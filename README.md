@@ -43,4 +43,4 @@ O app e Odontoart-only. Multi-tenant esta desativado, mas campos `company_id` es
 ## Modulos (MVP)
 - Dashboard com indicadores (hoje/semana/mes), situacao e distribuicao por cidade/UF.
 - Agenda (tabela com filtros em header, date range, chips e exportacao CSV).
-- Rotas (CRUD de rotas e paradas) - em evolucao.
+- Rotas (CRUD de rotas/paradas, abertura em Google Maps/Waze).
