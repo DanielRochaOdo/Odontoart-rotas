@@ -1,7 +1,8 @@
-﻿create extension if not exists "pgcrypto";
+create extension if not exists "pgcrypto";
 
 -- Helpers
-create or replace function public.current_role()
+drop function if exists public.current_profile_role();
+create or replace function public.current_profile_role()
 returns text
 language sql
 stable
@@ -11,7 +12,7 @@ as $$
   select role from public.profiles where user_id = auth.uid();
 $$;
 
-grant execute on function public.current_role() to authenticated;
+grant execute on function public.current_profile_role() to authenticated;
 
 drop function if exists public.is_vendedor();
 create or replace function public.is_vendedor()
@@ -21,7 +22,7 @@ stable
 security definer
 set search_path = public
 as $$
-  select current_role() = 'VENDEDOR';
+  select current_profile_role() = 'VENDEDOR';
 $$;
 
 grant execute on function public.is_vendedor() to authenticated;
@@ -34,7 +35,7 @@ stable
 security definer
 set search_path = public
 as $$
-  select current_role() = 'SUPERVISOR';
+  select current_profile_role() = 'SUPERVISOR';
 $$;
 
 grant execute on function public.is_supervisor() to authenticated;
@@ -47,7 +48,7 @@ stable
 security definer
 set search_path = public
 as $$
-  select current_role() = 'ASSISTENTE';
+  select current_profile_role() = 'ASSISTENTE';
 $$;
 
 grant execute on function public.is_assistente() to authenticated;

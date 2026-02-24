@@ -20,8 +20,8 @@ App web interno da Odontoart para gestao de agenda e rotas comerciais. Uso exclu
 
 ## Supabase (migrations)
 Os scripts SQL ficam em `supabase/migrations`.
-- `20260224_profiles.sql` cria a tabela `profiles`.
-- `20260224_agenda_routes_rls.sql` cria `agenda`, `routes`, `route_stops`, helpers e politicas RLS.
+- `2026022401_profiles.sql` cria a tabela `profiles`.
+- `2026022402_agenda_routes_rls.sql` cria `agenda`, `routes`, `route_stops`, helpers e politicas RLS.
 
 ## Importacao XLSX
 - Arquivo esperado: `data/agenda.xlsx` (aba ` BASE`).
