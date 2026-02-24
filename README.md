@@ -39,3 +39,8 @@ Os scripts SQL ficam em `supabase/migrations`.
 
 ## Observacao
 O app e Odontoart-only. Multi-tenant esta desativado, mas campos `company_id` estao previstos para evolucao futura.
+
+## Modulos (MVP)
+- Dashboard com indicadores (hoje/semana/mes), situacao e distribuicao por cidade/UF.
+- Agenda (tabela com filtros e exportacao) - em evolucao.
+- Rotas (CRUD de rotas e paradas) - em evolucao.
