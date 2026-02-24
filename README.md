@@ -19,11 +19,16 @@ App web interno da Odontoart para gestao de agenda e rotas comerciais. Uso exclu
 ## Supabase (migrations)
 Os scripts SQL ficam em `supabase/migrations`.
 - `20260224_profiles.sql` cria a tabela `profiles`.
+- `20260224_agenda_routes_rls.sql` cria `agenda`, `routes`, `route_stops`, helpers e politicas RLS.
 
 ## Roles (MVP)
 - VENDEDOR: somente leitura (dados proprios, ate hoje).
 - SUPERVISOR: CRUD completo de agendas/rotas e visao total.
 - ASSISTENTE: CRUD completo de agendas/rotas e visao total.
+
+## RLS (MVP)
+- `agenda`: VENDEDOR so le seus registros (vendedor ou consultor) ate hoje, SUPERVISOR/ASSISTENTE com CRUD total.
+- `routes` e `route_stops`: VENDEDOR ve apenas rotas atribuídas, SUPERVISOR/ASSISTENTE com CRUD total.
 
 ## Observacao
 O app e Odontoart-only. Multi-tenant esta desativado, mas campos `company_id` estao previstos para evolucao futura.
