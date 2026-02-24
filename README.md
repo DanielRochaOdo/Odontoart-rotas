@@ -13,6 +13,8 @@ App web interno da Odontoart para gestao de agenda e rotas comerciais. Uso exclu
 2. Configure as variaveis de ambiente em `.env.local`:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
+   - `SUPABASE_URL` (para scripts)
+   - `SUPABASE_SERVICE_ROLE_KEY` (para scripts)
 3. Suba o app:
    - `npm run dev`
 
@@ -20,6 +22,11 @@ App web interno da Odontoart para gestao de agenda e rotas comerciais. Uso exclu
 Os scripts SQL ficam em `supabase/migrations`.
 - `20260224_profiles.sql` cria a tabela `profiles`.
 - `20260224_agenda_routes_rls.sql` cria `agenda`, `routes`, `route_stops`, helpers e politicas RLS.
+
+## Importacao XLSX
+- Arquivo esperado: `data/agenda.xlsx` (aba ` BASE`).
+- Executar: `npm run import:agenda`.
+- O script cria `dedupe_key` (empresa + nome_fantasia + data + vendedor) e evita duplicacoes.
 
 ## Roles (MVP)
 - VENDEDOR: somente leitura (dados proprios, ate hoje).
