@@ -112,7 +112,7 @@ export default function AppLayout() {
       <div className="flex min-h-screen w-full flex-col gap-4 px-4 py-4 md:flex-row md:items-start md:gap-6 md:px-0 md:py-6">
         <aside
           className={[
-            "mb-6 hidden w-full shrink-0 rounded-none border border-sea/20 bg-gradient-to-b from-white via-white to-sand/60 shadow-card md:mb-0 md:sticky md:top-6 md:flex md:flex-col md:rounded-r-3xl md:border-l-0",
+            "mb-6 hidden w-full shrink-0 rounded-none border border-sea/20 bg-gradient-to-b from-white via-white to-sand/60 shadow-card md:mb-0 md:sticky md:top-0 md:flex md:flex-col md:rounded-r-3xl md:border-l-0",
             collapsed ? "p-4 md:w-20 md:py-6" : "p-5 md:w-56",
           ].join(" ")}
         >

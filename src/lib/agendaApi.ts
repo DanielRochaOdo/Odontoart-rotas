@@ -21,22 +21,48 @@ const formatInValues = (values: string[]) =>
     .map((value) => `"${value.replace(/"/g, '\\"')}"`)
     .join(",");
 
+const normalizeOption = (value: string) =>
+  value.trim().replace(/\s+/g, " ").toUpperCase();
+
+type OptionsCacheEntry = {
+  options: string[];
+  rawMap: Map<string, string[]>;
+};
+
+const optionsCache = new Map<string, OptionsCacheEntry>();
+
+export const clearAgendaOptionsCache = () => {
+  optionsCache.clear();
+};
+
+const expandFilterValues = (key: string, values: string[]) => {
+  const entry = optionsCache.get(key);
+  if (!entry) {
+    return values;
+  }
+
+  const expanded = values.flatMap((value) => entry.rawMap.get(value) ?? value);
+  return Array.from(new Set(expanded)).filter(Boolean);
+};
+
 const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let next: any = query;
 
   Object.entries(filters.columns).forEach(([key, values]) => {
     if (!values || values.length === 0) return;
-    const cleaned = values.map((value) => value.trim()).filter(Boolean);
+    const cleaned = values.map((value) => normalizeOption(value)).filter(Boolean);
     if (cleaned.length === 0) return;
+    const expanded = expandFilterValues(key, cleaned);
+    if (expanded.length === 0) return;
 
     if (key === "empresa_nome") {
-      const inValues = formatInValues(cleaned);
+      const inValues = formatInValues(expanded);
       next = next.or(`empresa.in.(${inValues}),nome_fantasia.in.(${inValues})`);
       return;
     }
 
-    next = next.in(key, cleaned);
+    next = next.in(key, expanded);
   });
 
   if (filters.global) {
@@ -107,7 +133,7 @@ export const fetchAgenda = async (
       { count: "exact" },
     )
     .is("visit_generated_at", null)
-    .eq("situacao", "Ativo");
+    .ilike("situacao", "ativo%");
 
   query = applyFilters(query, filters);
 
@@ -129,15 +155,13 @@ export const fetchAgenda = async (
   return { data: (data ?? []) as AgendaRow[], count: count ?? 0 };
 };
 
-const optionsCache = new Map<string, string[]>();
-
-export const fetchDistinctOptions = async (columns: string[]) => {
-  const cacheKey = columns.join("|");
-  if (optionsCache.has(cacheKey)) {
-    return optionsCache.get(cacheKey)!;
+export const fetchDistinctOptions = async (filterKey: string, columns: string[]) => {
+  const cached = optionsCache.get(filterKey);
+  if (cached) {
+    return cached.options;
   }
 
-  const values = new Set<string>();
+  const normalizedMap = new Map<string, Set<string>>();
 
   for (const column of columns) {
     const { data, error } = await supabase
@@ -145,7 +169,7 @@ export const fetchDistinctOptions = async (columns: string[]) => {
       .select(column)
       .not(column, "is", null)
       .is("visit_generated_at", null)
-      .eq("situacao", "Ativo")
+      .ilike("situacao", "ativo%")
       .limit(2000);
 
     if (error) {
@@ -153,14 +177,25 @@ export const fetchDistinctOptions = async (columns: string[]) => {
     }
 
     data?.forEach((row) => {
-      const value = row[column as keyof typeof row];
-      if (value) values.add(String(value));
+      const rawValue = row[column as keyof typeof row];
+      if (!rawValue) return;
+      const rawText = String(rawValue);
+      const normalized = normalizeOption(rawText);
+      if (!normalized) return;
+      if (!normalizedMap.has(normalized)) {
+        normalizedMap.set(normalized, new Set());
+      }
+      normalizedMap.get(normalized)?.add(rawText);
     });
   }
 
-  const sorted = Array.from(values).sort((a, b) => a.localeCompare(b));
-  optionsCache.set(cacheKey, sorted);
-  return sorted;
+  const options = Array.from(normalizedMap.keys()).sort((a, b) => a.localeCompare(b));
+  const rawMap = new Map<string, string[]>();
+  normalizedMap.forEach((set, key) => {
+    rawMap.set(key, Array.from(set));
+  });
+  optionsCache.set(filterKey, { options, rawMap });
+  return options;
 };
 
 export const fetchAgendaForGeneration = async (filters: AgendaFilters) => {
@@ -168,7 +203,7 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters) => {
     .from("agenda")
     .select("id, perfil_visita")
     .is("visit_generated_at", null)
-    .eq("situacao", "Ativo")
+    .ilike("situacao", "ativo%")
     .order("id", { ascending: true });
 
   query = applyFilters(query, filters);

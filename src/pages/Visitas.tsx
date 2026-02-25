@@ -8,7 +8,7 @@ import { fetchVendedores } from "../lib/agendaApi";
 import { onProfilesUpdated } from "../lib/profileEvents";
 import {
   PERFIL_VISITA_PRESETS,
-  isCustomTimeValue,
+  extractCustomTimes,
   isPresetPerfilVisita,
   normalizePerfilVisita,
 } from "../lib/perfilVisita";
@@ -20,6 +20,7 @@ type VisitRow = {
   assigned_to_user_id: string | null;
   assigned_to_name: string | null;
   perfil_visita: string | null;
+  perfil_visita_opcoes?: string | null;
   route_id: string | null;
   completed_at: string | null;
   completed_vidas: number | null;
@@ -102,8 +103,10 @@ export default function Visitas() {
     agendaId: string;
     vidas: string;
     perfil: string;
-    customEnabled: boolean;
+    customManual: boolean;
     customTime: string;
+    customOptions: string[];
+    customEditEnabled: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -188,7 +191,7 @@ export default function Visitas() {
       const { data, error: supaError } = await supabase
         .from("visits")
         .select(
-          "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, route_id, completed_at, completed_vidas, no_visit_reason, agenda:agenda_id (id, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, perfil_visita)",
+          "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, agenda:agenda_id (id, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, perfil_visita)",
         )
         .gte("visit_date", startDate)
         .lte("visit_date", effectiveEnd)
@@ -526,15 +529,28 @@ export default function Visitas() {
   };
 
   const openCompleteModal = (item: VisitRow) => {
-    const perfilValue = normalizePerfilVisita(item.perfil_visita);
-    const isCustom = perfilValue !== "" && !isPresetPerfilVisita(perfilValue);
+    const agendaPerfil = item.agenda?.perfil_visita ?? "";
+    const visitPerfil = item.perfil_visita ?? "";
+    const visitOptionsRaw = item.perfil_visita_opcoes ?? "";
+    const agendaOptions = extractCustomTimes(agendaPerfil);
+    const visitOptions = extractCustomTimes(visitOptionsRaw || visitPerfil);
+    const customOptions = agendaOptions.length > 0 ? agendaOptions : visitOptions;
+    const rawPerfil = agendaPerfil || visitOptionsRaw || visitPerfil;
+    const normalized = normalizePerfilVisita(rawPerfil);
+    const isPreset = normalized !== "" && isPresetPerfilVisita(normalized);
+    const hasCustomOptions = customOptions.length > 0 && !isPreset;
+    const selectedPerfil = hasCustomOptions
+      ? customOptions.find((option) => option === visitPerfil) ?? customOptions[0]
+      : normalized;
     setCompleteVisit({
       id: item.id,
       agendaId: item.agenda_id,
       vidas: item.completed_vidas?.toString() ?? "",
-      perfil: isCustom ? perfilValue : perfilValue,
-      customEnabled: isCustom,
-      customTime: isCustom && isCustomTimeValue(perfilValue) ? perfilValue : "",
+      perfil: selectedPerfil,
+      customManual: false,
+      customTime: hasCustomOptions ? selectedPerfil : "",
+      customOptions: hasCustomOptions ? customOptions : [],
+      customEditEnabled: false,
     });
   };
 
@@ -605,6 +621,10 @@ export default function Visitas() {
           completed_at: new Date().toISOString(),
           completed_vidas: vidas,
           perfil_visita: completeVisit.perfil,
+          perfil_visita_opcoes:
+            completeVisit.customOptions.filter((option) => option.trim()).length > 0
+              ? completeVisit.customOptions.filter((option) => option.trim()).join(", ")
+              : null,
           no_visit_reason: null,
         })
         .eq("id", completeVisit.id);
@@ -636,6 +656,22 @@ export default function Visitas() {
     } finally {
       setSavingId(null);
     }
+  };
+
+  const updateCustomOptions = (options: string[]) => {
+    setCompleteVisit((prev) => {
+      if (!prev) return prev;
+      const cleaned = options.map((item) => item.trim());
+      const available = cleaned.filter(Boolean);
+      const shouldUpdatePerfil =
+        !prev.customManual && (prev.perfil === "" || !available.includes(prev.perfil));
+      return {
+        ...prev,
+        customOptions: cleaned,
+        perfil: shouldUpdatePerfil ? (available[0] ?? "") : prev.perfil,
+        customTime: prev.customManual ? prev.customTime : prev.customTime,
+      };
+    });
   };
 
   return (
@@ -944,45 +980,140 @@ export default function Visitas() {
               </label>
               <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
                 Horario da visita
-                <select
-                  value={completeVisit.customEnabled ? "__custom__" : completeVisit.perfil}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    if (value === "__custom__") {
-                      setCompleteVisit((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              customEnabled: true,
-                              perfil: prev.customTime,
+                {completeVisit.customOptions.filter((option) => option.trim()).length > 0 ? (
+                  <div className="rounded-lg border border-sea/20 bg-sand/40 px-3 py-2 text-[11px] text-ink/70">
+                    Perfil visita: Horario customizado
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {completeVisit.customOptions
+                        .filter((option) => option.trim())
+                        .map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            onClick={() =>
+                              setCompleteVisit((prev) =>
+                                prev ? { ...prev, perfil: option, customManual: false } : prev,
+                              )
                             }
-                          : prev,
-                      );
-                    } else {
-                      setCompleteVisit((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              customEnabled: false,
-                              customTime: "",
-                              perfil: value,
-                            }
-                          : prev,
-                      );
-                    }
-                  }}
-                  className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                >
-                  <option value="">Selecione</option>
-                  {PERFIL_VISITA_PRESETS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                  <option value="__custom__">Horario customizado</option>
-                </select>
+                            className={[
+                              "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                              completeVisit.perfil === option
+                                ? "border-sea bg-sea/20 text-sea"
+                                : "border-sea/20 bg-white/80 text-ink/70",
+                            ].join(" ")}
+                          >
+                            {option}
+                          </button>
+                        ))}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCompleteVisit((prev) =>
+                            prev ? { ...prev, customEditEnabled: !prev.customEditEnabled } : prev,
+                          )
+                        }
+                        className="rounded-lg border border-sea/30 bg-white/80 px-2 py-1 text-[10px] font-semibold text-ink/70"
+                      >
+                        {completeVisit.customEditEnabled ? "Fechar edicao" : "Editar horarios"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCompleteVisit((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  customManual: true,
+                                  customTime: prev.customTime || "",
+                                }
+                              : prev,
+                          )
+                        }
+                        className="rounded-lg border border-sea/30 bg-white/80 px-2 py-1 text-[10px] font-semibold text-ink/70"
+                      >
+                        Outro horario
+                      </button>
+                    </div>
+                    {completeVisit.customEditEnabled && (
+                      <div className="mt-2 space-y-2">
+                        {completeVisit.customOptions.map((time, index) => (
+                          <div key={`${time}-${index}`} className="flex items-center gap-2">
+                            <input
+                              type="time"
+                              value={time}
+                              onChange={(event) => {
+                                const next = [...completeVisit.customOptions];
+                                next[index] = event.target.value;
+                                updateCustomOptions(next);
+                              }}
+                              className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                            />
+                            {completeVisit.customOptions.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const next = completeVisit.customOptions.filter((_, idx) => idx !== index);
+                                  updateCustomOptions(next.length ? next : [""]);
+                                }}
+                                className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-[10px] text-ink/70"
+                              >
+                                Remover
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => updateCustomOptions([...completeVisit.customOptions, ""])}
+                          className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-[10px] text-ink/70"
+                        >
+                          Adicionar horario
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <select
+                    value={completeVisit.customManual ? "__custom__" : completeVisit.perfil}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (value === "__custom__") {
+                        setCompleteVisit((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                customManual: true,
+                                perfil: prev.customTime,
+                              }
+                            : prev,
+                        );
+                      } else {
+                        setCompleteVisit((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                customManual: false,
+                                perfil: value,
+                              }
+                            : prev,
+                        );
+                      }
+                    }}
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  >
+                    <option value="">Selecione</option>
+                    {PERFIL_VISITA_PRESETS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                    <option value="__custom__">Outro horario</option>
+                  </select>
+                )}
               </label>
-              {completeVisit.customEnabled && (
+              {completeVisit.customManual && (
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
                   Horario customizado
                   <input

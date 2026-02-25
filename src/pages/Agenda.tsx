@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import {
   flexRender,
   type ColumnDef,
@@ -7,6 +7,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import {
+  clearAgendaOptionsCache,
   fetchAgenda,
   fetchAgendaForGeneration,
   fetchDistinctOptions,
@@ -69,6 +70,8 @@ export default function Agenda() {
   const { role, session } = useAuth();
   const canAccess = role === "SUPERVISOR" || role === "ASSISTENTE";
   const { filters, setFilters, clearFilters } = useAgendaFilters();
+  const [globalQuery, setGlobalQuery] = useState(filters.global);
+  const typingGlobalRef = useRef(false);
   const [data, setData] = useState<AgendaRow[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -111,11 +114,34 @@ export default function Agenda() {
   }, [filters, sorting]);
 
   useEffect(() => {
+    if (typingGlobalRef.current) {
+      if (filters.global === globalQuery) {
+        typingGlobalRef.current = false;
+      }
+      return;
+    }
+    if (filters.global !== globalQuery) {
+      setGlobalQuery(filters.global);
+    }
+  }, [filters.global, globalQuery]);
+
+  useEffect(() => {
+    const handler = window.setTimeout(() => {
+      setFilters((prev) =>
+        prev.global === globalQuery ? prev : { ...prev, global: globalQuery },
+      );
+      typingGlobalRef.current = false;
+    }, 250);
+    return () => window.clearTimeout(handler);
+  }, [globalQuery, setFilters]);
+
+  useEffect(() => {
     const loadOptions = async () => {
+      clearAgendaOptionsCache();
       const entries = await Promise.all(
         Object.entries(FILTER_SOURCES).map(async ([key, sources]) => [
           key,
-          await fetchDistinctOptions(sources),
+          await fetchDistinctOptions(key, sources),
         ]),
       );
       setFilterOptions(Object.fromEntries(entries));
@@ -124,7 +150,7 @@ export default function Agenda() {
     loadOptions().catch((err) => {
       console.error(err);
     });
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => {
     if (!canGenerate) return;
@@ -617,14 +643,15 @@ export default function Agenda() {
       </header>
 
       <section className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
-        <div className="flex flex-wrap items-end gap-4">
+        <div className="flex flex-wrap items-start gap-4">
           <div className="flex flex-col gap-1">
             <label className="text-[11px] font-semibold text-ink/70">Busca global</label>
             <input
-              value={filters.global}
-              onChange={(event) =>
-                setFilters((prev) => ({ ...prev, global: event.target.value }))
-              }
+              value={globalQuery}
+              onChange={(event) => {
+                typingGlobalRef.current = true;
+                setGlobalQuery(event.target.value);
+              }}
               placeholder="Empresa, cidade, vendedor..."
               className="w-64 rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
             />
@@ -693,7 +720,9 @@ export default function Agenda() {
                 }
                 className="rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
               />
-              <span className="w-full text-left text-xs font-semibold text-ink/50">Ou</span>
+              <span className="w-full text-left text-xs font-semibold text-ink/50 md:w-auto md:pt-2">
+                Ou
+              </span>
               <select
                 value={filters.dateRanges.data_da_ultima_visita.month ?? ""}
                 onChange={(event) =>
@@ -750,12 +779,12 @@ export default function Agenda() {
           <button
             type="button"
             onClick={clearFilters}
-            className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+            className="self-end rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea md:mt-5"
           >
             Limpar filtros
           </button>
           {canGenerate && (
-            <div className="flex w-full items-center justify-between gap-2 md:ml-auto md:w-auto md:justify-start">
+            <div className="flex w-full items-center justify-between gap-2 md:ml-auto md:w-auto md:justify-start md:self-end md:mt-5">
               <button
                 type="button"
                 onClick={() => {
@@ -768,7 +797,7 @@ export default function Agenda() {
                 Gerar visitas
               </button>
               <span className="order-2 text-xs text-ink/60 md:order-1">
-                Empresas disponiveis: {totalCount}
+                Empresas: {totalCount}
               </span>
             </div>
           )}
@@ -1119,3 +1148,4 @@ export default function Agenda() {
     </div>
   );
 }
+

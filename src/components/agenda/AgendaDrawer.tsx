@@ -3,7 +3,7 @@ import type { AgendaRow } from "../../types/agenda";
 import { supabase } from "../../lib/supabase";
 import {
   PERFIL_VISITA_PRESETS,
-  isCustomTimeValue,
+  extractCustomTimes,
   isPresetPerfilVisita,
   normalizePerfilVisita,
 } from "../../lib/perfilVisita";
@@ -42,7 +42,7 @@ const FIELDS = [
   { key: "empresa", label: "Empresa", type: "text" },
   { key: "perfil_visita", label: "Perfil Visita", type: "text" },
   { key: "corte", label: "Corte", type: "number" },
-  { key: "venc", label: "VenC", type: "number" },
+  { key: "venc", label: "Venc", type: "number" },
   { key: "valor", label: "Valor", type: "number" },
   { key: "tit", label: "TIT", type: "text" },
   { key: "endereco", label: "Endereco", type: "text", wide: true },
@@ -114,21 +114,31 @@ export default function AgendaDrawer({
   const [deletePassword, setDeletePassword] = useState("");
   const [deleting, setDeleting] = useState(false);
   const initialPerfilValue = normalizePerfilVisita(row?.perfil_visita ?? "");
+  const initialCustomTimes = extractCustomTimes(row?.perfil_visita ?? null);
   const initialPerfilIsCustom = initialPerfilValue !== "" && !isPresetPerfilVisita(initialPerfilValue);
   const [perfilCustomEnabled, setPerfilCustomEnabled] = useState(initialPerfilIsCustom);
-  const [perfilCustomTime, setPerfilCustomTime] = useState(
-    initialPerfilIsCustom && isCustomTimeValue(initialPerfilValue) ? initialPerfilValue : "",
+  const [perfilCustomTimes, setPerfilCustomTimes] = useState<string[]>(
+    initialPerfilIsCustom ? (initialCustomTimes.length ? initialCustomTimes : [""]) : [],
   );
+
+  const applyCustomTimes = (times: string[]) => {
+    setPerfilCustomTimes(times);
+    const cleaned = times.map((time) => time.trim()).filter(Boolean);
+    setFormState((prev) =>
+      prev ? { ...prev, perfil_visita: cleaned.join(", ") } : prev,
+    );
+  };
 
   const syncPerfilState = (value: string | null) => {
     const normalized = normalizePerfilVisita(value);
+    const times = extractCustomTimes(value);
     if (normalized && !isPresetPerfilVisita(normalized)) {
       setPerfilCustomEnabled(true);
-      setPerfilCustomTime(isCustomTimeValue(normalized) ? normalized : "");
-    } else {
-      setPerfilCustomEnabled(false);
-      setPerfilCustomTime("");
+      applyCustomTimes(times.length ? times : [""]);
+      return;
     }
+    setPerfilCustomEnabled(false);
+    setPerfilCustomTimes([]);
   };
 
   const displayTitle = useMemo(() => {
@@ -372,12 +382,12 @@ export default function AgendaDrawer({
                         const value = event.target.value;
                         if (value === "__custom__") {
                           setPerfilCustomEnabled(true);
-                          setFormState((prev) =>
-                            prev ? { ...prev, perfil_visita: perfilCustomTime } : prev,
-                          );
+                          if (perfilCustomTimes.length === 0) {
+                            applyCustomTimes([""]);
+                          }
                         } else {
                           setPerfilCustomEnabled(false);
-                          setPerfilCustomTime("");
+                          setPerfilCustomTimes([]);
                           setFormState((prev) =>
                             prev
                               ? {
@@ -399,22 +409,41 @@ export default function AgendaDrawer({
                       <option value="__custom__">Horario customizado</option>
                     </select>
                     {perfilCustomEnabled && (
-                      <input
-                        type="time"
-                        value={perfilCustomTime}
-                        onChange={(event) => {
-                          setPerfilCustomTime(event.target.value);
-                          setFormState((prev) =>
-                            prev
-                              ? {
-                                  ...prev,
-                                  perfil_visita: event.target.value,
-                                }
-                              : prev,
-                          );
-                        }}
-                        className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                      />
+                      <div className="flex flex-col gap-2">
+                        {perfilCustomTimes.map((time, index) => (
+                          <div key={`${time}-${index}`} className="flex items-center gap-2">
+                            <input
+                              type="time"
+                              value={time}
+                              onChange={(event) => {
+                                const next = [...perfilCustomTimes];
+                                next[index] = event.target.value;
+                                applyCustomTimes(next);
+                              }}
+                              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                            />
+                            {perfilCustomTimes.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const next = perfilCustomTimes.filter((_, idx) => idx !== index);
+                                  applyCustomTimes(next.length ? next : [""]);
+                                }}
+                                className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] text-ink/70"
+                              >
+                                Remover
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => applyCustomTimes([...perfilCustomTimes, ""])}
+                          className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] text-ink/70"
+                        >
+                          Adicionar horario
+                        </button>
+                      </div>
                     )}
                   </div>
                 ) : (

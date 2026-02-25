@@ -1,6 +1,7 @@
 export type ClienteRow = {
   id: string;
   codigo: string | null;
+  cep: string | null;
   empresa: string | null;
   nome_fantasia: string | null;
   perfil_visita: string | null;

@@ -3,12 +3,66 @@ import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 
 const escapeOrValue = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
 const DEFAULT_SITUACAO = "Ativo";
+const normalizeAgendaKeyPart = (value?: string | null) =>
+  (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+const buildAgendaDedupeKey = (empresa?: string | null, nomeFantasia?: string | null) =>
+  `${normalizeAgendaKeyPart(empresa)}|${normalizeAgendaKeyPart(nomeFantasia)}||`;
+
+const upsertAgendaFromClientesPayloads = async (
+  payloads: Array<{
+    codigo?: string | null;
+    cep?: string | null;
+    empresa?: string | null;
+    nome_fantasia?: string | null;
+    perfil_visita?: string | null;
+    situacao?: string | null;
+    endereco?: string | null;
+    bairro?: string | null;
+    cidade?: string | null;
+    uf?: string | null;
+  }>,
+) => {
+  const agendaRows = payloads
+    .map((payload) => {
+      const empresa = payload.empresa ?? null;
+      const nomeFantasia = payload.nome_fantasia ?? null;
+      if (!empresa && !nomeFantasia) return null;
+      return {
+        cod_1: payload.codigo ?? null,
+        cep: payload.cep ?? null,
+        empresa,
+        nome_fantasia: nomeFantasia,
+        perfil_visita: payload.perfil_visita ?? null,
+        endereco: payload.endereco ?? null,
+        bairro: payload.bairro ?? null,
+        cidade: payload.cidade ?? null,
+        uf: payload.uf ?? null,
+        situacao: payload.situacao ?? DEFAULT_SITUACAO,
+        dedupe_key: buildAgendaDedupeKey(empresa, nomeFantasia),
+        raw_row: {
+          source: "clientes",
+        },
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
+
+  if (agendaRows.length === 0) return;
+
+  const { error } = await supabase
+    .from("agenda")
+    .upsert(agendaRows, { onConflict: "dedupe_key", ignoreDuplicates: true });
+
+  if (error) throw new Error(error.message);
+};
 
 export const fetchClientes = async () => {
   const { data, error } = await supabase
     .from("clientes")
     .select(
-      "id, codigo, empresa, nome_fantasia, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
+      "id, codigo, cep, empresa, nome_fantasia, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
     );
 
   if (error) throw new Error(error.message);
@@ -17,6 +71,7 @@ export const fetchClientes = async () => {
 
 export const createCliente = async (payload: {
   codigo?: string | null;
+  cep?: string | null;
   empresa?: string | null;
   nome_fantasia?: string | null;
   perfil_visita?: string | null;
@@ -30,6 +85,7 @@ export const createCliente = async (payload: {
     .from("clientes")
     .insert({
       codigo: payload.codigo ?? null,
+      cep: payload.cep ?? null,
       empresa: payload.empresa ?? null,
       nome_fantasia: payload.nome_fantasia ?? null,
       perfil_visita: payload.perfil_visita ?? null,
@@ -40,11 +96,12 @@ export const createCliente = async (payload: {
       uf: payload.uf ?? null,
     })
     .select(
-      "id, codigo, empresa, nome_fantasia, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
+      "id, codigo, cep, empresa, nome_fantasia, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
     )
     .single();
 
   if (error) throw new Error(error.message);
+  await upsertAgendaFromClientesPayloads([data as ClienteRow]);
   return data as ClienteRow;
 };
 
@@ -53,6 +110,7 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
     .from("clientes")
     .update({
       codigo: payload.codigo ?? null,
+      cep: payload.cep ?? null,
       empresa: payload.empresa ?? null,
       nome_fantasia: payload.nome_fantasia ?? null,
       perfil_visita: payload.perfil_visita ?? null,
@@ -64,7 +122,7 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
     })
     .eq("id", id)
     .select(
-      "id, codigo, empresa, nome_fantasia, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
+      "id, codigo, cep, empresa, nome_fantasia, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
     )
     .single();
 
@@ -80,6 +138,7 @@ export const deleteCliente = async (id: string) => {
 export const upsertClientes = async (
   payloads: Array<{
     codigo?: string | null;
+    cep?: string | null;
     empresa?: string | null;
     nome_fantasia?: string | null;
     perfil_visita?: string | null;
@@ -93,6 +152,7 @@ export const upsertClientes = async (
   if (payloads.length === 0) return [];
   const normalized = payloads.map((payload) => ({
     codigo: payload.codigo ?? null,
+    cep: payload.cep ?? null,
     empresa: payload.empresa ?? null,
     nome_fantasia: payload.nome_fantasia ?? null,
     perfil_visita: payload.perfil_visita ?? null,
@@ -106,9 +166,10 @@ export const upsertClientes = async (
     .from("clientes")
     .upsert(normalized, { onConflict: "dedupe_key", ignoreDuplicates: true })
     .select(
-      "id, codigo, empresa, nome_fantasia, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
+      "id, codigo, cep, empresa, nome_fantasia, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
     );
   if (error) throw new Error(error.message);
+  await upsertAgendaFromClientesPayloads(normalized);
   return (data ?? []) as ClienteRow[];
 };
 
@@ -117,7 +178,18 @@ export const syncAgendaForCliente = async (cliente: ClienteRow) => {
   const empresa = cliente.empresa?.trim();
   const nomeFantasia = cliente.nome_fantasia?.trim();
 
-  let query = supabase.from("agenda").update({ situacao });
+  let query = supabase.from("agenda").update({
+    situacao,
+    cod_1: cliente.codigo ?? null,
+    cep: cliente.cep ?? null,
+    empresa: cliente.empresa ?? null,
+    nome_fantasia: cliente.nome_fantasia ?? null,
+    perfil_visita: cliente.perfil_visita ?? null,
+    endereco: cliente.endereco ?? null,
+    bairro: cliente.bairro ?? null,
+    cidade: cliente.cidade ?? null,
+    uf: cliente.uf ?? null,
+  });
 
   if (empresa && nomeFantasia) {
     query = query.or(

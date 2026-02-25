@@ -22,6 +22,114 @@
     margin: 0;
     min-height: 100vh;
     overflow-x: hidden;
+    text-transform: uppercase;
+  }
+
+  input,
+  textarea,
+  select,
+  option,
+  button,
+  label,
+  th,
+  td {
+    text-transform: uppercase;
+  }
+
+  .dark {
+    color-scheme: dark;
+  }
+
+  .dark body {
+    background-color: #000000;
+    color: #e8f5ed;
+  }
+
+  .dark .bg-hero-gradient {
+    background-image:
+      radial-gradient(circle at top left, rgba(12, 111, 61, 0.25), transparent 55%),
+      radial-gradient(circle at 25% 15%, rgba(52, 211, 153, 0.12), transparent 60%),
+      linear-gradient(135deg, #000000 0%, #0a0a0a 45%, #000000 100%);
+  }
+
+  .dark .bg-white {
+    background-color: #0f0f0f !important;
+  }
+
+  .dark .bg-white\/95 {
+    background-color: #111111 !important;
+  }
+
+  .dark .bg-white\/90 {
+    background-color: #141414 !important;
+  }
+
+  .dark .bg-white\/80 {
+    background-color: #1a1a1a !important;
+  }
+
+  .dark .bg-white\/70 {
+    background-color: #1f1f1f !important;
+  }
+
+  .dark .bg-white\/50 {
+    background-color: #242424 !important;
+  }
+
+  .dark .bg-sand {
+    background-color: #1a1a1a !important;
+  }
+
+  .dark .bg-sand\/60 {
+    background-color: #161616 !important;
+  }
+
+  .dark .bg-sand\/30 {
+    background-color: #121212 !important;
+  }
+
+  .dark .bg-paper {
+    background-color: #101010 !important;
+  }
+
+  .dark .text-ink {
+    color: #f3f4f6 !important;
+  }
+
+  .dark .text-ink\/70 {
+    color: rgba(243, 244, 246, 0.72) !important;
+  }
+
+  .dark .text-ink\/60 {
+    color: rgba(243, 244, 246, 0.6) !important;
+  }
+
+  .dark .text-ink\/50 {
+    color: rgba(243, 244, 246, 0.5) !important;
+  }
+
+  .dark .text-ink\/40 {
+    color: rgba(243, 244, 246, 0.4) !important;
+  }
+
+  .dark .text-muted {
+    color: #9ca3af !important;
+  }
+
+  .dark .border-sea\/15 {
+    border-color: rgba(52, 211, 153, 0.2) !important;
+  }
+
+  .dark .border-sea\/20 {
+    border-color: rgba(52, 211, 153, 0.25) !important;
+  }
+
+  .dark .border-sea\/30 {
+    border-color: rgba(52, 211, 153, 0.35) !important;
+  }
+
+  .dark .shadow-card {
+    box-shadow: 0 12px 28px -18px rgba(0, 0, 0, 0.6);
   }
 
   a {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { Plus } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
@@ -13,10 +14,11 @@ import {
 import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import {
   PERFIL_VISITA_PRESETS,
-  isCustomTimeValue,
+  extractCustomTimes,
   isPresetPerfilVisita,
   normalizePerfilVisita,
 } from "../lib/perfilVisita";
+import { formatCep, isCepErrorPayload, mapCepResponse, sanitizeCep } from "../lib/cep";
 
 const formatDate = (value: string | null) => {
   if (!value) return "-";
@@ -27,11 +29,12 @@ const formatDate = (value: string | null) => {
 
 const buildPerfilState = (value: string | null) => {
   const normalized = normalizePerfilVisita(value);
+  const customTimes = extractCustomTimes(value);
   const isCustom = normalized !== "" && !isPresetPerfilVisita(normalized);
   return {
-    perfil: normalized,
+    perfil: isCustom ? customTimes.join(", ") : normalized,
     customEnabled: isCustom,
-    customTime: isCustom && isCustomTimeValue(normalized) ? normalized : "",
+    customTimes: isCustom ? (customTimes.length ? customTimes : [""]) : [],
   };
 };
 
@@ -48,6 +51,7 @@ const normalizeHeader = (value: string) =>
 const HEADER_MAP: Record<string, string> = {
   codigo: "codigo",
   cod: "codigo",
+  cep: "cep",
   empresa: "empresa",
   "nome fantasia": "nome_fantasia",
   fantasia: "nome_fantasia",
@@ -82,6 +86,7 @@ export default function Clientes() {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
     codigo: "",
+    cep: "",
     empresa: "",
     nome_fantasia: "",
     situacao: "",
@@ -98,6 +103,7 @@ export default function Clientes() {
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     codigo: "",
+    cep: "",
     empresa: "",
     nome_fantasia: "",
     situacao: "",
@@ -107,11 +113,33 @@ export default function Clientes() {
     uf: "",
   });
   const [perfilEdit, setPerfilEdit] = useState(() => buildPerfilState(null));
+
+  const applyPerfilTimes = (
+    setter: Dispatch<
+      SetStateAction<{
+        perfil: string;
+        customEnabled: boolean;
+        customTimes: string[];
+      }>
+    >,
+    times: string[],
+  ) => {
+    const cleaned = times.map((time) => time.trim()).filter(Boolean);
+    setter((prev) => ({
+      ...prev,
+      customTimes: times,
+      perfil: cleaned.join(", "),
+    }));
+  };
   const [savingEdit, setSavingEdit] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [cepLoading, setCepLoading] = useState(false);
+  const [cepError, setCepError] = useState<string | null>(null);
+  const [cepLoadingEdit, setCepLoadingEdit] = useState(false);
+  const [cepErrorEdit, setCepErrorEdit] = useState<string | null>(null);
 
   const loadClientes = async () => {
     setLoading(true);
@@ -136,6 +164,7 @@ export default function Clientes() {
     setIsEditing(false);
     setEditForm({
       codigo: selected.codigo ?? "",
+      cep: selected.cep ?? "",
       empresa: selected.empresa ?? "",
       nome_fantasia: selected.nome_fantasia ?? "",
       situacao: selected.situacao ?? "Ativo",
@@ -153,12 +182,99 @@ export default function Clientes() {
       .finally(() => setHistoryLoading(false));
   }, [selected]);
 
+  useEffect(() => {
+    const digits = sanitizeCep(form.cep);
+    if (digits.length !== 8) {
+      setCepError(null);
+      return;
+    }
+    const controller = new AbortController();
+    const handler = window.setTimeout(async () => {
+      setCepLoading(true);
+      setCepError(null);
+      try {
+        const baseUrl = (import.meta as ImportMeta & { env: Record<string, string> }).env
+          ?.VITE_CEP_API_URL ?? "http://localhost:8000";
+        const response = await fetch(`${baseUrl}/cep/${digits}`, { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error("Falha ao consultar CEP.");
+        }
+        const data = (await response.json()) as Record<string, unknown>;
+        if (isCepErrorPayload(data)) {
+          throw new Error("CEP nao encontrado.");
+        }
+        const mapped = mapCepResponse(data);
+        setForm((prev) => ({
+          ...prev,
+          endereco: mapped.endereco ?? prev.endereco,
+          bairro: mapped.bairro ?? prev.bairro,
+          cidade: mapped.cidade ?? prev.cidade,
+          uf: mapped.uf ?? prev.uf,
+        }));
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") {
+          setCepError("CEP nao encontrado ou API indisponivel.");
+        }
+      } finally {
+        setCepLoading(false);
+      }
+    }, 400);
+    return () => {
+      window.clearTimeout(handler);
+      controller.abort();
+    };
+  }, [form.cep]);
+
+  useEffect(() => {
+    const digits = sanitizeCep(editForm.cep);
+    if (digits.length !== 8) {
+      setCepErrorEdit(null);
+      return;
+    }
+    const controller = new AbortController();
+    const handler = window.setTimeout(async () => {
+      setCepLoadingEdit(true);
+      setCepErrorEdit(null);
+      try {
+        const baseUrl = (import.meta as ImportMeta & { env: Record<string, string> }).env
+          ?.VITE_CEP_API_URL ?? "http://localhost:8000";
+        const response = await fetch(`${baseUrl}/cep/${digits}`, { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error("Falha ao consultar CEP.");
+        }
+        const data = (await response.json()) as Record<string, unknown>;
+        if (isCepErrorPayload(data)) {
+          throw new Error("CEP nao encontrado.");
+        }
+        const mapped = mapCepResponse(data);
+        setEditForm((prev) => ({
+          ...prev,
+          endereco: mapped.endereco ?? prev.endereco,
+          bairro: mapped.bairro ?? prev.bairro,
+          cidade: mapped.cidade ?? prev.cidade,
+          uf: mapped.uf ?? prev.uf,
+        }));
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") {
+          setCepErrorEdit("CEP nao encontrado ou API indisponivel.");
+        }
+      } finally {
+        setCepLoadingEdit(false);
+      }
+    }, 400);
+    return () => {
+      window.clearTimeout(handler);
+      controller.abort();
+    };
+  }, [editForm.cep]);
+
   const filteredClientes = useMemo(() => {
     const base = search.trim()
       ? clientes.filter((cliente) => {
           const term = search.trim().toLowerCase();
           const fields = [
             cliente.codigo,
+            cliente.cep,
             cliente.empresa,
             cliente.nome_fantasia,
             cliente.situacao,
@@ -174,7 +290,10 @@ export default function Clientes() {
       : clientes;
 
     const filteredByStatus = situacaoFilter
-      ? base.filter((cliente) => (cliente.situacao ?? "Ativo") === situacaoFilter)
+      ? base.filter((cliente) => {
+          const normalized = normalizeStatus(cliente.situacao ?? "Ativo") ?? "Ativo";
+          return normalized === situacaoFilter;
+        })
       : base;
 
     return [...filteredByStatus].sort((a, b) => {
@@ -196,6 +315,7 @@ export default function Clientes() {
     try {
       const created = await createCliente({
         codigo: form.codigo.trim() || null,
+        cep: form.cep.trim() || null,
         empresa: form.empresa.trim() || null,
         nome_fantasia: form.nome_fantasia.trim() || null,
         perfil_visita: perfilCreate.perfil || null,
@@ -209,6 +329,7 @@ export default function Clientes() {
       await syncAgendaForCliente(created);
       setForm({
         codigo: "",
+        cep: "",
         empresa: "",
         nome_fantasia: "",
         situacao: "Ativo",
@@ -236,6 +357,7 @@ export default function Clientes() {
     try {
       const updated = await updateCliente(selected.id, {
         codigo: editForm.codigo.trim() || null,
+        cep: editForm.cep.trim() || null,
         empresa: editForm.empresa.trim() || null,
         nome_fantasia: editForm.nome_fantasia.trim() || null,
         perfil_visita: perfilEdit.perfil || null,
@@ -259,6 +381,7 @@ export default function Clientes() {
   const handleDownloadTemplate = () => {
     const headers = [
       "codigo",
+      "cep",
       "empresa",
       "nome_fantasia",
       "situacao",
@@ -299,13 +422,14 @@ export default function Clientes() {
             if (!target) return;
             const text = String(value ?? "").trim();
             if (!text) return;
-            record[target] = text;
+            record[target] = target === "cep" ? formatCep(text) : text;
           });
 
           const situacaoValue = record.situacao ? normalizeStatus(record.situacao) : null;
 
           return {
             codigo: record.codigo ?? null,
+            cep: record.cep ?? null,
             empresa: record.empresa ?? null,
             nome_fantasia: record.nome_fantasia ?? null,
             situacao: situacaoValue ?? record.situacao ?? "Ativo",
@@ -372,6 +496,23 @@ export default function Clientes() {
               onChange={(event) => setForm((prev) => ({ ...prev, codigo: event.target.value }))}
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+            CEP
+            <input
+              value={form.cep}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, cep: formatCep(event.target.value) }))
+              }
+              placeholder="00000-000"
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+            {cepLoading && (
+              <span className="text-[11px] text-ink/60">Consultando CEP...</span>
+            )}
+            {cepError && (
+              <span className="text-[11px] text-red-600">{cepError}</span>
+            )}
           </label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             Empresa
@@ -450,10 +591,10 @@ export default function Clientes() {
                   setPerfilCreate((prev) => ({
                     ...prev,
                     customEnabled: true,
-                    perfil: prev.customTime,
+                    customTimes: prev.customTimes.length ? prev.customTimes : [""],
                   }));
                 } else {
-                  setPerfilCreate({ perfil: value, customEnabled: false, customTime: "" });
+                  setPerfilCreate({ perfil: value, customEnabled: false, customTimes: [] });
                 }
               }}
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
@@ -468,21 +609,42 @@ export default function Clientes() {
             </select>
           </label>
           {perfilCreate.customEnabled && (
-            <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-              Horario customizado
-              <input
-                type="time"
-                value={perfilCreate.customTime}
-                onChange={(event) =>
-                  setPerfilCreate((prev) => ({
-                    ...prev,
-                    customTime: event.target.value,
-                    perfil: event.target.value,
-                  }))
-                }
-                className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-              />
-            </label>
+            <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70">
+              Horarios customizados
+              {perfilCreate.customTimes.map((time, index) => (
+                <div key={`${time}-${index}`} className="flex items-center gap-2">
+                  <input
+                    type="time"
+                    value={time}
+                    onChange={(event) => {
+                      const next = [...perfilCreate.customTimes];
+                      next[index] = event.target.value;
+                      applyPerfilTimes(setPerfilCreate, next);
+                    }}
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                  {perfilCreate.customTimes.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = perfilCreate.customTimes.filter((_, idx) => idx !== index);
+                        applyPerfilTimes(setPerfilCreate, next.length ? next : [""]);
+                      }}
+                      className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] text-ink/70"
+                    >
+                      Remover
+                    </button>
+                  )}
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => applyPerfilTimes(setPerfilCreate, [...perfilCreate.customTimes, ""])}
+                className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] text-ink/70"
+              >
+                Adicionar horario
+              </button>
+            </div>
           )}
           <div className="flex items-end md:col-span-2">
             <button
@@ -571,6 +733,9 @@ export default function Clientes() {
                     <div className="text-[10px] text-ink/50">
                       Codigo: {cliente.codigo ?? "-"}
                     </div>
+                    {cliente.cep ? (
+                      <div className="text-[10px] text-ink/50">CEP: {cliente.cep}</div>
+                    ) : null}
                   </div>
                 </button>
               ))
@@ -622,6 +787,23 @@ export default function Clientes() {
                     onChange={(event) => setEditForm((prev) => ({ ...prev, codigo: event.target.value }))}
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  CEP
+                  <input
+                    value={editForm.cep}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, cep: formatCep(event.target.value) }))
+                    }
+                    placeholder="00000-000"
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                  {cepLoadingEdit && (
+                    <span className="text-[11px] text-ink/60">Consultando CEP...</span>
+                  )}
+                  {cepErrorEdit && (
+                    <span className="text-[11px] text-red-600">{cepErrorEdit}</span>
+                  )}
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Empresa
@@ -700,10 +882,10 @@ export default function Clientes() {
                         setPerfilEdit((prev) => ({
                           ...prev,
                           customEnabled: true,
-                          perfil: prev.customTime,
+                          customTimes: prev.customTimes.length ? prev.customTimes : [""],
                         }));
                       } else {
-                        setPerfilEdit({ perfil: value, customEnabled: false, customTime: "" });
+                        setPerfilEdit({ perfil: value, customEnabled: false, customTimes: [] });
                       }
                     }}
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
@@ -718,27 +900,49 @@ export default function Clientes() {
                   </select>
                 </label>
                 {perfilEdit.customEnabled && (
-                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                    Horario customizado
-                    <input
-                      type="time"
-                      value={perfilEdit.customTime}
-                      onChange={(event) =>
-                        setPerfilEdit((prev) => ({
-                          ...prev,
-                          customTime: event.target.value,
-                          perfil: event.target.value,
-                        }))
-                      }
-                      className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                    />
-                  </label>
+                  <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70">
+                    Horarios customizados
+                    {perfilEdit.customTimes.map((time, index) => (
+                      <div key={`${time}-${index}`} className="flex items-center gap-2">
+                        <input
+                          type="time"
+                          value={time}
+                          onChange={(event) => {
+                            const next = [...perfilEdit.customTimes];
+                            next[index] = event.target.value;
+                            applyPerfilTimes(setPerfilEdit, next);
+                          }}
+                          className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                        />
+                        {perfilEdit.customTimes.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = perfilEdit.customTimes.filter((_, idx) => idx !== index);
+                              applyPerfilTimes(setPerfilEdit, next.length ? next : [""]);
+                            }}
+                            className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] text-ink/70"
+                          >
+                            Remover
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => applyPerfilTimes(setPerfilEdit, [...perfilEdit.customTimes, ""])}
+                      className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] text-ink/70"
+                    >
+                      Adicionar horario
+                    </button>
+                  </div>
                 )}
               </div>
             ) : (
               <div className="mt-6 space-y-3">
                 {[
                   ["Codigo", selected.codigo],
+                  ["CEP", selected.cep],
                   ["Situacao", selected.situacao ?? "Ativo"],
                   ["Empresa", selected.empresa],
                   ["Nome fantasia", selected.nome_fantasia],
