@@ -121,6 +121,15 @@ const normalizeText = (value: unknown): string | null => {
   return text.length ? text : null;
 };
 
+const normalizeSituacao = (value: unknown): string | null => {
+  const text = normalizeText(value);
+  if (!text) return null;
+  const cleaned = text.toLowerCase();
+  if (cleaned.startsWith("ativo")) return "Ativo";
+  if (cleaned.startsWith("inativo")) return "Inativo";
+  return text;
+};
+
 const makeDedupeKey = (row: AgendaInsert) => {
   const dateKey = row.data_da_ultima_visita
     ? row.data_da_ultima_visita.slice(0, 10)
@@ -192,13 +201,16 @@ for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
         break;
       }
       default: {
-        record[target] = normalizeText(cell);
+        record[target] = target === "situacao" ? normalizeSituacao(cell) : normalizeText(cell);
       }
     }
   });
 
   record.raw_row = rawRow;
   record.dedupe_key = makeDedupeKey(record) || null;
+  if (!record.situacao) {
+    record.situacao = "Ativo";
+  }
   inserts.push(record);
 }
 
