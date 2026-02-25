@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
+import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
 import {
   createCliente,
@@ -7,6 +8,7 @@ import {
   fetchClientes,
   updateCliente,
   syncAgendaForCliente,
+  upsertClientes,
 } from "../lib/clientesApi";
 import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import {
@@ -34,6 +36,37 @@ const buildPerfilState = (value: string | null) => {
 };
 
 const STATUS_OPTIONS = ["Ativo", "Inativo"] as const;
+
+const normalizeHeader = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+const HEADER_MAP: Record<string, string> = {
+  codigo: "codigo",
+  cod: "codigo",
+  empresa: "empresa",
+  "nome fantasia": "nome_fantasia",
+  fantasia: "nome_fantasia",
+  situacao: "situacao",
+  status: "status",
+  "perfil visita": "perfil_visita",
+  perfil: "perfil_visita",
+  endereco: "endereco",
+  bairro: "bairro",
+  cidade: "cidade",
+  uf: "uf",
+};
+
+const normalizeStatus = (value: string) => {
+  const cleaned = value.trim().toLowerCase();
+  if (cleaned === "ativo") return "Ativo";
+  if (cleaned === "inativo") return "Inativo";
+  return null;
+};
 
 export default function Clientes() {
   const { role } = useAuth();
@@ -78,6 +111,10 @@ export default function Clientes() {
   });
   const [perfilEdit, setPerfilEdit] = useState(() => buildPerfilState(null));
   const [savingEdit, setSavingEdit] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadClientes = async () => {
     setLoading(true);
@@ -223,6 +260,90 @@ export default function Clientes() {
       setError(err instanceof Error ? err.message : "Erro ao atualizar cliente.");
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  const handleDownloadTemplate = () => {
+    const headers = [
+      "codigo",
+      "empresa",
+      "nome_fantasia",
+      "situacao",
+      "status",
+      "perfil_visita",
+      "endereco",
+      "bairro",
+      "cidade",
+      "uf",
+    ];
+    const sheet = XLSX.utils.aoa_to_sheet([headers]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, "CLIENTES");
+    XLSX.writeFile(workbook, "modelo_clientes.xlsx");
+  };
+
+  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    setImportMessage(null);
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+      if (!rows.length) {
+        setImportMessage("Arquivo sem registros.");
+        return;
+      }
+
+      const payloads = rows
+        .map((raw) => {
+          const record: Record<string, string> = {};
+          Object.entries(raw).forEach(([key, value]) => {
+            const normalized = normalizeHeader(key);
+            const target = HEADER_MAP[normalized];
+            if (!target) return;
+            const text = String(value ?? "").trim();
+            if (!text) return;
+            record[target] = text;
+          });
+
+          const statusValue = record.status ? normalizeStatus(record.status) : null;
+          const situacaoValue = record.situacao ? normalizeStatus(record.situacao) : null;
+
+          return {
+            codigo: record.codigo ?? null,
+            empresa: record.empresa ?? null,
+            nome_fantasia: record.nome_fantasia ?? null,
+            situacao: situacaoValue ?? record.situacao ?? null,
+            status: (statusValue ?? "Ativo") as "Ativo" | "Inativo",
+            perfil_visita: record.perfil_visita ?? null,
+            endereco: record.endereco ?? null,
+            bairro: record.bairro ?? null,
+            cidade: record.cidade ?? null,
+            uf: record.uf ?? null,
+          };
+        })
+        .filter((record) => Boolean(record.empresa || record.nome_fantasia));
+
+      if (payloads.length === 0) {
+        setImportMessage("Nenhum cliente valido encontrado.");
+        return;
+      }
+
+      const created = await upsertClientes(payloads);
+      for (const cliente of created) {
+        await syncAgendaForCliente(cliente);
+      }
+      await loadClientes();
+      setImportMessage(`Importacao concluida. ${created.length} cliente(s) adicionados.`);
+    } catch (err) {
+      setImportMessage(err instanceof Error ? err.message : "Erro ao importar arquivo.");
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -408,6 +529,18 @@ export default function Clientes() {
           <p className="text-xs text-ink/60">{clientes.length} cliente(s).</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {canCreate && (
+            <button
+              type="button"
+              onClick={() => {
+                setImportMessage(null);
+                setShowImportModal(true);
+              }}
+              className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+            >
+              Importar XLSX
+            </button>
+          )}
           <select
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value as "" | "Ativo" | "Inativo")}
@@ -728,6 +861,53 @@ export default function Clientes() {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => (importing ? null : setShowImportModal(false))}
+          />
+          <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Importar clientes (XLSX)</h3>
+            <p className="mt-1 text-xs text-ink/60">
+              Baixe o modelo, preencha os clientes e envie para importar.
+            </p>
+
+            {importMessage && (
+              <div className="mt-3 rounded-lg border border-sea/20 bg-sand/30 px-3 py-2 text-xs text-ink/70">
+                {importMessage}
+              </div>
+            )}
+
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={handleDownloadTemplate}
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Baixar modelo
+              </button>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={importing}
+                className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+              >
+                {importing ? "Importando..." : "Importar arquivo"}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={handleImportFile}
+                className="hidden"
+              />
             </div>
           </div>
         </div>

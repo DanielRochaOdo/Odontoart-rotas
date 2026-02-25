@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { addDays, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, startOfMonth, startOfWeek } from "date-fns";
+import { addDays, endOfMonth, endOfWeek, format, isAfter, isSameDay, isSameMonth, startOfMonth, startOfWeek } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, Pencil } from "lucide-react";
 import { supabase } from "../lib/supabase";
@@ -23,13 +23,17 @@ type VisitRow = {
   route_id: string | null;
   completed_at: string | null;
   completed_vidas: number | null;
+  no_visit_reason: string | null;
   agenda?: {
     id: string;
     empresa: string | null;
     nome_fantasia: string | null;
+    endereco: string | null;
+    bairro: string | null;
     cidade: string | null;
     uf: string | null;
     situacao: string | null;
+    perfil_visita: string | null;
   } | null;
 };
 
@@ -57,8 +61,23 @@ const formatVisitDate = (value: string | null) => {
   return format(date, "dd/MM/yyyy");
 };
 
+const NO_VISIT_REASONS = [
+  "RESPONSAVEL NÃO COMPARECEU",
+  "VISITA REMARCADA",
+  "EMPRESA FECHADA",
+];
+
+const parseTitValue = (value: string | number | null) => {
+  if (value === null || value === undefined) return 0;
+  const raw = typeof value === "number" ? value.toString() : String(value);
+  const cleaned = raw.replace(/[^0-9.-]/g, "");
+  if (!cleaned) return 0;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 export default function Visitas() {
-  const { role, session } = useAuth();
+  const { role, session, profile } = useAuth();
   const isVendor = role === "VENDEDOR";
   const canManage = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canAccess = canManage || isVendor;
@@ -74,8 +93,13 @@ export default function Visitas() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [maxVisibleDate, setMaxVisibleDate] = useState<string | null>(null);
+  const [blockMessage, setBlockMessage] = useState<string | null>(null);
+  const [confirmVisit, setConfirmVisit] = useState<VisitRow | null>(null);
+  const [noVisit, setNoVisit] = useState<{ id: string; reason: string } | null>(null);
   const [completeVisit, setCompleteVisit] = useState<{
     id: string;
+    agendaId: string;
     vidas: string;
     perfil: string;
     customEnabled: boolean;
@@ -111,14 +135,63 @@ export default function Visitas() {
       const end = endOfMonth(currentMonth);
       const startDate = format(start, "yyyy-MM-dd");
       const endDate = format(end, "yyyy-MM-dd");
+      const todayKey = format(new Date(), "yyyy-MM-dd");
+      const yesterdayKey = format(addDays(new Date(), -1), "yyyy-MM-dd");
+      let effectiveEnd = endDate;
+      let maxDate = endDate;
+
+      if (isVendor) {
+        let blocked = false;
+        if (session?.user.id || profile?.display_name) {
+          let baseQuery = supabase
+            .from("visits")
+            .select("id", { count: "exact", head: true })
+            .eq("visit_date", yesterdayKey)
+            .is("completed_at", null);
+
+          if (session?.user.id && profile?.display_name) {
+            baseQuery = baseQuery.or(
+              `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
+            );
+          } else if (session?.user.id) {
+            baseQuery = baseQuery.eq("assigned_to_user_id", session.user.id);
+          } else if (profile?.display_name) {
+            baseQuery = baseQuery.eq("assigned_to_name", profile.display_name);
+          }
+
+          const { count, error: countError } = await baseQuery;
+          if (!countError && (count ?? 0) > 0) {
+            blocked = true;
+          }
+        }
+
+        if (blocked) {
+          maxDate = yesterdayKey;
+          setBlockMessage("Conclua todas as visitas de ontem para ver as visitas de hoje.");
+        } else {
+          maxDate = todayKey;
+          setBlockMessage(null);
+        }
+
+        setMaxVisibleDate(maxDate);
+        effectiveEnd = maxDate < endDate ? maxDate : endDate;
+        if (effectiveEnd < startDate) {
+          setVisits([]);
+          setLoading(false);
+          return;
+        }
+      } else {
+        setMaxVisibleDate(null);
+        setBlockMessage(null);
+      }
 
       const { data, error: supaError } = await supabase
         .from("visits")
         .select(
-          "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, route_id, completed_at, completed_vidas, agenda:agenda_id (id, empresa, nome_fantasia, cidade, uf, situacao)",
+          "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, route_id, completed_at, completed_vidas, no_visit_reason, agenda:agenda_id (id, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, perfil_visita)",
         )
         .gte("visit_date", startDate)
-        .lte("visit_date", endDate)
+        .lte("visit_date", effectiveEnd)
         .order("visit_date", { ascending: true });
 
       if (supaError) {
@@ -140,7 +213,7 @@ export default function Visitas() {
     };
 
     load();
-  }, [currentMonth, refreshKey]);
+  }, [currentMonth, refreshKey, isVendor, profile?.display_name, session?.user.id]);
 
   const calendarDays = useMemo(() => {
     const start = startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 1 });
@@ -164,6 +237,14 @@ export default function Visitas() {
     });
     return map;
   }, [visits]);
+
+  useEffect(() => {
+    if (!isVendor || !maxVisibleDate || !selectedDate) return;
+    const maxDate = new Date(`${maxVisibleDate}T12:00:00`);
+    if (isAfter(selectedDate, maxDate)) {
+      setSelectedDate(maxDate);
+    }
+  }, [isVendor, maxVisibleDate, selectedDate]);
 
   const selectedVisits = useMemo(() => {
     if (!selectedDate) return [] as VisitRow[];
@@ -449,6 +530,7 @@ export default function Visitas() {
     const isCustom = perfilValue !== "" && !isPresetPerfilVisita(perfilValue);
     setCompleteVisit({
       id: item.id,
+      agendaId: item.agenda_id,
       vidas: item.completed_vidas?.toString() ?? "",
       perfil: isCustom ? perfilValue : perfilValue,
       customEnabled: isCustom,
@@ -456,11 +538,47 @@ export default function Visitas() {
     });
   };
 
+  const handleStartRegister = (item: VisitRow) => {
+    setConfirmVisit(item);
+  };
+
+  const handleConfirmNoVisit = async () => {
+    if (!noVisit) return;
+    if (!noVisit.reason) {
+      setError("Selecione o motivo.");
+      return;
+    }
+    setSavingId(noVisit.id);
+    setError(null);
+    try {
+      const { error: updateError } = await supabase
+        .from("visits")
+        .update({
+          completed_at: new Date().toISOString(),
+          no_visit_reason: noVisit.reason,
+        })
+        .eq("id", noVisit.id);
+
+      if (updateError) throw new Error(updateError.message);
+
+      setNoVisit(null);
+      setRefreshKey((prev) => prev + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao registrar visita.");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   const handleConfirmVisit = async () => {
     if (!completeVisit) return;
     const vidasValue = completeVisit.vidas.trim();
     if (!vidasValue) {
       setError("Informe a quantidade de vidas.");
+      return;
+    }
+    if (!/^\d+$/.test(vidasValue)) {
+      setError("Quantidade de vidas deve conter apenas numeros.");
       return;
     }
     const vidas = Number(vidasValue);
@@ -476,16 +594,40 @@ export default function Visitas() {
     setSavingId(completeVisit.id);
     setError(null);
     try {
+      const visit = visits.find((item) => item.id === completeVisit.id);
+      if (!visit) {
+        throw new Error("Visita nao encontrada.");
+      }
+
       const { error: updateError } = await supabase
         .from("visits")
         .update({
           completed_at: new Date().toISOString(),
           completed_vidas: vidas,
           perfil_visita: completeVisit.perfil,
+          no_visit_reason: null,
         })
         .eq("id", completeVisit.id);
 
       if (updateError) throw new Error(updateError.message);
+
+      const { data: agendaData, error: agendaError } = await supabase
+        .from("agenda")
+        .select("tit")
+        .eq("id", visit.agenda_id)
+        .single();
+
+      if (agendaError) throw new Error(agendaError.message);
+
+      const currentTit = parseTitValue(agendaData?.tit ?? null);
+      const nextTit = currentTit + vidas;
+
+      const { error: updateTitError } = await supabase
+        .from("agenda")
+        .update({ tit: nextTit.toString() })
+        .eq("id", visit.agenda_id);
+
+      if (updateTitError) throw new Error(updateTitError.message);
 
       setCompleteVisit(null);
       setRefreshKey((prev) => prev + 1);
@@ -545,15 +687,19 @@ export default function Visitas() {
                 const key = format(day, "yyyy-MM-dd");
                 const count = visitsByDate.get(key)?.length ?? 0;
                 const isSelected = selectedDate ? isSameDay(day, selectedDate) : false;
+                const maxDate = isVendor && maxVisibleDate ? new Date(`${maxVisibleDate}T12:00:00`) : null;
+                const isDisabled = maxDate ? isAfter(day, maxDate) : false;
                 return (
                   <button
                     key={key}
                     type="button"
-                    onClick={() => setSelectedDate(day)}
+                    onClick={() => (isDisabled ? null : setSelectedDate(day))}
+                    disabled={isDisabled}
                     className={[
                       "flex h-16 flex-col items-center justify-center rounded-xl border px-1 text-xs transition",
                       isSameMonth(day, currentMonth) ? "border-sea/20 bg-white" : "border-mist/50 bg-white/50 text-ink/40",
                       isSelected ? "border-sea bg-sand/60 shadow-sm" : "hover:border-sea hover:bg-sand/40",
+                      isDisabled ? "cursor-not-allowed opacity-40 hover:border-sea/20 hover:bg-white/50" : "",
                     ].join(" ")}
                   >
                     <span className="text-sm font-semibold text-ink">{format(day, "d")}</span>
@@ -619,10 +765,15 @@ export default function Visitas() {
                                       {item.agenda?.empresa ?? item.agenda?.nome_fantasia ?? "Sem nome"}
                                     </p>
                                     <p className="text-xs text-ink/60">
-                                      {item.agenda?.cidade
-                                        ? `${item.agenda.cidade} / ${item.agenda?.uf ?? ""}`
-                                        : ""}
+                                      {item.agenda?.bairro
+                                        ? `${item.agenda.bairro} - ${item.agenda.cidade ?? ""} / ${item.agenda?.uf ?? ""}`
+                                        : item.agenda?.cidade
+                                          ? `${item.agenda.cidade} / ${item.agenda?.uf ?? ""}`
+                                          : ""}
                                     </p>
+                                    {item.agenda?.endereco ? (
+                                      <p className="text-[11px] text-ink/50">{item.agenda.endereco}</p>
+                                    ) : null}
                                   </div>
                                   <div className="flex items-center gap-2">
                                     {item.agenda?.situacao ? (
@@ -707,21 +858,36 @@ export default function Visitas() {
                                 ) : canManage ? (
                                   <div className="mt-3 grid gap-1 text-[11px] text-ink/60">
                                     <span>Vendedor: {displayVendor}</span>
+                                    <span>
+                                      Perfil visita: {item.agenda?.perfil_visita ?? item.perfil_visita ?? "-"}
+                                    </span>
                                     <span>Data: {formatVisitDate(item.visit_date)}</span>
+                                    {item.no_visit_reason ? (
+                                      <span>Motivo: {item.no_visit_reason}</span>
+                                    ) : null}
                                   </div>
                                 ) : (
                                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                                     <div className="grid gap-1 text-[11px] text-ink/60">
-                                      <span>Horario: {item.perfil_visita ?? "-"}</span>
+                                      <span>
+                                        Perfil visita: {item.agenda?.perfil_visita ?? item.perfil_visita ?? "-"}
+                                      </span>
                                       <span>Data: {formatVisitDate(item.visit_date)}</span>
+                                      {item.no_visit_reason ? (
+                                        <span>Motivo: {item.no_visit_reason}</span>
+                                      ) : null}
                                     </div>
                                     <button
                                       type="button"
-                                      onClick={() => openCompleteModal(item)}
+                                      onClick={() => handleStartRegister(item)}
                                       disabled={isCompleted}
                                       className="rounded-lg bg-sea px-3 py-2 text-[11px] font-semibold text-white hover:bg-seaLight disabled:opacity-60"
                                     >
-                                      {isCompleted ? "Visita registrada" : "Registrar visita"}
+                                      {isCompleted
+                                        ? item.no_visit_reason
+                                          ? "Visita nao realizada"
+                                          : "Visita registrada"
+                                        : "Registrar visita"}
                                     </button>
                                   </div>
                                 )}
@@ -734,6 +900,12 @@ export default function Visitas() {
                   );
                 })}
               </div>
+            )}
+
+            {isVendor && blockMessage && (
+              <p className="mt-4 rounded-xl border border-amber-300 bg-amber-100 px-3 py-2 text-xs font-bold text-red-600">
+                {blockMessage}
+              </p>
             )}
           </section>
         </div>
@@ -757,6 +929,8 @@ export default function Visitas() {
                 Quantidade de vidas
                 <input
                   type="number"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   min={0}
                   step={1}
                   value={completeVisit.vidas}
@@ -846,6 +1020,94 @@ export default function Visitas() {
                 className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
                 {savingId === completeVisit.id ? "Salvando..." : "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmVisit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setConfirmVisit(null)}
+          />
+          <div className="relative w-full max-w-sm rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Visita feita?</h3>
+            <p className="mt-1 text-xs text-ink/60">
+              Confirme se a visita foi realizada.
+            </p>
+            <div className="mt-6 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmVisit(null);
+                  setNoVisit({ id: confirmVisit.id, reason: "" });
+                }}
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Nao
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const visit = confirmVisit;
+                  setConfirmVisit(null);
+                  if (visit) openCompleteModal(visit);
+                }}
+                className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight"
+              >
+                Sim
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {noVisit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setNoVisit(null)}
+          />
+          <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Motivo da visita nao realizada</h3>
+            <p className="mt-1 text-xs text-ink/60">
+              Selecione o motivo.
+            </p>
+            <div className="mt-4">
+              <select
+                value={noVisit.reason}
+                onChange={(event) =>
+                  setNoVisit((prev) => (prev ? { ...prev, reason: event.target.value } : prev))
+                }
+                className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+              >
+                <option value="">Selecione</option>
+                {NO_VISIT_REASONS.map((reason) => (
+                  <option key={reason} value={reason}>
+                    {reason}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="mt-6 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setNoVisit(null)}
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmNoVisit}
+                disabled={savingId === noVisit.id}
+                className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+              >
+                {savingId === noVisit.id ? "Salvando..." : "Confirmar"}
               </button>
             </div>
           </div>

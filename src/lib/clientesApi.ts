@@ -2,6 +2,7 @@ import { supabase } from "./supabase";
 import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 
 const escapeOrValue = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
+const DEFAULT_STATUS = "Ativo";
 
 export const fetchClientes = async () => {
   const { data, error } = await supabase
@@ -34,7 +35,7 @@ export const createCliente = async (payload: {
       nome_fantasia: payload.nome_fantasia ?? null,
       perfil_visita: payload.perfil_visita ?? null,
       situacao: payload.situacao ?? null,
-      status: payload.status ?? "Ativo",
+      status: payload.status ?? DEFAULT_STATUS,
       endereco: payload.endereco ?? null,
       bairro: payload.bairro ?? null,
       cidade: payload.cidade ?? null,
@@ -58,7 +59,7 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
       nome_fantasia: payload.nome_fantasia ?? null,
       perfil_visita: payload.perfil_visita ?? null,
       situacao: payload.situacao ?? null,
-      status: payload.status ?? "Ativo",
+      status: payload.status ?? DEFAULT_STATUS,
       endereco: payload.endereco ?? null,
       bairro: payload.bairro ?? null,
       cidade: payload.cidade ?? null,
@@ -77,6 +78,43 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
 export const deleteCliente = async (id: string) => {
   const { error } = await supabase.from("clientes").delete().eq("id", id);
   if (error) throw new Error(error.message);
+};
+
+export const upsertClientes = async (
+  payloads: Array<{
+    codigo?: string | null;
+    empresa?: string | null;
+    nome_fantasia?: string | null;
+    perfil_visita?: string | null;
+    situacao?: string | null;
+    status?: "Ativo" | "Inativo" | null;
+    endereco?: string | null;
+    bairro?: string | null;
+    cidade?: string | null;
+    uf?: string | null;
+  }>,
+) => {
+  if (payloads.length === 0) return [];
+  const normalized = payloads.map((payload) => ({
+    codigo: payload.codigo ?? null,
+    empresa: payload.empresa ?? null,
+    nome_fantasia: payload.nome_fantasia ?? null,
+    perfil_visita: payload.perfil_visita ?? null,
+    situacao: payload.situacao ?? null,
+    status: payload.status ?? DEFAULT_STATUS,
+    endereco: payload.endereco ?? null,
+    bairro: payload.bairro ?? null,
+    cidade: payload.cidade ?? null,
+    uf: payload.uf ?? null,
+  }));
+  const { data, error } = await supabase
+    .from("clientes")
+    .upsert(normalized, { onConflict: "dedupe_key", ignoreDuplicates: true })
+    .select(
+      "id, codigo, empresa, nome_fantasia, perfil_visita, situacao, status, endereco, bairro, cidade, uf, created_at",
+    );
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ClienteRow[];
 };
 
 export const syncAgendaForCliente = async (cliente: ClienteRow) => {
