@@ -12,6 +12,8 @@ import {
   Building2,
   Menu,
   X,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { ROLE_LABELS } from "../types/roles";
@@ -33,6 +35,16 @@ const navItems: NavItem[] = [
 
 export default function AppLayout() {
   const { profile, role, signOut } = useAuth();
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "light";
+    try {
+      const stored = localStorage.getItem("theme");
+      if (stored === "light" || stored === "dark") return stored;
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    } catch {
+      return "light";
+    }
+  });
   const [collapsed, setCollapsed] = useState(() => {
     try {
       const stored = localStorage.getItem("sidebarCollapsed");
@@ -50,6 +62,18 @@ export default function AppLayout() {
       // ignore
     }
   }, [collapsed]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    root.classList.toggle("dark", theme === "dark");
+    document.body.classList.toggle("dark", theme === "dark");
+    try {
+      localStorage.setItem("theme", theme);
+    } catch {
+      // ignore
+    }
+  }, [theme]);
 
   const initials = useMemo(() => {
     const name = profile?.display_name ?? "Odontoart";
@@ -176,6 +200,18 @@ export default function AppLayout() {
 
           <button
             type="button"
+            onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+            className={[
+              "mt-6 flex items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea",
+              collapsed ? "w-11 self-center px-2" : "w-full",
+            ].join(" ")}
+          >
+            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+            {!collapsed && (theme === "dark" ? "Modo claro" : "Modo escuro")}
+          </button>
+
+          <button
+            type="button"
             onClick={() => signOut()}
             className={[
               "mt-6 flex items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea",
@@ -252,6 +288,15 @@ export default function AppLayout() {
                   );
                 })}
             </nav>
+
+            <button
+              type="button"
+              onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+            >
+              {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+              {theme === "dark" ? "Modo claro" : "Modo escuro"}
+            </button>
 
             <button
               type="button"
