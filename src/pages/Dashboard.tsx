@@ -96,13 +96,13 @@ export default function Dashboard() {
   const [supervisores, setSupervisores] = useState<
     { id: string; display_name: string | null }[]
   >([]);
-  const [selectedSupervisorId, setSelectedSupervisorId] = useState<string | null>(null);
+  const [selectedSupervisorId, setSelectedSupervisorId] = useState<string>("all");
   const [teamVendorNames, setTeamVendorNames] = useState<string[]>([]);
 
   const isVendor = role === "VENDEDOR";
   const canSelectSupervisor = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canViewTeamStats = role === "SUPERVISOR" || role === "ASSISTENTE";
-  const activeSupervisorId = selectedSupervisorId;
+  const activeSupervisorId = selectedSupervisorId === "all" ? null : selectedSupervisorId;
 
   useEffect(() => {
     if (!canSelectSupervisor) return;
@@ -125,9 +125,9 @@ export default function Dashboard() {
       const list = data ?? [];
       setSupervisores(list);
       setSelectedSupervisorId((prev) => {
-        if (prev) return prev;
+        if (prev && prev !== "") return prev;
         if (role === "SUPERVISOR" && profile?.id) return profile.id;
-        return list[0]?.id ?? null;
+        return "all";
       });
     };
 
@@ -208,7 +208,7 @@ export default function Dashboard() {
   }, [isVendor, profile?.display_name, session?.user.id]);
 
   useEffect(() => {
-    if (!canViewTeamStats || !activeSupervisorId) return;
+    if (!canViewTeamStats) return;
 
     const loadTeamStats = async () => {
       setTeamStatsError(null);
@@ -218,11 +218,14 @@ export default function Dashboard() {
       const startKey = monthStart.toISOString().slice(0, 10);
       const endKey = monthEnd.toISOString().slice(0, 10);
 
-      const { data: vendors, error: vendorsError } = await supabase
+      const vendorsQuery = supabase
         .from("profiles")
         .select("user_id, display_name")
-        .eq("role", "VENDEDOR")
-        .eq("supervisor_id", activeSupervisorId);
+        .eq("role", "VENDEDOR");
+
+      const { data: vendors, error: vendorsError } = activeSupervisorId
+        ? await vendorsQuery.eq("supervisor_id", activeSupervisorId)
+        : await vendorsQuery;
 
       if (vendorsError) {
         setTeamStatsError(vendorsError.message);
@@ -240,25 +243,27 @@ export default function Dashboard() {
       setTeamVendorsCount(vendorIds.length);
       setTeamVendorNames(vendorNames);
 
-      if (vendorIds.length === 0 && vendorNames.length === 0) {
-        setTeamStats(computeVisitStats([]));
-        return;
-      }
-
       let visitsQuery = supabase
         .from("visits")
         .select("agenda_id, completed_at, completed_vidas, no_visit_reason, visit_date")
         .gte("visit_date", startKey)
         .lte("visit_date", endKey);
 
-      if (vendorIds.length && vendorNames.length) {
-        visitsQuery = visitsQuery.or(
-          `assigned_to_user_id.in.(${formatOrValues(vendorIds)}),assigned_to_name.in.(${formatOrValues(vendorNames)})`,
-        );
-      } else if (vendorIds.length) {
-        visitsQuery = visitsQuery.in("assigned_to_user_id", vendorIds);
-      } else {
-        visitsQuery = visitsQuery.in("assigned_to_name", vendorNames);
+      if (activeSupervisorId) {
+        if (vendorIds.length === 0 && vendorNames.length === 0) {
+          setTeamStats(computeVisitStats([]));
+          return;
+        }
+
+        if (vendorIds.length && vendorNames.length) {
+          visitsQuery = visitsQuery.or(
+            `assigned_to_user_id.in.(${formatOrValues(vendorIds)}),assigned_to_name.in.(${formatOrValues(vendorNames)})`,
+          );
+        } else if (vendorIds.length) {
+          visitsQuery = visitsQuery.in("assigned_to_user_id", vendorIds);
+        } else {
+          visitsQuery = visitsQuery.in("assigned_to_name", vendorNames);
+        }
       }
 
       const { data: visitsData, error: visitsError } = await visitsQuery;
@@ -405,12 +410,13 @@ export default function Dashboard() {
               <select
                 id="dashboard-supervisor-select"
                 name="dashboardSupervisorSelect"
-                value={selectedSupervisorId ?? ""}
-                onChange={(event) => setSelectedSupervisorId(event.target.value || null)}
+                value={selectedSupervisorId}
+                onChange={(event) => setSelectedSupervisorId(event.target.value || "all")}
                 className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
               >
+                <option value="all">Todos</option>
                 {supervisores.length === 0 ? (
-                  <option value="">Nenhum supervisor</option>
+                  <option value="all">Nenhum supervisor</option>
                 ) : (
                   supervisores.map((supervisor) => (
                     <option key={supervisor.id} value={supervisor.id}>

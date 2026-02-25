@@ -228,7 +228,7 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters) => {
 export const fetchVendedores = async () => {
   const { data, error } = await supabase
     .from("profiles")
-    .select("user_id, display_name, role")
+    .select("user_id, display_name, role, supervisor_id")
     .eq("role", "VENDEDOR")
     .order("display_name", { ascending: true });
 

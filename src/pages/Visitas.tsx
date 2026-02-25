@@ -35,10 +35,16 @@ type VisitRow = {
     uf: string | null;
     situacao: string | null;
     perfil_visita: string | null;
+    supervisor?: string | null;
   } | null;
 };
 
-type VendorOption = { user_id: string; display_name: string | null; role: string };
+type VendorOption = {
+  user_id: string;
+  display_name: string | null;
+  role: string;
+  supervisor_id?: string | null;
+};
 
 const formatDateKey = (value: string) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
@@ -96,6 +102,10 @@ export default function Visitas() {
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [maxVisibleDate, setMaxVisibleDate] = useState<string | null>(null);
   const [blockMessage, setBlockMessage] = useState<string | null>(null);
+  const [supervisores, setSupervisores] = useState<
+    { id: string; user_id: string | null; display_name: string | null }[]
+  >([]);
+  const [selectedSupervisorId, setSelectedSupervisorId] = useState<string>("all");
   const [confirmVisit, setConfirmVisit] = useState<VisitRow | null>(null);
   const [noVisit, setNoVisit] = useState<{ id: string; reason: string } | null>(null);
   const [completeVisit, setCompleteVisit] = useState<{
@@ -121,8 +131,26 @@ export default function Visitas() {
           console.error(err);
         });
     };
+    const loadSupervisores = async () => {
+      const { data, error: supaError } = await supabase
+        .from("profiles")
+        .select("id, user_id, display_name")
+        .eq("role", "SUPERVISOR")
+        .order("display_name", { ascending: true });
+      if (!active) return;
+      if (supaError) {
+        console.error(supaError);
+        setSupervisores([]);
+        return;
+      }
+      setSupervisores(data ?? []);
+    };
     loadVendors();
-    const unsubscribe = onProfilesUpdated(loadVendors);
+    loadSupervisores();
+    const unsubscribe = onProfilesUpdated(() => {
+      loadVendors();
+      loadSupervisores();
+    });
     return () => {
       active = false;
       unsubscribe();
@@ -191,7 +219,7 @@ export default function Visitas() {
       const { data, error: supaError } = await supabase
         .from("visits")
         .select(
-          "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, agenda:agenda_id (id, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, perfil_visita)",
+          "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, agenda:agenda_id (id, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, perfil_visita, supervisor)",
         )
         .gte("visit_date", startDate)
         .lte("visit_date", effectiveEnd)
@@ -230,16 +258,47 @@ export default function Visitas() {
     return days;
   }, [currentMonth]);
 
+  const filteredVisits = useMemo(() => {
+    if (!canManage || selectedSupervisorId === "all") return visits;
+    const supervisor = supervisores.find(
+      (item) => item.id === selectedSupervisorId || item.user_id === selectedSupervisorId,
+    );
+    const supervisorName = supervisor?.display_name ? normalize(supervisor.display_name) : "";
+    const supervisorIds = new Set<string>();
+    if (supervisor?.id) supervisorIds.add(supervisor.id);
+    if (supervisor?.user_id) supervisorIds.add(supervisor.user_id);
+    const vendorIds = vendors
+      .filter((vendor) => (vendor.supervisor_id ? supervisorIds.has(vendor.supervisor_id) : false))
+      .map((vendor) => vendor.user_id)
+      .filter(Boolean);
+    const vendorNames = vendors
+      .filter((vendor) => (vendor.supervisor_id ? supervisorIds.has(vendor.supervisor_id) : false))
+      .map((vendor) => vendor.display_name)
+      .filter((value): value is string => Boolean(value))
+      .map((value) => normalize(value));
+    const vendorIdSet = new Set(vendorIds);
+    const vendorNameSet = new Set(vendorNames);
+    if (vendorIdSet.size === 0 && vendorNameSet.size === 0) return [];
+    return visits.filter((visit) => {
+      if (visit.assigned_to_user_id && vendorIdSet.has(visit.assigned_to_user_id)) return true;
+      if (visit.assigned_to_name && vendorNameSet.has(normalize(visit.assigned_to_name))) return true;
+      if (supervisorName && visit.agenda?.supervisor) {
+        return normalize(visit.agenda.supervisor) === supervisorName;
+      }
+      return false;
+    });
+  }, [canManage, selectedSupervisorId, supervisores, vendors, visits]);
+
   const visitsByDate = useMemo(() => {
     const map = new Map<string, VisitRow[]>();
-    visits.forEach((visit) => {
+    filteredVisits.forEach((visit) => {
       if (!visit.visit_date) return;
       const key = formatDateKey(visit.visit_date);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(visit);
     });
     return map;
-  }, [visits]);
+  }, [filteredVisits]);
 
   useEffect(() => {
     if (!isVendor || !maxVisibleDate || !selectedDate) return;
@@ -676,11 +735,38 @@ export default function Visitas() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h2 className="font-display text-2xl text-ink">Visitas</h2>
-        <p className="mt-2 text-sm text-ink/60">
-          Calendario de visitas por vendedor. Clique em um dia para ver as visitas detalhadas.
-        </p>
+      <header className="space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="font-display text-2xl text-ink">Visitas</h2>
+            <p className="mt-2 text-sm text-ink/60">
+              Calendario de visitas por vendedor. Clique em um dia para ver as visitas detalhadas.
+            </p>
+          </div>
+          {canManage && (
+            <label className="flex min-w-[220px] flex-col gap-1 text-xs font-semibold text-ink/70">
+              Supervisor
+              <select
+                id="visitas-supervisor-select"
+                name="visitasSupervisorSelect"
+                value={selectedSupervisorId}
+                onChange={(event) => setSelectedSupervisorId(event.target.value || "all")}
+                className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
+              >
+                <option value="all">Todos</option>
+                {supervisores.length === 0 ? (
+                  <option value="all">Nenhum supervisor</option>
+                ) : (
+                  supervisores.map((supervisor) => (
+                    <option key={supervisor.id} value={supervisor.id}>
+                      {supervisor.display_name ?? "Supervisor"}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+          )}
+        </div>
       </header>
 
       {!canAccess ? (
