@@ -27,6 +27,13 @@ const parseVisitDate = (row: { data_da_ultima_visita: string | null }) => {
 const formatOrValues = (values: string[]) =>
   values.map((value) => `"${value.replace(/"/g, '\\"')}"`).join(",");
 
+const normalizeKey = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .trim();
+
 type VisitStats = {
   totalVidas: number;
   empresasVisitadas: number;
@@ -86,9 +93,49 @@ export default function Dashboard() {
   const [teamStats, setTeamStats] = useState<VisitStats | null>(null);
   const [teamStatsError, setTeamStatsError] = useState<string | null>(null);
   const [teamVendorsCount, setTeamVendorsCount] = useState(0);
+  const [supervisores, setSupervisores] = useState<
+    { id: string; display_name: string | null }[]
+  >([]);
+  const [selectedSupervisorId, setSelectedSupervisorId] = useState<string | null>(null);
+  const [teamVendorNames, setTeamVendorNames] = useState<string[]>([]);
 
   const isVendor = role === "VENDEDOR";
-  const isSupervisor = role === "SUPERVISOR";
+  const canSelectSupervisor = role === "SUPERVISOR" || role === "ASSISTENTE";
+  const canViewTeamStats = role === "SUPERVISOR" || role === "ASSISTENTE";
+  const activeSupervisorId = selectedSupervisorId;
+
+  useEffect(() => {
+    if (!canSelectSupervisor) return;
+    let active = true;
+    const loadSupervisores = async () => {
+      const { data, error: supaError } = await supabase
+        .from("profiles")
+        .select("id, display_name")
+        .eq("role", "SUPERVISOR")
+        .order("display_name", { ascending: true });
+
+      if (!active) return;
+
+      if (supaError) {
+        console.error(supaError);
+        setSupervisores([]);
+        return;
+      }
+
+      const list = data ?? [];
+      setSupervisores(list);
+      setSelectedSupervisorId((prev) => {
+        if (prev) return prev;
+        if (role === "SUPERVISOR" && profile?.id) return profile.id;
+        return list[0]?.id ?? null;
+      });
+    };
+
+    loadSupervisores();
+    return () => {
+      active = false;
+    };
+  }, [canSelectSupervisor, profile?.id, role]);
 
   useEffect(() => {
     const load = async () => {
@@ -161,7 +208,7 @@ export default function Dashboard() {
   }, [isVendor, profile?.display_name, session?.user.id]);
 
   useEffect(() => {
-    if (!isSupervisor || !profile?.id) return;
+    if (!canViewTeamStats || !activeSupervisorId) return;
 
     const loadTeamStats = async () => {
       setTeamStatsError(null);
@@ -175,7 +222,7 @@ export default function Dashboard() {
         .from("profiles")
         .select("user_id, display_name")
         .eq("role", "VENDEDOR")
-        .eq("supervisor_id", profile.id);
+        .eq("supervisor_id", activeSupervisorId);
 
       if (vendorsError) {
         setTeamStatsError(vendorsError.message);
@@ -191,11 +238,10 @@ export default function Dashboard() {
         .filter((value): value is string => Boolean(value));
 
       setTeamVendorsCount(vendorIds.length);
+      setTeamVendorNames(vendorNames);
 
       if (vendorIds.length === 0 && vendorNames.length === 0) {
-        setTeamStats(
-          computeVisitStats([]),
-        );
+        setTeamStats(computeVisitStats([]));
         return;
       }
 
@@ -235,7 +281,21 @@ export default function Dashboard() {
     };
 
     loadTeamStats();
-  }, [isSupervisor, profile?.id]);
+  }, [activeSupervisorId, canViewTeamStats]);
+
+  const normalizedVendorNames = useMemo(() => {
+    if (!teamVendorNames.length) return new Set<string>();
+    return new Set(teamVendorNames.map((name) => normalizeKey(name)));
+  }, [teamVendorNames]);
+
+  const summaryRows = useMemo(() => {
+    if (!canSelectSupervisor || !activeSupervisorId) return rows;
+    if (normalizedVendorNames.size === 0) return [];
+    return rows.filter((row) => {
+      if (!row.vendedor) return false;
+      return normalizedVendorNames.has(normalizeKey(row.vendedor));
+    });
+  }, [activeSupervisorId, canSelectSupervisor, normalizedVendorNames, rows]);
 
   const summary = useMemo(() => {
     const now = new Date();
@@ -249,7 +309,7 @@ export default function Dashboard() {
     const byCity: Record<string, number> = {};
     const byVendor: Record<string, number> = {};
 
-    rows.forEach((row) => {
+    summaryRows.forEach((row) => {
       const visitDate = parseVisitDate(row);
       if (visitDate) {
         const visitDay = new Date(visitDate);
@@ -278,7 +338,7 @@ export default function Dashboard() {
     const ranking = Object.entries(byVendor).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
     return { totals, topStatus, topCities, ranking, byVendor };
-  }, [rows]);
+  }, [summaryRows]);
 
   const donutLabel = (value: number) => new Intl.NumberFormat("pt-BR").format(value);
 
@@ -331,11 +391,37 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h2 className="font-display text-2xl text-ink">Dashboard</h2>
-        <p className="mt-2 text-sm text-muted">
-          Indicadores gerais da agenda e visitas comerciais.
-        </p>
+      <header className="space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="font-display text-2xl text-ink">Dashboard</h2>
+            <p className="mt-2 text-sm text-muted">
+              Indicadores gerais da agenda e visitas comerciais.
+            </p>
+          </div>
+          {canSelectSupervisor && (
+            <label className="flex min-w-[220px] flex-col gap-1 text-xs font-semibold text-ink/70">
+              Supervisor
+              <select
+                id="dashboard-supervisor-select"
+                name="dashboardSupervisorSelect"
+                value={selectedSupervisorId ?? ""}
+                onChange={(event) => setSelectedSupervisorId(event.target.value || null)}
+                className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
+              >
+                {supervisores.length === 0 ? (
+                  <option value="">Nenhum supervisor</option>
+                ) : (
+                  supervisores.map((supervisor) => (
+                    <option key={supervisor.id} value={supervisor.id}>
+                      {supervisor.display_name ?? "Supervisor"}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+          )}
+        </div>
       </header>
 
       {loading ? (
@@ -437,10 +523,10 @@ export default function Dashboard() {
               <div className="rounded-2xl border border-sea/15 bg-white/90 p-5">
                 <h3 className="font-display text-lg text-ink">Resumo geral</h3>
                 <p className="mt-2 text-sm text-ink/60">
-                  Total de vendedores ativos: {Object.keys(summary.byVendor).length}
+                  Total de vendedores ativos: {teamVendorsCount || Object.keys(summary.byVendor).length}
                 </p>
                 <p className="mt-2 text-sm text-ink/60">
-                  Total de registros analisados: {rows.length}
+                  Total de registros analisados: {summaryRows.length}
                 </p>
               </div>
             </section>
@@ -482,7 +568,7 @@ export default function Dashboard() {
             </section>
           )}
 
-          {isSupervisor && (
+          {canViewTeamStats && (
             <section className="grid gap-4 lg:grid-cols-2">
               {teamStatsError ? (
                 <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-600">

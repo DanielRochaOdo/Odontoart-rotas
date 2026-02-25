@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { AgendaFilters } from "../types/agenda";
 
@@ -127,34 +127,49 @@ const buildParams = (filters: AgendaFilters) => {
 
 export const useAgendaFilters = () => {
   const [searchParams, setSearchParams] = useSearchParams();
+  const searchKey = searchParams.toString();
+  const searchParamsSnapshot = useMemo(() => new URLSearchParams(searchKey), [searchKey]);
 
   const filters = useMemo(() => {
-    const fromQuery = parseFromSearchParams(searchParams);
+    const fromQuery = parseFromSearchParams(searchParamsSnapshot);
     if (fromQuery) return fromQuery;
     const fromStorage = parseFromStorage();
     return fromStorage ?? makeEmptyFilters();
-  }, [searchParams]);
+  }, [searchParamsSnapshot]);
+
+  const filtersRef = useRef(filters);
+  useEffect(() => {
+    filtersRef.current = filters;
+  }, [filters]);
 
   const syncFilters = useCallback(
     (next: AgendaFilters) => {
-      setSearchParams(buildParams(next), { replace: true });
+      const params = buildParams(next);
+      const nextKey = params.toString();
+      if (nextKey !== searchKey) {
+        setSearchParams(params, { replace: true });
+      }
       localStorage.setItem("agendaFilters", JSON.stringify(next));
     },
-    [setSearchParams],
+    [searchKey, setSearchParams],
   );
 
   useEffect(() => {
-    if (searchParams.size !== 0) return;
+    if (searchKey.length !== 0) return;
     const stored = parseFromStorage();
     if (stored) {
       syncFilters(stored);
     }
-  }, [searchParams, syncFilters]);
+  }, [searchKey, syncFilters]);
 
-  const setFilters = (next: AgendaFilters | ((prev: AgendaFilters) => AgendaFilters)) => {
-    const resolved = typeof next === "function" ? next(filters) : next;
-    syncFilters(resolved);
-  };
+  const setFilters = useCallback(
+    (next: AgendaFilters | ((prev: AgendaFilters) => AgendaFilters)) => {
+      const current = filtersRef.current;
+      const resolved = typeof next === "function" ? next(current) : next;
+      syncFilters(resolved);
+    },
+    [syncFilters],
+  );
 
   const clearFilters = () => setFilters(makeEmptyFilters());
 

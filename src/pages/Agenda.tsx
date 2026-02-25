@@ -344,22 +344,49 @@ export default function Agenda() {
   };
 
   const columns = useMemo<ColumnDef<AgendaRow>[]>(
-    () => [
+    () => {
+      const renderSortLabel = (
+        column: {
+          getToggleSortingHandler: () => ((event: unknown) => void) | undefined;
+          getIsSorted: () => false | "asc" | "desc";
+          getCanSort: () => boolean;
+        },
+        label: string,
+      ) => {
+        const handler = column.getToggleSortingHandler();
+        return (
+          <button
+            type="button"
+            onClick={handler}
+            disabled={!column.getCanSort() || !handler}
+            className="flex items-center gap-1 text-left disabled:opacity-70"
+          >
+            <span className="leading-tight">{label}</span>
+            {column.getIsSorted() ? (
+              <span className="text-[10px] text-sea">
+                {column.getIsSorted() === "desc" ? "▼" : "▲"}
+              </span>
+            ) : null}
+          </button>
+        );
+      };
+
+      return [
       {
         accessorKey: "data_da_ultima_visita",
-        header: () => <span>Data ultima visita</span>,
+        header: ({ column }) => renderSortLabel(column, "Data ultima visita"),
         cell: (info) => formatDate(info.getValue() as string | null),
       },
       {
         accessorKey: "cod_1",
-        header: () => <span>Codigo</span>,
+        header: ({ column }) => renderSortLabel(column, "Codigo"),
         cell: (info) => info.getValue<string | null>() ?? "-",
       },
       {
         accessorKey: "supervisor",
-        header: () => (
+        header: ({ column }) => (
           <div className="flex items-center justify-between gap-2">
-            <span className="leading-tight">Supervisor</span>
+            {renderSortLabel(column, "Supervisor")}
             <MultiSelectFilter
               label={
                 (filters.columns.supervisor ?? []).length
@@ -381,9 +408,9 @@ export default function Agenda() {
       },
       {
         accessorKey: "empresa",
-        header: () => (
+        header: ({ column }) => (
           <div className="flex items-center justify-between gap-2">
-            <span className="leading-tight">Empresa</span>
+            {renderSortLabel(column, "Empresa")}
             <MultiSelectFilter
               label={
                 (filters.columns.empresa_nome ?? []).length
@@ -414,9 +441,9 @@ export default function Agenda() {
       },
       {
         accessorKey: "bairro",
-        header: () => (
+        header: ({ column }) => (
           <div className="flex items-center justify-between gap-2">
-            <span className="leading-tight">Bairro</span>
+            {renderSortLabel(column, "Bairro")}
             <MultiSelectFilter
               label={
                 (filters.columns.bairro ?? []).length
@@ -438,9 +465,9 @@ export default function Agenda() {
       },
       {
         accessorKey: "cidade",
-        header: () => (
+        header: ({ column }) => (
           <div className="flex items-center justify-between gap-2">
-            <span className="leading-tight">Cidade</span>
+            {renderSortLabel(column, "Cidade")}
             <MultiSelectFilter
               label={
                 (filters.columns.cidade ?? []).length
@@ -462,9 +489,9 @@ export default function Agenda() {
       },
       {
         accessorKey: "uf",
-        header: () => (
+        header: ({ column }) => (
           <div className="flex items-center justify-between gap-2">
-            <span className="leading-tight">UF</span>
+            {renderSortLabel(column, "UF")}
             <MultiSelectFilter
               label={
                 (filters.columns.uf ?? []).length ? `Filtro (${filters.columns.uf.length})` : "Filtro"
@@ -484,9 +511,9 @@ export default function Agenda() {
       },
       {
         accessorKey: "vendedor",
-        header: () => (
+        header: ({ column }) => (
           <div className="flex items-center justify-between gap-2">
-            <span className="leading-tight">Vendedor</span>
+            {renderSortLabel(column, "Vendedor")}
             <MultiSelectFilter
               label={
                 (filters.columns.vendedor ?? []).length
@@ -508,9 +535,9 @@ export default function Agenda() {
       },
       {
         accessorKey: "grupo",
-        header: () => (
+        header: ({ column }) => (
           <div className="flex items-center justify-between gap-2">
-            <span className="leading-tight">Grupo</span>
+            {renderSortLabel(column, "Grupo")}
             <MultiSelectFilter
               label={
                 (filters.columns.grupo ?? []).length
@@ -532,9 +559,9 @@ export default function Agenda() {
       },
       {
         accessorKey: "perfil_visita",
-        header: () => (
+        header: ({ column }) => (
           <div className="flex items-center justify-between gap-2">
-            <span className="leading-tight">Perfil Visita</span>
+            {renderSortLabel(column, "Perfil Visita")}
             <MultiSelectFilter
               label={
                 (filters.columns.perfil_visita ?? []).length
@@ -554,7 +581,8 @@ export default function Agenda() {
         ),
         cell: (info) => info.getValue<string | null>() ?? "-",
       },
-    ],
+    ];
+    },
     [filterOptions, filters.columns, setFilters],
   );
 
@@ -653,6 +681,8 @@ export default function Agenda() {
                 setGlobalQuery(event.target.value);
               }}
               placeholder="Empresa, cidade, vendedor..."
+              id="agenda-global-search"
+              name="agendaGlobalSearch"
               className="w-64 rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
             />
           </div>
@@ -698,6 +728,8 @@ export default function Agenda() {
                     },
                   }))
                 }
+                id="agenda-duv-from"
+                name="agendaDuvFrom"
                 className="rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
               />
               <span className="text-xs text-ink/50">ate</span>
@@ -718,6 +750,8 @@ export default function Agenda() {
                     },
                   }))
                 }
+                id="agenda-duv-to"
+                name="agendaDuvTo"
                 className="rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
               />
               <span className="w-full text-left text-xs font-semibold text-ink/50 md:w-auto md:pt-2">
@@ -743,6 +777,8 @@ export default function Agenda() {
                     },
                   }))
                 }
+                id="agenda-duv-month"
+                name="agendaDuvMonth"
                 className="rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
               >
                 <option value="">Mes</option>
@@ -771,6 +807,8 @@ export default function Agenda() {
                     },
                   }))
                 }
+                id="agenda-duv-year"
+                name="agendaDuvYear"
                 className="w-24 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
               />
             </div>
@@ -831,6 +869,8 @@ export default function Agenda() {
                     value={vendorQuery}
                     onChange={(event) => setVendorQuery(event.target.value)}
                     placeholder="Buscar vendedor..."
+                    id="agenda-generate-vendor-search"
+                    name="agendaGenerateVendorSearch"
                     className="w-full rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
                   />
                   <div className="mt-2 max-h-40 space-y-1 overflow-auto">
@@ -849,6 +889,7 @@ export default function Agenda() {
                               type="checkbox"
                               checked={checked}
                               onChange={() => handleToggleVendor(vendor.user_id)}
+                              name={`agendaGenerateVendor-${vendor.user_id}`}
                               className="h-4 w-4 accent-sea"
                             />
                           </label>
@@ -879,6 +920,8 @@ export default function Agenda() {
                   type="date"
                   value={visitDate}
                   onChange={(event) => setVisitDate(event.target.value)}
+                  id="agenda-generate-visit-date"
+                  name="agendaGenerateVisitDate"
                   className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
                 />
               </label>
@@ -1040,18 +1083,10 @@ export default function Agenda() {
                       <th
                         key={header.id}
                         className="relative align-top whitespace-normal border-b border-sea/20 px-4 py-3 text-xs font-semibold text-ink/70 overflow-visible"
-                        onClick={header.column.getToggleSortingHandler()}
                       >
-                        <div className="flex items-center gap-2">
-                          {header.isPlaceholder
-                            ? null
-                            : flexRender(header.column.columnDef.header, header.getContext())}
-                          {header.column.getIsSorted() ? (
-                            <span className="text-[10px] text-sea">
-                              {header.column.getIsSorted() === "desc" ? "▼" : "▲"}
-                            </span>
-                          ) : null}
-                        </div>
+                        {header.isPlaceholder
+                          ? null
+                          : flexRender(header.column.columnDef.header, header.getContext())}
                       </th>
                     ))}
                   </tr>

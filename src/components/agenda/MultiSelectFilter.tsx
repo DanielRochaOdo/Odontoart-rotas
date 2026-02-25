@@ -2,32 +2,6 @@
 import { createPortal } from "react-dom";
 import { Check, Filter } from "lucide-react";
 
-const useClickOutside = (
-  refs: Array<React.RefObject<HTMLElement | null>>,
-  handler: () => void,
-  active: boolean,
-) => {
-  useEffect(() => {
-    if (!active) return;
-    const listener = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (!target) return;
-      const path = event.composedPath?.() ?? [];
-      const isInside = refs.some((ref) => {
-        const element = ref.current;
-        if (!element) return false;
-        return element.contains(target) || path.includes(element);
-      });
-      if (isInside) return;
-      handler();
-    };
-    document.addEventListener("pointerdown", listener, true);
-    return () => {
-      document.removeEventListener("pointerdown", listener, true);
-    };
-  }, [active, handler, refs]);
-};
-
 type MultiSelectFilterProps = {
   label: string;
   options: string[];
@@ -36,6 +10,9 @@ type MultiSelectFilterProps = {
   onOpen?: () => void;
 };
 
+const makeFieldId = (label: string) =>
+  `agenda-filter-${label}`.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
 export default function MultiSelectFilter({
   label,
   options,
@@ -43,6 +20,7 @@ export default function MultiSelectFilter({
   onApply,
   onOpen,
 }: MultiSelectFilterProps) {
+  const debug = Boolean(import.meta.env?.DEV);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<string[]>(value);
@@ -50,47 +28,60 @@ export default function MultiSelectFilter({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
-  const clickOutsideRefs = useMemo(() => [containerRef, popoverRef], []);
-
-  useClickOutside(clickOutsideRefs, () => setOpen(false), open);
-
-  const handleToggle = () => {
-    setOpen((prev) => {
-      const next = !prev;
-      if (next) {
-        setDraft(value);
-        setQuery("");
-        onOpen?.();
-      }
-      return next;
-    });
-  };
+  const fieldId = useMemo(() => makeFieldId(label), [label]);
 
   useEffect(() => {
-    if (!open) return;
-    const updatePosition = () => {
-      const button = buttonRef.current;
-      if (!button) return;
-      const rect = button.getBoundingClientRect();
-      const width = 256;
-      const gap = 8;
-      const padding = 12;
-      let left = rect.left;
-      if (left + width > window.innerWidth - padding) {
-        left = Math.max(padding, window.innerWidth - width - padding);
-      }
-      const top = rect.bottom + gap;
-      setPosition({ top, left });
-    };
-    updatePosition();
-    const handler = () => updatePosition();
-    window.addEventListener("resize", handler);
-    window.addEventListener("scroll", handler, true);
+    if (!debug) return;
+    console.log("[MultiSelectFilter] state", { label, open });
+  }, [debug, label, open]);
+
+  useEffect(() => {
+    if (!debug) return;
+    console.log("[MultiSelectFilter] position", { label, position });
+  }, [debug, label, position]);
+
+  useEffect(() => {
+    if (!debug) return;
     return () => {
-      window.removeEventListener("resize", handler);
-      window.removeEventListener("scroll", handler, true);
+      console.log("[MultiSelectFilter] unmount", { label });
     };
-  }, [open]);
+  }, [debug, label]);
+
+  const computePosition = () => {
+    const button = buttonRef.current;
+    if (!button) return;
+    const rect = button.getBoundingClientRect();
+    const width = 256;
+    const gap = 8;
+    const padding = 12;
+    let left = rect.left;
+    if (left + width > window.innerWidth - padding) {
+      left = Math.max(padding, window.innerWidth - width - padding);
+    }
+    const top = rect.bottom + gap;
+    setPosition({ top, left });
+  };
+
+  const openMenu = (event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (debug) {
+      console.log("[MultiSelectFilter] pointerdown trigger", {
+        label,
+        open,
+        target: (event.target as HTMLElement | null)?.tagName,
+      });
+    }
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setDraft(value);
+    setQuery("");
+    onOpen?.();
+    setOpen(true);
+    computePosition();
+  };
 
   const filteredOptions = useMemo(() => {
     if (!query.trim()) return options;
@@ -104,21 +95,86 @@ export default function MultiSelectFilter({
     );
   };
 
+  useEffect(() => {
+    if (!open) return;
+    const handler = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      const path = event.composedPath?.() ?? [];
+      const isInside = [buttonRef, popoverRef].some((ref) => {
+        const element = ref.current;
+        if (!element) return false;
+        return element.contains(target) || path.includes(element);
+      });
+      if (debug) {
+        console.log("[MultiSelectFilter] document pointerdown", {
+          label,
+          isInside,
+          target: (event.target as HTMLElement | null)?.tagName,
+        });
+      }
+      if (isInside) return;
+      if (debug) {
+        console.log("[MultiSelectFilter] close by outside pointerdown", {
+          label,
+          target: (event.target as HTMLElement | null)?.tagName,
+        });
+      }
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", handler, true);
+    return () => {
+      document.removeEventListener("pointerdown", handler, true);
+    };
+  }, [open, debug, label]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (debug) {
+          console.log("[MultiSelectFilter] close by ESC", { label });
+        }
+        setOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [open, debug, label]);
+
+  useEffect(() => {
+    if (!open) return;
+    computePosition();
+    const handler = () => computePosition();
+    window.addEventListener("resize", handler);
+    window.addEventListener("scroll", handler, true);
+    return () => {
+      window.removeEventListener("resize", handler);
+      window.removeEventListener("scroll", handler, true);
+    };
+  }, [open]);
+
   return (
     <div
       ref={containerRef}
       className="relative z-20"
       onClick={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
     >
       <button
         type="button"
         ref={buttonRef}
+        data-filter-trigger="true"
+        onPointerDown={openMenu}
         onClick={(event) => {
           event.stopPropagation();
-          handleToggle();
+          if (debug) {
+            console.log("[MultiSelectFilter] click trigger", { label });
+          }
         }}
-        onMouseDown={(event) => event.stopPropagation()}
         className="relative inline-flex h-6 w-6 items-center justify-center rounded-md border border-sea/20 bg-white/80 text-ink/50 transition hover:border-sea hover:text-sea"
         aria-label={label}
         title={label}
@@ -133,12 +189,13 @@ export default function MultiSelectFilter({
 
       {open && position
         ? createPortal(
-            <div
+          <div
               ref={popoverRef}
               className="fixed z-[9999] w-64 rounded-2xl border border-sea/20 bg-white p-3 shadow-xl"
               style={{ top: position.top, left: position.left }}
               onClick={(event) => event.stopPropagation()}
               onMouseDown={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
             >
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-ink/60">Filtro</p>
@@ -154,6 +211,8 @@ export default function MultiSelectFilter({
               </div>
 
               <input
+                id={`${fieldId}-search`}
+                name={`${fieldId}-search`}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Buscar..."
