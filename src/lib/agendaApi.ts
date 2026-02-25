@@ -107,7 +107,7 @@ export const fetchAgenda = async (
       { count: "exact" },
     )
     .is("visit_generated_at", null)
-    .eq("cliente_status", "Ativo");
+    .eq("situacao", "Ativo");
 
   query = applyFilters(query, filters);
 
@@ -145,7 +145,7 @@ export const fetchDistinctOptions = async (columns: string[]) => {
       .select(column)
       .not(column, "is", null)
       .is("visit_generated_at", null)
-      .eq("cliente_status", "Ativo")
+      .eq("situacao", "Ativo")
       .limit(2000);
 
     if (error) {
@@ -168,7 +168,7 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters) => {
     .from("agenda")
     .select("id, perfil_visita")
     .is("visit_generated_at", null)
-    .eq("cliente_status", "Ativo")
+    .eq("situacao", "Ativo")
     .order("id", { ascending: true });
 
   query = applyFilters(query, filters);

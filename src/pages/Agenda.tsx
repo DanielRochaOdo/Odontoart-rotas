@@ -27,7 +27,6 @@ const FILTER_SOURCES: Record<string, string[]> = {
   bairro: ["bairro"],
   cidade: ["cidade"],
   uf: ["uf"],
-  situacao: ["situacao"],
   grupo: ["grupo"],
   perfil_visita: ["perfil_visita"],
   empresa_nome: ["empresa", "nome_fantasia"],
@@ -39,7 +38,6 @@ const FILTER_LABELS: Record<string, string> = {
   bairro: "Bairro",
   cidade: "Cidade",
   uf: "UF",
-  situacao: "Situacao",
   grupo: "Grupo",
   perfil_visita: "Perfil Visita",
   empresa_nome: "Empresa",
@@ -483,30 +481,6 @@ export default function Agenda() {
         cell: (info) => info.getValue<string | null>() ?? "-",
       },
       {
-        accessorKey: "situacao",
-        header: () => (
-          <div className="flex items-center justify-between gap-2">
-            <span className="leading-tight">Situacao</span>
-            <MultiSelectFilter
-              label={
-                (filters.columns.situacao ?? []).length
-                  ? `Filtro (${filters.columns.situacao.length})`
-                  : "Filtro"
-              }
-              options={filterOptions.situacao ?? []}
-              value={filters.columns.situacao}
-              onApply={(next) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  columns: { ...prev.columns, situacao: next },
-                }))
-              }
-            />
-          </div>
-        ),
-        cell: (info) => info.getValue<string | null>() ?? "-",
-      },
-      {
         accessorKey: "grupo",
         header: () => (
           <div className="flex items-center justify-between gap-2">
@@ -656,6 +630,27 @@ export default function Agenda() {
             />
           </div>
 
+          <div className="flex flex-col gap-1 md:hidden">
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] font-semibold text-ink/70">Bairro</label>
+              <MultiSelectFilter
+                label={
+                  (filters.columns.bairro ?? []).length
+                    ? `Selecionados (${filters.columns.bairro.length})`
+                    : "Selecionar"
+                }
+                options={filterOptions.bairro ?? []}
+                value={filters.columns.bairro}
+                onApply={(next) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    columns: { ...prev.columns, bairro: next },
+                  }))
+                }
+              />
+            </div>
+          </div>
+
           <div className="flex flex-col gap-1">
             <label className="text-[11px] font-semibold text-ink/70">Data ultima visita</label>
             <div className="flex flex-wrap items-center gap-2">
@@ -698,7 +693,7 @@ export default function Agenda() {
                 }
                 className="rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
               />
-              <span className="mx-1 text-xs text-ink/40">ou</span>
+              <span className="w-full text-left text-xs font-semibold text-ink/50">Ou</span>
               <select
                 value={filters.dateRanges.data_da_ultima_visita.month ?? ""}
                 onChange={(event) =>
@@ -760,10 +755,7 @@ export default function Agenda() {
             Limpar filtros
           </button>
           {canGenerate && (
-            <div className="ml-auto flex items-center gap-2">
-              <span className="text-xs text-ink/60">
-                Empresas disponiveis: {totalCount}
-              </span>
+            <div className="flex w-full items-center justify-between gap-2 md:ml-auto md:w-auto md:justify-start">
               <button
                 type="button"
                 onClick={() => {
@@ -771,10 +763,13 @@ export default function Agenda() {
                   setShowGenerateModal(true);
                 }}
                 disabled={totalCount === 0}
-                className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                className="order-1 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60 md:order-2"
               >
                 Gerar visitas
               </button>
+              <span className="order-2 text-xs text-ink/60 md:order-1">
+                Empresas disponiveis: {totalCount}
+              </span>
             </div>
           )}
         </div>
@@ -903,102 +898,207 @@ export default function Agenda() {
       )}
 
       <div className="rounded-2xl border border-sea/15 bg-white/90">
-        <div className="overflow-x-auto">
-          <table className="w-full table-fixed border-collapse text-left text-sm">
-            <thead className="sticky top-0 z-30 bg-sand/60 shadow-sm overflow-visible">
-              {table.getHeaderGroups().map((headerGroup) => (
-                <tr key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <th
-                      key={header.id}
-                      className="relative align-top whitespace-normal border-b border-sea/20 px-4 py-3 text-xs font-semibold text-ink/70 overflow-visible"
-                      onClick={header.column.getToggleSortingHandler()}
-                    >
-                      <div className="flex items-center gap-2">
-                        {header.isPlaceholder
-                          ? null
-                          : flexRender(header.column.columnDef.header, header.getContext())}
-                        {header.column.getIsSorted() ? (
-                          <span className="text-[10px] text-sea">
-                            {header.column.getIsSorted() === "desc" ? "▼" : "▲"}
-                          </span>
-                        ) : null}
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              ))}
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={columns.length} className="px-4 py-6 text-center text-sm text-ink/60">
-                    Carregando agenda...
-                  </td>
-                </tr>
-              ) : error ? (
-                <tr>
-                  <td colSpan={columns.length} className="px-4 py-6 text-center text-sm text-red-500">
-                    {error}
-                  </td>
-                </tr>
-              ) : data.length === 0 ? (
-                <tr>
-                  <td colSpan={columns.length} className="px-4 py-6 text-center text-sm text-ink/60">
-                    Nenhum registro encontrado.
-                  </td>
-                </tr>
-              ) : (
-                table.getRowModel().rows.map((row) => (
-                  <tr
+        <div className="md:hidden">
+          {loading ? (
+            <div className="px-4 py-6 text-center text-sm text-ink/60">Carregando agenda...</div>
+          ) : error ? (
+            <div className="px-4 py-6 text-center text-sm text-red-500">{error}</div>
+          ) : data.length === 0 ? (
+            <div className="px-4 py-6 text-center text-sm text-ink/60">Nenhum registro encontrado.</div>
+          ) : (
+            <div className="space-y-3 px-3 py-3">
+              {data.map((row) => {
+                const empresaLabel = row.empresa ?? row.nome_fantasia ?? "Sem empresa";
+                const locationLine = `${row.bairro ? `${row.bairro} · ` : ""}${row.cidade ?? ""}${
+                  row.uf ? ` / ${row.uf}` : ""
+                }`;
+                return (
+                  <button
                     key={row.id}
-                    className="cursor-pointer border-b border-sea/10 hover:bg-sea/10"
-                    onClick={() => setSelectedRow(row.original)}
+                    type="button"
+                    onClick={() => setSelectedRow(row)}
+                    className="w-full rounded-2xl border border-sea/15 bg-white/95 p-4 text-left shadow-sm transition hover:shadow-card"
                   >
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="whitespace-normal break-words px-4 py-3 text-sm text-ink">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-ink">{empresaLabel}</p>
+                        {row.endereco && (
+                          <p className="mt-1 text-xs text-ink/60">{row.endereco}</p>
+                        )}
+                        <p className="text-xs text-ink/50">{locationLine || "-"}</p>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <span className="rounded-full bg-sea/10 px-2 py-1 text-[10px] font-semibold text-sea">
+                          COD {row.cod_1 ?? "-"}
+                        </span>
+                        {row.perfil_visita && (
+                          <span className="rounded-full bg-sand px-2 py-1 text-[10px] font-semibold text-ink/70">
+                            {row.perfil_visita}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-ink/60">
+                      <div className="rounded-xl bg-sand/60 px-2 py-2">
+                        <p className="text-[10px] uppercase tracking-wide text-ink/40">Supervisor</p>
+                        <p className="text-[11px] font-semibold text-ink/70">{row.supervisor ?? "-"}</p>
+                      </div>
+                      <div className="rounded-xl bg-sand/60 px-2 py-2">
+                        <p className="text-[10px] uppercase tracking-wide text-ink/40">Vendedor</p>
+                        <p className="text-[11px] font-semibold text-ink/70">{row.vendedor ?? "-"}</p>
+                      </div>
+                      <div className="rounded-xl bg-sand/60 px-2 py-2">
+                        <p className="text-[10px] uppercase tracking-wide text-ink/40">Ultima visita</p>
+                        <p className="text-[11px] font-semibold text-ink/70">
+                          {formatDate(row.data_da_ultima_visita)}
+                        </p>
+                      </div>
+                      <div className="rounded-xl bg-sand/60 px-2 py-2">
+                        <p className="text-[10px] uppercase tracking-wide text-ink/40">Grupo</p>
+                        <p className="text-[11px] font-semibold text-ink/70">{row.grupo ?? "-"}</p>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-sea/15 px-4 py-3 text-xs text-ink/60">
+            <div>
+              Pagina {pageIndex + 1} de {Math.max(1, Math.ceil(totalCount / pageSize))}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPageIndex((prev) => Math.max(prev - 1, 0))}
+                disabled={pageIndex === 0}
+                className="rounded-lg border border-sea/30 bg-white/80 px-2 py-1 disabled:opacity-50"
+              >
+                Anterior
+              </button>
+              <button
+                type="button"
+                onClick={() => setPageIndex((prev) => prev + 1)}
+                disabled={(pageIndex + 1) * pageSize >= totalCount}
+                className="rounded-lg border border-sea/30 bg-white/80 px-2 py-1 disabled:opacity-50"
+              >
+                Proxima
+              </button>
+              <select
+                value={pageSize}
+                onChange={(event) => setPageSize(Number(event.target.value))}
+                className="rounded-lg border border-sea/30 bg-white/80 px-2 py-1"
+              >
+                {[25, 50, 100].map((size) => (
+                  <option key={size} value={size}>
+                    {size} / pagina
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-sea/15 px-4 py-3 text-xs text-ink/60">
-          <div>
-            Pagina {pageIndex + 1} de {Math.max(1, Math.ceil(totalCount / pageSize))}
+        <div className="hidden md:block">
+          <div className="overflow-x-auto">
+            <table className="w-full table-fixed border-collapse text-left text-sm">
+              <thead className="sticky top-0 z-30 bg-sand/60 shadow-sm overflow-visible">
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <tr key={headerGroup.id}>
+                    {headerGroup.headers.map((header) => (
+                      <th
+                        key={header.id}
+                        className="relative align-top whitespace-normal border-b border-sea/20 px-4 py-3 text-xs font-semibold text-ink/70 overflow-visible"
+                        onClick={header.column.getToggleSortingHandler()}
+                      >
+                        <div className="flex items-center gap-2">
+                          {header.isPlaceholder
+                            ? null
+                            : flexRender(header.column.columnDef.header, header.getContext())}
+                          {header.column.getIsSorted() ? (
+                            <span className="text-[10px] text-sea">
+                              {header.column.getIsSorted() === "desc" ? "▼" : "▲"}
+                            </span>
+                          ) : null}
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                ))}
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={columns.length} className="px-4 py-6 text-center text-sm text-ink/60">
+                      Carregando agenda...
+                    </td>
+                  </tr>
+                ) : error ? (
+                  <tr>
+                    <td colSpan={columns.length} className="px-4 py-6 text-center text-sm text-red-500">
+                      {error}
+                    </td>
+                  </tr>
+                ) : data.length === 0 ? (
+                  <tr>
+                    <td colSpan={columns.length} className="px-4 py-6 text-center text-sm text-ink/60">
+                      Nenhum registro encontrado.
+                    </td>
+                  </tr>
+                ) : (
+                  table.getRowModel().rows.map((row) => (
+                    <tr
+                      key={row.id}
+                      className="cursor-pointer border-b border-sea/10 hover:bg-sea/10"
+                      onClick={() => setSelectedRow(row.original)}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <td key={cell.id} className="whitespace-normal break-words px-4 py-3 text-sm text-ink">
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      ))}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setPageIndex((prev) => Math.max(prev - 1, 0))}
-              disabled={pageIndex === 0}
-              className="rounded-lg border border-sea/30 bg-white/80 px-2 py-1 disabled:opacity-50"
-            >
-              Anterior
-            </button>
-            <button
-              type="button"
-              onClick={() => setPageIndex((prev) => prev + 1)}
-              disabled={(pageIndex + 1) * pageSize >= totalCount}
-              className="rounded-lg border border-sea/30 bg-white/80 px-2 py-1 disabled:opacity-50"
-            >
-              Proxima
-            </button>
-            <select
-              value={pageSize}
-              onChange={(event) => setPageSize(Number(event.target.value))}
-              className="rounded-lg border border-sea/30 bg-white/80 px-2 py-1"
-            >
-              {[25, 50, 100].map((size) => (
-                <option key={size} value={size}>
-                  {size} / pagina
-                </option>
-              ))}
-            </select>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-sea/15 px-4 py-3 text-xs text-ink/60">
+            <div>
+              Pagina {pageIndex + 1} de {Math.max(1, Math.ceil(totalCount / pageSize))}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPageIndex((prev) => Math.max(prev - 1, 0))}
+                disabled={pageIndex === 0}
+                className="rounded-lg border border-sea/30 bg-white/80 px-2 py-1 disabled:opacity-50"
+              >
+                Anterior
+              </button>
+              <button
+                type="button"
+                onClick={() => setPageIndex((prev) => prev + 1)}
+                disabled={(pageIndex + 1) * pageSize >= totalCount}
+                className="rounded-lg border border-sea/30 bg-white/80 px-2 py-1 disabled:opacity-50"
+              >
+                Proxima
+              </button>
+              <select
+                value={pageSize}
+                onChange={(event) => setPageSize(Number(event.target.value))}
+                className="rounded-lg border border-sea/30 bg-white/80 px-2 py-1"
+              >
+                {[25, 50, 100].map((size) => (
+                  <option key={size} value={size}>
+                    {size} / pagina
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
       </div>

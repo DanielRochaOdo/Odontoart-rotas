@@ -5,7 +5,6 @@ export type ClienteRow = {
   nome_fantasia: string | null;
   perfil_visita: string | null;
   situacao: string | null;
-  status: "Ativo" | "Inativo" | null;
   endereco: string | null;
   bairro: string | null;
   cidade: string | null;

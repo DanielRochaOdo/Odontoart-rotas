@@ -35,7 +35,7 @@ const buildPerfilState = (value: string | null) => {
   };
 };
 
-const STATUS_OPTIONS = ["Ativo", "Inativo"] as const;
+const SITUACAO_OPTIONS = ["Ativo", "Inativo"] as const;
 
 const normalizeHeader = (value: string) =>
   value
@@ -52,7 +52,6 @@ const HEADER_MAP: Record<string, string> = {
   "nome fantasia": "nome_fantasia",
   fantasia: "nome_fantasia",
   situacao: "situacao",
-  status: "status",
   "perfil visita": "perfil_visita",
   perfil: "perfil_visita",
   endereco: "endereco",
@@ -78,7 +77,7 @@ export default function Clientes() {
   const [error, setError] = useState<string | null>(null);
   const [clientes, setClientes] = useState<ClienteRow[]>([]);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"" | "Ativo" | "Inativo">("");
+  const [situacaoFilter, setSituacaoFilter] = useState<"" | "Ativo" | "Inativo">("");
 
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
@@ -86,7 +85,6 @@ export default function Clientes() {
     empresa: "",
     nome_fantasia: "",
     situacao: "",
-    status: "Ativo" as "Ativo" | "Inativo",
     endereco: "",
     bairro: "",
     cidade: "",
@@ -103,7 +101,6 @@ export default function Clientes() {
     empresa: "",
     nome_fantasia: "",
     situacao: "",
-    status: "Ativo" as "Ativo" | "Inativo",
     endereco: "",
     bairro: "",
     cidade: "",
@@ -141,8 +138,7 @@ export default function Clientes() {
       codigo: selected.codigo ?? "",
       empresa: selected.empresa ?? "",
       nome_fantasia: selected.nome_fantasia ?? "",
-      situacao: selected.situacao ?? "",
-      status: selected.status ?? "Ativo",
+      situacao: selected.situacao ?? "Ativo",
       endereco: selected.endereco ?? "",
       bairro: selected.bairro ?? "",
       cidade: selected.cidade ?? "",
@@ -177,8 +173,8 @@ export default function Clientes() {
         })
       : clientes;
 
-    const filteredByStatus = statusFilter
-      ? base.filter((cliente) => (cliente.status ?? "Ativo") === statusFilter)
+    const filteredByStatus = situacaoFilter
+      ? base.filter((cliente) => (cliente.situacao ?? "Ativo") === situacaoFilter)
       : base;
 
     return [...filteredByStatus].sort((a, b) => {
@@ -186,7 +182,7 @@ export default function Clientes() {
       const nameB = (b.empresa ?? b.nome_fantasia ?? "").toLocaleLowerCase("pt-BR");
       return nameA.localeCompare(nameB, "pt-BR");
     });
-  }, [clientes, search, statusFilter]);
+  }, [clientes, search, situacaoFilter]);
 
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -203,8 +199,7 @@ export default function Clientes() {
         empresa: form.empresa.trim() || null,
         nome_fantasia: form.nome_fantasia.trim() || null,
         perfil_visita: perfilCreate.perfil || null,
-        situacao: form.situacao.trim() || null,
-        status: form.status,
+        situacao: form.situacao.trim() || "Ativo",
         endereco: form.endereco.trim() || null,
         bairro: form.bairro.trim() || null,
         cidade: form.cidade.trim() || null,
@@ -216,8 +211,7 @@ export default function Clientes() {
         codigo: "",
         empresa: "",
         nome_fantasia: "",
-        situacao: "",
-        status: "Ativo",
+        situacao: "Ativo",
         endereco: "",
         bairro: "",
         cidade: "",
@@ -245,8 +239,7 @@ export default function Clientes() {
         empresa: editForm.empresa.trim() || null,
         nome_fantasia: editForm.nome_fantasia.trim() || null,
         perfil_visita: perfilEdit.perfil || null,
-        situacao: editForm.situacao.trim() || null,
-        status: editForm.status,
+        situacao: editForm.situacao.trim() || "Ativo",
         endereco: editForm.endereco.trim() || null,
         bairro: editForm.bairro.trim() || null,
         cidade: editForm.cidade.trim() || null,
@@ -269,7 +262,6 @@ export default function Clientes() {
       "empresa",
       "nome_fantasia",
       "situacao",
-      "status",
       "perfil_visita",
       "endereco",
       "bairro",
@@ -310,15 +302,13 @@ export default function Clientes() {
             record[target] = text;
           });
 
-          const statusValue = record.status ? normalizeStatus(record.status) : null;
           const situacaoValue = record.situacao ? normalizeStatus(record.situacao) : null;
 
           return {
             codigo: record.codigo ?? null,
             empresa: record.empresa ?? null,
             nome_fantasia: record.nome_fantasia ?? null,
-            situacao: situacaoValue ?? record.situacao ?? null,
-            status: (statusValue ?? "Ativo") as "Ativo" | "Inativo",
+            situacao: situacaoValue ?? record.situacao ?? "Ativo",
             perfil_visita: record.perfil_visita ?? null,
             endereco: record.endereco ?? null,
             bairro: record.bairro ?? null,
@@ -411,23 +401,7 @@ export default function Clientes() {
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             >
               <option value="">Selecione</option>
-              {STATUS_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            Status
-            <select
-              value={form.status}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, status: event.target.value as "Ativo" | "Inativo" }))
-              }
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            >
-              {STATUS_OPTIONS.map((option) => (
+              {SITUACAO_OPTIONS.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -542,12 +516,12 @@ export default function Clientes() {
             </button>
           )}
           <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as "" | "Ativo" | "Inativo")}
+            value={situacaoFilter}
+            onChange={(event) => setSituacaoFilter(event.target.value as "" | "Ativo" | "Inativo")}
             className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
           >
-            <option value="">Todos</option>
-            {STATUS_OPTIONS.map((option) => (
+            <option value="">Todas situacoes</option>
+            {SITUACAO_OPTIONS.map((option) => (
               <option key={option} value={option}>
                 {option}
               </option>
@@ -594,9 +568,6 @@ export default function Clientes() {
                         Situacao: {cliente.situacao}
                       </div>
                     ) : null}
-                    <div className="mt-1 inline-flex rounded-full border border-sea/20 px-2 py-0.5 text-[10px] text-sea">
-                      {cliente.status ?? "Ativo"}
-                    </div>
                     <div className="text-[10px] text-ink/50">
                       Codigo: {cliente.codigo ?? "-"}
                     </div>
@@ -652,25 +623,6 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                  Status
-                  <select
-                    value={editForm.status}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({
-                        ...prev,
-                        status: event.target.value as "Ativo" | "Inativo",
-                      }))
-                    }
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  >
-                    {STATUS_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Empresa
                   <input
@@ -689,7 +641,7 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   >
                     <option value="">Selecione</option>
-                    {STATUS_OPTIONS.map((option) => (
+                    {SITUACAO_OPTIONS.map((option) => (
                       <option key={option} value={option}>
                         {option}
                       </option>
@@ -787,8 +739,7 @@ export default function Clientes() {
               <div className="mt-6 space-y-3">
                 {[
                   ["Codigo", selected.codigo],
-                  ["Status", selected.status ?? "Ativo"],
-                  ["Situacao", selected.situacao ?? "-"],
+                  ["Situacao", selected.situacao ?? "Ativo"],
                   ["Empresa", selected.empresa],
                   ["Nome fantasia", selected.nome_fantasia],
                   ["Perfil visita", selected.perfil_visita],

@@ -10,6 +10,8 @@ import {
   Settings,
   MapPin,
   Building2,
+  Menu,
+  X,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { ROLE_LABELS } from "../types/roles";
@@ -39,6 +41,7 @@ export default function AppLayout() {
       return true;
     }
   });
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -60,10 +63,32 @@ export default function AppLayout() {
 
   return (
     <div className="min-h-screen bg-hero-gradient overflow-x-hidden text-ink">
-      <div className="flex min-h-screen w-full flex-col py-6 md:flex-row md:items-start md:gap-6 md:px-0">
+      <div className="md:hidden">
+        <div className="flex items-center justify-between border-b border-sea/15 bg-white/90 px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-sea/15 text-sea">
+              <MapPin size={16} />
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.3em] text-muted">Odontoart</p>
+              <h1 className="font-display text-base text-ink">Agenda+</h1>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(true)}
+            className="rounded-full border border-sea/20 bg-white/80 p-2 text-sea hover:border-sea"
+            aria-label="Abrir menu"
+          >
+            <Menu size={18} />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex min-h-screen w-full flex-col gap-4 px-4 py-4 md:flex-row md:items-start md:gap-6 md:px-0 md:py-6">
         <aside
           className={[
-            "mb-6 w-full shrink-0 rounded-none border border-sea/20 bg-gradient-to-b from-white via-white to-sand/60 shadow-card md:mb-0 md:sticky md:top-6 md:rounded-r-3xl md:border-l-0",
+            "mb-6 hidden w-full shrink-0 rounded-none border border-sea/20 bg-gradient-to-b from-white via-white to-sand/60 shadow-card md:mb-0 md:sticky md:top-6 md:flex md:flex-col md:rounded-r-3xl md:border-l-0",
             collapsed ? "p-4 md:w-20 md:py-6" : "p-5 md:w-56",
           ].join(" ")}
         >
@@ -162,10 +187,86 @@ export default function AppLayout() {
           </button>
         </aside>
 
-        <main className="min-w-0 flex-1 rounded-3xl border border-sea/15 bg-white/95 p-6 shadow-card md:mr-6">
+        <main className="min-w-0 flex-1 rounded-2xl border border-sea/15 bg-white/95 p-4 shadow-card md:mr-6 md:rounded-3xl md:p-6">
           <Outlet />
         </main>
       </div>
+
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+          <div className="relative h-full w-72 max-w-full bg-white p-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-sea/15 text-sea">
+                  <MapPin size={18} />
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-muted">Odontoart</p>
+                  <h1 className="font-display text-lg text-ink">Agenda+</h1>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(false)}
+                className="rounded-full border border-sea/20 bg-white/80 p-1 text-sea hover:border-sea"
+                aria-label="Fechar menu"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-sea/20 bg-sand/60 px-4 py-3">
+              <p className="text-xs text-ink/70">Colaborador</p>
+              <p className="font-semibold text-ink">{profile?.display_name ?? "Perfil pendente"}</p>
+              <p className="text-xs text-ink/60">{role ? ROLE_LABELS[role] : "Sem função"}</p>
+            </div>
+
+            <nav className="mt-6 flex flex-col gap-2">
+              {navItems
+                .filter((item) => !item.roles || (role ? item.roles.includes(role) : false))
+                .map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.to === "/"}
+                      onClick={() => setMobileMenuOpen(false)}
+                      className={({ isActive }) =>
+                        [
+                          "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold transition",
+                          isActive
+                            ? "bg-sea text-white shadow-lg shadow-sea/25"
+                            : "bg-white/70 text-ink/70 hover:bg-sea/10 hover:text-sea",
+                        ].join(" ")
+                      }
+                    >
+                      <Icon size={18} />
+                      {item.label}
+                    </NavLink>
+                  );
+                })}
+            </nav>
+
+            <button
+              type="button"
+              onClick={async () => {
+                setMobileMenuOpen(false);
+                await signOut();
+              }}
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+            >
+              <LogOut size={16} />
+              Sair
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
