@@ -33,21 +33,21 @@ export default function Login() {
         <div className="max-w-md">
           <p className="text-xs uppercase tracking-[0.35em] text-muted">Odontoart</p>
           <h1 className="mt-3 font-display text-3xl text-ink">Agenda+ Rotas</h1>
-          <p className="mt-4 text-base text-muted">
+          <p className="mt-4 text-base text-ink/70">
             Plataforma interna de gestão de visitas e roteirização comercial. O acesso é restrito e
             controlado pela Odontoart.
           </p>
-          <div className="mt-6 rounded-2xl border border-mist/60 bg-white/80 p-4 shadow-card">
+          <div className="mt-6 rounded-2xl border border-sea/20 bg-sand/40 p-4 shadow-card">
             <p className="text-sm font-semibold text-ink">Acesso exclusivo</p>
-            <p className="mt-1 text-sm text-muted">
+            <p className="mt-1 text-sm text-ink/60">
               Caso precise de credenciais, fale com a supervisão comercial.
             </p>
           </div>
         </div>
 
-        <div className="mt-8 w-full max-w-md rounded-3xl bg-white/90 p-8 shadow-card backdrop-blur lg:mt-0">
+        <div className="mt-8 w-full max-w-md rounded-3xl border border-sea/20 bg-white/95 p-8 shadow-card lg:mt-0">
           <h2 className="font-display text-xl text-ink">Entrar</h2>
-          <p className="mt-2 text-sm text-muted">Use seu e-mail corporativo Odontoart.</p>
+          <p className="mt-2 text-sm text-ink/70">Use seu e-mail corporativo Odontoart.</p>
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">
             <label className="block text-sm font-semibold text-ink">
@@ -79,7 +79,7 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-xl bg-sea px-4 py-2 text-sm font-semibold text-white transition hover:bg-seaLight disabled:cursor-not-allowed disabled:opacity-70"
+              className="w-full rounded-xl border border-sea/40 bg-seaLight px-4 py-2 text-sm font-semibold text-ink shadow-md transition hover:bg-sea disabled:cursor-not-allowed disabled:opacity-70"
             >
               {loading ? "Entrando..." : "Entrar"}
             </button>

@@ -74,8 +74,6 @@ create table if not exists public.agenda (
   cod_1 text null,
   empresa text null,
   perfil_visita text null,
-  dt_mar_25 date null,
-  consultor_mar_25 text null,
   corte numeric null,
   venc numeric null,
   valor numeric null,
@@ -101,8 +99,6 @@ create unique index if not exists agenda_dedupe_key_unique on public.agenda(dedu
 create index if not exists agenda_vendedor_idx on public.agenda(vendedor);
 create index if not exists agenda_consultor_idx on public.agenda(consultor);
 create index if not exists agenda_data_visita_idx on public.agenda(data_da_ultima_visita);
-create index if not exists agenda_dt_mar_25_idx on public.agenda(dt_mar_25);
-
 -- Routes
 create table if not exists public.routes (
   id uuid primary key default gen_random_uuid(),
@@ -170,10 +166,6 @@ create policy "Vendedor read own agenda" on public.agenda
     and (
       data_da_ultima_visita is null
       or data_da_ultima_visita::date <= (now() at time zone 'America/Fortaleza')::date
-    )
-    and (
-      dt_mar_25 is null
-      or dt_mar_25 <= (now() at time zone 'America/Fortaleza')::date
     )
   );
 

@@ -9,12 +9,9 @@ type RawRow = Record<string, unknown>;
 type AgendaInsert = {
   company_id?: string | null;
   data_da_ultima_visita?: string | null;
-  consultor?: string | null;
   cod_1?: string | null;
   empresa?: string | null;
   perfil_visita?: string | null;
-  dt_mar_25?: string | null;
-  consultor_mar_25?: string | null;
   corte?: number | null;
   venc?: number | null;
   valor?: number | null;
@@ -39,7 +36,6 @@ const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  // eslint-disable-next-line no-console
   console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in env.");
   process.exit(1);
 }
@@ -57,11 +53,8 @@ const headerToColumn = (header: string, occurrence: number) => {
   const normalized = header.trim();
   const map: Record<string, string> = {
     "Data da ultima visita": "data_da_ultima_visita",
-    Consultor: "consultor",
     EMPRESA: "empresa",
     "Perfil Visita": "perfil_visita",
-    "Dt mar/25": "dt_mar_25",
-    "Consultor Mar/25": "consultor_mar_25",
     Corte: "corte",
     VenC: "venc",
     Valor: "valor",
@@ -92,7 +85,7 @@ const parseDate = (value: unknown): Date | null => {
   }
   if (typeof value === "string") {
     const trimmed = value.trim();
-    const match = trimmed.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/);
+    const match = trimmed.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})/);
     if (match) {
       const day = Number(match[1]);
       const month = Number(match[2]);
@@ -151,14 +144,12 @@ const workbook = xlsx.readFile(xlsxPath, { cellDates: true });
 const sheet = workbook.Sheets[sheetName];
 
 if (!sheet) {
-  // eslint-disable-next-line no-console
   console.error(`Sheet "${sheetName}" not found in ${xlsxPath}`);
   process.exit(1);
 }
 
 const rows = xlsx.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null });
 if (!rows.length) {
-  // eslint-disable-next-line no-console
   console.error("No rows found in sheet.");
   process.exit(1);
 }
@@ -194,11 +185,6 @@ for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
         record.data_da_ultima_visita = parsed ? parsed.toISOString() : null;
         break;
       }
-      case "dt_mar_25": {
-        const parsed = parseDate(cell);
-        record.dt_mar_25 = parsed ? parsed.toISOString().slice(0, 10) : null;
-        break;
-      }
       case "corte":
       case "venc":
       case "valor": {
@@ -226,7 +212,6 @@ for (const batch of batches) {
     .select("id");
 
   if (error) {
-    // eslint-disable-next-line no-console
     console.error("Insert failed:", error.message);
     process.exit(1);
   }
@@ -234,5 +219,4 @@ for (const batch of batches) {
   inserted += data?.length ?? 0;
 }
 
-// eslint-disable-next-line no-console
 console.log(`Import finished. Inserted ${inserted} rows.`);

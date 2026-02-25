@@ -5,6 +5,9 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Agenda from "./pages/Agenda";
 import RoutesPage from "./pages/Routes";
+import Visitas from "./pages/Visitas";
+import Clientes from "./pages/Clientes";
+import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 
 export default function App() {
@@ -17,6 +20,9 @@ export default function App() {
             <Route index element={<Dashboard />} />
             <Route path="agenda" element={<Agenda />} />
             <Route path="rotas" element={<RoutesPage />} />
+            <Route path="visitas" element={<Visitas />} />
+            <Route path="clientes" element={<Clientes />} />
+            <Route path="configuracoes" element={<Settings />} />
           </Route>
         </Route>
         <Route path="*" element={<NotFound />} />

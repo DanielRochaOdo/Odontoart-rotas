@@ -19,9 +19,8 @@ const startOfMonth = (date: Date) => {
   return result;
 };
 
-const parseVisitDate = (row: { data_da_ultima_visita: string | null; dt_mar_25: string | null }) => {
+const parseVisitDate = (row: { data_da_ultima_visita: string | null }) => {
   if (row.data_da_ultima_visita) return new Date(row.data_da_ultima_visita);
-  if (row.dt_mar_25) return new Date(`${row.dt_mar_25}T00:00:00`);
   return null;
 };
 
@@ -32,7 +31,6 @@ export default function Dashboard() {
   const [rows, setRows] = useState<
     {
       data_da_ultima_visita: string | null;
-      dt_mar_25: string | null;
       situacao: string | null;
       cidade: string | null;
       uf: string | null;
@@ -46,7 +44,7 @@ export default function Dashboard() {
       setError(null);
       const { data, error: supabaseError } = await supabase
         .from("agenda")
-        .select("data_da_ultima_visita, dt_mar_25, situacao, cidade, uf, vendedor")
+        .select("data_da_ultima_visita, situacao, cidade, uf, vendedor")
         .limit(5000);
 
       if (supabaseError) {
@@ -114,7 +112,7 @@ export default function Dashboard() {
       </header>
 
       {loading ? (
-        <div className="rounded-2xl border border-mist/60 bg-white p-6 text-sm text-muted">
+        <div className="rounded-2xl border border-sea/20 bg-sand/30 p-6 text-sm text-ink/70">
           Carregando indicadores...
         </div>
       ) : error ? (
@@ -124,38 +122,38 @@ export default function Dashboard() {
       ) : (
         <div className="space-y-6">
           <section className="grid gap-4 md:grid-cols-3">
-            <div className="rounded-2xl border border-mist/60 bg-white p-5">
-              <p className="text-xs uppercase tracking-[0.2em] text-muted">Hoje</p>
+            <div className="rounded-2xl border border-sea/20 bg-sand/40 p-5">
+              <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Hoje</p>
               <p className="mt-2 font-display text-3xl text-ink">
                 {formatNumber(summary.totals.today)}
               </p>
-              <p className="text-xs text-muted">Agendamentos</p>
+              <p className="text-xs text-ink/60">Agendamentos</p>
             </div>
-            <div className="rounded-2xl border border-mist/60 bg-white p-5">
-              <p className="text-xs uppercase tracking-[0.2em] text-muted">Semana</p>
+            <div className="rounded-2xl border border-sea/20 bg-sand/40 p-5">
+              <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Semana</p>
               <p className="mt-2 font-display text-3xl text-ink">
                 {formatNumber(summary.totals.week)}
               </p>
-              <p className="text-xs text-muted">Agendamentos</p>
+              <p className="text-xs text-ink/60">Agendamentos</p>
             </div>
-            <div className="rounded-2xl border border-mist/60 bg-white p-5">
-              <p className="text-xs uppercase tracking-[0.2em] text-muted">Mes</p>
+            <div className="rounded-2xl border border-sea/20 bg-sand/40 p-5">
+              <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Mes</p>
               <p className="mt-2 font-display text-3xl text-ink">
                 {formatNumber(summary.totals.month)}
               </p>
-              <p className="text-xs text-muted">Agendamentos</p>
+              <p className="text-xs text-ink/60">Agendamentos</p>
             </div>
           </section>
 
           <section className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-mist/60 bg-white p-5">
+            <div className="rounded-2xl border border-sea/15 bg-white/90 p-5">
               <div className="flex items-center justify-between">
                 <h3 className="font-display text-lg text-ink">Visitas por situacao</h3>
-                <span className="text-xs text-muted">Top 6</span>
+                <span className="text-xs text-ink/60">Top 6</span>
               </div>
               <div className="mt-4 space-y-2">
                 {summary.topStatus.length === 0 ? (
-                  <p className="text-sm text-muted">Sem dados.</p>
+                  <p className="text-sm text-ink/60">Sem dados.</p>
                 ) : (
                   summary.topStatus.map(([label, value]) => (
                     <div key={label} className="flex items-center justify-between text-sm">
@@ -167,14 +165,14 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-mist/60 bg-white p-5">
+            <div className="rounded-2xl border border-sea/15 bg-white/90 p-5">
               <div className="flex items-center justify-between">
                 <h3 className="font-display text-lg text-ink">Por cidade / UF</h3>
-                <span className="text-xs text-muted">Top 6</span>
+                <span className="text-xs text-ink/60">Top 6</span>
               </div>
               <div className="mt-4 space-y-2">
                 {summary.topCities.length === 0 ? (
-                  <p className="text-sm text-muted">Sem dados.</p>
+                  <p className="text-sm text-ink/60">Sem dados.</p>
                 ) : (
                   summary.topCities.map(([label, value]) => (
                     <div key={label} className="flex items-center justify-between text-sm">
@@ -189,14 +187,14 @@ export default function Dashboard() {
 
           {(role === "SUPERVISOR" || role === "ASSISTENTE") && (
             <section className="grid gap-4 lg:grid-cols-2">
-              <div className="rounded-2xl border border-mist/60 bg-white p-5">
+              <div className="rounded-2xl border border-sea/15 bg-white/90 p-5">
                 <div className="flex items-center justify-between">
                   <h3 className="font-display text-lg text-ink">Visitas por vendedor</h3>
-                  <span className="text-xs text-muted">Top 5</span>
+                  <span className="text-xs text-ink/60">Top 5</span>
                 </div>
                 <div className="mt-4 space-y-2">
                   {summary.ranking.length === 0 ? (
-                    <p className="text-sm text-muted">Sem dados.</p>
+                    <p className="text-sm text-ink/60">Sem dados.</p>
                   ) : (
                     summary.ranking.map(([label, value], index) => (
                       <div key={label} className="flex items-center justify-between text-sm">
@@ -209,12 +207,12 @@ export default function Dashboard() {
                   )}
                 </div>
               </div>
-              <div className="rounded-2xl border border-mist/60 bg-white p-5">
+              <div className="rounded-2xl border border-sea/15 bg-white/90 p-5">
                 <h3 className="font-display text-lg text-ink">Resumo geral</h3>
-                <p className="mt-2 text-sm text-muted">
+                <p className="mt-2 text-sm text-ink/60">
                   Total de vendedores ativos: {Object.keys(summary.byVendor).length}
                 </p>
-                <p className="mt-2 text-sm text-muted">
+                <p className="mt-2 text-sm text-ink/60">
                   Total de registros analisados: {rows.length}
                 </p>
               </div>

@@ -47,7 +47,7 @@ export const fetchRouteStops = async (routeId: string) => {
     .order("stop_order", { ascending: true });
 
   if (error) throw new Error(error.message);
-  return (data ?? []) as RouteStop[];
+  return (data ?? []) as unknown as RouteStop[];
 };
 
 export const createRouteStop = async (payload: {
@@ -70,7 +70,7 @@ export const createRouteStop = async (payload: {
     .single();
 
   if (error) throw new Error(error.message);
-  return data as RouteStop;
+  return data as unknown as RouteStop;
 };
 
 export const deleteRouteStop = async (stopId: string) => {
