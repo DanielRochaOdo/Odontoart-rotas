@@ -5,8 +5,10 @@ import { Check, Filter } from "lucide-react";
 const useClickOutside = (
   refs: Array<React.RefObject<HTMLElement | null>>,
   handler: () => void,
+  active: boolean,
 ) => {
   useEffect(() => {
+    if (!active) return;
     const listener = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (!target) return;
@@ -23,7 +25,7 @@ const useClickOutside = (
     return () => {
       document.removeEventListener("pointerdown", listener, true);
     };
-  }, [handler, refs]);
+  }, [active, handler, refs]);
 };
 
 type MultiSelectFilterProps = {
@@ -50,7 +52,7 @@ export default function MultiSelectFilter({
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const clickOutsideRefs = useMemo(() => [containerRef, popoverRef], []);
 
-  useClickOutside(clickOutsideRefs, () => setOpen(false));
+  useClickOutside(clickOutsideRefs, () => setOpen(false), open);
 
   const handleToggle = () => {
     setOpen((prev) => {
