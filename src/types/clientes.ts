@@ -19,7 +19,9 @@ export type ClienteHistoryRow = {
   assigned_to_name: string | null;
   assigned_to_user_id: string | null;
   perfil_visita: string | null;
+  perfil_visita_opcoes: string | null;
   completed_at: string | null;
   completed_vidas: number | null;
   situacao: string | null;
+  supervisor: string | null;
 };

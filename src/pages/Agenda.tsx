@@ -81,6 +81,7 @@ export default function Agenda() {
   const [pageSize, setPageSize] = useState(25);
   const [filterOptions, setFilterOptions] = useState<Record<string, string[]>>({});
   const [selectedRow, setSelectedRow] = useState<AgendaRow | null>(null);
+  const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const [vendedores, setVendedores] = useState<
     { user_id: string; display_name: string | null; role: string }[]
   >([]);
@@ -94,6 +95,46 @@ export default function Agenda() {
   const [generateMessage, setGenerateMessage] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const restoredViewRef = useRef(false);
+
+  useEffect(() => {
+    if (restoredViewRef.current) return;
+    try {
+      const raw = sessionStorage.getItem("agendaViewState");
+      if (!raw) {
+        restoredViewRef.current = true;
+        return;
+      }
+      const parsed = JSON.parse(raw) as Partial<{
+        pageIndex: number;
+        pageSize: number;
+        sorting: SortingState;
+        selectedRowId: string | null;
+      }>;
+      if (typeof parsed.pageIndex === "number") setPageIndex(parsed.pageIndex);
+      if (typeof parsed.pageSize === "number") setPageSize(parsed.pageSize);
+      if (Array.isArray(parsed.sorting)) setSorting(parsed.sorting);
+      if (typeof parsed.selectedRowId === "string") setSelectedRowId(parsed.selectedRowId);
+      restoredViewRef.current = true;
+    } catch {
+      restoredViewRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!restoredViewRef.current) return;
+    const payload = {
+      pageIndex,
+      pageSize,
+      sorting,
+      selectedRowId,
+    };
+    try {
+      sessionStorage.setItem("agendaViewState", JSON.stringify(payload));
+    } catch {
+      // ignore
+    }
+  }, [pageIndex, pageSize, selectedRowId, sorting]);
 
   const canGenerate = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canEdit = role === "SUPERVISOR" || role === "ASSISTENTE";
@@ -202,6 +243,15 @@ export default function Agenda() {
 
     load();
   }, [filters, pageIndex, pageSize, sorting, refreshKey]);
+
+  useEffect(() => {
+    if (!selectedRowId) return;
+    if (selectedRow?.id === selectedRowId) return;
+    const found = data.find((row) => row.id === selectedRowId);
+    if (found) {
+      setSelectedRow(found);
+    }
+  }, [data, selectedRow, selectedRowId]);
 
   const filteredVendedores = useMemo(() => {
     if (!vendorQuery.trim()) return vendedores;
@@ -335,11 +385,13 @@ export default function Agenda() {
 
   const handleDrawerUpdated = (updated: AgendaRow) => {
     setSelectedRow(updated);
+    setSelectedRowId(updated.id);
     setRefreshKey((value) => value + 1);
   };
 
   const handleDrawerDeleted = () => {
     setSelectedRow(null);
+    setSelectedRowId(null);
     setRefreshKey((value) => value + 1);
   };
 
@@ -1116,7 +1168,10 @@ export default function Agenda() {
                     <tr
                       key={row.id}
                       className="cursor-pointer border-b border-sea/10 hover:bg-sea/10"
-                      onClick={() => setSelectedRow(row.original)}
+                      onClick={() => {
+                        setSelectedRow(row.original);
+                        setSelectedRowId(row.original.id);
+                      }}
                     >
                       {row.getVisibleCells().map((cell) => (
                         <td key={cell.id} className="whitespace-normal break-words px-4 py-3 text-sm text-ink">
@@ -1170,7 +1225,10 @@ export default function Agenda() {
       <AgendaDrawer
         key={selectedRow?.id ?? "agenda-drawer"}
         row={selectedRow}
-        onClose={() => setSelectedRow(null)}
+        onClose={() => {
+          setSelectedRow(null);
+          setSelectedRowId(null);
+        }}
         canEdit={canEdit}
         userEmail={session?.user.email ?? null}
         vendorOptions={vendorOptions}

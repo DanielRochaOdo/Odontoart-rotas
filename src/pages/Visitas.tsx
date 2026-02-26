@@ -1,4 +1,4 @@
-ï»¿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { addDays, endOfMonth, endOfWeek, format, isAfter, isSameDay, isSameMonth, startOfMonth, startOfWeek } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, Pencil } from "lucide-react";
@@ -69,19 +69,11 @@ const formatVisitDate = (value: string | null) => {
 };
 
 const NO_VISIT_REASONS = [
-  "RESPONSAVEL NÃƒO COMPARECEU",
+  "RESPONSAVEL NÃO COMPARECEU",
   "VISITA REMARCADA",
   "EMPRESA FECHADA",
 ];
 
-const parseTitValue = (value: string | number | null) => {
-  if (value === null || value === undefined) return 0;
-  const raw = typeof value === "number" ? value.toString() : String(value);
-  const cleaned = raw.replace(/[^0-9.-]/g, "");
-  if (!cleaned) return 0;
-  const parsed = Number(cleaned);
-  return Number.isFinite(parsed) ? parsed : 0;
-};
 
 export default function Visitas() {
   const { role, session, profile } = useAuth();
@@ -106,6 +98,46 @@ export default function Visitas() {
     { id: string; user_id: string | null; display_name: string | null }[]
   >([]);
   const [selectedSupervisorId, setSelectedSupervisorId] = useState<string>("all");
+  const restoredViewRef = useRef(false);
+
+  useEffect(() => {
+    if (restoredViewRef.current) return;
+    try {
+      const raw = sessionStorage.getItem("visitasViewState");
+      if (!raw) {
+        restoredViewRef.current = true;
+        return;
+      }
+      const parsed = JSON.parse(raw) as Partial<{
+        currentMonth: string;
+        selectedDate: string | null;
+        expandedVendor: string | null;
+        selectedSupervisorId: string;
+      }>;
+      if (parsed.currentMonth) setCurrentMonth(new Date(parsed.currentMonth));
+      if (parsed.selectedDate) setSelectedDate(new Date(parsed.selectedDate));
+      if (parsed.expandedVendor) setExpandedVendor(parsed.expandedVendor);
+      if (parsed.selectedSupervisorId) setSelectedSupervisorId(parsed.selectedSupervisorId);
+      restoredViewRef.current = true;
+    } catch {
+      restoredViewRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!restoredViewRef.current) return;
+    const payload = {
+      currentMonth: currentMonth.toISOString(),
+      selectedDate: selectedDate ? selectedDate.toISOString() : null,
+      expandedVendor,
+      selectedSupervisorId,
+    };
+    try {
+      sessionStorage.setItem("visitasViewState", JSON.stringify(payload));
+    } catch {
+      // ignore
+    }
+  }, [currentMonth, expandedVendor, selectedDate, selectedSupervisorId]);
   const [confirmVisit, setConfirmVisit] = useState<VisitRow | null>(null);
   const [noVisit, setNoVisit] = useState<{ id: string; reason: string } | null>(null);
   const [completeVisit, setCompleteVisit] = useState<{
@@ -469,6 +501,10 @@ export default function Visitas() {
 
     const visit = visits.find((item) => item.id === visitId);
     if (!visit) return;
+    if (visit.completed_at) {
+      setError("Visita registrada. Edicao bloqueada.");
+      return;
+    }
 
     const vendor = vendorById.get(state.vendorId);
     const vendorName = vendor?.display_name ?? vendor?.user_id ?? visit.assigned_to_name ?? "Sem vendedor";
@@ -593,7 +629,8 @@ export default function Visitas() {
     const visitOptionsRaw = item.perfil_visita_opcoes ?? "";
     const agendaOptions = extractCustomTimes(agendaPerfil);
     const visitOptions = extractCustomTimes(visitOptionsRaw || visitPerfil);
-    const customOptions = agendaOptions.length > 0 ? agendaOptions : visitOptions;
+    const customOptions =
+      agendaOptions.length >= visitOptions.length ? agendaOptions : visitOptions;
     const rawPerfil = agendaPerfil || visitOptionsRaw || visitPerfil;
     const normalized = normalizePerfilVisita(rawPerfil);
     const isPreset = normalized !== "" && isPresetPerfilVisita(normalized);
@@ -674,6 +711,16 @@ export default function Visitas() {
         throw new Error("Visita nao encontrada.");
       }
 
+      const cleanedOptions = completeVisit.customOptions
+        .map((option) => option.trim())
+        .filter(Boolean);
+      const customTime = completeVisit.customManual ? completeVisit.customTime.trim() : "";
+      const normalizedOptions = [...cleanedOptions];
+      if (customTime && !normalizedOptions.includes(customTime)) {
+        normalizedOptions.push(customTime);
+      }
+      const perfilOpcoesString = normalizedOptions.length > 0 ? normalizedOptions.join(" • ") : null;
+
       const { error: updateError } = await supabase
         .from("visits")
         .update({
@@ -681,32 +728,12 @@ export default function Visitas() {
           completed_vidas: vidas,
           perfil_visita: completeVisit.perfil,
           perfil_visita_opcoes:
-            completeVisit.customOptions.filter((option) => option.trim()).length > 0
-              ? completeVisit.customOptions.filter((option) => option.trim()).join(", ")
-              : null,
+            perfilOpcoesString,
           no_visit_reason: null,
         })
         .eq("id", completeVisit.id);
 
       if (updateError) throw new Error(updateError.message);
-
-      const { data: agendaData, error: agendaError } = await supabase
-        .from("agenda")
-        .select("tit")
-        .eq("id", visit.agenda_id)
-        .single();
-
-      if (agendaError) throw new Error(agendaError.message);
-
-      const currentTit = parseTitValue(agendaData?.tit ?? null);
-      const nextTit = currentTit + vidas;
-
-      const { error: updateTitError } = await supabase
-        .from("agenda")
-        .update({ tit: nextTit.toString() })
-        .eq("id", visit.agenda_id);
-
-      if (updateTitError) throw new Error(updateTitError.message);
 
       setCompleteVisit(null);
       setRefreshKey((prev) => prev + 1);
@@ -906,12 +933,14 @@ export default function Visitas() {
                                     {canManage && (
                                       <button
                                         type="button"
-                                        onClick={() =>
+                                        onClick={() => {
+                                          if (isCompleted) return;
                                           setEditingVisits((prev) => ({
                                             ...prev,
                                             [item.id]: !isEditing,
-                                          }))
-                                        }
+                                          }));
+                                        }}
+                                        disabled={isCompleted}
                                         className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
                                         aria-label="Editar visita"
                                         title="Editar visita"
@@ -922,7 +951,7 @@ export default function Visitas() {
                                   </div>
                                 </div>
 
-                                {canManage && isEditing ? (
+                                {canManage && isEditing && !isCompleted ? (
                                   <div className="mt-3 grid gap-2 md:grid-cols-3">
                                     <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
                                       Vendedor
@@ -984,6 +1013,11 @@ export default function Visitas() {
                                       Perfil visita: {item.agenda?.perfil_visita ?? item.perfil_visita ?? "-"}
                                     </span>
                                     <span>Data: {formatVisitDate(item.visit_date)}</span>
+                                    {isCompleted ? (
+                                      <span className="rounded-lg border border-amber-300 bg-amber-100 px-2 py-1 text-[11px] font-semibold text-red-600">
+                                        Visita registrada. Edicao bloqueada.
+                                      </span>
+                                    ) : null}
                                     {item.no_visit_reason ? (
                                       <span>Motivo: {item.no_visit_reason}</span>
                                     ) : null}

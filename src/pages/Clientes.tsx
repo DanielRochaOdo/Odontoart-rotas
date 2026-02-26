@@ -9,8 +9,10 @@ import {
   fetchClientes,
   updateCliente,
   syncAgendaForCliente,
+  syncVisitsForCliente,
   upsertClientes,
 } from "../lib/clientesApi";
+import { fetchSupervisores } from "../lib/agendaApi";
 import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import {
   PERFIL_VISITA_PRESETS,
@@ -32,7 +34,7 @@ const buildPerfilState = (value: string | null) => {
   const customTimes = extractCustomTimes(value);
   const isCustom = normalized !== "" && !isPresetPerfilVisita(normalized);
   return {
-    perfil: isCustom ? customTimes.join(", ") : normalized,
+    perfil: isCustom ? customTimes.join(" • ") : normalized,
     customEnabled: isCustom,
     customTimes: isCustom ? (customTimes.length ? customTimes : [""]) : [],
   };
@@ -71,6 +73,23 @@ const normalizeStatus = (value: string) => {
   return null;
 };
 
+const normalizeName = (value: string | null) =>
+  (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
+const formatPerfilDisplay = (value: string | null) => {
+  if (!value) return null;
+  const parts = value
+    .split(/[,\u2022]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (parts.length <= 1) return value;
+  return parts.join(" • ");
+};
+
 export default function Clientes() {
   const { role } = useAuth();
   const canView = role === "SUPERVISOR" || role === "ASSISTENTE";
@@ -100,6 +119,13 @@ export default function Clientes() {
   const [selected, setSelected] = useState<ClienteRow | null>(null);
   const [history, setHistory] = useState<ClienteHistoryRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historySupervisores, setHistorySupervisores] = useState<
+    { user_id: string; display_name: string | null }[]
+  >([]);
+  const [historySupervisorId, setHistorySupervisorId] = useState<string>("all");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const restoredViewRef = useRef(false);
+  const pendingEditRestoreRef = useRef<boolean | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     codigo: "",
@@ -128,7 +154,7 @@ export default function Clientes() {
     setter((prev) => ({
       ...prev,
       customTimes: times,
-      perfil: cleaned.join(", "),
+      perfil: cleaned.join(" • "),
     }));
   };
   const [savingEdit, setSavingEdit] = useState(false);
@@ -160,8 +186,70 @@ export default function Clientes() {
   }, [canView]);
 
   useEffect(() => {
+    if (restoredViewRef.current) return;
+    try {
+      const raw = sessionStorage.getItem("clientesViewState");
+      if (!raw) {
+        restoredViewRef.current = true;
+        return;
+      }
+      const parsed = JSON.parse(raw) as Partial<{
+        search: string;
+        situacaoFilter: "" | "Ativo" | "Inativo";
+        selectedId: string | null;
+        isEditing: boolean;
+        historySupervisorId: string;
+      }>;
+      if (typeof parsed.search === "string") setSearch(parsed.search);
+      if (parsed.situacaoFilter) setSituacaoFilter(parsed.situacaoFilter);
+      if (typeof parsed.selectedId === "string") setSelectedId(parsed.selectedId);
+      if (typeof parsed.historySupervisorId === "string") {
+        setHistorySupervisorId(parsed.historySupervisorId);
+      }
+      if (typeof parsed.isEditing === "boolean") {
+        pendingEditRestoreRef.current = parsed.isEditing;
+      }
+      restoredViewRef.current = true;
+    } catch {
+      restoredViewRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!restoredViewRef.current) return;
+    const payload = {
+      search,
+      situacaoFilter,
+      selectedId,
+      isEditing,
+      historySupervisorId,
+    };
+    try {
+      sessionStorage.setItem("clientesViewState", JSON.stringify(payload));
+    } catch {
+      // ignore
+    }
+  }, [historySupervisorId, isEditing, search, selectedId, situacaoFilter]);
+
+  useEffect(() => {
+    if (!canView) return;
+    let active = true;
+    fetchSupervisores()
+      .then((data) => {
+        if (active) setHistorySupervisores(data);
+      })
+      .catch((err) => {
+        console.error(err);
+      });
+    return () => {
+      active = false;
+    };
+  }, [canView]);
+
+  useEffect(() => {
     if (!selected) return;
     setIsEditing(false);
+    setHistorySupervisorId("all");
     setEditForm({
       codigo: selected.codigo ?? "",
       cep: selected.cep ?? "",
@@ -181,6 +269,30 @@ export default function Clientes() {
       .catch((err) => setError(err instanceof Error ? err.message : "Erro ao carregar historico."))
       .finally(() => setHistoryLoading(false));
   }, [selected]);
+
+  useEffect(() => {
+    if (!selectedId || selected) return;
+    const found = clientes.find((cliente) => cliente.id === selectedId);
+    if (found) {
+      setSelected(found);
+      if (pendingEditRestoreRef.current !== null) {
+        setIsEditing(pendingEditRestoreRef.current);
+        pendingEditRestoreRef.current = null;
+      }
+    }
+  }, [clientes, selected, selectedId]);
+
+  const filteredHistory = useMemo(() => {
+    if (historySupervisorId === "all") return history;
+    const supervisor = historySupervisores.find(
+      (item) => item.user_id === historySupervisorId,
+    );
+    const supervisorName = normalizeName(supervisor?.display_name ?? "");
+    if (!supervisorName) return history;
+    return history.filter(
+      (visit) => normalizeName(visit.supervisor) === supervisorName,
+    );
+  }, [history, historySupervisorId, historySupervisores]);
 
   useEffect(() => {
     const digits = sanitizeCep(form.cep);
@@ -368,6 +480,7 @@ export default function Clientes() {
         uf: editForm.uf.trim() || null,
       });
       await syncAgendaForCliente(updated);
+      await syncVisitsForCliente(updated);
       setClientes((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       setSelected(updated);
       setIsEditing(false);
@@ -712,7 +825,10 @@ export default function Clientes() {
                 <button
                   key={cliente.id}
                   type="button"
-                  onClick={() => setSelected(cliente)}
+                  onClick={() => {
+                    setSelected(cliente);
+                    setSelectedId(cliente.id);
+                  }}
                   className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left text-sm hover:bg-sand/40"
                 >
                   <div>
@@ -746,7 +862,14 @@ export default function Clientes() {
 
       {selected && (
         <div className="fixed inset-0 z-50 flex justify-end">
-          <button type="button" className="absolute inset-0 bg-ink/30" onClick={() => setSelected(null)} />
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => {
+              setSelected(null);
+              setSelectedId(null);
+            }}
+          />
           <div className="relative h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -770,7 +893,10 @@ export default function Clientes() {
                 )}
                 <button
                   type="button"
-                  onClick={() => setSelected(null)}
+                  onClick={() => {
+                    setSelected(null);
+                    setSelectedId(null);
+                  }}
                   className="rounded-full border border-mist px-3 py-1 text-xs text-muted"
                 >
                   Fechar
@@ -981,14 +1107,31 @@ export default function Clientes() {
             )}
 
             <div className="mt-8 border-t border-mist/40 pt-4">
-              <h4 className="font-display text-lg text-ink">Historico de visitas</h4>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h4 className="font-display text-lg text-ink">Historico de visitas</h4>
+                <label className="flex items-center gap-2 text-xs font-semibold text-ink/70">
+                  Supervisor
+                  <select
+                    value={historySupervisorId}
+                    onChange={(event) => setHistorySupervisorId(event.target.value)}
+                    className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                  >
+                    <option value="all">Todos</option>
+                    {historySupervisores.map((supervisor) => (
+                      <option key={supervisor.user_id} value={supervisor.user_id}>
+                        {supervisor.display_name ?? "Supervisor"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               {historyLoading ? (
                 <p className="mt-2 text-sm text-ink/60">Carregando historico...</p>
-              ) : history.length === 0 ? (
+              ) : filteredHistory.length === 0 ? (
                 <p className="mt-2 text-sm text-ink/60">Nenhum historico para este cliente.</p>
               ) : (
                 <div className="mt-3 space-y-2">
-                  {history.map((visit) => (
+                  {filteredHistory.map((visit) => (
                     <div key={visit.id} className="rounded-xl border border-sea/15 bg-white/90 p-3">
                       <div className="flex items-center justify-between text-sm">
                         <span className="font-semibold text-ink">
@@ -998,11 +1141,19 @@ export default function Clientes() {
                           {formatDate(visit.visit_date)}
                         </span>
                       </div>
+                      {visit.supervisor ? (
+                        <div className="mt-1 text-xs text-ink/60">
+                          Supervisor: {visit.supervisor}
+                        </div>
+                      ) : null}
                       <div className="mt-1 text-xs text-ink/60">
                         {visit.situacao ? `Situacao: ${visit.situacao}` : "Situacao nao informada"}
                       </div>
-                      {visit.perfil_visita ? (
-                        <div className="mt-1 text-xs text-ink/60">Perfil: {visit.perfil_visita}</div>
+                      {visit.perfil_visita || visit.perfil_visita_opcoes ? (
+                        <div className="mt-1 text-xs text-ink/60">
+                          Perfil:{" "}
+                          {formatPerfilDisplay(visit.perfil_visita_opcoes ?? visit.perfil_visita)}
+                        </div>
                       ) : null}
                       {visit.completed_at ? (
                         <div className="mt-1 text-[11px] text-ink/50">

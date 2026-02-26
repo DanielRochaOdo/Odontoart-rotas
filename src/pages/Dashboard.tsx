@@ -42,6 +42,8 @@ type VisitStats = {
   visitasPendentes: number;
 };
 
+type DonutSeries = { label: string; value: number; color: string };
+
 const computeVisitStats = (data: Array<{ agenda_id: string | null; completed_at: string | null; completed_vidas: number | null; no_visit_reason: string | null }>): VisitStats => {
   const totalVidas = (data ?? []).reduce((sum, item) => {
     const value = Number(item.completed_vidas ?? 0);
@@ -75,6 +77,48 @@ const computeVisitStats = (data: Array<{ agenda_id: string | null; completed_at:
   };
 };
 
+const buildDailyVidasSeries = (
+  data: Array<{
+    visit_date: string | null;
+    completed_at: string | null;
+    completed_vidas: number | null;
+    no_visit_reason: string | null;
+  }>,
+  days = 7,
+): DonutSeries[] => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const labels: { key: string; label: string }[] = [];
+  for (let i = days - 1; i >= 0; i -= 1) {
+    const date = new Date(today);
+    date.setDate(today.getDate() - i);
+    const key = date.toISOString().slice(0, 10);
+    const label = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(date);
+    labels.push({ key, label });
+  }
+
+  const totals = new Map<string, number>();
+  labels.forEach(({ key }) => totals.set(key, 0));
+
+  (data ?? []).forEach((item) => {
+    if (!item.completed_at || item.no_visit_reason) return;
+    const key = item.visit_date ?? item.completed_at?.slice(0, 10);
+    if (!key || !totals.has(key)) return;
+    const value = Number(item.completed_vidas ?? 0);
+    if (!Number.isFinite(value)) return;
+    totals.set(key, (totals.get(key) ?? 0) + value);
+  });
+
+  const palette = ["#0f766e", "#1f7a5a", "#22c55e", "#38bdf8", "#7dd3fc", "#94a3b8", "#e2e8f0"];
+
+  return labels.map(({ key, label }, index) => ({
+    label,
+    value: totals.get(key) ?? 0,
+    color: palette[index % palette.length],
+  }));
+};
+
 export default function Dashboard() {
   const { role, profile, session } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -90,8 +134,10 @@ export default function Dashboard() {
   >([]);
   const [visitStats, setVisitStats] = useState<VisitStats | null>(null);
   const [visitStatsError, setVisitStatsError] = useState<string | null>(null);
+  const [visitDailyVidas, setVisitDailyVidas] = useState<DonutSeries[]>([]);
   const [teamStats, setTeamStats] = useState<VisitStats | null>(null);
   const [teamStatsError, setTeamStatsError] = useState<string | null>(null);
+  const [teamDailyVidas, setTeamDailyVidas] = useState<DonutSeries[]>([]);
   const [teamVendorsCount, setTeamVendorsCount] = useState(0);
   const [supervisores, setSupervisores] = useState<
     { id: string; display_name: string | null }[]
@@ -189,9 +235,11 @@ export default function Dashboard() {
       if (supaError) {
         setVisitStatsError(supaError.message);
         setVisitStats(null);
+        setVisitDailyVidas([]);
         return;
       }
 
+      setVisitDailyVidas(buildDailyVidasSeries(data ?? []));
       setVisitStats(
         computeVisitStats(
           (data ?? []).map((item) => ({
@@ -270,9 +318,11 @@ export default function Dashboard() {
       if (visitsError) {
         setTeamStatsError(visitsError.message);
         setTeamStats(null);
+        setTeamDailyVidas([]);
         return;
       }
 
+      setTeamDailyVidas(buildDailyVidasSeries(visitsData ?? []));
       setTeamStats(
         computeVisitStats(
           (visitsData ?? []).map((item) => ({
@@ -346,6 +396,14 @@ export default function Dashboard() {
   }, [summaryRows]);
 
   const donutLabel = (value: number) => new Intl.NumberFormat("pt-BR").format(value);
+  const dailyVidasTotal = useMemo(
+    () => visitDailyVidas.reduce((sum, item) => sum + item.value, 0),
+    [visitDailyVidas],
+  );
+  const teamDailyVidasTotal = useMemo(
+    () => teamDailyVidas.reduce((sum, item) => sum + item.value, 0),
+    [teamDailyVidas],
+  );
 
   const renderDonut = (
     title: string,
@@ -539,7 +597,7 @@ export default function Dashboard() {
           )}
 
           {isVendor && (
-            <section className="grid gap-4 lg:grid-cols-2">
+            <section className="grid gap-4 lg:grid-cols-3">
               {visitStatsError ? (
                 <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-600">
                   {visitStatsError}
@@ -565,6 +623,12 @@ export default function Dashboard() {
                     ],
                     "Mes atual",
                   )}
+                  {renderDonut(
+                    "Vidas por dia",
+                    dailyVidasTotal,
+                    visitDailyVidas,
+                    "Ultimos 7 dias",
+                  )}
                 </>
               ) : (
                 <div className="rounded-2xl border border-sea/20 bg-sand/30 p-5 text-sm text-ink/70">
@@ -575,7 +639,7 @@ export default function Dashboard() {
           )}
 
           {canViewTeamStats && (
-            <section className="grid gap-4 lg:grid-cols-2">
+            <section className="grid gap-4 lg:grid-cols-3">
               {teamStatsError ? (
                 <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-600">
                   {teamStatsError}
@@ -600,6 +664,12 @@ export default function Dashboard() {
                       { label: "Empresas visitadas", value: teamStats.empresasVisitadas, color: "#38bdf8" },
                     ],
                     "Mes atual",
+                  )}
+                  {renderDonut(
+                    "Vidas por dia (equipe)",
+                    teamDailyVidasTotal,
+                    teamDailyVidas,
+                    "Ultimos 7 dias",
                   )}
                 </>
               ) : (
