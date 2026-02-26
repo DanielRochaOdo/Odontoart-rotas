@@ -173,6 +173,8 @@ export default function Clientes() {
   const [addressLookupError, setAddressLookupError] = useState<string | null>(null);
   const [addressLookupLoadingEdit, setAddressLookupLoadingEdit] = useState(false);
   const [addressLookupErrorEdit, setAddressLookupErrorEdit] = useState<string | null>(null);
+  const skipCepLookupRef = useRef(false);
+  const skipCepLookupEditRef = useRef(false);
 
   const loadClientes = async () => {
     setLoading(true);
@@ -302,6 +304,10 @@ export default function Clientes() {
   }, [history, historySupervisorId, historySupervisores]);
 
   useEffect(() => {
+    if (skipCepLookupRef.current) {
+      skipCepLookupRef.current = false;
+      return;
+    }
     const digits = sanitizeCep(form.cep);
     if (digits.length !== 8) {
       setCepError(null);
@@ -338,6 +344,10 @@ export default function Clientes() {
   }, [form.cep]);
 
   useEffect(() => {
+    if (skipCepLookupEditRef.current) {
+      skipCepLookupEditRef.current = false;
+      return;
+    }
     const digits = sanitizeCep(editForm.cep);
     if (digits.length !== 8) {
       setCepErrorEdit(null);
@@ -536,6 +546,9 @@ export default function Clientes() {
       if (!mapped) {
         throw new Error("Endereco nao encontrado.");
       }
+      if (mapped.cep) {
+        skipCepLookupRef.current = true;
+      }
       setForm((prev) => ({
         ...prev,
         bairro: mapped.bairro ?? prev.bairro,
@@ -545,6 +558,33 @@ export default function Clientes() {
       setAddressLookupError("Endereco nao encontrado ou API indisponivel.");
     } finally {
       setAddressLookupLoading(false);
+    }
+  };
+
+  const handleCepLookup = async () => {
+    const digits = sanitizeCep(form.cep);
+    if (digits.length !== 8) {
+      setCepError("Informe um CEP valido.");
+      return;
+    }
+    setCepLoading(true);
+    setCepError(null);
+    try {
+      const mapped = await fetchNominatimByCep(digits);
+      if (!mapped) {
+        throw new Error("CEP nao encontrado.");
+      }
+      setForm((prev) => ({
+        ...prev,
+        endereco: mapped.endereco ?? prev.endereco,
+        bairro: mapped.bairro ?? prev.bairro,
+        cidade: mapped.cidade ?? prev.cidade,
+        uf: mapped.uf ?? prev.uf,
+      }));
+    } catch (err) {
+      setCepError("CEP nao encontrado ou API indisponivel.");
+    } finally {
+      setCepLoading(false);
     }
   };
 
@@ -581,6 +621,32 @@ export default function Clientes() {
     }
   };
 
+  const handleCepLookupEdit = async () => {
+    const digits = sanitizeCep(editForm.cep);
+    if (digits.length !== 8) {
+      setCepErrorEdit("Informe um CEP valido.");
+      return;
+    }
+    setCepLoadingEdit(true);
+    setCepErrorEdit(null);
+    try {
+      const mapped = await fetchNominatimByCep(digits);
+      if (!mapped) {
+        throw new Error("CEP nao encontrado.");
+      }
+      setEditForm((prev) => ({
+        ...prev,
+        endereco: mapped.endereco ?? prev.endereco,
+        bairro: mapped.bairro ?? prev.bairro,
+        cidade: mapped.cidade ?? prev.cidade,
+        uf: mapped.uf ?? prev.uf,
+      }));
+    } catch (err) {
+      setCepErrorEdit("CEP nao encontrado ou API indisponivel.");
+    } finally {
+      setCepLoadingEdit(false);
+    }
+  };
   const handleAddressLookupEdit = async () => {
     const road = editForm.endereco.trim();
     const city = editForm.cidade.trim();
@@ -595,6 +661,9 @@ export default function Clientes() {
       const mapped = await fetchNominatimByAddress(road, city, state);
       if (!mapped) {
         throw new Error("Endereco nao encontrado.");
+      }
+      if (mapped.cep) {
+        skipCepLookupEditRef.current = true;
       }
       setEditForm((prev) => ({
         ...prev,
@@ -742,6 +811,14 @@ export default function Clientes() {
               placeholder="00000-000"
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
+            <button
+              type="button"
+              onClick={handleCepLookup}
+              disabled={cepLoading || sanitizeCep(form.cep).length !== 8}
+              className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
+            >
+              {cepLoading ? "Buscando CEP..." : "Cadastrar via CEP"}
+            </button>
             {cepLoading && (
               <span className="text-[11px] text-ink/60">Consultando CEP...</span>
             )}
@@ -819,7 +896,7 @@ export default function Clientes() {
               disabled={!canSearchEndereco || addressLookupLoading}
               className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
             >
-              {addressLookupLoading ? "Buscando endereco..." : "Buscar endereco"}
+              {addressLookupLoading ? "Buscando endereco..." : "Cadastrar via endereco"}
             </button>
             {addressLookupError && (
               <span className="text-[11px] font-normal text-red-600">{addressLookupError}</span>
@@ -1068,6 +1145,14 @@ export default function Clientes() {
                     placeholder="00000-000"
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
+                  <button
+                    type="button"
+                    onClick={handleCepLookupEdit}
+                    disabled={cepLoadingEdit || sanitizeCep(editForm.cep).length !== 8}
+                    className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
+                  >
+                    {cepLoadingEdit ? "Buscando CEP..." : "Cadastrar via CEP"}
+                  </button>
                   {cepLoadingEdit && (
                     <span className="text-[11px] text-ink/60">Consultando CEP...</span>
                   )}
@@ -1145,7 +1230,7 @@ export default function Clientes() {
                     disabled={!canSearchEnderecoEdit || addressLookupLoadingEdit}
                     className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
                   >
-                    {addressLookupLoadingEdit ? "Buscando endereco..." : "Buscar endereco"}
+                    {addressLookupLoadingEdit ? "Buscando endereco..." : "Cadastrar via endereco"}
                   </button>
                   {addressLookupErrorEdit && (
                     <span className="text-[11px] font-normal text-red-600">{addressLookupErrorEdit}</span>
