@@ -803,7 +803,7 @@ export default function Agenda() {
           );
         },
         enableSorting: false,
-        size: 48,
+        size: 25,
       },
       {
         id: "obs",
@@ -825,17 +825,17 @@ export default function Agenda() {
                   openScheduleModal(info.row.original);
                 }}
                 onPointerDown={(event) => event.stopPropagation()}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-amber-300 bg-amber-50 text-amber-700 hover:border-amber-400"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-amber-300 bg-amber-50 text-amber-700 hover:border-amber-400"
                 title="Visitas agendadas"
                 aria-label="Visitas agendadas"
               >
-                <MessageSquare size={14} />
+                <MessageSquare size={12} />
               </button>
             </div>
           );
         },
         enableSorting: false,
-        size: 52,
+        size: 25,
       },
       {
         accessorKey: "data_da_ultima_visita",
@@ -1741,16 +1741,29 @@ export default function Agenda() {
               <thead className="sticky top-0 z-30 bg-sand/60 shadow-sm overflow-visible">
                 {table.getHeaderGroups().map((headerGroup) => (
                   <tr key={headerGroup.id}>
-                    {headerGroup.headers.map((header) => (
-                      <th
-                        key={header.id}
-                        className="relative align-top whitespace-normal border-b border-sea/20 px-4 py-3 text-xs font-semibold text-ink/70 overflow-visible"
-                      >
-                        {header.isPlaceholder
-                          ? null
-                          : flexRender(header.column.columnDef.header, header.getContext())}
-                      </th>
-                    ))}
+                    {headerGroup.headers.map((header) => {
+                      const isTight = header.column.id === "select" || header.column.id === "obs";
+                      const tightStyles = isTight
+                        ? {
+                            width: header.getSize(),
+                            minWidth: header.getSize(),
+                            maxWidth: header.getSize(),
+                          }
+                        : undefined;
+                      return (
+                        <th
+                          key={header.id}
+                          style={tightStyles}
+                          className={`relative align-top whitespace-normal border-b border-sea/20 py-3 text-xs font-semibold text-ink/70 overflow-visible ${
+                            isTight ? "px-1 text-center" : "px-4"
+                          }`}
+                        >
+                          {header.isPlaceholder
+                            ? null
+                            : flexRender(header.column.columnDef.header, header.getContext())}
+                        </th>
+                      );
+                    })}
                   </tr>
                 ))}
               </thead>
@@ -1783,11 +1796,27 @@ export default function Agenda() {
                         setSelectedRowId(row.original.id);
                       }}
                     >
-                      {row.getVisibleCells().map((cell) => (
-                        <td key={cell.id} className="whitespace-normal break-words px-4 py-3 text-sm text-ink">
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
-                      ))}
+                      {row.getVisibleCells().map((cell) => {
+                        const isTight = cell.column.id === "select" || cell.column.id === "obs";
+                        const tightStyles = isTight
+                          ? {
+                              width: cell.column.getSize(),
+                              minWidth: cell.column.getSize(),
+                              maxWidth: cell.column.getSize(),
+                            }
+                          : undefined;
+                        return (
+                          <td
+                            key={cell.id}
+                            style={tightStyles}
+                            className={`whitespace-normal break-words py-3 text-sm text-ink ${
+                              isTight ? "px-1 text-center" : "px-4"
+                            }`}
+                          >
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </td>
+                        );
+                      })}
                     </tr>
                   ))
                 )}
