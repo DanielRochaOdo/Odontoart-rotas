@@ -120,6 +120,17 @@ export type AgendaFetchResult = {
   count: number;
 };
 
+export type AgendaScheduledVisit = {
+  id: string;
+  agenda_id: string;
+  visit_date: string;
+  assigned_to_user_id: string | null;
+  assigned_to_name: string | null;
+  perfil_visita: string | null;
+  completed_at: string | null;
+  route_id: string | null;
+};
+
 export const fetchAgenda = async (
   pageIndex: number,
   pageSize: number,
@@ -129,10 +140,9 @@ export const fetchAgenda = async (
   let query = supabase
     .from("agenda")
     .select(
-      "id, data_da_ultima_visita, cod_1, empresa, perfil_visita, corte, venc, valor, tit, endereco, bairro, cidade, uf, supervisor, vendedor, cod_2, nome_fantasia, grupo, situacao, obs_contrato_1, obs_contrato_2, created_at",
+      "id, data_da_ultima_visita, cod_1, empresa, perfil_visita, corte, venc, valor, tit, endereco, bairro, cidade, uf, supervisor, vendedor, cod_2, nome_fantasia, grupo, situacao, obs_contrato_1, obs_contrato_2, visit_generated_at, created_at",
       { count: "exact" },
     )
-    .is("visit_generated_at", null)
     .ilike("situacao", "ativo%");
 
   query = applyFilters(query, filters);
@@ -155,6 +165,24 @@ export const fetchAgenda = async (
   return { data: (data ?? []) as AgendaRow[], count: count ?? 0 };
 };
 
+export const fetchAgendaScheduledVisits = async (agendaIds: string[]) => {
+  if (!agendaIds.length) return [] as AgendaScheduledVisit[];
+  const { data, error } = await supabase
+    .from("visits")
+    .select(
+      "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, completed_at, route_id",
+    )
+    .in("agenda_id", agendaIds)
+    .is("completed_at", null)
+    .order("visit_date", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as AgendaScheduledVisit[];
+};
+
 export const fetchDistinctOptions = async (filterKey: string, columns: string[]) => {
   const cached = optionsCache.get(filterKey);
   if (cached) {
@@ -168,7 +196,6 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
       .from("agenda")
       .select(column)
       .not(column, "is", null)
-      .is("visit_generated_at", null)
       .ilike("situacao", "ativo%")
       .limit(2000);
 
@@ -198,14 +225,30 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
   return options;
 };
 
-export const fetchAgendaForGeneration = async (filters: AgendaFilters) => {
-  let query = supabase
-    .from("agenda")
-    .select("id, perfil_visita")
-    .is("visit_generated_at", null)
-    .ilike("situacao", "ativo%")
-    .order("id", { ascending: true });
+export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: string[]) => {
+  const buildQuery = () =>
+    supabase
+      .from("agenda")
+      .select("id, perfil_visita")
+      .is("visit_generated_at", null)
+      .ilike("situacao", "ativo%")
+      .order("id", { ascending: true });
 
+  if (ids && ids.length > 0) {
+    const results: { id: string; perfil_visita: string | null }[] = [];
+    const chunkSize = 500;
+
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunk = ids.slice(i, i + chunkSize);
+      const { data, error } = await buildQuery().in("id", chunk);
+      if (error) throw new Error(error.message);
+      results.push(...((data ?? []) as { id: string; perfil_visita: string | null }[]));
+    }
+
+    return results;
+  }
+
+  let query = buildQuery();
   query = applyFilters(query, filters);
 
   const results: { id: string; perfil_visita: string | null }[] = [];

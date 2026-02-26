@@ -69,9 +69,10 @@ const formatVisitDate = (value: string | null) => {
 };
 
 const NO_VISIT_REASONS = [
-  "RESPONSAVEL NÃO COMPARECEU",
-  "VISITA REMARCADA",
-  "EMPRESA FECHADA",
+  "NAO AUTORIZADO",
+  "NÃƒO CHEGOU A TEMPO",
+  "ENDEREÃ‡O NAO LOCALIZADO",
+  "AUSENTE NO DIA",
 ];
 
 
@@ -205,6 +206,7 @@ export default function Visitas() {
 
       if (isVendor) {
         let blocked = false;
+        let blockReason: string | null = null;
         if (session?.user.id || profile?.display_name) {
           let baseQuery = supabase
             .from("visits")
@@ -225,12 +227,28 @@ export default function Visitas() {
           const { count, error: countError } = await baseQuery;
           if (!countError && (count ?? 0) > 0) {
             blocked = true;
+            blockReason = "Conclua todas as visitas de ontem para ver as visitas de hoje.";
+          }
+        }
+
+        if (!blocked && session?.user.id) {
+          const { count, error: aceiteError } = await supabase
+            .from("aceite_digital")
+            .select("id", { count: "exact", head: true })
+            .eq("vendor_user_id", session.user.id)
+            .eq("entry_date", yesterdayKey);
+
+          if (aceiteError) {
+            console.error(aceiteError);
+          } else if ((count ?? 0) === 0) {
+            blocked = true;
+            blockReason = "Registre o aceite digital de ontem para ver as visitas de hoje.";
           }
         }
 
         if (blocked) {
           maxDate = yesterdayKey;
-          setBlockMessage("Conclua todas as visitas de ontem para ver as visitas de hoje.");
+          setBlockMessage(blockReason ?? "Conclua todas as visitas de ontem para ver as visitas de hoje.");
         } else {
           maxDate = todayKey;
           setBlockMessage(null);
@@ -719,7 +737,7 @@ export default function Visitas() {
       if (customTime && !normalizedOptions.includes(customTime)) {
         normalizedOptions.push(customTime);
       }
-      const perfilOpcoesString = normalizedOptions.length > 0 ? normalizedOptions.join(" • ") : null;
+      const perfilOpcoesString = normalizedOptions.length > 0 ? normalizedOptions.join(" ï¿½ ") : null;
 
       const { error: updateError } = await supabase
         .from("visits")

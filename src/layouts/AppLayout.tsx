@@ -12,6 +12,7 @@ import {
   Building2,
   Menu,
   X,
+  CheckSquare,
   Sun,
   Moon,
 } from "lucide-react";
@@ -29,6 +30,7 @@ const navItems: NavItem[] = [
   { label: "Dashboard", to: "/", icon: LayoutDashboard, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
   { label: "Agenda", to: "/agenda", icon: CalendarDays, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Visitas", to: "/visitas", icon: CalendarCheck, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
+  { label: "Aceite digital", to: "/aceite-digital", icon: CheckSquare, roles: ["VENDEDOR"] },
   { label: "Clientes", to: "/clientes", icon: Building2, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Configuracoes", to: "/configuracoes", icon: Settings, roles: ["SUPERVISOR"] },
 ];

@@ -6,6 +6,7 @@ import Dashboard from "./pages/Dashboard";
 import Agenda from "./pages/Agenda";
 import RoutesPage from "./pages/Routes";
 import Visitas from "./pages/Visitas";
+import AceiteDigital from "./pages/AceiteDigital";
 import Clientes from "./pages/Clientes";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
@@ -21,6 +22,7 @@ export default function App() {
             <Route path="agenda" element={<Agenda />} />
             <Route path="rotas" element={<RoutesPage />} />
             <Route path="visitas" element={<Visitas />} />
+            <Route path="aceite-digital" element={<AceiteDigital />} />
             <Route path="clientes" element={<Clientes />} />
             <Route path="configuracoes" element={<Settings />} />
           </Route>

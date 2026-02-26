@@ -20,7 +20,8 @@ import {
   isPresetPerfilVisita,
   normalizePerfilVisita,
 } from "../lib/perfilVisita";
-import { formatCep, isCepErrorPayload, mapCepResponse, sanitizeCep } from "../lib/cep";
+import { formatCep, sanitizeCep } from "../lib/cep";
+import { fetchNominatimByAddress, fetchNominatimByCep } from "../lib/nominatim";
 
 const formatDate = (value: string | null) => {
   if (!value) return "-";
@@ -166,6 +167,12 @@ export default function Clientes() {
   const [cepError, setCepError] = useState<string | null>(null);
   const [cepLoadingEdit, setCepLoadingEdit] = useState(false);
   const [cepErrorEdit, setCepErrorEdit] = useState<string | null>(null);
+  const [bairroLoading, setBairroLoading] = useState(false);
+  const [bairroLoadingEdit, setBairroLoadingEdit] = useState(false);
+  const [addressLookupLoading, setAddressLookupLoading] = useState(false);
+  const [addressLookupError, setAddressLookupError] = useState<string | null>(null);
+  const [addressLookupLoadingEdit, setAddressLookupLoadingEdit] = useState(false);
+  const [addressLookupErrorEdit, setAddressLookupErrorEdit] = useState<string | null>(null);
 
   const loadClientes = async () => {
     setLoading(true);
@@ -305,17 +312,10 @@ export default function Clientes() {
       setCepLoading(true);
       setCepError(null);
       try {
-        const baseUrl = (import.meta as ImportMeta & { env: Record<string, string> }).env
-          ?.VITE_CEP_API_URL ?? "http://localhost:8000";
-        const response = await fetch(`${baseUrl}/cep/${digits}`, { signal: controller.signal });
-        if (!response.ok) {
-          throw new Error("Falha ao consultar CEP.");
-        }
-        const data = (await response.json()) as Record<string, unknown>;
-        if (isCepErrorPayload(data)) {
+        const mapped = await fetchNominatimByCep(digits, controller.signal);
+        if (!mapped) {
           throw new Error("CEP nao encontrado.");
         }
-        const mapped = mapCepResponse(data);
         setForm((prev) => ({
           ...prev,
           endereco: mapped.endereco ?? prev.endereco,
@@ -348,17 +348,10 @@ export default function Clientes() {
       setCepLoadingEdit(true);
       setCepErrorEdit(null);
       try {
-        const baseUrl = (import.meta as ImportMeta & { env: Record<string, string> }).env
-          ?.VITE_CEP_API_URL ?? "http://localhost:8000";
-        const response = await fetch(`${baseUrl}/cep/${digits}`, { signal: controller.signal });
-        if (!response.ok) {
-          throw new Error("Falha ao consultar CEP.");
-        }
-        const data = (await response.json()) as Record<string, unknown>;
-        if (isCepErrorPayload(data)) {
+        const mapped = await fetchNominatimByCep(digits, controller.signal);
+        if (!mapped) {
           throw new Error("CEP nao encontrado.");
         }
-        const mapped = mapCepResponse(data);
         setEditForm((prev) => ({
           ...prev,
           endereco: mapped.endereco ?? prev.endereco,
@@ -379,6 +372,76 @@ export default function Clientes() {
       controller.abort();
     };
   }, [editForm.cep]);
+
+  useEffect(() => {
+    const road = form.endereco.trim();
+    const city = form.cidade.trim();
+    const state = form.uf.trim();
+    const cepDigits = sanitizeCep(form.cep);
+    if (!road || !city || !state || cepDigits.length === 8) {
+      setBairroLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const handler = window.setTimeout(async () => {
+      setBairroLoading(true);
+      try {
+        const mapped = await fetchNominatimByAddress(road, city, state, controller.signal);
+        if (mapped?.bairro) {
+          setForm((prev) => ({
+            ...prev,
+            bairro: mapped.bairro ?? prev.bairro,
+          }));
+        }
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") {
+          console.error(err);
+        }
+      } finally {
+        setBairroLoading(false);
+      }
+    }, 600);
+    return () => {
+      window.clearTimeout(handler);
+      controller.abort();
+      setBairroLoading(false);
+    };
+  }, [form.endereco, form.cidade, form.uf, form.cep]);
+
+  useEffect(() => {
+    const road = editForm.endereco.trim();
+    const city = editForm.cidade.trim();
+    const state = editForm.uf.trim();
+    const cepDigits = sanitizeCep(editForm.cep);
+    if (!road || !city || !state || cepDigits.length === 8) {
+      setBairroLoadingEdit(false);
+      return;
+    }
+    const controller = new AbortController();
+    const handler = window.setTimeout(async () => {
+      setBairroLoadingEdit(true);
+      try {
+        const mapped = await fetchNominatimByAddress(road, city, state, controller.signal);
+        if (mapped?.bairro) {
+          setEditForm((prev) => ({
+            ...prev,
+            bairro: mapped.bairro ?? prev.bairro,
+          }));
+        }
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") {
+          console.error(err);
+        }
+      } finally {
+        setBairroLoadingEdit(false);
+      }
+    }, 600);
+    return () => {
+      window.clearTimeout(handler);
+      controller.abort();
+      setBairroLoadingEdit(false);
+    };
+  }, [editForm.endereco, editForm.cidade, editForm.uf, editForm.cep]);
 
   const filteredClientes = useMemo(() => {
     const base = search.trim()
@@ -458,6 +521,33 @@ export default function Clientes() {
     }
   };
 
+  const handleAddressLookup = async () => {
+    const road = form.endereco.trim();
+    const city = form.cidade.trim();
+    const state = form.uf.trim();
+    if (!road || !city || !state) {
+      setAddressLookupError("Informe endereco, cidade e UF.");
+      return;
+    }
+    setAddressLookupLoading(true);
+    setAddressLookupError(null);
+    try {
+      const mapped = await fetchNominatimByAddress(road, city, state);
+      if (!mapped) {
+        throw new Error("Endereco nao encontrado.");
+      }
+      setForm((prev) => ({
+        ...prev,
+        bairro: mapped.bairro ?? prev.bairro,
+        cep: mapped.cep ? formatCep(mapped.cep) : prev.cep,
+      }));
+    } catch (err) {
+      setAddressLookupError("Endereco nao encontrado ou API indisponivel.");
+    } finally {
+      setAddressLookupLoading(false);
+    }
+  };
+
   const handleSaveEdit = async () => {
     if (!selected || !canEdit) return;
     if (!editForm.empresa.trim() && !editForm.nome_fantasia.trim()) {
@@ -488,6 +578,33 @@ export default function Clientes() {
       setError(err instanceof Error ? err.message : "Erro ao atualizar cliente.");
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  const handleAddressLookupEdit = async () => {
+    const road = editForm.endereco.trim();
+    const city = editForm.cidade.trim();
+    const state = editForm.uf.trim();
+    if (!road || !city || !state) {
+      setAddressLookupErrorEdit("Informe endereco, cidade e UF.");
+      return;
+    }
+    setAddressLookupLoadingEdit(true);
+    setAddressLookupErrorEdit(null);
+    try {
+      const mapped = await fetchNominatimByAddress(road, city, state);
+      if (!mapped) {
+        throw new Error("Endereco nao encontrado.");
+      }
+      setEditForm((prev) => ({
+        ...prev,
+        bairro: mapped.bairro ?? prev.bairro,
+        cep: mapped.cep ? formatCep(mapped.cep) : prev.cep,
+      }));
+    } catch (err) {
+      setAddressLookupErrorEdit("Endereco nao encontrado ou API indisponivel.");
+    } finally {
+      setAddressLookupLoadingEdit(false);
     }
   };
 
@@ -573,6 +690,11 @@ export default function Clientes() {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
+
+  const canEditEndereco = Boolean(form.cidade.trim() && form.uf.trim());
+  const canSearchEndereco = Boolean(form.endereco.trim() && canEditEndereco);
+  const canEditEnderecoEdit = Boolean(editForm.cidade.trim() && editForm.uf.trim());
+  const canSearchEnderecoEdit = Boolean(editForm.endereco.trim() && canEditEnderecoEdit);
 
   if (!canView) {
     return (
@@ -683,8 +805,25 @@ export default function Clientes() {
             <input
               value={form.endereco}
               onChange={(event) => setForm((prev) => ({ ...prev, endereco: event.target.value }))}
+              disabled={!canEditEndereco}
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
+            {!canEditEndereco && (
+              <span className="text-[10px] font-normal text-ink/50">
+                Informe cidade e UF para editar o endereco.
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={handleAddressLookup}
+              disabled={!canSearchEndereco || addressLookupLoading}
+              className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
+            >
+              {addressLookupLoading ? "Buscando endereco..." : "Buscar endereco"}
+            </button>
+            {addressLookupError && (
+              <span className="text-[11px] font-normal text-red-600">{addressLookupError}</span>
+            )}
           </label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
             Bairro
@@ -693,6 +832,11 @@ export default function Clientes() {
               onChange={(event) => setForm((prev) => ({ ...prev, bairro: event.target.value }))}
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
+            {bairroLoading && (
+              <span className="text-[10px] font-normal text-ink/50 animate-pulse">
+                Buscando bairro...
+              </span>
+            )}
           </label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             Perfil visita
@@ -987,8 +1131,25 @@ export default function Clientes() {
                   <input
                     value={editForm.endereco}
                     onChange={(event) => setEditForm((prev) => ({ ...prev, endereco: event.target.value }))}
+                    disabled={!canEditEnderecoEdit}
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
+                  {!canEditEnderecoEdit && (
+                    <span className="text-[10px] font-normal text-ink/50">
+                      Informe cidade e UF para editar o endereco.
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleAddressLookupEdit}
+                    disabled={!canSearchEnderecoEdit || addressLookupLoadingEdit}
+                    className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
+                  >
+                    {addressLookupLoadingEdit ? "Buscando endereco..." : "Buscar endereco"}
+                  </button>
+                  {addressLookupErrorEdit && (
+                    <span className="text-[11px] font-normal text-red-600">{addressLookupErrorEdit}</span>
+                  )}
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
                   Bairro
@@ -997,6 +1158,11 @@ export default function Clientes() {
                     onChange={(event) => setEditForm((prev) => ({ ...prev, bairro: event.target.value }))}
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
+                  {bairroLoadingEdit && (
+                    <span className="text-[10px] font-normal text-ink/50 animate-pulse">
+                      Buscando bairro...
+                    </span>
+                  )}
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Perfil visita

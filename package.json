@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "import:agenda": "tsx scripts/import_agenda_xlsx.ts"
+    "import:agenda": "tsx scripts/import_agenda_xlsx.ts",
+    "backfill:bairro": "tsx scripts/backfill_bairro_nominatim.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",

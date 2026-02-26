@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AgendaRow } from "../../types/agenda";
 import { supabase } from "../../lib/supabase";
+import { fetchNominatimByAddress } from "../../lib/nominatim";
 import {
   PERFIL_VISITA_PRESETS,
   extractCustomTimes,
@@ -113,6 +114,7 @@ export default function AgendaDrawer({
   const [saving, setSaving] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [bairroLoading, setBairroLoading] = useState(false);
   const initialPerfilValue = normalizePerfilVisita(row?.perfil_visita ?? "");
   const initialCustomTimes = extractCustomTimes(row?.perfil_visita ?? null);
   const initialPerfilIsCustom = initialPerfilValue !== "" && !isPresetPerfilVisita(initialPerfilValue);
@@ -163,6 +165,48 @@ export default function AgendaDrawer({
     }
     return values;
   }, [supervisorOptions, formState?.supervisor]);
+
+  useEffect(() => {
+    if (!isEditing || !formState) {
+      setBairroLoading(false);
+      return;
+    }
+    const road = formState.endereco.trim();
+    const city = formState.cidade.trim();
+    const state = formState.uf.trim();
+    if (!road || !city || !state) {
+      setBairroLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const handler = window.setTimeout(async () => {
+      setBairroLoading(true);
+      try {
+        const mapped = await fetchNominatimByAddress(road, city, state, controller.signal);
+        if (mapped?.bairro) {
+          setFormState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  bairro: mapped.bairro ?? prev.bairro,
+                }
+              : prev,
+          );
+        }
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") {
+          console.error(err);
+        }
+      } finally {
+        setBairroLoading(false);
+      }
+    }, 600);
+    return () => {
+      window.clearTimeout(handler);
+      controller.abort();
+      setBairroLoading(false);
+    };
+  }, [isEditing, formState?.endereco, formState?.cidade, formState?.uf]);
 
   if (!row || !formState) return null;
 
@@ -446,6 +490,29 @@ export default function AgendaDrawer({
                       </div>
                     )}
                   </div>
+                ) : field.key === "bairro" ? (
+                  <>
+                    <input
+                      type={field.type}
+                      value={formState[field.key]}
+                      onChange={(event) =>
+                        setFormState((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                [field.key]: event.target.value,
+                              }
+                            : prev,
+                        )
+                      }
+                      className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                    {bairroLoading && (
+                      <span className="text-[10px] font-normal text-ink/50 animate-pulse">
+                        Buscando bairro...
+                      </span>
+                    )}
+                  </>
                 ) : (
                   <input
                     type={field.type}

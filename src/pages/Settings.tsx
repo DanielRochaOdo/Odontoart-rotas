@@ -13,7 +13,8 @@ import {
 } from "../lib/settingsApi";
 import { emitProfilesUpdated } from "../lib/profileEvents";
 import type { CepMapped } from "../lib/cep";
-import { formatCep, isCepErrorPayload, mapCepResponse, sanitizeCep } from "../lib/cep";
+import { formatCep, sanitizeCep } from "../lib/cep";
+import { fetchNominatimByCep } from "../lib/nominatim";
 
 type TabKey = "SUPERVISORES" | "VENDEDORES" | "ASSISTENTES";
 
@@ -27,9 +28,7 @@ type VendorFormState = FormState & {
   supervisor_id: string;
 };
 
-type AssistantFormState = FormState & {
-  vendedor_id: string;
-};
+type AssistantFormState = FormState;
 
 const filterByRole = (profiles: ManagedProfile[], role: ManagedProfile["role"]) =>
   profiles.filter((profile) => profile.role === role);
@@ -69,7 +68,6 @@ export default function Settings() {
     display_name: "",
     email: "",
     password: "",
-    vendedor_id: "",
   });
 
   const [editingSupervisorId, setEditingSupervisorId] = useState<string | null>(null);
@@ -91,7 +89,6 @@ export default function Settings() {
     display_name: "",
     email: "",
     password: "",
-    vendedor_id: "",
   });
 
   const supervisors = useMemo(() => sortByName(filterByRole(profiles, "SUPERVISOR")), [profiles]);
@@ -129,19 +126,11 @@ export default function Settings() {
       setCepLoading(true);
       setCepError(null);
       try {
-        const baseUrl = (import.meta as ImportMeta & { env: Record<string, string> }).env
-          ?.VITE_CEP_API_URL ?? "http://localhost:8000";
-        const response = await fetch(`${baseUrl}/cep/${sanitized}`, {
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          throw new Error("Nao foi possivel consultar o CEP.");
-        }
-        const data = (await response.json()) as Record<string, unknown>;
-        if (isCepErrorPayload(data)) {
+        const mapped = await fetchNominatimByCep(sanitized, controller.signal);
+        if (!mapped) {
           throw new Error("CEP nao encontrado.");
         }
-        setCepResult(mapCepResponse(data));
+        setCepResult(mapped);
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
           setCepError("CEP nao encontrado ou API indisponivel.");
@@ -163,7 +152,7 @@ export default function Settings() {
     setEditingAssistantId(null);
     setSupervisorEdit({ display_name: "", email: "", password: "" });
     setVendorEdit({ display_name: "", email: "", password: "", supervisor_id: "" });
-    setAssistantEdit({ display_name: "", email: "", password: "", vendedor_id: "" });
+    setAssistantEdit({ display_name: "", email: "", password: "" });
   };
 
   const handleCreateSupervisor = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -219,8 +208,8 @@ export default function Settings() {
 
   const handleCreateAssistant = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!assistantForm.display_name || !assistantForm.email || !assistantForm.password || !assistantForm.vendedor_id) {
-      setError("Preencha nome, e-mail, senha e vendedor.");
+    if (!assistantForm.display_name || !assistantForm.email || !assistantForm.password) {
+      setError("Preencha nome, e-mail e senha.");
       return;
     }
     setCreatingAssistant(true);
@@ -231,11 +220,10 @@ export default function Settings() {
         email: assistantForm.email,
         password: assistantForm.password,
         role: "ASSISTENTE",
-        vendedor_id: assistantForm.vendedor_id,
       });
       setProfiles((prev) => [created, ...prev]);
       emitProfilesUpdated();
-      setAssistantForm({ display_name: "", email: "", password: "", vendedor_id: "" });
+      setAssistantForm({ display_name: "", email: "", password: "" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao criar assistente.");
     } finally {
@@ -271,7 +259,6 @@ export default function Settings() {
       display_name: profile.display_name ?? "",
       email: "",
       password: "",
-      vendedor_id: profile.vendedor_id ?? "",
     });
   };
   const handleSaveSupervisor = async () => {
@@ -354,8 +341,8 @@ export default function Settings() {
 
   const handleSaveAssistant = async () => {
     if (!editingAssistantId) return;
-    if (!assistantEdit.display_name || !assistantEdit.vendedor_id) {
-      setError("Nome e vendedor sao obrigatorios.");
+    if (!assistantEdit.display_name) {
+      setError("Nome do assistente e obrigatorio.");
       return;
     }
     const current = profiles.find((item) => item.id === editingAssistantId) ?? null;
@@ -369,7 +356,7 @@ export default function Settings() {
       const updated = await updateManagedProfile({
         id: editingAssistantId,
         display_name: assistantEdit.display_name,
-        vendedor_id: assistantEdit.vendedor_id,
+        vendedor_id: null,
         supervisor_id: null,
       });
       setProfiles((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
@@ -384,7 +371,7 @@ export default function Settings() {
       }
 
       setEditingAssistantId(null);
-      setAssistantEdit({ display_name: "", email: "", password: "", vendedor_id: "" });
+      setAssistantEdit({ display_name: "", email: "", password: "" });
       emitProfilesUpdated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao atualizar assistente.");
@@ -839,21 +826,6 @@ export default function Settings() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                  Vendedor
-                  <select
-                    value={assistantForm.vendedor_id}
-                    onChange={(event) => setAssistantForm((prev) => ({ ...prev, vendedor_id: event.target.value }))}
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  >
-                    <option value="">Selecione</option>
-                    {vendors.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.display_name ?? item.user_id}
-                      </option>
-                    ))}
-                  </select>
-                </label>
                 <div className="flex items-end">
                   <button
                     type="submit"
@@ -882,18 +854,6 @@ export default function Settings() {
                             onChange={(event) => setAssistantEdit((prev) => ({ ...prev, display_name: event.target.value }))}
                             className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
                           />
-                          <select
-                            value={assistantEdit.vendedor_id}
-                            onChange={(event) => setAssistantEdit((prev) => ({ ...prev, vendedor_id: event.target.value }))}
-                            className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
-                          >
-                            <option value="">Vendedor</option>
-                            {vendors.map((item) => (
-                              <option key={item.id} value={item.id}>
-                                {item.display_name ?? item.user_id}
-                              </option>
-                            ))}
-                          </select>
                           <input
                             type="email"
                             placeholder="Novo email"
@@ -926,9 +886,7 @@ export default function Settings() {
                       ) : (
                         <div>
                           <p className="text-sm font-semibold text-ink">{assistant.display_name ?? "Sem nome"}</p>
-                          <p className="text-xs text-ink/60">
-                            Vendedor: {assistant.vendedor?.display_name ?? "Nao informado"}
-                          </p>
+                          <p className="text-xs text-ink/60">Assistente</p>
                         </div>
                       )}
                       {editingAssistantId !== assistant.id && (

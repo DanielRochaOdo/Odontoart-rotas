@@ -89,9 +89,8 @@ serve(async (req) => {
     if (payload.role === "VENDEDOR" && !payload.supervisor_id) {
       return jsonResponse(400, { error: "Selecione um supervisor." });
     }
-    if (payload.role === "ASSISTENTE" && !payload.vendedor_id) {
-      return jsonResponse(400, { error: "Selecione um vendedor." });
-    }
+    const resolvedSupervisorId = payload.role === "VENDEDOR" ? payload.supervisor_id ?? null : null;
+    const resolvedVendedorId = payload.role === "ASSISTENTE" ? null : payload.vendedor_id ?? null;
 
     const { data: createdUser, error: createError } = await supabase.auth.admin.createUser({
       email: payload.email,
@@ -100,8 +99,8 @@ serve(async (req) => {
       user_metadata: {
         display_name: payload.display_name,
         role: payload.role,
-        supervisor_id: payload.supervisor_id ?? null,
-        vendedor_id: payload.vendedor_id ?? null,
+        supervisor_id: resolvedSupervisorId,
+        vendedor_id: resolvedVendedorId,
       },
     });
 
@@ -114,8 +113,8 @@ serve(async (req) => {
       .update({
         role: payload.role,
         display_name: payload.display_name,
-        supervisor_id: payload.supervisor_id ?? null,
-        vendedor_id: payload.vendedor_id ?? null,
+        supervisor_id: resolvedSupervisorId,
+        vendedor_id: resolvedVendedorId,
       })
       .eq("user_id", createdUser.user.id)
       .select(

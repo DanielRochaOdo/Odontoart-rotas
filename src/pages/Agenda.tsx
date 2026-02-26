@@ -10,9 +10,11 @@ import {
   clearAgendaOptionsCache,
   fetchAgenda,
   fetchAgendaForGeneration,
+  fetchAgendaScheduledVisits,
   fetchDistinctOptions,
   fetchSupervisores,
   fetchVendedores,
+  type AgendaScheduledVisit,
 } from "../lib/agendaApi";
 import type { AgendaRow } from "../types/agenda";
 import { useAgendaFilters } from "../hooks/useAgendaFilters";
@@ -21,10 +23,12 @@ import AgendaDrawer from "../components/agenda/AgendaDrawer";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { onProfilesUpdated } from "../lib/profileEvents";
+import { MessageSquare } from "lucide-react";
 
 const FILTER_SOURCES: Record<string, string[]> = {
   supervisor: ["supervisor"],
   vendedor: ["vendedor"],
+  cod_1: ["cod_1"],
   bairro: ["bairro"],
   cidade: ["cidade"],
   uf: ["uf"],
@@ -36,6 +40,7 @@ const FILTER_SOURCES: Record<string, string[]> = {
 const FILTER_LABELS: Record<string, string> = {
   supervisor: "Supervisor",
   vendedor: "Vendedor",
+  cod_1: "Codigo",
   bairro: "Bairro",
   cidade: "Cidade",
   uf: "UF",
@@ -82,6 +87,25 @@ export default function Agenda() {
   const [filterOptions, setFilterOptions] = useState<Record<string, string[]>>({});
   const [selectedRow, setSelectedRow] = useState<AgendaRow | null>(null);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
+  const [selectedAgendaIds, setSelectedAgendaIds] = useState<string[]>([]);
+  const [scheduledVisitsByAgenda, setScheduledVisitsByAgenda] = useState<
+    Record<string, AgendaScheduledVisit[]>
+  >({});
+  const [scheduleModalRow, setScheduleModalRow] = useState<AgendaRow | null>(null);
+  const [scheduleDrafts, setScheduleDrafts] = useState<
+    Array<{
+      id?: string;
+      vendorId: string;
+      vendorName: string;
+      date: string;
+      perfil: string;
+      routeId?: string | null;
+    }>
+  >([]);
+  const [scheduleOriginal, setScheduleOriginal] = useState<AgendaScheduledVisit[]>([]);
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
   const [vendedores, setVendedores] = useState<
     { user_id: string; display_name: string | null; role: string }[]
   >([]);
@@ -96,6 +120,7 @@ export default function Agenda() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const restoredViewRef = useRef(false);
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (restoredViewRef.current) return;
@@ -150,8 +175,17 @@ export default function Agenda() {
     [vendedores],
   );
 
+  const vendorById = useMemo(
+    () => new Map(vendedores.map((vendor) => [vendor.user_id, vendor.display_name ?? vendor.user_id])),
+    [vendedores],
+  );
+
   useEffect(() => {
     setPageIndex(0);
+  }, [filters, sorting]);
+
+  useEffect(() => {
+    setSelectedAgendaIds([]);
   }, [filters, sorting]);
 
   useEffect(() => {
@@ -245,6 +279,36 @@ export default function Agenda() {
   }, [filters, pageIndex, pageSize, sorting, refreshKey]);
 
   useEffect(() => {
+    let active = true;
+    const agendaIds = data.map((row) => row.id);
+    if (agendaIds.length === 0) {
+      setScheduledVisitsByAgenda({});
+      return () => {
+        active = false;
+      };
+    }
+
+    fetchAgendaScheduledVisits(agendaIds)
+      .then((visits) => {
+        if (!active) return;
+        const grouped: Record<string, AgendaScheduledVisit[]> = {};
+        visits.forEach((visit) => {
+          if (!grouped[visit.agenda_id]) grouped[visit.agenda_id] = [];
+          grouped[visit.agenda_id].push(visit);
+        });
+        setScheduledVisitsByAgenda(grouped);
+      })
+      .catch((err) => {
+        console.error(err);
+        if (active) setScheduledVisitsByAgenda({});
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [data, scheduleRefreshKey]);
+
+  useEffect(() => {
     if (!selectedRowId) return;
     if (selectedRow?.id === selectedRowId) return;
     const found = data.find((row) => row.id === selectedRowId);
@@ -261,6 +325,36 @@ export default function Agenda() {
     );
   }, [vendorQuery, vendedores]);
 
+  const selectedAgendaSet = useMemo(() => new Set(selectedAgendaIds), [selectedAgendaIds]);
+  const visibleAgendaIds = useMemo(() => data.map((row) => row.id), [data]);
+  const allVisibleSelected =
+    visibleAgendaIds.length > 0 && visibleAgendaIds.every((id) => selectedAgendaSet.has(id));
+  const someVisibleSelected =
+    visibleAgendaIds.some((id) => selectedAgendaSet.has(id)) && !allVisibleSelected;
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someVisibleSelected;
+    }
+  }, [someVisibleSelected]);
+
+  const toggleAgendaSelection = (agendaId: string) => {
+    setSelectedAgendaIds((prev) =>
+      prev.includes(agendaId) ? prev.filter((id) => id !== agendaId) : [...prev, agendaId],
+    );
+  };
+
+  const setVisibleSelection = (checked: boolean) => {
+    setSelectedAgendaIds((prev) => {
+      if (checked) {
+        const next = new Set(prev);
+        visibleAgendaIds.forEach((id) => next.add(id));
+        return Array.from(next);
+      }
+      return prev.filter((id) => !visibleAgendaIds.includes(id));
+    });
+  };
+
   const handleToggleVendor = (vendorId: string) => {
     setSelectedVendorIds((prev) =>
       prev.includes(vendorId) ? prev.filter((id) => id !== vendorId) : [...prev, vendorId],
@@ -274,6 +368,10 @@ export default function Agenda() {
       setGenerateMessage("Selecione pelo menos um vendedor para gerar visitas.");
       return;
     }
+    if (selectedAgendaIds.length === 0) {
+      setGenerateMessage("Selecione pelo menos uma empresa para gerar visitas.");
+      return;
+    }
     if (!visitDate) {
       setGenerateMessage("Selecione a data da visita.");
       return;
@@ -283,7 +381,7 @@ export default function Agenda() {
     setGenerateMessage(null);
 
     try {
-      const rows = await fetchAgendaForGeneration(filters);
+      const rows = await fetchAgendaForGeneration(filters, selectedAgendaIds);
       if (rows.length === 0) {
         setGenerateMessage("Nenhum registro encontrado para gerar visitas.");
         return;
@@ -371,6 +469,7 @@ export default function Agenda() {
       setGenerateMessage(
         `Geradas ${totalVisits} visitas (${rows.length} empresa(s)) para ${selectedVendors.length} vendedor(es).`,
       );
+      setSelectedAgendaIds([]);
       setSelectedVendorIds([]);
       setVendorQuery("");
       setVisitDate("");
@@ -393,6 +492,251 @@ export default function Agenda() {
     setSelectedRow(null);
     setSelectedRowId(null);
     setRefreshKey((value) => value + 1);
+  };
+
+  const openScheduleModal = (row: AgendaRow) => {
+    const visits = scheduledVisitsByAgenda[row.id] ?? [];
+    const drafts = visits.map((visit) => ({
+      id: visit.id,
+      vendorId: visit.assigned_to_user_id ?? "",
+      vendorName: visit.assigned_to_name ?? "",
+      date: visit.visit_date,
+      perfil: visit.perfil_visita ?? row.perfil_visita ?? "",
+      routeId: visit.route_id ?? null,
+    }));
+    setScheduleModalRow(row);
+    setScheduleDrafts(drafts);
+    setScheduleOriginal(visits);
+    setScheduleError(null);
+  };
+
+  const closeScheduleModal = () => {
+    setScheduleModalRow(null);
+    setScheduleDrafts([]);
+    setScheduleOriginal([]);
+    setScheduleError(null);
+  };
+
+  const handleAddScheduleDraft = () => {
+    const now = new Date();
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    const fallbackDate = scheduleDrafts[0]?.date ?? local.toISOString().slice(0, 10);
+    const fallbackPerfil = scheduleModalRow?.perfil_visita ?? "";
+    setScheduleDrafts((prev) => [
+      ...prev,
+      { vendorId: "", vendorName: "", date: fallbackDate, perfil: fallbackPerfil },
+    ]);
+  };
+
+  const updateScheduleDraft = (index: number, patch: Partial<(typeof scheduleDrafts)[number]>) => {
+    setScheduleDrafts((prev) =>
+      prev.map((item, idx) => (idx === index ? { ...item, ...patch } : item)),
+    );
+  };
+
+  const removeScheduleDraft = (index: number) => {
+    setScheduleDrafts((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const ensureRoute = async (vendorId: string, vendorName: string, dateValue: string) => {
+    const { data: existing, error } = await supabase
+      .from("routes")
+      .select("id")
+      .eq("assigned_to_user_id", vendorId)
+      .eq("date", dateValue)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (existing?.id) {
+      return existing.id as string;
+    }
+
+    const displayDate = new Intl.DateTimeFormat("pt-BR").format(new Date(`${dateValue}T12:00:00`));
+    const { data: created, error: createError } = await supabase
+      .from("routes")
+      .insert({
+        name: `Visitas ${displayDate} - ${vendorName || "Vendedor"}`,
+        date: dateValue,
+        assigned_to_user_id: vendorId,
+        created_by: session?.user.id ?? null,
+      })
+      .select("id")
+      .single();
+
+    if (createError || !created) {
+      throw new Error(createError?.message ?? "Erro ao criar rota.");
+    }
+
+    return created.id as string;
+  };
+
+  const getNextStopOrder = async (routeId: string) => {
+    const { count, error } = await supabase
+      .from("route_stops")
+      .select("id", { count: "exact", head: true })
+      .eq("route_id", routeId);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return (count ?? 0) + 1;
+  };
+
+  const ensureRouteStop = async (routeId: string, agendaId: string) => {
+    const { data: existing, error } = await supabase
+      .from("route_stops")
+      .select("id")
+      .eq("route_id", routeId)
+      .eq("agenda_id", agendaId)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    if (existing?.id) return;
+
+    const stopOrder = await getNextStopOrder(routeId);
+    const { error: insertError } = await supabase.from("route_stops").insert({
+      route_id: routeId,
+      agenda_id: agendaId,
+      stop_order: stopOrder,
+    });
+    if (insertError) throw new Error(insertError.message);
+  };
+
+  const removeRouteStop = async (routeId: string, agendaId: string) => {
+    const { error } = await supabase
+      .from("route_stops")
+      .delete()
+      .eq("route_id", routeId)
+      .eq("agenda_id", agendaId);
+    if (error) throw new Error(error.message);
+  };
+
+  const handleScheduleSave = async () => {
+    if (!scheduleModalRow) return;
+
+    for (const draft of scheduleDrafts) {
+      if (!draft.vendorId) {
+        setScheduleError("Selecione o vendedor.");
+        return;
+      }
+      if (!draft.date) {
+        setScheduleError("Selecione a data da visita.");
+        return;
+      }
+    }
+
+    const seen = new Set<string>();
+    for (const draft of scheduleDrafts) {
+      const key = `${draft.vendorId}::${draft.date}`;
+      if (seen.has(key)) {
+        setScheduleError("Nao e permitido repetir o mesmo vendedor na mesma data.");
+        return;
+      }
+      seen.add(key);
+    }
+
+    setScheduleSaving(true);
+    setScheduleError(null);
+    try {
+      const originalById = new Map(scheduleOriginal.map((visit) => [visit.id, visit]));
+      const draftIds = new Set(scheduleDrafts.filter((item) => item.id).map((item) => item.id as string));
+      const removed = scheduleOriginal.filter((visit) => !draftIds.has(visit.id));
+
+      for (const visit of removed) {
+        if (visit.route_id) {
+          await removeRouteStop(visit.route_id, visit.agenda_id);
+        }
+        const { error } = await supabase.from("visits").delete().eq("id", visit.id);
+        if (error) throw new Error(error.message);
+      }
+
+      for (const draft of scheduleDrafts) {
+        const vendorName =
+          vendorById.get(draft.vendorId) ?? draft.vendorName ?? draft.vendorId ?? "Vendedor";
+        if (!draft.id) {
+          const routeId = await ensureRoute(draft.vendorId, vendorName, draft.date);
+          const { data, error } = await supabase
+            .from("visits")
+            .insert({
+              agenda_id: scheduleModalRow.id,
+              assigned_to_user_id: draft.vendorId,
+              assigned_to_name: vendorName,
+              visit_date: draft.date,
+              perfil_visita: draft.perfil.trim() || null,
+              route_id: routeId,
+              created_by: session?.user.id ?? null,
+            })
+            .select("id")
+            .single();
+          if (error || !data) throw new Error(error?.message ?? "Erro ao adicionar visita.");
+          await ensureRouteStop(routeId, scheduleModalRow.id);
+          continue;
+        }
+
+        const original = originalById.get(draft.id);
+        if (!original) continue;
+
+        const vendorChanged = (original.assigned_to_user_id ?? "") !== draft.vendorId;
+        const dateChanged = original.visit_date !== draft.date;
+        const perfilChanged = (original.perfil_visita ?? "") !== draft.perfil;
+
+        if (vendorChanged || dateChanged) {
+          const routeId = await ensureRoute(draft.vendorId, vendorName, draft.date);
+          if (original.route_id && original.route_id !== routeId) {
+            await removeRouteStop(original.route_id, original.agenda_id);
+          }
+          await ensureRouteStop(routeId, scheduleModalRow.id);
+
+          const { error } = await supabase
+            .from("visits")
+            .update({
+              assigned_to_user_id: draft.vendorId,
+              assigned_to_name: vendorName,
+              visit_date: draft.date,
+              perfil_visita: draft.perfil.trim() || null,
+              route_id: routeId,
+            })
+            .eq("id", draft.id);
+          if (error) throw new Error(error.message);
+        } else if (perfilChanged) {
+          const { error } = await supabase
+            .from("visits")
+            .update({
+              perfil_visita: draft.perfil.trim() || null,
+            })
+            .eq("id", draft.id);
+          if (error) throw new Error(error.message);
+        }
+      }
+
+      if (scheduleDrafts.length === 0) {
+        const { error } = await supabase
+          .from("agenda")
+          .update({ visit_generated_at: null })
+          .eq("id", scheduleModalRow.id);
+        if (error) throw new Error(error.message);
+      } else {
+        const { error } = await supabase
+          .from("agenda")
+          .update({ visit_generated_at: new Date().toISOString() })
+          .eq("id", scheduleModalRow.id)
+          .is("visit_generated_at", null);
+        if (error) throw new Error(error.message);
+      }
+
+      setScheduleModalRow(null);
+      setScheduleDrafts([]);
+      setScheduleOriginal([]);
+      setScheduleRefreshKey((prev) => prev + 1);
+    } catch (err) {
+      setScheduleError(err instanceof Error ? err.message : "Erro ao salvar visitas.");
+    } finally {
+      setScheduleSaving(false);
+    }
   };
 
   const columns = useMemo<ColumnDef<AgendaRow>[]>(
@@ -425,13 +769,101 @@ export default function Agenda() {
 
       return [
       {
+        id: "select",
+        header: () => (
+          <div className="flex items-center justify-center">
+            <input
+              ref={selectAllRef}
+              type="checkbox"
+              checked={allVisibleSelected}
+              onChange={(event) => setVisibleSelection(event.target.checked)}
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              className="h-4 w-4 accent-sea"
+              aria-label="Selecionar todos nesta pagina"
+              title="Selecionar todos nesta pagina"
+            />
+          </div>
+        ),
+        cell: (info) => {
+          const rowId = info.row.original.id;
+          const checked = selectedAgendaSet.has(rowId);
+          return (
+            <div className="flex items-center justify-center">
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => toggleAgendaSelection(rowId)}
+                onClick={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+                className="h-4 w-4 accent-sea"
+                aria-label="Selecionar empresa"
+              />
+            </div>
+          );
+        },
+        enableSorting: false,
+        size: 48,
+      },
+      {
+        id: "obs",
+        header: () => (
+          <div className="flex items-center justify-center text-[11px] font-semibold text-ink/60">
+            Obs
+          </div>
+        ),
+        cell: (info) => {
+          const rowId = info.row.original.id;
+          const visits = scheduledVisitsByAgenda[rowId] ?? [];
+          if (visits.length === 0) return null;
+          return (
+            <div className="flex items-center justify-center">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openScheduleModal(info.row.original);
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-amber-300 bg-amber-50 text-amber-700 hover:border-amber-400"
+                title="Visitas agendadas"
+                aria-label="Visitas agendadas"
+              >
+                <MessageSquare size={14} />
+              </button>
+            </div>
+          );
+        },
+        enableSorting: false,
+        size: 52,
+      },
+      {
         accessorKey: "data_da_ultima_visita",
         header: ({ column }) => renderSortLabel(column, "Data ultima visita"),
         cell: (info) => formatDate(info.getValue() as string | null),
       },
       {
         accessorKey: "cod_1",
-        header: ({ column }) => renderSortLabel(column, "Codigo"),
+        header: ({ column }) => (
+          <div className="flex items-center justify-between gap-2">
+            {renderSortLabel(column, "Codigo")}
+            <MultiSelectFilter
+              label={
+                (filters.columns.cod_1 ?? []).length
+                  ? `Filtro (${filters.columns.cod_1.length})`
+                  : "Filtro"
+              }
+              options={filterOptions.cod_1 ?? []}
+              value={filters.columns.cod_1}
+              onApply={(next) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  columns: { ...prev.columns, cod_1: next },
+                }))
+              }
+            />
+          </div>
+        ),
         cell: (info) => info.getValue<string | null>() ?? "-",
       },
       {
@@ -635,7 +1067,17 @@ export default function Agenda() {
       },
     ];
     },
-    [filterOptions, filters.columns, setFilters],
+    [
+      allVisibleSelected,
+      filterOptions,
+      filters.columns,
+      openScheduleModal,
+      selectedAgendaSet,
+      scheduledVisitsByAgenda,
+      setFilters,
+      setVisibleSelection,
+      toggleAgendaSelection,
+    ],
   );
 
   const table = useReactTable({
@@ -886,9 +1328,10 @@ export default function Agenda() {
               >
                 Gerar visitas
               </button>
-              <span className="order-2 text-xs text-ink/60 md:order-1">
-                Empresas: {totalCount}
-              </span>
+              <div className="order-2 text-xs text-ink/60 md:order-1">
+                <div>Empresas: {totalCount}</div>
+                <div>Selecionadas: {selectedAgendaIds.length}</div>
+              </div>
             </div>
           )}
         </div>
@@ -910,7 +1353,10 @@ export default function Agenda() {
           <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Gerar visitas</h3>
             <p className="mt-1 text-xs text-ink/60">
-              Selecione os vendedores e a data para gerar as visitas com base nos filtros atuais.
+              Selecione os vendedores, a data e as empresas marcadas na lista para gerar as visitas.
+            </p>
+            <p className="mt-2 text-xs text-ink/60">
+              Empresas selecionadas: {selectedAgendaIds.length}
             </p>
 
             <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -995,11 +1441,142 @@ export default function Agenda() {
               <button
                 type="button"
                 onClick={handleGenerateVisits}
-        disabled={selectedVendorIds.length === 0 || !visitDate || generating || totalCount === 0}
-        className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
-      >
-                {generating ? "Gerando..." : `Confirmar (${totalCount})`}
+                disabled={
+                  selectedVendorIds.length === 0 ||
+                  selectedAgendaIds.length === 0 ||
+                  !visitDate ||
+                  generating ||
+                  totalCount === 0
+                }
+                className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+              >
+                {generating ? "Gerando..." : `Confirmar (${selectedAgendaIds.length})`}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {scheduleModalRow && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => (scheduleSaving ? null : closeScheduleModal())}
+          />
+          <div className="relative w-full max-w-3xl rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="font-display text-lg text-ink">Visitas agendadas</h3>
+                <p className="mt-1 text-xs text-ink/60">
+                  {scheduleModalRow.empresa ?? scheduleModalRow.nome_fantasia ?? "Empresa"}
+                </p>
+              </div>
+              <span className="rounded-full bg-sea/10 px-2 py-1 text-[10px] font-semibold text-sea">
+                COD {scheduleModalRow.cod_1 ?? "-"}
+              </span>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {scheduleDrafts.length === 0 ? (
+                <p className="text-xs text-ink/60">Nenhuma visita agendada.</p>
+              ) : (
+                scheduleDrafts.map((draft, index) => (
+                  <div
+                    key={draft.id ?? `draft-${index}`}
+                    className="rounded-2xl border border-sea/20 bg-white/90 p-3"
+                  >
+                    <div className="grid gap-3 md:grid-cols-[1.2fr_0.8fr_0.8fr_auto] md:items-end">
+                      <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
+                        Vendedor
+                        <select
+                          value={draft.vendorId}
+                          onChange={(event) =>
+                            updateScheduleDraft(index, { vendorId: event.target.value })
+                          }
+                          disabled={scheduleSaving}
+                          className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea disabled:opacity-60"
+                        >
+                          <option value="">Selecione</option>
+                          {draft.vendorId &&
+                            !vendedores.some((vendor) => vendor.user_id === draft.vendorId) && (
+                              <option value={draft.vendorId}>
+                                {vendorById.get(draft.vendorId) ?? draft.vendorName ?? draft.vendorId}
+                              </option>
+                            )}
+                          {vendedores.map((vendor) => (
+                            <option key={vendor.user_id} value={vendor.user_id}>
+                              {vendor.display_name ?? vendor.user_id}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
+                        Data
+                        <input
+                          type="date"
+                          value={draft.date}
+                          onChange={(event) => updateScheduleDraft(index, { date: event.target.value })}
+                          disabled={scheduleSaving}
+                          className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea disabled:opacity-60"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
+                        Tipo de visita
+                        <input
+                          value={draft.perfil}
+                          onChange={(event) =>
+                            updateScheduleDraft(index, { perfil: event.target.value })
+                          }
+                          disabled={scheduleSaving}
+                          className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea disabled:opacity-60"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => removeScheduleDraft(index)}
+                        disabled={scheduleSaving}
+                        className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-600 hover:border-red-300 disabled:opacity-60"
+                      >
+                        Remover
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {scheduleError && (
+              <p className="mt-3 text-xs text-red-500">{scheduleError}</p>
+            )}
+
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={handleAddScheduleDraft}
+                disabled={scheduleSaving}
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-60"
+              >
+                Adicionar vendedor
+              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={closeScheduleModal}
+                  disabled={scheduleSaving}
+                  className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-60"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleScheduleSave}
+                  disabled={scheduleSaving}
+                  className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                >
+                  {scheduleSaving ? "Salvando..." : "Salvar"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1052,6 +1629,39 @@ export default function Agenda() {
                         <p className="text-xs text-ink/50">{locationLine || "-"}</p>
                       </div>
                       <div className="flex flex-col items-end gap-2">
+                        <label
+                          className="flex items-center gap-1 text-[10px] text-ink/60"
+                          onClick={(event) => event.stopPropagation()}
+                          onPointerDown={(event) => event.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedAgendaSet.has(row.id)}
+                            onChange={() => toggleAgendaSelection(row.id)}
+                            className="h-3.5 w-3.5 accent-sea"
+                            aria-label="Selecionar empresa"
+                          />
+                          Selecionar
+                        </label>
+                        {(() => {
+                          const scheduled = scheduledVisitsByAgenda[row.id] ?? [];
+                          if (scheduled.length === 0) return null;
+                          return (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openScheduleModal(row);
+                              }}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-amber-300 bg-amber-50 text-amber-700"
+                              title="Visitas agendadas"
+                              aria-label="Visitas agendadas"
+                            >
+                              <MessageSquare size={14} />
+                            </button>
+                          );
+                        })()}
                         <span className="rounded-full bg-sea/10 px-2 py-1 text-[10px] font-semibold text-sea">
                           COD {row.cod_1 ?? "-"}
                         </span>

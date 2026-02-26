@@ -5,6 +5,7 @@ import type { AgendaFilters } from "../types/agenda";
 const FILTER_KEYS = [
   "supervisor",
   "vendedor",
+  "cod_1",
   "bairro",
   "cidade",
   "uf",
@@ -18,6 +19,7 @@ const makeEmptyFilters = (): AgendaFilters => ({
   columns: {
     supervisor: [],
     vendedor: [],
+    cod_1: [],
     bairro: [],
     cidade: [],
     uf: [],
