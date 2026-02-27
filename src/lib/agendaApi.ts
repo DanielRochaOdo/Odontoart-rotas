@@ -140,7 +140,7 @@ export const fetchAgenda = async (
   let query = supabase
     .from("agenda")
     .select(
-      "id, data_da_ultima_visita, cod_1, empresa, perfil_visita, corte, venc, valor, tit, endereco, bairro, cidade, uf, supervisor, vendedor, cod_2, nome_fantasia, grupo, situacao, obs_contrato_1, obs_contrato_2, visit_generated_at, created_at",
+      "id, data_da_ultima_visita, cod_1, empresa, perfil_visita, corte, venc, valor, tit, endereco, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1, visit_generated_at, created_at",
       { count: "exact" },
     )
     .ilike("situacao", "ativo%");

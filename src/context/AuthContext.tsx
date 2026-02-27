@@ -9,6 +9,7 @@ export type Profile = {
   user_id: string;
   role: UserRole;
   display_name: string | null;
+  nome?: string | null;
   created_at: string;
 };
 
@@ -37,7 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const { data, error } = await supabase
       .from("profiles")
-      .select("id, user_id, role, display_name, created_at")
+      .select("id, user_id, role, display_name, nome, created_at")
       .eq("user_id", activeSession.user.id)
       .single();
 

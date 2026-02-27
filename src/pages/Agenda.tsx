@@ -23,7 +23,7 @@ import AgendaDrawer from "../components/agenda/AgendaDrawer";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { onProfilesUpdated } from "../lib/profileEvents";
-import { MessageSquare } from "lucide-react";
+import { PERFIL_VISITA_PRESETS } from "../lib/perfilVisita";
 
 const FILTER_SOURCES: Record<string, string[]> = {
   supervisor: ["supervisor"],
@@ -49,12 +49,32 @@ const FILTER_LABELS: Record<string, string> = {
   empresa_nome: "Empresa",
 };
 
+const parseDateValue = (value: string) => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return new Date(`${value}T12:00:00`);
+  }
+  return new Date(value);
+};
+
 const formatDate = (value: string | null) => {
   if (!value) return "-";
-  const date = new Date(value);
+  const date = parseDateValue(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("pt-BR").format(date);
 };
+
+const formatVisitBadge = (value: string | null) => {
+  if (!value) return "-";
+  const date = parseDateValue(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const formatted = new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "short",
+  }).format(date);
+  return formatted.replace(".", "").toUpperCase();
+};
+
+const escapeOrValue = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
 
 const MONTH_OPTIONS = [
   { value: "1", label: "Janeiro" },
@@ -99,6 +119,7 @@ export default function Agenda() {
       vendorName: string;
       date: string;
       perfil: string;
+      perfilCustom?: boolean;
       routeId?: string | null;
     }>
   >([]);
@@ -502,6 +523,10 @@ export default function Agenda() {
       vendorName: visit.assigned_to_name ?? "",
       date: visit.visit_date,
       perfil: visit.perfil_visita ?? row.perfil_visita ?? "",
+      perfilCustom: Boolean(
+        (visit.perfil_visita ?? row.perfil_visita ?? "") &&
+          !PERFIL_VISITA_PRESETS.includes(visit.perfil_visita ?? row.perfil_visita ?? ""),
+      ),
       routeId: visit.route_id ?? null,
     }));
     setScheduleModalRow(row);
@@ -524,7 +549,15 @@ export default function Agenda() {
     const fallbackPerfil = scheduleModalRow?.perfil_visita ?? "";
     setScheduleDrafts((prev) => [
       ...prev,
-      { vendorId: "", vendorName: "", date: fallbackDate, perfil: fallbackPerfil },
+      {
+        vendorId: "",
+        vendorName: "",
+        date: fallbackDate,
+        perfil: fallbackPerfil,
+        perfilCustom: Boolean(
+          fallbackPerfil && !PERFIL_VISITA_PRESETS.includes(fallbackPerfil),
+        ),
+      },
     ]);
   };
 
@@ -728,6 +761,58 @@ export default function Agenda() {
         if (error) throw new Error(error.message);
       }
 
+      if (scheduleDrafts.length > 0) {
+        const resolvedPerfil =
+          scheduleDrafts
+            .map((draft) => draft.perfil.trim())
+            .find((value) => value.length > 0) ?? null;
+        const currentPerfil = scheduleModalRow.perfil_visita ?? null;
+
+        if (resolvedPerfil !== currentPerfil) {
+          const { error: agendaPerfilError } = await supabase
+            .from("agenda")
+            .update({ perfil_visita: resolvedPerfil })
+            .eq("id", scheduleModalRow.id);
+          if (agendaPerfilError) throw new Error(agendaPerfilError.message);
+
+          const codigo = scheduleModalRow.cod_1?.trim() ?? "";
+          const empresa = scheduleModalRow.empresa?.trim() ?? "";
+          const nomeFantasia = scheduleModalRow.nome_fantasia?.trim() ?? "";
+
+          let clientesQuery = supabase.from("clientes").update({ perfil_visita: resolvedPerfil });
+          let hasClienteFilter = false;
+          if (codigo) {
+            clientesQuery = clientesQuery.eq("codigo", codigo);
+            hasClienteFilter = true;
+          } else if (empresa && nomeFantasia) {
+            clientesQuery = clientesQuery.or(
+              `empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
+            );
+            hasClienteFilter = true;
+          } else if (empresa) {
+            clientesQuery = clientesQuery.eq("empresa", empresa);
+            hasClienteFilter = true;
+          } else if (nomeFantasia) {
+            clientesQuery = clientesQuery.eq("nome_fantasia", nomeFantasia);
+            hasClienteFilter = true;
+          }
+
+          if (hasClienteFilter) {
+            const { error: clienteError } = await clientesQuery;
+            if (clienteError) throw new Error(clienteError.message);
+          }
+
+          setData((prev) =>
+            prev.map((row) =>
+              row.id === scheduleModalRow.id ? { ...row, perfil_visita: resolvedPerfil } : row,
+            ),
+          );
+          setSelectedRow((prev) =>
+            prev?.id === scheduleModalRow.id ? { ...prev, perfil_visita: resolvedPerfil } : prev,
+          );
+        }
+      }
+
       setScheduleModalRow(null);
       setScheduleDrafts([]);
       setScheduleOriginal([]);
@@ -816,6 +901,9 @@ export default function Agenda() {
           const rowId = info.row.original.id;
           const visits = scheduledVisitsByAgenda[rowId] ?? [];
           if (visits.length === 0) return null;
+          const visitDate = visits[0]?.visit_date ?? null;
+          const badgeText = formatVisitBadge(visitDate);
+          const titleText = visitDate ? `Visita agendada: ${formatDate(visitDate)}` : "Visita agendada";
           return (
             <div className="flex items-center justify-center">
               <button
@@ -825,17 +913,17 @@ export default function Agenda() {
                   openScheduleModal(info.row.original);
                 }}
                 onPointerDown={(event) => event.stopPropagation()}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-amber-300 bg-amber-50 text-amber-700 hover:border-amber-400"
-                title="Visitas agendadas"
-                aria-label="Visitas agendadas"
+                className="inline-flex min-h-6 items-center justify-center rounded-md border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-700 hover:border-red-300"
+                title={titleText}
+                aria-label={titleText}
               >
-                <MessageSquare size={12} />
+                {badgeText}
               </button>
             </div>
           );
         },
         enableSorting: false,
-        size: 25,
+        size: 70,
       },
       {
         accessorKey: "data_da_ultima_visita",
@@ -1522,15 +1610,41 @@ export default function Agenda() {
                         />
                       </label>
                       <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
-                        Tipo de visita
-                        <input
-                          value={draft.perfil}
+                        Perfil visita
+                        <select
+                          value={
+                            draft.perfilCustom
+                              ? "__custom__"
+                              : draft.perfil
+                                ? draft.perfil
+                                : ""
+                          }
                           onChange={(event) =>
-                            updateScheduleDraft(index, { perfil: event.target.value })
+                            updateScheduleDraft(index, {
+                              perfilCustom: event.target.value === "__custom__",
+                              perfil: event.target.value === "__custom__" ? draft.perfil : event.target.value,
+                            })
                           }
                           disabled={scheduleSaving}
                           className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea disabled:opacity-60"
-                        />
+                        >
+                          <option value="">Selecione</option>
+                          {PERFIL_VISITA_PRESETS.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                          <option value="__custom__">Horario customizado</option>
+                        </select>
+                        {draft.perfilCustom && (
+                          <input
+                            value={draft.perfil}
+                            onChange={(event) => updateScheduleDraft(index, { perfil: event.target.value })}
+                            disabled={scheduleSaving}
+                            placeholder="Informe o horario customizado"
+                            className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-[11px] text-ink outline-none focus:border-sea disabled:opacity-60"
+                          />
+                        )}
                       </label>
                       <button
                         type="button"
@@ -1646,6 +1760,9 @@ export default function Agenda() {
                         {(() => {
                           const scheduled = scheduledVisitsByAgenda[row.id] ?? [];
                           if (scheduled.length === 0) return null;
+                          const visitDate = scheduled[0]?.visit_date ?? null;
+                          const badgeText = formatVisitBadge(visitDate);
+                          const titleText = visitDate ? `Visita agendada: ${formatDate(visitDate)}` : "Visita agendada";
                           return (
                             <button
                               type="button"
@@ -1654,11 +1771,11 @@ export default function Agenda() {
                                 openScheduleModal(row);
                               }}
                               onPointerDown={(event) => event.stopPropagation()}
-                              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-amber-300 bg-amber-50 text-amber-700"
-                              title="Visitas agendadas"
-                              aria-label="Visitas agendadas"
+                              className="inline-flex min-h-7 items-center justify-center rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-red-700"
+                              title={titleText}
+                              aria-label={titleText}
                             >
-                              <MessageSquare size={14} />
+                              {badgeText}
                             </button>
                           );
                         })()}

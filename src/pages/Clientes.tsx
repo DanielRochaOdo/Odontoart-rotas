@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
 import {
   createCliente,
+  deleteCliente,
   fetchClienteHistory,
   fetchClientes,
   updateCliente,
@@ -28,6 +29,28 @@ const formatDate = (value: string | null) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("pt-BR").format(date);
+};
+
+const normalizeAddressValue = (value: string | null | undefined) =>
+  (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+const isSameAddress = (a: Pick<ClienteRow, "endereco" | "cidade" | "uf">, b: Pick<ClienteRow, "endereco" | "cidade" | "uf">) => {
+  const enderecoA = normalizeAddressValue(a.endereco);
+  const enderecoB = normalizeAddressValue(b.endereco);
+  if (!enderecoA || !enderecoB) return false;
+  if (enderecoA !== enderecoB) return false;
+  const cidadeA = normalizeAddressValue(a.cidade);
+  const cidadeB = normalizeAddressValue(b.cidade);
+  const ufA = normalizeAddressValue(a.uf);
+  const ufB = normalizeAddressValue(b.uf);
+  if (cidadeA && cidadeB && cidadeA !== cidadeB) return false;
+  if (ufA && ufB && ufA !== ufB) return false;
+  return true;
 };
 
 const buildPerfilState = (value: string | null) => {
@@ -167,12 +190,21 @@ export default function Clientes() {
   const [cepError, setCepError] = useState<string | null>(null);
   const [cepLoadingEdit, setCepLoadingEdit] = useState(false);
   const [cepErrorEdit, setCepErrorEdit] = useState<string | null>(null);
+  const [importProgress, setImportProgress] = useState(0);
+  const [importTotal, setImportTotal] = useState(0);
+  const [importStartedAt, setImportStartedAt] = useState<number | null>(null);
+  const [importTick, setImportTick] = useState(0);
   const [bairroLoading, setBairroLoading] = useState(false);
   const [bairroLoadingEdit, setBairroLoadingEdit] = useState(false);
   const [addressLookupLoading, setAddressLookupLoading] = useState(false);
   const [addressLookupError, setAddressLookupError] = useState<string | null>(null);
   const [addressLookupLoadingEdit, setAddressLookupLoadingEdit] = useState(false);
   const [addressLookupErrorEdit, setAddressLookupErrorEdit] = useState<string | null>(null);
+  const [duplicateModal, setDuplicateModal] = useState<{
+    newCliente: ClienteRow;
+    existing: ClienteRow[];
+  } | null>(null);
+  const [duplicateResolving, setDuplicateResolving] = useState(false);
   const skipCepLookupRef = useRef(false);
   const skipCepLookupEditRef = useRef(false);
 
@@ -498,6 +530,12 @@ export default function Clientes() {
     setCreating(true);
     setError(null);
     try {
+      const existingMatches = clientes.filter((cliente) =>
+        isSameAddress(
+          { endereco: form.endereco, cidade: form.cidade, uf: form.uf },
+          { endereco: cliente.endereco, cidade: cliente.cidade, uf: cliente.uf },
+        ),
+      );
       const created = await createCliente({
         codigo: form.codigo.trim() || null,
         cep: form.cep.trim() || null,
@@ -511,7 +549,11 @@ export default function Clientes() {
         uf: form.uf.trim() || null,
       });
       setClientes((prev) => [created, ...prev]);
-      await syncAgendaForCliente(created);
+      if (existingMatches.length > 0) {
+        setDuplicateModal({ newCliente: created, existing: existingMatches });
+      } else {
+        await syncAgendaForCliente(created);
+      }
       setForm({
         codigo: "",
         cep: "",
@@ -528,6 +570,46 @@ export default function Clientes() {
       setError(err instanceof Error ? err.message : "Erro ao criar cliente.");
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleDuplicateKeepOld = async () => {
+    if (!duplicateModal) return;
+    setDuplicateResolving(true);
+    setError(null);
+    try {
+      await deleteCliente(duplicateModal.newCliente.id);
+      setClientes((prev) => prev.filter((item) => item.id !== duplicateModal.newCliente.id));
+      if (selectedId === duplicateModal.newCliente.id) {
+        setSelected(null);
+        setSelectedId(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao remover cliente duplicado.");
+    } finally {
+      setDuplicateResolving(false);
+      setDuplicateModal(null);
+    }
+  };
+
+  const handleDuplicateSubstitute = async () => {
+    if (!duplicateModal) return;
+    setDuplicateResolving(true);
+    setError(null);
+    try {
+      const oldIds = duplicateModal.existing.map((item) => item.id);
+      await Promise.all(oldIds.map((id) => deleteCliente(id)));
+      setClientes((prev) => prev.filter((item) => !oldIds.includes(item.id)));
+      if (selectedId && oldIds.includes(selectedId)) {
+        setSelected(null);
+        setSelectedId(null);
+      }
+      await syncAgendaForCliente(duplicateModal.newCliente);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao substituir cliente.");
+    } finally {
+      setDuplicateResolving(false);
+      setDuplicateModal(null);
     }
   };
 
@@ -696,11 +778,32 @@ export default function Clientes() {
     XLSX.writeFile(workbook, "modelo_clientes.xlsx");
   };
 
+  useEffect(() => {
+    if (!importing) return;
+    setImportTick(Date.now());
+    const interval = window.setInterval(() => {
+      setImportTick(Date.now());
+    }, 500);
+    return () => window.clearInterval(interval);
+  }, [importing]);
+
+  const formatDuration = (totalSeconds: number) => {
+    const clamped = Math.max(0, Math.floor(totalSeconds));
+    const minutes = Math.floor(clamped / 60);
+    const seconds = clamped % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  };
+
+  const delay = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
   const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     setImporting(true);
     setImportMessage(null);
+    setImportProgress(0);
+    setImportTotal(0);
+    setImportStartedAt(Date.now());
     try {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
@@ -746,6 +849,64 @@ export default function Clientes() {
         return;
       }
 
+      const checkable = payloads.filter((item) => {
+        const cepDigits = sanitizeCep(item.cep ?? "");
+        if (cepDigits.length === 8) return true;
+        const road = item.endereco?.trim() ?? "";
+        const city = item.cidade?.trim() ?? "";
+        const state = item.uf?.trim() ?? "";
+        return Boolean(road && city && state);
+      });
+
+      setImportTotal(checkable.length);
+
+      if (checkable.length > 0) {
+        setImportMessage("Checando bairros via API...");
+        let processed = 0;
+        const lastRequestAt = { current: 0 };
+        for (const item of checkable) {
+          const cepDigits = sanitizeCep(item.cep ?? "");
+          const hasCep = cepDigits.length === 8;
+          const road = item.endereco?.trim() ?? "";
+          const city = item.cidade?.trim() ?? "";
+          const state = item.uf?.trim() ?? "";
+          const canCheckAddress = Boolean(road && city && state);
+          const hasRequest = hasCep || canCheckAddress;
+
+          if (!hasRequest) {
+            processed += 1;
+            setImportProgress(processed);
+            continue;
+          }
+
+          const now = Date.now();
+          const wait = Math.max(0, 1000 - (now - lastRequestAt.current));
+          if (wait) {
+            await delay(wait);
+          }
+          lastRequestAt.current = Date.now();
+
+          try {
+            if (hasCep) {
+              const mapped = await fetchNominatimByCep(cepDigits);
+              if (mapped?.bairro) {
+                item.bairro = mapped.bairro;
+              }
+            } else if (canCheckAddress) {
+              const mapped = await fetchNominatimByAddress(road, city, state);
+              if (mapped?.bairro) {
+                item.bairro = mapped.bairro;
+              }
+            }
+          } catch {
+            // ignore individual lookup errors, keep import running
+          } finally {
+            processed += 1;
+            setImportProgress(processed);
+          }
+        }
+      }
+
       const created = await upsertClientes(payloads);
       for (const cliente of created) {
         await syncAgendaForCliente(cliente);
@@ -756,6 +917,7 @@ export default function Clientes() {
       setImportMessage(err instanceof Error ? err.message : "Erro ao importar arquivo.");
     } finally {
       setImporting(false);
+      setImportStartedAt(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
@@ -1423,6 +1585,71 @@ export default function Clientes() {
         </div>
       )}
 
+      {duplicateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-ink/30" />
+          <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Endereco duplicado</h3>
+            <p className="mt-2 text-sm text-ink/70">
+              O endereco informado ja existe para {duplicateModal.existing.length} cliente(s).
+              Deseja manter o antigo ou substituir pelo novo cadastro?
+            </p>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <div className="rounded-2xl border border-sea/15 bg-sand/30 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-ink/50">Novo cadastro</p>
+                <p className="mt-2 text-sm font-semibold text-ink">
+                  {duplicateModal.newCliente.empresa ??
+                    duplicateModal.newCliente.nome_fantasia ??
+                    "Sem nome"}
+                </p>
+                <p className="text-xs text-ink/60">
+                  {duplicateModal.newCliente.endereco ?? "-"}
+                </p>
+                <p className="text-[11px] text-ink/50">
+                  {duplicateModal.newCliente.cidade
+                    ? `${duplicateModal.newCliente.cidade} / ${duplicateModal.newCliente.uf ?? ""}`
+                    : "-"}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-sea/15 bg-white/90 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-ink/50">Cadastro existente</p>
+                {duplicateModal.existing.map((item) => (
+                  <div key={item.id} className="mt-2">
+                    <p className="text-sm font-semibold text-ink">
+                      {item.empresa ?? item.nome_fantasia ?? "Sem nome"}
+                    </p>
+                    <p className="text-xs text-ink/60">{item.endereco ?? "-"}</p>
+                    <p className="text-[11px] text-ink/50">
+                      {item.cidade ? `${item.cidade} / ${item.uf ?? ""}` : "-"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleDuplicateKeepOld}
+                disabled={duplicateResolving}
+                className="rounded-full border border-sea/30 bg-white px-4 py-2 text-xs font-semibold text-ink/70 hover:border-sea disabled:opacity-60"
+              >
+                Manter antigo
+              </button>
+              <button
+                type="button"
+                onClick={handleDuplicateSubstitute}
+                disabled={duplicateResolving}
+                className="rounded-full bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+              >
+                Substituir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showImportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <button
@@ -1439,6 +1666,27 @@ export default function Clientes() {
             {importMessage && (
               <div className="mt-3 rounded-lg border border-sea/20 bg-sand/30 px-3 py-2 text-xs text-ink/70">
                 {importMessage}
+              </div>
+            )}
+            {importing && importTotal > 0 && (
+              <div className="mt-4 space-y-2">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-sea/10">
+                  <div
+                    className="h-full rounded-full bg-sea transition-all"
+                    style={{ width: `${Math.min(100, Math.round((importProgress / importTotal) * 100))}%` }}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-ink/60">
+                  <span>
+                    Checagem de bairros: {importProgress}/{importTotal}
+                  </span>
+                  <span>
+                    Tempo corrido: {formatDuration(importStartedAt ? (importTick - importStartedAt) / 1000 : 0)}
+                  </span>
+                  <span>
+                    Tempo estimado: {formatDuration(Math.max(0, importTotal - importProgress))}
+                  </span>
+                </div>
               </div>
             )}
 

@@ -12,6 +12,20 @@ import {
 const formatValue = (value: string | number | null) =>
   value === null || value === "" ? "-" : String(value);
 
+const formatCurrency = (value: number | string | null) => {
+  if (value === null || value === "") return "-";
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return String(value);
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(numeric);
+};
+
+const formatCurrencyInput = (value: string) => {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return "";
+  const amount = Number(digits) / 100;
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(amount);
+};
+
 const formatDate = (value: string | null) => {
   if (!value) return "-";
   const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
@@ -35,7 +49,41 @@ const parseNumber = (value: string) => {
   return Number.isNaN(parsed) ? null : parsed;
 };
 
+const parseCurrency = (value: string) => {
+  const cleaned = value.replace(/[^\d.,-]/g, "");
+  if (!cleaned) return null;
+  const hasComma = cleaned.includes(",");
+  const hasDot = cleaned.includes(".");
+  let normalized = cleaned;
+  if (hasComma && hasDot) {
+    normalized = cleaned.replace(/\./g, "").replace(",", ".");
+  } else if (hasComma) {
+    normalized = cleaned.replace(",", ".");
+  }
+  const parsed = Number(normalized);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+const sanitizeDigits = (value: string) => value.replace(/\D/g, "");
+
+const sanitizeDecimal = (value: string) => {
+  const raw = value.replace(/[^\d.,]/g, "");
+  const firstComma = raw.indexOf(",");
+  const firstDot = raw.indexOf(".");
+  const decimalIndex =
+    firstComma === -1 ? firstDot : firstDot === -1 ? firstComma : Math.min(firstComma, firstDot);
+  if (decimalIndex === -1) {
+    return raw.replace(/[^\d]/g, "");
+  }
+  const integerPart = raw.slice(0, decimalIndex).replace(/[^\d]/g, "");
+  const decimalPart = raw.slice(decimalIndex + 1).replace(/[^\d]/g, "");
+  const separator = raw[decimalIndex] ?? ",";
+  return `${integerPart}${separator}${decimalPart}`;
+};
+
 const SITUACAO_OPTIONS = ["Ativo", "Inativo"];
+
+const NUMERIC_ONLY_FIELDS = new Set(["cod_1", "corte", "venc", "tit"]);
+const DECIMAL_FIELDS = new Set(["valor"]);
 
 const FIELDS = [
   { key: "data_da_ultima_visita", label: "Data da ultima visita", type: "date" },
@@ -52,12 +100,10 @@ const FIELDS = [
   { key: "uf", label: "UF", type: "text" },
   { key: "supervisor", label: "Supervisor", type: "text" },
   { key: "vendedor", label: "Vendedor", type: "text" },
-  { key: "cod_2", label: "Cod. (2)", type: "text" },
   { key: "nome_fantasia", label: "Nome Fantasia", type: "text" },
   { key: "grupo", label: "Grupo", type: "text" },
   { key: "situacao", label: "Situacao", type: "text" },
   { key: "obs_contrato_1", label: "Obs. Contrato", type: "text", wide: true },
-  { key: "obs_contrato_2", label: "Obs. Contrato (2)", type: "text", wide: true },
 ] as const;
 
 type FieldKey = (typeof FIELDS)[number]["key"];
@@ -81,7 +127,7 @@ const buildFormState = (row: AgendaRow): AgendaFormState => ({
   perfil_visita: row.perfil_visita ?? "",
   corte: row.corte?.toString() ?? "",
   venc: row.venc?.toString() ?? "",
-  valor: row.valor?.toString() ?? "",
+  valor: row.valor !== null && row.valor !== undefined ? formatCurrency(row.valor) : "",
   tit: row.tit ?? "",
   endereco: row.endereco ?? "",
   bairro: row.bairro ?? "",
@@ -89,12 +135,10 @@ const buildFormState = (row: AgendaRow): AgendaFormState => ({
   uf: row.uf ?? "",
   supervisor: row.supervisor ?? "",
   vendedor: row.vendedor ?? "",
-  cod_2: row.cod_2 ?? "",
   nome_fantasia: row.nome_fantasia ?? "",
   grupo: row.grupo ?? "",
   situacao: row.situacao ?? "",
   obs_contrato_1: row.obs_contrato_1 ?? "",
-  obs_contrato_2: row.obs_contrato_2 ?? "",
 });
 
 export default function AgendaDrawer({
@@ -224,7 +268,7 @@ export default function AgendaDrawer({
       perfil_visita: formState.perfil_visita.trim() || null,
       corte: formState.corte ? parseNumber(formState.corte) : null,
       venc: formState.venc ? parseNumber(formState.venc) : null,
-      valor: formState.valor ? parseNumber(formState.valor) : null,
+      valor: formState.valor ? parseCurrency(formState.valor) : null,
       tit: formState.tit.trim() || null,
       endereco: formState.endereco.trim() || null,
       bairro: formState.bairro.trim() || null,
@@ -232,12 +276,10 @@ export default function AgendaDrawer({
       uf: formState.uf.trim() || null,
       supervisor: formState.supervisor.trim() || null,
       vendedor: formState.vendedor.trim() || null,
-      cod_2: formState.cod_2.trim() || null,
       nome_fantasia: formState.nome_fantasia.trim() || null,
       grupo: formState.grupo.trim() || null,
       situacao: formState.situacao.trim() || null,
       obs_contrato_1: formState.obs_contrato_1.trim() || null,
-      obs_contrato_2: formState.obs_contrato_2.trim() || null,
     };
 
     const { data, error } = await supabase
@@ -515,18 +557,44 @@ export default function AgendaDrawer({
                   </>
                 ) : (
                   <input
-                    type={field.type}
+                    type={
+                      NUMERIC_ONLY_FIELDS.has(field.key) || DECIMAL_FIELDS.has(field.key)
+                        ? "text"
+                        : field.type
+                    }
+                    inputMode={
+                      NUMERIC_ONLY_FIELDS.has(field.key)
+                        ? "numeric"
+                        : DECIMAL_FIELDS.has(field.key)
+                          ? "decimal"
+                          : undefined
+                    }
+                    pattern={
+                      NUMERIC_ONLY_FIELDS.has(field.key)
+                        ? "[0-9]*"
+                        : DECIMAL_FIELDS.has(field.key)
+                          ? "[0-9.,]*"
+                          : undefined
+                    }
                     value={formState[field.key]}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      const raw = event.target.value;
+                      const nextValue = NUMERIC_ONLY_FIELDS.has(field.key)
+                        ? sanitizeDigits(raw)
+                        : field.key === "valor"
+                          ? formatCurrencyInput(raw)
+                          : DECIMAL_FIELDS.has(field.key)
+                            ? sanitizeDecimal(raw)
+                            : raw;
                       setFormState((prev) =>
                         prev
                           ? {
                               ...prev,
-                              [field.key]: event.target.value,
+                              [field.key]: nextValue,
                             }
                           : prev,
-                      )
-                    }
+                      );
+                    }}
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 )}
@@ -545,7 +613,9 @@ export default function AgendaDrawer({
                 <span className="text-sm text-ink">
                   {field.type === "date"
                     ? formatDate(row[field.key] as string | null)
-                    : formatValue(row[field.key] as string | number | null)}
+                    : field.key === "valor"
+                      ? formatCurrency(row[field.key] as number | string | null)
+                      : formatValue(row[field.key] as string | number | null)}
                 </span>
               </div>
             ))}

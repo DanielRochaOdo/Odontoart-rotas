@@ -10,6 +10,7 @@ type CreatePayload = {
   email: string;
   password: string;
   display_name: string;
+  nome?: string | null;
   role: "VENDEDOR" | "ASSISTENTE" | "SUPERVISOR";
   supervisor_id?: string | null;
   vendedor_id?: string | null;
@@ -91,13 +92,15 @@ serve(async (req) => {
     }
     const resolvedSupervisorId = payload.role === "VENDEDOR" ? payload.supervisor_id ?? null : null;
     const resolvedVendedorId = payload.role === "ASSISTENTE" ? null : payload.vendedor_id ?? null;
+    const resolvedName = payload.nome ?? payload.display_name;
 
     const { data: createdUser, error: createError } = await supabase.auth.admin.createUser({
       email: payload.email,
       password: payload.password,
       email_confirm: true,
       user_metadata: {
-        display_name: payload.display_name,
+        display_name: resolvedName,
+        nome: resolvedName,
         role: payload.role,
         supervisor_id: resolvedSupervisorId,
         vendedor_id: resolvedVendedorId,
@@ -112,13 +115,14 @@ serve(async (req) => {
       .from("profiles")
       .update({
         role: payload.role,
-        display_name: payload.display_name,
+        display_name: resolvedName,
+        nome: resolvedName,
         supervisor_id: resolvedSupervisorId,
         vendedor_id: resolvedVendedorId,
       })
       .eq("user_id", createdUser.user.id)
       .select(
-        "id, user_id, role, display_name, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
+        "id, user_id, role, display_name, nome, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
       )
       .single();
 

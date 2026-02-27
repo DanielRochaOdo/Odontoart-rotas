@@ -9,6 +9,7 @@ import Visitas from "./pages/Visitas";
 import AceiteDigital from "./pages/AceiteDigital";
 import Clientes from "./pages/Clientes";
 import Settings from "./pages/Settings";
+import Logs from "./pages/Logs";
 import NotFound from "./pages/NotFound";
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
             <Route path="aceite-digital" element={<AceiteDigital />} />
             <Route path="clientes" element={<Clientes />} />
             <Route path="configuracoes" element={<Settings />} />
+            <Route path="logs" element={<Logs />} />
           </Route>
         </Route>
         <Route path="*" element={<NotFound />} />

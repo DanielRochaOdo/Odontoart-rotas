@@ -14,12 +14,10 @@
   uf: string | null;
   supervisor: string | null;
   vendedor: string | null;
-  cod_2: string | null;
   nome_fantasia: string | null;
   grupo: string | null;
   situacao: string | null;
   obs_contrato_1: string | null;
-  obs_contrato_2: string | null;
   visit_generated_at?: string | null;
   visit_assigned_to?: string | null;
   visit_route_id?: string | null;

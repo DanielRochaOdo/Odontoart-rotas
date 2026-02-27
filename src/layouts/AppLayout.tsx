@@ -15,6 +15,7 @@ import {
   CheckSquare,
   Sun,
   Moon,
+  ClipboardList,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { ROLE_LABELS } from "../types/roles";
@@ -32,6 +33,7 @@ const navItems: NavItem[] = [
   { label: "Visitas", to: "/visitas", icon: CalendarCheck, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
   { label: "Aceite digital", to: "/aceite-digital", icon: CheckSquare, roles: ["VENDEDOR"] },
   { label: "Clientes", to: "/clientes", icon: Building2, roles: ["SUPERVISOR", "ASSISTENTE"] },
+  { label: "Logs", to: "/logs", icon: ClipboardList, roles: ["SUPERVISOR"] },
   { label: "Configuracoes", to: "/configuracoes", icon: Settings, roles: ["SUPERVISOR"] },
 ];
 
@@ -42,7 +44,7 @@ export default function AppLayout() {
     try {
       const stored = localStorage.getItem("theme");
       if (stored === "light" || stored === "dark") return stored;
-      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      return "light";
     } catch {
       return "light";
     }
@@ -78,14 +80,14 @@ export default function AppLayout() {
   }, [theme]);
 
   const initials = useMemo(() => {
-    const name = profile?.display_name ?? "Odontoart";
+    const name = profile?.nome ?? profile?.display_name ?? "Odontoart";
     return name
       .split(" ")
       .filter(Boolean)
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase())
       .join("");
-  }, [profile?.display_name]);
+  }, [profile?.display_name, profile?.nome]);
 
   return (
     <div className="min-h-screen bg-hero-gradient overflow-x-hidden text-ink">
@@ -167,7 +169,7 @@ export default function AppLayout() {
           ) : (
             <div className="mt-5 rounded-2xl border border-sea/20 bg-sand/60 px-4 py-3">
               <p className="text-xs text-ink/70">Colaborador</p>
-              <p className="font-semibold text-ink">{profile?.display_name ?? "Perfil pendente"}</p>
+              <p className="font-semibold text-ink">{profile?.nome ?? profile?.display_name ?? "Perfil pendente"}</p>
               <p className="text-xs text-ink/60">{role ? ROLE_LABELS[role] : "Sem função"}</p>
             </div>
           )}
@@ -260,7 +262,7 @@ export default function AppLayout() {
 
             <div className="mt-5 rounded-2xl border border-sea/20 bg-sand/60 px-4 py-3">
               <p className="text-xs text-ink/70">Colaborador</p>
-              <p className="font-semibold text-ink">{profile?.display_name ?? "Perfil pendente"}</p>
+              <p className="font-semibold text-ink">{profile?.nome ?? profile?.display_name ?? "Perfil pendente"}</p>
               <p className="text-xs text-ink/60">{role ? ROLE_LABELS[role] : "Sem função"}</p>
             </div>
 
@@ -317,3 +319,4 @@ export default function AppLayout() {
     </div>
   );
 }
+

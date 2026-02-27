@@ -48,19 +48,25 @@ type VisitStats = {
 };
 
 type DonutSeries = { label: string; value: number; color: string };
-type VendorVidasSeries = { label: string; value: number };
+type VendorVidasSeries = { label: string; visitas: number; aceite: number; total: number };
 type VendorVidasSummary = {
   total: number;
+  totalVisitas: number;
+  totalAceite: number;
   totalVendors: number;
   hiddenCount: number;
 };
 type DigitalSummary = {
+  allTimeTotalVidas: number;
+  monthTotalVidas: number;
+  periodTotalVidas: number;
+  periodRegistered: number;
   todayTotalVidas: number;
   todayRegistered: number;
-  yesterdayTotalVidas: number;
-  yesterdayRegistered: number;
+  weekTotalVidas: number;
+  weekRegistered: number;
   pendingToday: string[];
-  pendingYesterday: string[];
+  pendingWeek: string[];
 };
 
 const computeVisitStats = (data: Array<{ agenda_id: string | null; completed_at: string | null; completed_vidas: number | null; no_visit_reason: string | null }>): VisitStats => {
@@ -168,6 +174,8 @@ export default function Dashboard() {
   const [vendorVidasError, setVendorVidasError] = useState<string | null>(null);
   const [vendorVidasSummary, setVendorVidasSummary] = useState<VendorVidasSummary>({
     total: 0,
+    totalVisitas: 0,
+    totalAceite: 0,
     totalVendors: 0,
     hiddenCount: 0,
   });
@@ -176,17 +184,23 @@ export default function Dashboard() {
   const [digitalSummary, setDigitalSummary] = useState<DigitalSummary | null>(null);
   const [digitalLoading, setDigitalLoading] = useState(false);
   const [digitalError, setDigitalError] = useState<string | null>(null);
+  const [scheduledCounts, setScheduledCounts] = useState<{ today: number; week: number; month: number }>({
+    today: 0,
+    week: 0,
+    month: 0,
+  });
+  const [scheduledCountsError, setScheduledCountsError] = useState<string | null>(null);
 
   const isVendor = role === "VENDEDOR";
   const canSelectSupervisor = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canViewTeamStats = role === "SUPERVISOR" || role === "ASSISTENTE";
   const activeSupervisorId = selectedSupervisorId === "all" ? null : selectedSupervisorId;
   const todayKey = useMemo(() => toLocalDateInput(new Date()), []);
-  const yesterdayKey = useMemo(() => {
-    const date = new Date();
-    date.setDate(date.getDate() - 1);
-    return toLocalDateInput(date);
-  }, []);
+  const monthStartKey = useMemo(() => toLocalDateInput(startOfMonth(new Date())), []);
+  const monthEndKey = useMemo(() => toLocalDateInput(new Date()), []);
+  const weekStartKey = useMemo(() => toLocalDateInput(startOfWeek(new Date())), []);
+  const [digitalFrom, setDigitalFrom] = useState(() => toLocalDateInput(startOfMonth(new Date())));
+  const [digitalTo, setDigitalTo] = useState(() => toLocalDateInput(new Date()));
 
   useEffect(() => {
     if (!canSelectSupervisor) return;
@@ -241,6 +255,113 @@ export default function Dashboard() {
 
     load();
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadScheduledCounts = async () => {
+      setScheduledCountsError(null);
+      try {
+        const now = new Date();
+        const today = new Date(now);
+        today.setHours(0, 0, 0, 0);
+        const weekStart = startOfWeek(now);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekStart.getDate() + 6);
+        weekEnd.setHours(0, 0, 0, 0);
+        const monthStart = startOfMonth(now);
+        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        monthEnd.setHours(0, 0, 0, 0);
+
+        const startRange = weekStart < monthStart ? weekStart : monthStart;
+        const endRange = weekEnd > monthEnd ? weekEnd : monthEnd;
+
+        const startKey = toLocalDateInput(startRange);
+        const endKey = toLocalDateInput(endRange);
+        const todayKey = toLocalDateInput(today);
+        const weekStartKeyLocal = toLocalDateInput(weekStart);
+        const weekEndKeyLocal = toLocalDateInput(weekEnd);
+        const monthStartKeyLocal = toLocalDateInput(monthStart);
+        const monthEndKeyLocal = toLocalDateInput(monthEnd);
+
+        let baseQuery = supabase
+          .from("visits")
+          .select("visit_date, assigned_to_user_id, assigned_to_name")
+          .gte("visit_date", startKey)
+          .lte("visit_date", endKey);
+
+        if (isVendor) {
+          if (session?.user.id && profile?.display_name) {
+            baseQuery = baseQuery.or(
+              `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
+            );
+          } else if (session?.user.id) {
+            baseQuery = baseQuery.eq("assigned_to_user_id", session.user.id);
+          } else if (profile?.display_name) {
+            baseQuery = baseQuery.eq("assigned_to_name", profile.display_name);
+          }
+        } else if (activeSupervisorId) {
+          const vendorsQuery = supabase
+            .from("profiles")
+            .select("user_id, display_name")
+            .eq("role", "VENDEDOR")
+            .eq("supervisor_id", activeSupervisorId);
+          const { data: vendors, error: vendorsError } = await vendorsQuery;
+          if (vendorsError) throw new Error(vendorsError.message);
+
+          const vendorIds = (vendors ?? [])
+            .map((vendor) => vendor.user_id)
+            .filter((value): value is string => Boolean(value));
+          const vendorNames = (vendors ?? [])
+            .map((vendor) => vendor.display_name)
+            .filter((value): value is string => Boolean(value));
+
+          if (vendorIds.length === 0 && vendorNames.length === 0) {
+            if (active) setScheduledCounts({ today: 0, week: 0, month: 0 });
+            return;
+          }
+
+          if (vendorIds.length && vendorNames.length) {
+            baseQuery = baseQuery.or(
+              `assigned_to_user_id.in.(${formatOrValues(vendorIds)}),assigned_to_name.in.(${formatOrValues(vendorNames)})`,
+            );
+          } else if (vendorIds.length) {
+            baseQuery = baseQuery.in("assigned_to_user_id", vendorIds);
+          } else {
+            baseQuery = baseQuery.in("assigned_to_name", vendorNames);
+          }
+        }
+
+        const { data: visitsData, error: visitsError } = await baseQuery;
+        if (!active) return;
+        if (visitsError) throw new Error(visitsError.message);
+
+        let todayCount = 0;
+        let weekCount = 0;
+        let monthCount = 0;
+
+        (visitsData ?? []).forEach((visit) => {
+          const key = (visit.visit_date ?? "").slice(0, 10);
+          if (!key) return;
+          if (key === todayKey) todayCount += 1;
+          if (key >= weekStartKeyLocal && key <= weekEndKeyLocal) weekCount += 1;
+          if (key >= monthStartKeyLocal && key <= monthEndKeyLocal) monthCount += 1;
+        });
+
+        if (!active) return;
+        setScheduledCounts({ today: todayCount, week: weekCount, month: monthCount });
+      } catch (err) {
+        if (!active) return;
+        setScheduledCountsError(err instanceof Error ? err.message : "Erro ao carregar visitas marcadas.");
+        setScheduledCounts({ today: 0, week: 0, month: 0 });
+      }
+    };
+
+    loadScheduledCounts();
+    return () => {
+      active = false;
+    };
+  }, [activeSupervisorId, isVendor, profile?.display_name, session?.user.id]);
 
   useEffect(() => {
     if (!isVendor) return;
@@ -380,13 +501,13 @@ export default function Dashboard() {
     if (!canViewTeamStats) return;
     if (!vendorVidasFrom || !vendorVidasTo) {
       setVendorVidasSeries([]);
-      setVendorVidasSummary({ total: 0, totalVendors: 0, hiddenCount: 0 });
+      setVendorVidasSummary({ total: 0, totalVisitas: 0, totalAceite: 0, totalVendors: 0, hiddenCount: 0 });
       return;
     }
     if (vendorVidasFrom > vendorVidasTo) {
       setVendorVidasError("Periodo invalido.");
       setVendorVidasSeries([]);
-      setVendorVidasSummary({ total: 0, totalVendors: 0, hiddenCount: 0 });
+      setVendorVidasSummary({ total: 0, totalVisitas: 0, totalAceite: 0, totalVendors: 0, hiddenCount: 0 });
       return;
     }
 
@@ -449,7 +570,8 @@ export default function Dashboard() {
         const { data: visitsData, error: visitsError } = await visitsQuery;
         if (visitsError) throw new Error(visitsError.message);
 
-        const totals = new Map<string, number>();
+        const visitasTotals = new Map<string, number>();
+        const aceiteTotals = new Map<string, number>();
         (visitsData ?? []).forEach((item) => {
           const value = Number(item.completed_vidas ?? 0);
           if (!Number.isFinite(value) || value <= 0) return;
@@ -457,24 +579,74 @@ export default function Dashboard() {
             item.assigned_to_name ??
             (item.assigned_to_user_id ? vendorNameById.get(item.assigned_to_user_id) : null) ??
             "Sem vendedor";
-          totals.set(label, (totals.get(label) ?? 0) + value);
+          visitasTotals.set(label, (visitasTotals.get(label) ?? 0) + value);
         });
 
-        const series = Array.from(totals.entries())
-          .map(([label, value]) => ({ label, value }))
-          .sort((a, b) => b.value - a.value);
+        let aceiteQuery = supabase
+          .from("aceite_digital")
+          .select("vendor_user_id, vendor_name, vidas, entry_date")
+          .gte("entry_date", vendorVidasFrom)
+          .lte("entry_date", vendorVidasTo);
+
+        if (activeSupervisorId) {
+          if (vendorIds.length === 0 && vendorNames.length === 0) {
+            setVendorVidasSeries([]);
+            setVendorVidasLoading(false);
+            return;
+          }
+
+          if (vendorIds.length && vendorNames.length) {
+            aceiteQuery = aceiteQuery.or(
+              `vendor_user_id.in.(${formatOrValues(vendorIds)}),vendor_name.in.(${formatOrValues(vendorNames)})`,
+            );
+          } else if (vendorIds.length) {
+            aceiteQuery = aceiteQuery.in("vendor_user_id", vendorIds);
+          } else {
+            aceiteQuery = aceiteQuery.in("vendor_name", vendorNames);
+          }
+        }
+
+        const { data: aceiteData, error: aceiteError } = await aceiteQuery;
+        if (aceiteError) throw new Error(aceiteError.message);
+
+        (aceiteData ?? []).forEach((item) => {
+          const value = Number(item.vidas ?? 0);
+          if (!Number.isFinite(value) || value < 0) return;
+          const label =
+            item.vendor_name ??
+            (item.vendor_user_id ? vendorNameById.get(item.vendor_user_id) : null) ??
+            "Sem vendedor";
+          aceiteTotals.set(label, (aceiteTotals.get(label) ?? 0) + value);
+        });
+
+        const allLabels = new Set<string>([
+          ...Array.from(visitasTotals.keys()),
+          ...Array.from(aceiteTotals.keys()),
+        ]);
+        const series = Array.from(allLabels)
+          .map((label) => {
+            const visitas = visitasTotals.get(label) ?? 0;
+            const aceite = aceiteTotals.get(label) ?? 0;
+            const total = visitas + aceite;
+            return { label, visitas, aceite, total };
+          })
+          .sort((a, b) => b.total - a.total);
         const topSeries = series.slice(0, 10);
-        const total = series.reduce((acc, item) => acc + item.value, 0);
+        const totalVisitas = series.reduce((acc, item) => acc + item.visitas, 0);
+        const totalAceite = series.reduce((acc, item) => acc + item.aceite, 0);
+        const total = totalVisitas + totalAceite;
         setVendorVidasSeries(topSeries);
         setVendorVidasSummary({
           total,
+          totalVisitas,
+          totalAceite,
           totalVendors: series.length,
           hiddenCount: Math.max(0, series.length - topSeries.length),
         });
       } catch (err) {
         setVendorVidasError(err instanceof Error ? err.message : "Erro ao carregar grafico.");
         setVendorVidasSeries([]);
-        setVendorVidasSummary({ total: 0, totalVendors: 0, hiddenCount: 0 });
+        setVendorVidasSummary({ total: 0, totalVisitas: 0, totalAceite: 0, totalVendors: 0, hiddenCount: 0 });
       } finally {
         setVendorVidasLoading(false);
       }
@@ -512,67 +684,114 @@ export default function Dashboard() {
         const vendorNameSet = new Set(vendorNames.map((name) => normalizeKey(name)));
         const vendorIdSet = new Set(vendorIds);
 
+        if (!digitalFrom || !digitalTo) {
+          throw new Error("Informe o periodo do aceite digital.");
+        }
+        if (digitalFrom > digitalTo) {
+          throw new Error("Periodo invalido.");
+        }
+
         if ((vendors ?? []).length === 0) {
           setDigitalSummary({
+            allTimeTotalVidas: 0,
+            monthTotalVidas: 0,
+            periodTotalVidas: 0,
+            periodRegistered: 0,
             todayTotalVidas: 0,
             todayRegistered: 0,
-            yesterdayTotalVidas: 0,
-            yesterdayRegistered: 0,
+            weekTotalVidas: 0,
+            weekRegistered: 0,
             pendingToday: [],
-            pendingYesterday: [],
+            pendingWeek: [],
           });
           setDigitalLoading(false);
           return;
         }
 
-        const { data: digitalRows, error: digitalError } = await supabase
-          .from("aceite_digital")
-          .select("vendor_user_id, vendor_name, entry_date, vidas")
-          .in("entry_date", [todayKey, yesterdayKey]);
+        const buildAceiteQuery = () =>
+          supabase
+            .from("aceite_digital")
+            .select("vendor_user_id, vendor_name, vidas, entry_date");
 
-        if (!active) return;
-        if (digitalError) throw new Error(digitalError.message);
-
-        const todayRows = (digitalRows ?? []).filter((row) => row.entry_date === todayKey);
-        const yesterdayRows = (digitalRows ?? []).filter((row) => row.entry_date === yesterdayKey);
-
-        const matchesVendor = (row: { vendor_user_id: string | null; vendor_name: string | null }) => {
-          if (vendorIdSet.size === 0 && vendorNameSet.size === 0) return false;
-          if (row.vendor_user_id && vendorIdSet.has(row.vendor_user_id)) return true;
-          if (row.vendor_name && vendorNameSet.has(normalizeKey(row.vendor_name))) return true;
-          return false;
+        const applyVendorFilter = (query: ReturnType<typeof buildAceiteQuery>) => {
+          if (vendorIds.length && vendorNames.length) {
+            return query.or(
+              `vendor_user_id.in.(${formatOrValues(vendorIds)}),vendor_name.in.(${formatOrValues(vendorNames)})`,
+            );
+          }
+          if (vendorIds.length) return query.in("vendor_user_id", vendorIds);
+          if (vendorNames.length) return query.in("vendor_name", vendorNames);
+          return query;
         };
 
-        const sumVidas = (rows: typeof todayRows) =>
-          rows.reduce((acc, row) => {
-            if (!matchesVendor(row)) return acc;
+        const todayQuery = applyVendorFilter(
+          buildAceiteQuery().eq("entry_date", todayKey),
+        );
+        const weekQuery = applyVendorFilter(
+          buildAceiteQuery().gte("entry_date", weekStartKey).lte("entry_date", todayKey),
+        );
+        const monthQuery = applyVendorFilter(
+          buildAceiteQuery().gte("entry_date", monthStartKey).lte("entry_date", monthEndKey),
+        );
+        const periodQuery = applyVendorFilter(
+          buildAceiteQuery().gte("entry_date", digitalFrom).lte("entry_date", digitalTo),
+        );
+        const allTimeQuery = applyVendorFilter(buildAceiteQuery());
+
+        const [
+          { data: todayRows, error: todayError },
+          { data: weekRows, error: weekError },
+          { data: monthRows, error: monthError },
+          { data: periodRows, error: periodError },
+          { data: allRows, error: allError },
+        ] = await Promise.all([todayQuery, weekQuery, monthQuery, periodQuery, allTimeQuery]);
+
+        if (!active) return;
+        if (todayError) throw new Error(todayError.message);
+        if (weekError) throw new Error(weekError.message);
+        if (monthError) throw new Error(monthError.message);
+        if (periodError) throw new Error(periodError.message);
+        if (allError) throw new Error(allError.message);
+
+        const sumRows = (rows: typeof todayRows) =>
+          (rows ?? []).reduce((acc, row) => {
             const value = Number(row.vidas ?? 0);
             return acc + (Number.isFinite(value) ? value : 0);
           }, 0);
 
         const acceptedTodayIds = new Set(
-          todayRows.map((row) => row.vendor_user_id).filter((value): value is string => Boolean(value)),
+          (todayRows ?? []).map((row) => row.vendor_user_id).filter((value): value is string => Boolean(value)),
         );
         const acceptedTodayNames = new Set(
-          todayRows
+          (todayRows ?? [])
             .map((row) => row.vendor_name)
             .filter((value): value is string => Boolean(value))
             .map((name) => normalizeKey(name)),
         );
-        const acceptedYesterdayIds = new Set(
-          yesterdayRows.map((row) => row.vendor_user_id).filter((value): value is string => Boolean(value)),
+        const acceptedWeekIds = new Set(
+          (weekRows ?? []).map((row) => row.vendor_user_id).filter((value): value is string => Boolean(value)),
         );
-        const acceptedYesterdayNames = new Set(
-          yesterdayRows
+        const acceptedWeekNames = new Set(
+          (weekRows ?? [])
+            .map((row) => row.vendor_name)
+            .filter((value): value is string => Boolean(value))
+            .map((name) => normalizeKey(name)),
+        );
+        const acceptedPeriodIds = new Set(
+          (periodRows ?? []).map((row) => row.vendor_user_id).filter((value): value is string => Boolean(value)),
+        );
+        const acceptedPeriodNames = new Set(
+          (periodRows ?? [])
             .map((row) => row.vendor_name)
             .filter((value): value is string => Boolean(value))
             .map((name) => normalizeKey(name)),
         );
 
         const pendingToday: string[] = [];
-        const pendingYesterday: string[] = [];
+        const pendingWeek: string[] = [];
         let todayRegistered = 0;
-        let yesterdayRegistered = 0;
+        let weekRegistered = 0;
+        let periodRegistered = 0;
 
         (vendors ?? []).forEach((vendor) => {
           const name = vendor.display_name ?? vendor.user_id ?? "Vendedor";
@@ -580,24 +799,32 @@ export default function Dashboard() {
           const isToday =
             (vendor.user_id && acceptedTodayIds.has(vendor.user_id)) ||
             (nameKey && acceptedTodayNames.has(nameKey));
-          const isYesterday =
-            (vendor.user_id && acceptedYesterdayIds.has(vendor.user_id)) ||
-            (nameKey && acceptedYesterdayNames.has(nameKey));
+          const isWeek =
+            (vendor.user_id && acceptedWeekIds.has(vendor.user_id)) ||
+            (nameKey && acceptedWeekNames.has(nameKey));
+          const isPeriod =
+            (vendor.user_id && acceptedPeriodIds.has(vendor.user_id)) ||
+            (nameKey && acceptedPeriodNames.has(nameKey));
 
           if (isToday) todayRegistered += 1;
-          if (isYesterday) yesterdayRegistered += 1;
+          if (isWeek) weekRegistered += 1;
+          if (isPeriod) periodRegistered += 1;
           if (!isToday) pendingToday.push(name);
-          if (!isYesterday) pendingYesterday.push(name);
+          if (!isWeek) pendingWeek.push(name);
         });
 
         if (!active) return;
         setDigitalSummary({
-          todayTotalVidas: sumVidas(todayRows),
+          allTimeTotalVidas: sumRows(allRows),
+          monthTotalVidas: sumRows(monthRows),
+          periodTotalVidas: sumRows(periodRows),
+          periodRegistered,
+          todayTotalVidas: sumRows(todayRows),
           todayRegistered,
-          yesterdayTotalVidas: sumVidas(yesterdayRows),
-          yesterdayRegistered,
+          weekTotalVidas: sumRows(weekRows),
+          weekRegistered,
           pendingToday,
-          pendingYesterday,
+          pendingWeek,
         });
       } catch (err) {
         if (!active) return;
@@ -612,7 +839,16 @@ export default function Dashboard() {
     return () => {
       active = false;
     };
-  }, [activeSupervisorId, canViewTeamStats, todayKey, yesterdayKey]);
+  }, [
+    activeSupervisorId,
+    canViewTeamStats,
+    digitalFrom,
+    digitalTo,
+    monthEndKey,
+    monthStartKey,
+    todayKey,
+    weekStartKey,
+  ]);
 
   const normalizedVendorNames = useMemo(() => {
     if (!teamVendorNames.length) return new Set<string>();
@@ -730,8 +966,10 @@ export default function Dashboard() {
 
   const exportVendorVidasPdf = () => {
     if (vendorVidasSeries.length === 0) return;
-    const total = vendorVidasSummary.total || vendorVidasSeries.reduce((acc, item) => acc + item.value, 0);
-    const maxValue = vendorVidasSeries[0]?.value ?? 1;
+    const total =
+      vendorVidasSummary.total ||
+      vendorVidasSeries.reduce((acc, item) => acc + item.total, 0);
+    const maxValue = vendorVidasSeries[0]?.total ?? 1;
     const periodLabel = `${vendorVidasFrom || "-"} a ${vendorVidasTo || "-"}`;
     const supervisorLabel =
       activeSupervisorId && supervisores.length
@@ -740,12 +978,14 @@ export default function Dashboard() {
 
     const rowsHtml = vendorVidasSeries
       .map((item, index) => {
-        const percent = total ? ((item.value / total) * 100).toFixed(1) : "0.0";
+        const percent = total ? ((item.total / total) * 100).toFixed(1) : "0.0";
         return `
           <tr>
             <td>${index + 1}</td>
             <td>${item.label}</td>
-            <td style="text-align:right;">${formatNumber(item.value)}</td>
+            <td style="text-align:right;">${formatNumber(item.visitas)}</td>
+            <td style="text-align:right;">${formatNumber(item.aceite)}</td>
+            <td style="text-align:right;">${formatNumber(item.total)}</td>
             <td style="text-align:right;">${percent}%</td>
           </tr>
         `;
@@ -754,11 +994,15 @@ export default function Dashboard() {
 
     const barsHtml = vendorVidasSeries
       .map((item) => {
-        const height = Math.max(8, Math.round((item.value / maxValue) * 160));
+        const visitasHeight = Math.max(8, Math.round((item.visitas / (maxValue || 1)) * 160));
+        const aceiteHeight = Math.max(8, Math.round((item.aceite / (maxValue || 1)) * 160));
         return `
           <div class="bar-item">
-            <div class="bar-value">${formatNumber(item.value)}</div>
-            <div class="bar" style="height:${height}px"></div>
+            <div class="bar-value">${formatNumber(item.total)}</div>
+            <div class="bar-pair">
+              <div class="bar bar-visitas" style="height:${visitasHeight}px"></div>
+              <div class="bar bar-aceite" style="height:${aceiteHeight}px"></div>
+            </div>
             <div class="bar-label">${item.label}</div>
           </div>
         `;
@@ -772,14 +1016,18 @@ export default function Dashboard() {
           <title>Vidas por vendedor</title>
           <style>
             * { box-sizing: border-box; }
+            * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             body { font-family: Arial, sans-serif; color: #0f172a; padding: 24px; }
             h1 { margin: 0 0 6px; font-size: 20px; }
             .meta { font-size: 12px; color: #475569; margin-bottom: 16px; }
             .summary { display: flex; gap: 12px; margin-bottom: 16px; }
             .summary .card { border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px 12px; font-size: 12px; }
-            .bars { display: flex; align-items: flex-end; gap: 12px; overflow-x: auto; padding-bottom: 8px; }
+            .bars { display: flex; align-items: flex-end; gap: 16px; overflow-x: auto; padding-bottom: 8px; }
             .bar-item { min-width: 72px; text-align: center; }
-            .bar { width: 36px; margin: 6px auto 4px; border-radius: 10px 10px 0 0; background: #0f766e; }
+            .bar-pair { display: flex; align-items: flex-end; justify-content: center; gap: 6px; margin: 6px auto 4px; }
+            .bar { width: 18px; border-radius: 10px 10px 0 0; border: 1px solid; }
+            .bar-visitas { background: #0f766e; color: #0f766e; }
+            .bar-aceite { background: #f59e0b; color: #f59e0b; }
             .bar-value { font-size: 11px; font-weight: bold; }
             .bar-label { font-size: 10px; color: #475569; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             table { width: 100%; border-collapse: collapse; margin-top: 16px; }
@@ -789,10 +1037,12 @@ export default function Dashboard() {
         </head>
         <body>
           <h1>Vidas por vendedor</h1>
-          <div class="meta">Periodo: ${periodLabel} • Supervisor: ${supervisorLabel}</div>
+          <div class="meta">Periodo: ${periodLabel} • Supervisor: ${supervisorLabel} • Fonte: visitas + aceite digital</div>
           <div class="summary">
             <div class="card">Total de vidas: <strong>${formatNumber(total)}</strong></div>
             <div class="card">Vendedores: <strong>${vendorVidasSummary.totalVendors}</strong></div>
+            <div class="card">Visitas: <strong>${formatNumber(vendorVidasSummary.totalVisitas)}</strong></div>
+            <div class="card">Aceite digital: <strong>${formatNumber(vendorVidasSummary.totalAceite)}</strong></div>
           </div>
           <div class="bars">${barsHtml}</div>
           <table>
@@ -800,7 +1050,9 @@ export default function Dashboard() {
               <tr>
                 <th>#</th>
                 <th>Vendedor</th>
-                <th style="text-align:right;">Vidas</th>
+                <th style="text-align:right;">Visitas</th>
+                <th style="text-align:right;">Aceite</th>
+                <th style="text-align:right;">Total</th>
                 <th style="text-align:right;">%</th>
               </tr>
             </thead>
@@ -878,27 +1130,32 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="space-y-6">
+          {scheduledCountsError && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
+              {scheduledCountsError}
+            </div>
+          )}
           <section className="grid gap-4 md:grid-cols-3">
             <div className="rounded-2xl border border-sea/20 bg-sand/40 p-5">
               <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Hoje</p>
               <p className="mt-2 font-display text-3xl text-ink">
-                {formatNumber(summary.totals.today)}
+                {formatNumber(scheduledCounts.today)}
               </p>
-              <p className="text-xs text-ink/60">Agendamentos</p>
+              <p className="text-xs text-ink/60">Visitas marcadas para hoje</p>
             </div>
             <div className="rounded-2xl border border-sea/20 bg-sand/40 p-5">
               <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Semana</p>
               <p className="mt-2 font-display text-3xl text-ink">
-                {formatNumber(summary.totals.week)}
+                {formatNumber(scheduledCounts.week)}
               </p>
-              <p className="text-xs text-ink/60">Agendamentos</p>
+              <p className="text-xs text-ink/60">Visitas marcadas para a semana</p>
             </div>
             <div className="rounded-2xl border border-sea/20 bg-sand/40 p-5">
               <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Mes</p>
               <p className="mt-2 font-display text-3xl text-ink">
-                {formatNumber(summary.totals.month)}
+                {formatNumber(scheduledCounts.month)}
               </p>
-              <p className="text-xs text-ink/60">Agendamentos</p>
+              <p className="text-xs text-ink/60">Visitas marcadas para o mes</p>
             </div>
           </section>
 
@@ -911,6 +1168,26 @@ export default function Dashboard() {
                     Resumo de registros de vidas e pendencias do time.
                   </p>
                 </div>
+                <div className="flex flex-wrap items-end gap-3">
+                  <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
+                    De
+                    <input
+                      type="date"
+                      value={digitalFrom}
+                      onChange={(event) => setDigitalFrom(event.target.value)}
+                      className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
+                    Ate
+                    <input
+                      type="date"
+                      value={digitalTo}
+                      onChange={(event) => setDigitalTo(event.target.value)}
+                      className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                    />
+                  </label>
+                </div>
               </div>
 
               {digitalLoading ? (
@@ -918,7 +1195,30 @@ export default function Dashboard() {
               ) : digitalError ? (
                 <p className="mt-3 text-xs text-red-500">{digitalError}</p>
               ) : digitalSummary ? (
-                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div className="mt-4 grid gap-3 md:grid-cols-5">
+                  <div className="rounded-xl border border-sea/15 bg-sand/30 px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Total</p>
+                    <p className="mt-2 text-2xl font-semibold text-ink">
+                      {formatNumber(digitalSummary.allTimeTotalVidas)}
+                    </p>
+                    <p className="text-[11px] text-ink/60">Todo o historico</p>
+                  </div>
+                  <div className="rounded-xl border border-sea/15 bg-sand/30 px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Periodo</p>
+                    <p className="mt-2 text-2xl font-semibold text-ink">
+                      {formatNumber(digitalSummary.periodTotalVidas)}
+                    </p>
+                    <p className="text-[11px] text-ink/60">
+                      {digitalSummary.periodRegistered} vendedor(es) registraram
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-sea/15 bg-sand/30 px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Mes</p>
+                    <p className="mt-2 text-2xl font-semibold text-ink">
+                      {formatNumber(digitalSummary.monthTotalVidas)}
+                    </p>
+                    <p className="text-[11px] text-ink/60">Mes atual</p>
+                  </div>
                   <div className="rounded-xl border border-sea/15 bg-sand/30 px-4 py-3">
                     <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Hoje</p>
                     <p className="mt-2 text-2xl font-semibold text-ink">
@@ -929,21 +1229,21 @@ export default function Dashboard() {
                     </p>
                   </div>
                   <div className="rounded-xl border border-sea/15 bg-sand/30 px-4 py-3">
-                    <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Ontem</p>
+                    <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Semana</p>
                     <p className="mt-2 text-2xl font-semibold text-ink">
-                      {formatNumber(digitalSummary.yesterdayTotalVidas)}
+                      {formatNumber(digitalSummary.weekTotalVidas)}
                     </p>
                     <p className="text-[11px] text-ink/60">
-                      {digitalSummary.yesterdayRegistered} vendedor(es) registraram
+                      {digitalSummary.weekRegistered} vendedor(es) registraram
                     </p>
                   </div>
-                  <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3">
+                  <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 md:col-span-5">
                     <p className="text-xs uppercase tracking-[0.2em] text-amber-700">Pendencias</p>
                     <p className="mt-2 text-sm text-amber-700">
-                      Ontem: {digitalSummary.pendingYesterday.length} vendedor(es)
+                      Semana: {digitalSummary.pendingWeek.length} vendedor(es)
                     </p>
                     <p className="text-[11px] text-amber-700">
-                      {formatPendingList(digitalSummary.pendingYesterday)}
+                      {formatPendingList(digitalSummary.pendingWeek)}
                     </p>
                     <p className="mt-2 text-sm text-amber-700">
                       Hoje: {digitalSummary.pendingToday.length} vendedor(es)
@@ -960,25 +1260,6 @@ export default function Dashboard() {
           )}
 
           <section className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-sea/15 bg-white/90 p-5">
-              <div className="flex items-center justify-between">
-                <h3 className="font-display text-lg text-ink">Visitas por situacao</h3>
-                <span className="text-xs text-ink/60">Top 6</span>
-              </div>
-              <div className="mt-4 space-y-2">
-                {summary.topStatus.length === 0 ? (
-                  <p className="text-sm text-ink/60">Sem dados.</p>
-                ) : (
-                  summary.topStatus.map(([label, value]) => (
-                    <div key={label} className="flex items-center justify-between text-sm">
-                      <span className="text-ink">{label}</span>
-                      <span className="font-semibold text-sea">{formatNumber(value)}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
             <div className="rounded-2xl border border-sea/15 bg-white/90 p-5">
               <div className="flex items-center justify-between">
                 <h3 className="font-display text-lg text-ink">Por cidade / UF</h3>
@@ -1000,35 +1281,24 @@ export default function Dashboard() {
           </section>
 
           {(role === "SUPERVISOR" || role === "ASSISTENTE") && (
-            <section className="grid gap-4 lg:grid-cols-2">
-              <div className="rounded-2xl border border-sea/15 bg-white/90 p-5">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-display text-lg text-ink">Visitas por vendedor</h3>
-                  <span className="text-xs text-ink/60">Top 5</span>
-                </div>
-                <div className="mt-4 space-y-2">
-                  {summary.ranking.length === 0 ? (
-                    <p className="text-sm text-ink/60">Sem dados.</p>
-                  ) : (
-                    summary.ranking.map(([label, value], index) => (
-                      <div key={label} className="flex items-center justify-between text-sm">
-                        <span className="text-ink">
-                          {index + 1}. {label}
-                        </span>
-                        <span className="font-semibold text-sea">{formatNumber(value)}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
+            <section className="rounded-2xl border border-sea/15 bg-white/90 p-5">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display text-lg text-ink">Visitas por vendedor</h3>
+                <span className="text-xs text-ink/60">Top 5</span>
               </div>
-              <div className="rounded-2xl border border-sea/15 bg-white/90 p-5">
-                <h3 className="font-display text-lg text-ink">Resumo geral</h3>
-                <p className="mt-2 text-sm text-ink/60">
-                  Total de vendedores ativos: {teamVendorsCount || Object.keys(summary.byVendor).length}
-                </p>
-                <p className="mt-2 text-sm text-ink/60">
-                  Total de registros analisados: {summaryRows.length}
-                </p>
+              <div className="mt-4 space-y-2">
+                {summary.ranking.length === 0 ? (
+                  <p className="text-sm text-ink/60">Sem dados.</p>
+                ) : (
+                  summary.ranking.map(([label, value], index) => (
+                    <div key={label} className="flex items-center justify-between text-sm">
+                      <span className="text-ink">
+                        {index + 1}. {label}
+                      </span>
+                      <span className="font-semibold text-sea">{formatNumber(value)}</span>
+                    </div>
+                  ))
+                )}
               </div>
             </section>
           )}
@@ -1039,7 +1309,7 @@ export default function Dashboard() {
                 <div>
                   <h3 className="font-display text-lg text-ink">Vidas por vendedor</h3>
                   <p className="mt-1 text-xs text-ink/60">
-                    Soma de vidas registradas por vendedor no periodo selecionado.
+                    Soma de vidas registradas por vendedor (visitas + aceite digital) no periodo selecionado.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-end gap-3">
@@ -1080,33 +1350,53 @@ export default function Dashboard() {
               ) : vendorVidasSeries.length === 0 ? (
                 <p className="mt-3 text-xs text-ink/60">Sem dados para o periodo.</p>
               ) : (
-                <div className="mt-5 space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink/60">
-                    <span>Total de vidas: {formatNumber(vendorVidasSummary.total)}</span>
-                    <span>
-                      Mostrando top 10{vendorVidasSummary.hiddenCount > 0 ? ` (+${vendorVidasSummary.hiddenCount} outros)` : ""}
-                    </span>
-                  </div>
+                  <div className="mt-5 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink/60">
+                      <span>Total de vidas: {formatNumber(vendorVidasSummary.total)}</span>
+                      <span>
+                        Mostrando top 10{vendorVidasSummary.hiddenCount > 0 ? ` (+${vendorVidasSummary.hiddenCount} outros)` : ""}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-ink/60">
+                      <span className="inline-flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 rounded-sm bg-sea" />
+                        Visitas
+                      </span>
+                      <span className="inline-flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 rounded-sm bg-amber-400" />
+                        Aceite digital
+                      </span>
+                    </div>
                   <div className="flex items-end gap-4 overflow-x-auto pb-2">
                     {(() => {
-                      const maxValue = vendorVidasSeries[0]?.value ?? 1;
-                      const total = vendorVidasSummary.total || vendorVidasSeries.reduce((acc, item) => acc + item.value, 0);
+                      const maxValue = vendorVidasSeries[0]?.total ?? 1;
+                      const safeMax = Math.max(1, maxValue);
+                      const total =
+                        vendorVidasSummary.total ||
+                        vendorVidasSeries.reduce((acc, item) => acc + item.total, 0);
                       return vendorVidasSeries.map((item) => {
-                        const height = Math.max(6, Math.round((item.value / maxValue) * 160));
-                        const percent = total ? ((item.value / total) * 100).toFixed(1) : "0.0";
+                        const visitasHeight = Math.max(6, Math.round((item.visitas / safeMax) * 160));
+                        const aceiteHeight = Math.max(6, Math.round((item.aceite / safeMax) * 160));
+                        const percent = total ? ((item.total / total) * 100).toFixed(1) : "0.0";
                         return (
                           <div
                             key={item.label}
                             className="flex min-w-[72px] flex-col items-center gap-2"
-                            title={`${item.label} • ${formatNumber(item.value)} vidas (${percent}%) • ${vendorVidasFrom} a ${vendorVidasTo}`}
+                            title={`${item.label} • Total ${formatNumber(item.total)} (Visitas ${formatNumber(item.visitas)} + Aceite ${formatNumber(item.aceite)}) • ${percent}% • ${vendorVidasFrom} a ${vendorVidasTo}`}
                           >
                             <span className="text-[11px] font-semibold text-ink">
-                              {formatNumber(item.value)}
+                              {formatNumber(item.total)}
                             </span>
-                            <div
-                              className="w-10 rounded-t-xl bg-sea"
-                              style={{ height }}
-                            />
+                            <div className="flex items-end gap-1">
+                              <div
+                                className="w-4 rounded-t-lg bg-sea"
+                                style={{ height: visitasHeight }}
+                              />
+                              <div
+                                className="w-4 rounded-t-lg bg-amber-400"
+                                style={{ height: aceiteHeight }}
+                              />
+                            </div>
                             <span className="w-20 truncate text-center text-[11px] text-ink/70">
                               {item.label}
                             </span>
@@ -1118,24 +1408,30 @@ export default function Dashboard() {
                   </div>
 
                   <div className="overflow-x-auto">
-                    <table className="min-w-[420px] w-full text-left text-xs text-ink/70">
+                    <table className="min-w-[520px] w-full text-left text-xs text-ink/70">
                       <thead>
                         <tr className="border-b border-sea/20">
                           <th className="py-2 pr-2">#</th>
                           <th className="py-2 pr-2">Vendedor</th>
-                          <th className="py-2 pr-2 text-right">Vidas</th>
+                          <th className="py-2 pr-2 text-right">Visitas</th>
+                          <th className="py-2 pr-2 text-right">Aceite</th>
+                          <th className="py-2 pr-2 text-right">Total</th>
                           <th className="py-2 pr-2 text-right">%</th>
                         </tr>
                       </thead>
                       <tbody>
                         {vendorVidasSeries.map((item, index) => {
-                          const total = vendorVidasSummary.total || vendorVidasSeries.reduce((acc, row) => acc + row.value, 0);
-                          const percent = total ? ((item.value / total) * 100).toFixed(1) : "0.0";
+                          const total =
+                            vendorVidasSummary.total ||
+                            vendorVidasSeries.reduce((acc, row) => acc + row.total, 0);
+                          const percent = total ? ((item.total / total) * 100).toFixed(1) : "0.0";
                           return (
                             <tr key={item.label} className="border-b border-sea/10">
                               <td className="py-2 pr-2">{index + 1}</td>
                               <td className="py-2 pr-2">{item.label}</td>
-                              <td className="py-2 pr-2 text-right">{formatNumber(item.value)}</td>
+                              <td className="py-2 pr-2 text-right">{formatNumber(item.visitas)}</td>
+                              <td className="py-2 pr-2 text-right">{formatNumber(item.aceite)}</td>
+                              <td className="py-2 pr-2 text-right">{formatNumber(item.total)}</td>
                               <td className="py-2 pr-2 text-right">{percent}%</td>
                             </tr>
                           );

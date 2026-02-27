@@ -34,7 +34,7 @@ const filterByRole = (profiles: ManagedProfile[], role: ManagedProfile["role"]) 
   profiles.filter((profile) => profile.role === role);
 
 const sortByName = (items: ManagedProfile[]) =>
-  [...items].sort((a, b) => (a.display_name ?? "").localeCompare(b.display_name ?? ""));
+  [...items].sort((a, b) => (a.nome ?? a.display_name ?? "").localeCompare(b.nome ?? b.display_name ?? ""));
 
 export default function Settings() {
   const { role } = useAuth();
@@ -166,6 +166,7 @@ export default function Settings() {
     try {
       const created = await createManagedUser({
         display_name: supervisorForm.display_name,
+        nome: supervisorForm.display_name,
         email: supervisorForm.email,
         password: supervisorForm.password,
         role: "SUPERVISOR",
@@ -191,6 +192,7 @@ export default function Settings() {
     try {
       const created = await createManagedUser({
         display_name: vendorForm.display_name,
+        nome: vendorForm.display_name,
         email: vendorForm.email,
         password: vendorForm.password,
         role: "VENDEDOR",
@@ -217,6 +219,7 @@ export default function Settings() {
     try {
       const created = await createManagedUser({
         display_name: assistantForm.display_name,
+        nome: assistantForm.display_name,
         email: assistantForm.email,
         password: assistantForm.password,
         role: "ASSISTENTE",
@@ -235,7 +238,7 @@ export default function Settings() {
     resetEdits();
     setEditingSupervisorId(profile.id);
     setSupervisorEdit({
-      display_name: profile.display_name ?? "",
+      display_name: profile.nome ?? profile.display_name ?? "",
       email: "",
       password: "",
     });
@@ -245,7 +248,7 @@ export default function Settings() {
     resetEdits();
     setEditingVendorId(profile.id);
     setVendorEdit({
-      display_name: profile.display_name ?? "",
+      display_name: profile.nome ?? profile.display_name ?? "",
       email: "",
       password: "",
       supervisor_id: profile.supervisor_id ?? "",
@@ -256,7 +259,7 @@ export default function Settings() {
     resetEdits();
     setEditingAssistantId(profile.id);
     setAssistantEdit({
-      display_name: profile.display_name ?? "",
+      display_name: profile.nome ?? profile.display_name ?? "",
       email: "",
       password: "",
     });
@@ -278,6 +281,7 @@ export default function Settings() {
       const updated = await updateManagedProfile({
         id: editingSupervisorId,
         display_name: supervisorEdit.display_name,
+        nome: supervisorEdit.display_name,
         supervisor_id: null,
         vendedor_id: null,
       });
@@ -317,6 +321,7 @@ export default function Settings() {
       const updated = await updateManagedProfile({
         id: editingVendorId,
         display_name: vendorEdit.display_name,
+        nome: vendorEdit.display_name,
         supervisor_id: vendorEdit.supervisor_id,
         vendedor_id: null,
       });
@@ -356,6 +361,7 @@ export default function Settings() {
       const updated = await updateManagedProfile({
         id: editingAssistantId,
         display_name: assistantEdit.display_name,
+        nome: assistantEdit.display_name,
         vendedor_id: null,
         supervisor_id: null,
       });
@@ -621,7 +627,9 @@ export default function Settings() {
                         </div>
                       ) : (
                         <div>
-                          <p className="text-sm font-semibold text-ink">{supervisor.display_name ?? "Sem nome"}</p>
+                          <p className="text-sm font-semibold text-ink">
+                            {supervisor.nome ?? supervisor.display_name ?? "Sem nome"}
+                          </p>
                           <p className="text-xs text-ink/60">Supervisor</p>
                         </div>
                       )}
@@ -689,7 +697,7 @@ export default function Settings() {
                     <option value="">Selecione</option>
                     {supervisors.map((item) => (
                       <option key={item.id} value={item.id}>
-                        {item.display_name ?? item.user_id}
+                        {item.nome ?? item.display_name ?? item.user_id}
                       </option>
                     ))}
                   </select>
@@ -730,7 +738,7 @@ export default function Settings() {
                             <option value="">Supervisor</option>
                             {supervisors.map((item) => (
                               <option key={item.id} value={item.id}>
-                                {item.display_name ?? item.user_id}
+                                {item.nome ?? item.display_name ?? item.user_id}
                               </option>
                             ))}
                           </select>
@@ -765,7 +773,9 @@ export default function Settings() {
                         </div>
                       ) : (
                         <div>
-                          <p className="text-sm font-semibold text-ink">{vendor.display_name ?? "Sem nome"}</p>
+                          <p className="text-sm font-semibold text-ink">
+                            {vendor.nome ?? vendor.display_name ?? "Sem nome"}
+                          </p>
                           <p className="text-xs text-ink/60">
                             Supervisor: {vendor.supervisor?.display_name ?? "Nao informado"}
                           </p>
@@ -885,7 +895,9 @@ export default function Settings() {
                         </div>
                       ) : (
                         <div>
-                          <p className="text-sm font-semibold text-ink">{assistant.display_name ?? "Sem nome"}</p>
+                          <p className="text-sm font-semibold text-ink">
+                            {assistant.nome ?? assistant.display_name ?? "Sem nome"}
+                          </p>
                           <p className="text-xs text-ink/60">Assistente</p>
                         </div>
                       )}

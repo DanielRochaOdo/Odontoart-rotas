@@ -22,12 +22,10 @@ type AgendaInsert = {
   uf?: string | null;
   supervisor?: string | null;
   vendedor?: string | null;
-  cod_2?: string | null;
   nome_fantasia?: string | null;
   grupo?: string | null;
   situacao?: string | null;
   obs_contrato_1?: string | null;
-  obs_contrato_2?: string | null;
   dedupe_key?: string | null;
   raw_row?: RawRow | null;
 };
@@ -51,7 +49,7 @@ const sheetName = " BASE";
 
 const headerToColumn = (header: string, occurrence: number) => {
   const normalized = header.trim();
-  const map: Record<string, string> = {
+  const map: Record<string, string | null> = {
     "Data da ultima visita": "data_da_ultima_visita",
     EMPRESA: "empresa",
     "Perfil Visita": "perfil_visita",
@@ -68,8 +66,8 @@ const headerToColumn = (header: string, occurrence: number) => {
     "Nome Fantasia": "nome_fantasia",
     Grupo: "grupo",
     Situação: "situacao",
-    "Obs. Contrato": occurrence === 1 ? "obs_contrato_1" : "obs_contrato_2",
-    "Cód.": occurrence === 1 ? "cod_1" : "cod_2",
+    "Obs. Contrato": occurrence === 1 ? "obs_contrato_1" : null,
+    "Cód.": occurrence === 1 ? "cod_1" : null,
   };
 
   return map[normalized] ?? null;
