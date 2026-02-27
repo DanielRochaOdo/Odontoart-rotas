@@ -23,7 +23,7 @@ import AgendaDrawer from "../components/agenda/AgendaDrawer";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { onProfilesUpdated } from "../lib/profileEvents";
-import { PERFIL_VISITA_PRESETS } from "../lib/perfilVisita";
+import { PERFIL_VISITA_PRESETS, isPresetPerfilVisita } from "../lib/perfilVisita";
 
 const FILTER_SOURCES: Record<string, string[]> = {
   supervisor: ["supervisor"],
@@ -517,18 +517,18 @@ export default function Agenda() {
 
   const openScheduleModal = (row: AgendaRow) => {
     const visits = scheduledVisitsByAgenda[row.id] ?? [];
-    const drafts = visits.map((visit) => ({
-      id: visit.id,
-      vendorId: visit.assigned_to_user_id ?? "",
-      vendorName: visit.assigned_to_name ?? "",
-      date: visit.visit_date,
-      perfil: visit.perfil_visita ?? row.perfil_visita ?? "",
-      perfilCustom: Boolean(
-        (visit.perfil_visita ?? row.perfil_visita ?? "") &&
-          !PERFIL_VISITA_PRESETS.includes(visit.perfil_visita ?? row.perfil_visita ?? ""),
-      ),
-      routeId: visit.route_id ?? null,
-    }));
+    const drafts = visits.map((visit) => {
+      const basePerfil = visit.perfil_visita ?? row.perfil_visita ?? "";
+      return {
+        id: visit.id,
+        vendorId: visit.assigned_to_user_id ?? "",
+        vendorName: visit.assigned_to_name ?? "",
+        date: visit.visit_date,
+        perfil: basePerfil,
+        perfilCustom: Boolean(basePerfil && !isPresetPerfilVisita(basePerfil)),
+        routeId: visit.route_id ?? null,
+      };
+    });
     setScheduleModalRow(row);
     setScheduleDrafts(drafts);
     setScheduleOriginal(visits);
@@ -554,9 +554,7 @@ export default function Agenda() {
         vendorName: "",
         date: fallbackDate,
         perfil: fallbackPerfil,
-        perfilCustom: Boolean(
-          fallbackPerfil && !PERFIL_VISITA_PRESETS.includes(fallbackPerfil),
-        ),
+        perfilCustom: Boolean(fallbackPerfil && !isPresetPerfilVisita(fallbackPerfil)),
       },
     ]);
   };

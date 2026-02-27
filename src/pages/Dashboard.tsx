@@ -681,9 +681,6 @@ export default function Dashboard() {
         const vendorNames = (vendors ?? [])
           .map((vendor) => vendor.display_name)
           .filter((value): value is string => Boolean(value));
-        const vendorNameSet = new Set(vendorNames.map((name) => normalizeKey(name)));
-        const vendorIdSet = new Set(vendorIds);
-
         if (!digitalFrom || !digitalTo) {
           throw new Error("Informe o periodo do aceite digital.");
         }
