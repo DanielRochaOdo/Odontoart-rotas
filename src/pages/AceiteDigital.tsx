@@ -44,6 +44,7 @@ export default function AceiteDigital() {
   const [digitalVidas, setDigitalVidas] = useState("");
   const [digitalAcceptanceToday, setDigitalAcceptanceToday] = useState<DigitalAcceptance | null>(null);
   const [digitalAcceptanceYesterday, setDigitalAcceptanceYesterday] = useState<DigitalAcceptance | null>(null);
+  const [hasVisitsYesterday, setHasVisitsYesterday] = useState(false);
   const [digitalLoading, setDigitalLoading] = useState(false);
   const [digitalSaving, setDigitalSaving] = useState(false);
   const [digitalError, setDigitalError] = useState<string | null>(null);
@@ -80,17 +81,43 @@ export default function AceiteDigital() {
             ? { id: yesterdayRow.id, entryDate: yesterdayRow.entry_date, vidas: Number(yesterdayRow.vidas ?? 0) }
             : null,
         );
+
+        let hasVisits = false;
+        if (session?.user.id || profile?.display_name) {
+          let visitsQuery = supabase
+            .from("visits")
+            .select("id", { count: "exact", head: true })
+            .eq("visit_date", yesterdayKey);
+
+          if (session?.user.id && profile?.display_name) {
+            visitsQuery = visitsQuery.or(
+              `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
+            );
+          } else if (session?.user.id) {
+            visitsQuery = visitsQuery.eq("assigned_to_user_id", session.user.id);
+          } else if (profile?.display_name) {
+            visitsQuery = visitsQuery.eq("assigned_to_name", profile.display_name);
+          }
+
+          const { count, error: visitsError } = await visitsQuery;
+          if (!visitsError && (count ?? 0) > 0) {
+            hasVisits = true;
+          }
+        }
+
+        setHasVisitsYesterday(hasVisits);
       } catch (err) {
         setDigitalError(err instanceof Error ? err.message : "Erro ao carregar aceite digital.");
         setDigitalAcceptanceToday(null);
         setDigitalAcceptanceYesterday(null);
+        setHasVisitsYesterday(false);
       } finally {
         setDigitalLoading(false);
       }
     };
 
     loadDigital();
-  }, [isVendor, session?.user.id, todayKey, yesterdayKey, digitalRefreshKey]);
+  }, [isVendor, session?.user.id, profile?.display_name, todayKey, yesterdayKey, digitalRefreshKey]);
 
   useEffect(() => {
     if (!canViewSummary) return;
@@ -122,7 +149,8 @@ export default function AceiteDigital() {
     [summaryRows],
   );
 
-  const pendingDate = digitalAcceptanceYesterday ? todayKey : yesterdayKey;
+  const shouldRequireYesterday = hasVisitsYesterday;
+  const pendingDate = digitalAcceptanceYesterday || !shouldRequireYesterday ? todayKey : yesterdayKey;
   const pendingAcceptance =
     pendingDate === todayKey ? digitalAcceptanceToday : digitalAcceptanceYesterday;
   const pendingLabel = pendingDate === yesterdayKey ? "Ontem" : "Hoje";
@@ -149,7 +177,7 @@ export default function AceiteDigital() {
       setDigitalError("Quantidade de vidas deve ser um numero inteiro valido.");
       return;
     }
-    if (dateKey === todayKey && !digitalAcceptanceYesterday) {
+    if (dateKey === todayKey && shouldRequireYesterday && !digitalAcceptanceYesterday) {
       setDigitalError("Registre o aceite digital de ontem para liberar o registro de hoje.");
       return;
     }
@@ -217,7 +245,7 @@ export default function AceiteDigital() {
                   Data pendente: {formatDate(pendingDate)}
                 </p>
               </div>
-              {pendingDate === todayKey && !digitalAcceptanceYesterday && (
+              {shouldRequireYesterday && !digitalAcceptanceYesterday && (
                 <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] text-amber-700">
                   Pendencia de ontem
                 </span>
@@ -273,7 +301,7 @@ export default function AceiteDigital() {
                 Registrado: {formatDate(pendingAcceptance.entryDate)} • {pendingAcceptance.vidas} vidas.
               </p>
             )}
-            {!digitalAcceptanceYesterday && (
+            {shouldRequireYesterday && !digitalAcceptanceYesterday && (
               <p className="mt-2 text-[11px] text-amber-600">
                 Registre o aceite de ontem para liberar o registro de hoje.
               </p>

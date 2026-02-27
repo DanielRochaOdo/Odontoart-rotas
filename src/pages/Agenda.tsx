@@ -1204,8 +1204,14 @@ export default function Agenda() {
     });
 
     if (filters.dateRanges.data_da_ultima_visita.from || filters.dateRanges.data_da_ultima_visita.to) {
+      const fromLabel = filters.dateRanges.data_da_ultima_visita.from
+        ? formatDate(filters.dateRanges.data_da_ultima_visita.from)
+        : "";
+      const toLabel = filters.dateRanges.data_da_ultima_visita.to
+        ? formatDate(filters.dateRanges.data_da_ultima_visita.to)
+        : "";
       chips.push({
-        label: `Data ultima visita: ${filters.dateRanges.data_da_ultima_visita.from ?? ""} - ${filters.dateRanges.data_da_ultima_visita.to ?? ""}`,
+        label: `Data ultima visita: ${fromLabel} - ${toLabel}`,
         onRemove: () =>
           setFilters((prev) => ({
             ...prev,

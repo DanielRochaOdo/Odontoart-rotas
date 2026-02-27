@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { addDays, endOfMonth, endOfWeek, format, isAfter, isSameDay, isSameMonth, startOfMonth, startOfWeek } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, Pencil } from "lucide-react";
+import { ChevronLeft, ChevronRight, MapPin, Pencil } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { fetchVendedores } from "../lib/agendaApi";
@@ -37,6 +37,34 @@ type VisitRow = {
     perfil_visita: string | null;
     supervisor?: string | null;
   } | null;
+};
+
+const buildMapAddress = (agenda?: VisitRow["agenda"] | null) => {
+  if (!agenda) return null;
+  const parts = [agenda.endereco, agenda.bairro, agenda.cidade, agenda.uf]
+    .filter(Boolean)
+    .map((value) => value?.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  return `${parts.join(", ")}, Brasil`;
+};
+
+const buildMapLinks = (address: string) => {
+  const encoded = encodeURIComponent(address);
+  const userAgent = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  const isIOS = /iPad|iPhone|iPod/i.test(userAgent);
+  return {
+    wazeApp: `waze://?q=${encoded}&navigate=yes`,
+    wazeWeb: `https://waze.com/ul?q=${encoded}&navigate=yes`,
+    googleApp: isIOS
+      ? `comgooglemaps://?daddr=${encoded}&directionsmode=driving`
+      : `google.navigation:q=${encoded}`,
+    googleWeb: `https://www.google.com/maps/dir/?api=1&destination=${encoded}`,
+    uberApp: `uber://?action=setPickup&dropoff[formatted_address]=${encoded}`,
+    uberWeb: `https://m.uber.com/ul/?action=setPickup&dropoff[formatted_address]=${encoded}`,
+    app99App: `taxis99://?client_id=MAP_123&deep_link_product_id=316`,
+    app99Web: `https://m.99app.com/?destination=${encoded}`,
+  };
 };
 
 type VendorOption = {
@@ -75,12 +103,60 @@ const NO_VISIT_REASONS = [
   "AUSENTE NO DIA",
 ];
 
+const isMobileDevice = () => {
+  if (typeof navigator === "undefined") return false;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+};
+
+const attemptOpenApp = (url: string, timeoutMs = 900) =>
+  new Promise<boolean>((resolve) => {
+    if (!url || typeof window === "undefined" || typeof document === "undefined") {
+      resolve(false);
+      return;
+    }
+
+    let opened = false;
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        opened = true;
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.location.href = url;
+
+    window.setTimeout(() => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      resolve(opened);
+    }, timeoutMs);
+  });
+
+const openMapApp = async (address: string) => {
+  const links = buildMapLinks(address);
+
+  if (!isMobileDevice()) {
+    window.open(links.googleWeb, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  const attempts = [links.wazeApp, links.app99App, links.uberApp, links.googleApp];
+
+  for (const url of attempts) {
+    const opened = await attemptOpenApp(url);
+    if (opened) return;
+  }
+
+  window.location.href = links.googleWeb;
+};
+
+
 
 export default function Visitas() {
   const { role, session, profile } = useAuth();
   const isVendor = role === "VENDEDOR";
   const canManage = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canAccess = canManage || isVendor;
+  const canFilterBySupervisor = role === "ASSISTENTE";
   const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(new Date()));
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [loading, setLoading] = useState(true);
@@ -207,6 +283,7 @@ export default function Visitas() {
       if (isVendor) {
         let blocked = false;
         let blockReason: string | null = null;
+        let hadVisitsYesterday = false;
         if (session?.user.id || profile?.display_name) {
           let baseQuery = supabase
             .from("visits")
@@ -229,9 +306,29 @@ export default function Visitas() {
             blocked = true;
             blockReason = "Conclua todas as visitas de ontem para ver as visitas de hoje.";
           }
+
+          let allVisitsQuery = supabase
+            .from("visits")
+            .select("id", { count: "exact", head: true })
+            .eq("visit_date", yesterdayKey);
+
+          if (session?.user.id && profile?.display_name) {
+            allVisitsQuery = allVisitsQuery.or(
+              `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
+            );
+          } else if (session?.user.id) {
+            allVisitsQuery = allVisitsQuery.eq("assigned_to_user_id", session.user.id);
+          } else if (profile?.display_name) {
+            allVisitsQuery = allVisitsQuery.eq("assigned_to_name", profile.display_name);
+          }
+
+          const { count: allCount, error: allCountError } = await allVisitsQuery;
+          if (!allCountError && (allCount ?? 0) > 0) {
+            hadVisitsYesterday = true;
+          }
         }
 
-        if (!blocked && session?.user.id) {
+        if (!blocked && session?.user.id && hadVisitsYesterday) {
           const { count, error: aceiteError } = await supabase
             .from("aceite_digital")
             .select("id", { count: "exact", head: true })
@@ -309,7 +406,7 @@ export default function Visitas() {
   }, [currentMonth]);
 
   const filteredVisits = useMemo(() => {
-    if (!canManage || selectedSupervisorId === "all") return visits;
+    if (!canManage || !canFilterBySupervisor || selectedSupervisorId === "all") return visits;
     const supervisor = supervisores.find(
       (item) => item.id === selectedSupervisorId || item.user_id === selectedSupervisorId,
     );
@@ -337,7 +434,7 @@ export default function Visitas() {
       }
       return false;
     });
-  }, [canManage, selectedSupervisorId, supervisores, vendors, visits]);
+  }, [canManage, canFilterBySupervisor, selectedSupervisorId, supervisores, vendors, visits]);
 
   const visitsByDate = useMemo(() => {
     const map = new Map<string, VisitRow[]>();
@@ -796,7 +893,7 @@ export default function Visitas() {
               Calendario de visitas por vendedor. Clique em um dia para ver as visitas detalhadas.
             </p>
           </div>
-          {canManage && (
+          {canFilterBySupervisor && (
             <label className="flex min-w-[220px] flex-col gap-1 text-xs font-semibold text-ink/70">
               Supervisor
               <select
@@ -932,6 +1029,7 @@ export default function Visitas() {
                                 : null) ??
                               "Sem vendedor";
                             const isCompleted = Boolean(item.completed_at);
+                            const mapAddress = buildMapAddress(item.agenda);
                             return (
                               <div key={item.id} className="rounded-xl border border-sea/10 bg-white/90 p-3">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -955,6 +1053,20 @@ export default function Visitas() {
                                       <span className="inline-flex rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
                                         {item.agenda.situacao}
                                       </span>
+                                    ) : null}
+                                    {mapAddress ? (
+                                      <button
+                                        type="button"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          openMapApp(mapAddress);
+                                        }}
+                                        className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
+                                        aria-label="Abrir mapa"
+                                        title="Abrir mapa"
+                                      >
+                                        <MapPin size={12} />
+                                      </button>
                                     ) : null}
                                     {canManage && (
                                       <button

@@ -74,9 +74,93 @@ const normalizeHeader = (value: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+const IMPORT_NUMERIC_FIELDS = new Set(["corte", "venc", "tit"]);
+const sanitizeDigits = (value: string) => value.replace(/\D/g, "");
+
+const parseImportCurrency = (value: string) => {
+  const cleaned = value.replace(/[^\d.,-]/g, "");
+  if (!cleaned) return null;
+  const hasComma = cleaned.includes(",");
+  const hasDot = cleaned.includes(".");
+  let normalized = cleaned;
+  if (hasComma && hasDot) {
+    normalized = cleaned.replace(/\./g, "").replace(",", ".");
+  } else if (hasComma) {
+    normalized = cleaned.replace(",", ".");
+  }
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const formatCurrency = (value: number | string | null) => {
+  if (value === null || value === "") return "";
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return String(value);
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(numeric);
+};
+
+const formatCurrencyInput = (value: string) => {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return "";
+  const amount = Number(digits) / 100;
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(amount);
+};
+
+const excelSerialToISOString = (serial: number) => {
+  if (!Number.isFinite(serial)) return null;
+  const utcMs = Date.UTC(1899, 11, 30) + serial * 86400000;
+  const date = new Date(utcMs);
+  if (Number.isNaN(date.getTime())) return null;
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}T12:00:00.000Z`;
+};
+
+const parseImportDate = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return `${trimmed}T12:00:00.000Z`;
+  }
+
+  const match = trimmed.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
+  if (match) {
+    const [, day, month, year] = match;
+    const dateKey = `${year}-${month}-${day}`;
+    return `${dateKey}T12:00:00.000Z`;
+  }
+
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric) && numeric >= 20000 && numeric <= 60000) {
+      const excelDate = excelSerialToISOString(numeric);
+      if (excelDate) return excelDate;
+    }
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}T12:00:00.000Z`;
+};
+
 const HEADER_MAP: Record<string, string> = {
   codigo: "codigo",
   cod: "codigo",
+  corte: "corte",
+  venc: "venc",
+  tit: "tit",
+  titulo: "tit",
+  "data ultima visita": "data_da_ultima_visita",
+  "data da ultima visita": "data_da_ultima_visita",
+  data_ultima_visita: "data_da_ultima_visita",
+  data_da_ultima_visita: "data_da_ultima_visita",
+  "ultima visita": "data_da_ultima_visita",
+  valor: "valor",
   cep: "cep",
   empresa: "empresa",
   "nome fantasia": "nome_fantasia",
@@ -84,6 +168,7 @@ const HEADER_MAP: Record<string, string> = {
   situacao: "situacao",
   "perfil visita": "perfil_visita",
   perfil: "perfil_visita",
+  perfil_visita: "perfil_visita",
   endereco: "endereco",
   bairro: "bairro",
   cidade: "cidade",
@@ -129,10 +214,11 @@ export default function Clientes() {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
     codigo: "",
+    valor: "",
     cep: "",
     empresa: "",
     nome_fantasia: "",
-    situacao: "",
+    situacao: "Ativo",
     endereco: "",
     bairro: "",
     cidade: "",
@@ -153,6 +239,7 @@ export default function Clientes() {
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     codigo: "",
+    valor: "",
     cep: "",
     empresa: "",
     nome_fantasia: "",
@@ -293,6 +380,7 @@ export default function Clientes() {
     setHistorySupervisorId("all");
     setEditForm({
       codigo: selected.codigo ?? "",
+      valor: selected.valor !== null && selected.valor !== undefined ? formatCurrency(selected.valor) : "",
       cep: selected.cep ?? "",
       empresa: selected.empresa ?? "",
       nome_fantasia: selected.nome_fantasia ?? "",
@@ -538,6 +626,7 @@ export default function Clientes() {
       );
       const created = await createCliente({
         codigo: form.codigo.trim() || null,
+        valor: form.valor ? parseImportCurrency(form.valor) : null,
         cep: form.cep.trim() || null,
         empresa: form.empresa.trim() || null,
         nome_fantasia: form.nome_fantasia.trim() || null,
@@ -556,6 +645,7 @@ export default function Clientes() {
       }
       setForm({
         codigo: "",
+        valor: "",
         cep: "",
         empresa: "",
         nome_fantasia: "",
@@ -695,6 +785,7 @@ export default function Clientes() {
     try {
       const updated = await updateCliente(selected.id, {
         codigo: editForm.codigo.trim() || null,
+        valor: editForm.valor ? parseImportCurrency(editForm.valor) : null,
         cep: editForm.cep.trim() || null,
         empresa: editForm.empresa.trim() || null,
         nome_fantasia: editForm.nome_fantasia.trim() || null,
@@ -776,6 +867,11 @@ export default function Clientes() {
   const handleDownloadTemplate = () => {
     const headers = [
       "codigo",
+      "corte",
+      "venc",
+      "tit",
+      "valor",
+      "data_ultima_visita",
       "cep",
       "empresa",
       "nome_fantasia",
@@ -838,13 +934,28 @@ export default function Clientes() {
             if (!target) return;
             const text = String(value ?? "").trim();
             if (!text) return;
-            record[target] = target === "cep" ? formatCep(text) : text;
+            const cleaned = IMPORT_NUMERIC_FIELDS.has(target) ? sanitizeDigits(text) : text;
+            if (!cleaned) return;
+            record[target] = target === "cep" ? formatCep(cleaned) : cleaned;
           });
 
           const situacaoValue = record.situacao ? normalizeStatus(record.situacao) : null;
+          const corteValue = record.corte ? Number(record.corte) : null;
+          const vencValue = record.venc ? Number(record.venc) : null;
+          const parsedCorte = Number.isFinite(corteValue ?? NaN) ? corteValue : null;
+          const parsedVenc = Number.isFinite(vencValue ?? NaN) ? vencValue : null;
+          const parsedDataUltimaVisita = record.data_da_ultima_visita
+            ? parseImportDate(record.data_da_ultima_visita)
+            : null;
+          const parsedValor = record.valor ? parseImportCurrency(record.valor) : null;
 
           return {
             codigo: record.codigo ?? null,
+            corte: parsedCorte,
+            venc: parsedVenc,
+            tit: record.tit ?? null,
+            valor: parsedValor,
+            data_da_ultima_visita: parsedDataUltimaVisita,
             cep: record.cep ?? null,
             empresa: record.empresa ?? null,
             nome_fantasia: record.nome_fantasia ?? null,
@@ -969,16 +1080,27 @@ export default function Clientes() {
           onSubmit={handleCreate}
           className="grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-4 md:grid-cols-6"
         >
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            Codigo
-            <input
-              value={form.codigo}
-              onChange={(event) => setForm((prev) => ({ ...prev, codigo: event.target.value }))}
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            CEP
+        <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+          Codigo
+          <input
+            value={form.codigo}
+            onChange={(event) => setForm((prev) => ({ ...prev, codigo: event.target.value }))}
+            className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+          Valor
+          <input
+            value={form.valor}
+            onChange={(event) =>
+              setForm((prev) => ({ ...prev, valor: formatCurrencyInput(event.target.value) }))
+            }
+            inputMode="decimal"
+            className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+          CEP
             <input
               value={form.cep}
               onChange={(event) =>
@@ -1312,6 +1434,17 @@ export default function Clientes() {
                   />
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Valor
+                  <input
+                    value={editForm.valor}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, valor: formatCurrencyInput(event.target.value) }))
+                    }
+                    inputMode="decimal"
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
                   CEP
                   <input
                     value={editForm.cep}
@@ -1495,6 +1628,7 @@ export default function Clientes() {
               <div className="mt-6 space-y-3">
                 {[
                   ["Codigo", selected.codigo],
+                  ["Valor", selected.valor !== null && selected.valor !== undefined ? formatCurrency(selected.valor) : null],
                   ["CEP", selected.cep],
                   ["Situacao", selected.situacao ?? "Ativo"],
                   ["Empresa", selected.empresa],
