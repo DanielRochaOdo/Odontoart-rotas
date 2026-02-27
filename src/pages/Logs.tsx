@@ -42,7 +42,6 @@ const FIELD_LABELS: Record<string, string> = {
   nome: "Nome",
   display_name: "Nome",
   empresa: "Empresa",
-  nome_fantasia: "Nome fantasia",
   perfil_visita: "Perfil visita",
   data_da_ultima_visita: "Data da ultima visita",
   visit_date: "Data da visita",
@@ -71,7 +70,7 @@ const FIELD_LABELS: Record<string, string> = {
   updated_at: "Atualizado em",
 };
 
-const IGNORED_FIELDS = new Set(["id", "created_at", "updated_at", "display_name"]);
+const IGNORED_FIELDS = new Set(["id", "created_at", "updated_at", "display_name", "nome_fantasia"]);
 
 const formatFieldLabel = (field: string) => {
   if (FIELD_LABELS[field]) return FIELD_LABELS[field];

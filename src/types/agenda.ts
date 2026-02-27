@@ -9,6 +9,7 @@
   valor: number | null;
   tit: string | null;
   endereco: string | null;
+  complemento: string | null;
   bairro: string | null;
   cidade: string | null;
   uf: string | null;
@@ -30,6 +31,15 @@ export type AgendaFilters = {
   global: string;
   columns: Record<string, string[]>;
   dateRanges: {
-    data_da_ultima_visita: { from?: string; to?: string; month?: string; year?: string };
+    data_da_ultima_visita: {
+      from?: string;
+      to?: string;
+      month?: string;
+      year?: string;
+      invert?: boolean;
+    };
+  };
+  ranges: {
+    vidas_ultima_visita: { from?: string; to?: string };
   };
 };

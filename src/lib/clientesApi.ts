@@ -36,6 +36,7 @@ const upsertAgendaFromClientesPayloads = async (
     cep?: string | null;
     empresa?: string | null;
     nome_fantasia?: string | null;
+    complemento?: string | null;
     perfil_visita?: string | null;
     situacao?: string | null;
     endereco?: string | null;
@@ -59,6 +60,7 @@ const upsertAgendaFromClientesPayloads = async (
         cep: payload.cep ?? null,
         empresa,
         nome_fantasia: nomeFantasia,
+        complemento: payload.complemento ?? null,
         perfil_visita: payload.perfil_visita ?? null,
         endereco: payload.endereco ?? null,
         bairro: payload.bairro ?? null,
@@ -111,7 +113,7 @@ export const fetchClientes = async () => {
   const { data, error } = await supabase
     .from("clientes")
     .select(
-      "id, codigo, valor, cep, empresa, nome_fantasia, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
+      "id, codigo, corte, venc, tit, valor, data_da_ultima_visita, cep, empresa, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
     );
 
   if (error) throw new Error(error.message);
@@ -120,10 +122,15 @@ export const fetchClientes = async () => {
 
 export const createCliente = async (payload: {
   codigo?: string | null;
+  corte?: number | null;
+  venc?: number | null;
+  tit?: string | null;
   valor?: number | null;
+  data_da_ultima_visita?: string | null;
   cep?: string | null;
   empresa?: string | null;
   nome_fantasia?: string | null;
+  complemento?: string | null;
   perfil_visita?: string | null;
   situacao?: string | null;
   endereco?: string | null;
@@ -135,10 +142,15 @@ export const createCliente = async (payload: {
     .from("clientes")
     .insert({
       codigo: payload.codigo ?? null,
+      corte: payload.corte ?? null,
+      venc: payload.venc ?? null,
+      tit: payload.tit ?? null,
       valor: payload.valor ?? null,
+      data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
       cep: payload.cep ?? null,
       empresa: payload.empresa ?? null,
       nome_fantasia: payload.nome_fantasia ?? null,
+      complemento: payload.complemento ?? null,
       perfil_visita: payload.perfil_visita ?? null,
       situacao: payload.situacao ?? DEFAULT_SITUACAO,
       endereco: payload.endereco ?? null,
@@ -147,7 +159,7 @@ export const createCliente = async (payload: {
       uf: payload.uf ?? null,
     })
     .select(
-      "id, codigo, valor, cep, empresa, nome_fantasia, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
+      "id, codigo, corte, venc, tit, valor, data_da_ultima_visita, cep, empresa, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
     )
     .single();
 
@@ -161,10 +173,15 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
     .from("clientes")
     .update({
       codigo: payload.codigo ?? null,
+      corte: payload.corte ?? null,
+      venc: payload.venc ?? null,
+      tit: payload.tit ?? null,
       valor: payload.valor ?? null,
+      data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
       cep: payload.cep ?? null,
       empresa: payload.empresa ?? null,
       nome_fantasia: payload.nome_fantasia ?? null,
+      complemento: payload.complemento ?? null,
       perfil_visita: payload.perfil_visita ?? null,
       situacao: payload.situacao ?? DEFAULT_SITUACAO,
       endereco: payload.endereco ?? null,
@@ -174,7 +191,7 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
     })
     .eq("id", id)
     .select(
-      "id, codigo, valor, cep, empresa, nome_fantasia, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
+      "id, codigo, corte, venc, tit, valor, data_da_ultima_visita, cep, empresa, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
     )
     .single();
 
@@ -233,6 +250,7 @@ export const upsertClientes = async (
     cep?: string | null;
     empresa?: string | null;
     nome_fantasia?: string | null;
+    complemento?: string | null;
     perfil_visita?: string | null;
     situacao?: string | null;
     endereco?: string | null;
@@ -252,6 +270,7 @@ export const upsertClientes = async (
     cep: payload.cep ?? null,
     empresa: payload.empresa ?? null,
     nome_fantasia: payload.nome_fantasia ?? null,
+    complemento: payload.complemento ?? null,
     perfil_visita: payload.perfil_visita ?? null,
     situacao: payload.situacao ?? DEFAULT_SITUACAO,
     endereco: payload.endereco ?? null,
@@ -259,17 +278,12 @@ export const upsertClientes = async (
     cidade: payload.cidade ?? null,
     uf: payload.uf ?? null,
   }));
-  const clientesRows = normalized.map(
-    ({ corte, venc, tit, data_da_ultima_visita, valor, ...rest }) => ({
-      ...rest,
-      valor,
-    }),
-  );
+  const clientesRows = normalized;
   const { data, error } = await supabase
     .from("clientes")
     .upsert(clientesRows, { onConflict: "dedupe_key", ignoreDuplicates: true })
     .select(
-      "id, codigo, valor, cep, empresa, nome_fantasia, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
+      "id, codigo, corte, venc, tit, valor, data_da_ultima_visita, cep, empresa, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
     );
   if (error) throw new Error(error.message);
   await upsertAgendaFromClientesPayloads(normalized);
@@ -284,11 +298,16 @@ export const syncAgendaForCliente = async (cliente: ClienteRow) => {
   let query = supabase.from("agenda").update({
     situacao,
     cod_1: cliente.codigo ?? null,
+    corte: cliente.corte ?? null,
+    venc: cliente.venc ?? null,
+    tit: cliente.tit ?? null,
+    data_da_ultima_visita: cliente.data_da_ultima_visita ?? null,
     cep: cliente.cep ?? null,
     empresa: cliente.empresa ?? null,
     nome_fantasia: cliente.nome_fantasia ?? null,
     perfil_visita: cliente.perfil_visita ?? null,
     valor: cliente.valor ?? null,
+    complemento: cliente.complemento ?? null,
     endereco: cliente.endereco ?? null,
     bairro: cliente.bairro ?? null,
     cidade: cliente.cidade ?? null,

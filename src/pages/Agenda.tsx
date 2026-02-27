@@ -11,10 +11,12 @@ import {
   fetchAgenda,
   fetchAgendaForGeneration,
   fetchAgendaScheduledVisits,
+  fetchAgendaVisitVendors,
   fetchDistinctOptions,
   fetchSupervisores,
   fetchVendedores,
   type AgendaScheduledVisit,
+  type AgendaVisitVendor,
 } from "../lib/agendaApi";
 import type { AgendaRow } from "../types/agenda";
 import { useAgendaFilters } from "../hooks/useAgendaFilters";
@@ -34,7 +36,7 @@ const FILTER_SOURCES: Record<string, string[]> = {
   uf: ["uf"],
   grupo: ["grupo"],
   perfil_visita: ["perfil_visita"],
-  empresa_nome: ["empresa", "nome_fantasia"],
+  empresa_nome: ["empresa"],
 };
 
 const FILTER_LABELS: Record<string, string> = {
@@ -75,6 +77,7 @@ const formatVisitBadge = (value: string | null) => {
 };
 
 const escapeOrValue = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
+const normalizeNumberInput = (value: string) => value.replace(/\D/g, "");
 
 const MONTH_OPTIONS = [
   { value: "1", label: "Janeiro" },
@@ -110,6 +113,9 @@ export default function Agenda() {
   const [selectedAgendaIds, setSelectedAgendaIds] = useState<string[]>([]);
   const [scheduledVisitsByAgenda, setScheduledVisitsByAgenda] = useState<
     Record<string, AgendaScheduledVisit[]>
+  >({});
+  const [visitVendorsByAgenda, setVisitVendorsByAgenda] = useState<
+    Record<string, AgendaVisitVendor[]>
   >({});
   const [scheduleModalRow, setScheduleModalRow] = useState<AgendaRow | null>(null);
   const [scheduleDrafts, setScheduleDrafts] = useState<
@@ -200,6 +206,35 @@ export default function Agenda() {
     () => new Map(vendedores.map((vendor) => [vendor.user_id, vendor.display_name ?? vendor.user_id])),
     [vendedores],
   );
+
+  const resolveVendorsForAgenda = (agendaId: string, fallback?: string | null) => {
+    const visits = visitVendorsByAgenda[agendaId] ?? scheduledVisitsByAgenda[agendaId] ?? [];
+    if (!visits.length) return fallback ?? "-";
+    const names = visits
+      .map(
+        (visit) =>
+          visit.assigned_to_name ??
+          (visit.assigned_to_user_id ? vendorById.get(visit.assigned_to_user_id) : null) ??
+          "",
+      )
+      .map((name) => name.trim())
+      .filter(Boolean);
+    if (!names.length) return fallback ?? "-";
+    return Array.from(new Set(names)).join(", ");
+  };
+
+  const resolveLastCompletedVidas = (agendaId: string, fallback?: number | null) => {
+    const visits = visitVendorsByAgenda[agendaId] ?? [];
+    const completed = visits.find(
+      (visit) =>
+        Boolean(visit.completed_at) &&
+        visit.completed_vidas !== null &&
+        visit.completed_vidas !== undefined,
+    );
+    if (completed) return String(completed.completed_vidas);
+    if (fallback !== null && fallback !== undefined) return String(fallback);
+    return "-";
+  };
 
   useEffect(() => {
     setPageIndex(0);
@@ -304,24 +339,34 @@ export default function Agenda() {
     const agendaIds = data.map((row) => row.id);
     if (agendaIds.length === 0) {
       setScheduledVisitsByAgenda({});
+      setVisitVendorsByAgenda({});
       return () => {
         active = false;
       };
     }
 
-    fetchAgendaScheduledVisits(agendaIds)
-      .then((visits) => {
+    Promise.all([fetchAgendaScheduledVisits(agendaIds), fetchAgendaVisitVendors(agendaIds)])
+      .then(([scheduledVisits, vendorVisits]) => {
         if (!active) return;
-        const grouped: Record<string, AgendaScheduledVisit[]> = {};
-        visits.forEach((visit) => {
-          if (!grouped[visit.agenda_id]) grouped[visit.agenda_id] = [];
-          grouped[visit.agenda_id].push(visit);
+        const groupedScheduled: Record<string, AgendaScheduledVisit[]> = {};
+        scheduledVisits.forEach((visit) => {
+          if (!groupedScheduled[visit.agenda_id]) groupedScheduled[visit.agenda_id] = [];
+          groupedScheduled[visit.agenda_id].push(visit);
         });
-        setScheduledVisitsByAgenda(grouped);
+        const groupedVendors: Record<string, AgendaVisitVendor[]> = {};
+        vendorVisits.forEach((visit) => {
+          if (!groupedVendors[visit.agenda_id]) groupedVendors[visit.agenda_id] = [];
+          groupedVendors[visit.agenda_id].push(visit);
+        });
+        setScheduledVisitsByAgenda(groupedScheduled);
+        setVisitVendorsByAgenda(groupedVendors);
       })
       .catch((err) => {
         console.error(err);
-        if (active) setScheduledVisitsByAgenda({});
+        if (active) {
+          setScheduledVisitsByAgenda({});
+          setVisitVendorsByAgenda({});
+        }
       });
 
     return () => {
@@ -413,6 +458,14 @@ export default function Agenda() {
       const visitBase = new Date(`${visitDate}T12:00:00`);
       const routeDate = visitDate;
       const displayDate = new Intl.DateTimeFormat("pt-BR").format(visitBase);
+      const vendorNames = Array.from(
+        new Set(
+          selectedVendors
+            .map((vendor) => vendor.display_name ?? vendor.user_id ?? "")
+            .map((name) => name.trim())
+            .filter(Boolean),
+        ),
+      ).join(", ");
 
       for (const vendor of selectedVendors) {
         const routeName = `Visitas ${displayDate} - ${vendor.display_name ?? "Vendedor"}`;
@@ -475,14 +528,20 @@ export default function Agenda() {
         const chunkIds = agendaIds.slice(i, i + chunkSize);
         const { error: updateError } = await supabase
           .from("agenda")
-          .update({
-            visit_generated_at: visitBase.toISOString(),
-          })
+          .update({ visit_generated_at: visitBase.toISOString() })
           .in("id", chunkIds)
           .is("visit_generated_at", null);
 
         if (updateError) {
           throw new Error(updateError.message);
+        }
+
+        const { error: vendorError } = await supabase
+          .from("agenda")
+          .update({ vendedor: vendorNames || null })
+          .in("id", chunkIds);
+        if (vendorError) {
+          throw new Error(vendorError.message);
         }
       }
 
@@ -744,10 +803,19 @@ export default function Agenda() {
         }
       }
 
+      const vendorNames = Array.from(
+        new Set(
+          scheduleDrafts
+            .map((draft) => vendorById.get(draft.vendorId) ?? draft.vendorName ?? draft.vendorId ?? "")
+            .map((name) => name.trim())
+            .filter(Boolean),
+        ),
+      ).join(", ");
+
       if (scheduleDrafts.length === 0) {
         const { error } = await supabase
           .from("agenda")
-          .update({ visit_generated_at: null })
+          .update({ visit_generated_at: null, vendedor: null })
           .eq("id", scheduleModalRow.id);
         if (error) throw new Error(error.message);
       } else {
@@ -757,6 +825,12 @@ export default function Agenda() {
           .eq("id", scheduleModalRow.id)
           .is("visit_generated_at", null);
         if (error) throw new Error(error.message);
+
+        const { error: vendorError } = await supabase
+          .from("agenda")
+          .update({ vendedor: vendorNames || null })
+          .eq("id", scheduleModalRow.id);
+        if (vendorError) throw new Error(vendorError.message);
       }
 
       if (scheduleDrafts.length > 0) {
@@ -775,23 +849,14 @@ export default function Agenda() {
 
           const codigo = scheduleModalRow.cod_1?.trim() ?? "";
           const empresa = scheduleModalRow.empresa?.trim() ?? "";
-          const nomeFantasia = scheduleModalRow.nome_fantasia?.trim() ?? "";
 
           let clientesQuery = supabase.from("clientes").update({ perfil_visita: resolvedPerfil });
           let hasClienteFilter = false;
           if (codigo) {
             clientesQuery = clientesQuery.eq("codigo", codigo);
             hasClienteFilter = true;
-          } else if (empresa && nomeFantasia) {
-            clientesQuery = clientesQuery.or(
-              `empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
-            );
-            hasClienteFilter = true;
           } else if (empresa) {
             clientesQuery = clientesQuery.eq("empresa", empresa);
-            hasClienteFilter = true;
-          } else if (nomeFantasia) {
-            clientesQuery = clientesQuery.eq("nome_fantasia", nomeFantasia);
             hasClienteFilter = true;
           }
 
@@ -814,6 +879,18 @@ export default function Agenda() {
       setScheduleModalRow(null);
       setScheduleDrafts([]);
       setScheduleOriginal([]);
+      setData((prev) =>
+        prev.map((row) =>
+          row.id === scheduleModalRow.id
+            ? { ...row, vendedor: scheduleDrafts.length ? vendorNames || null : null }
+            : row,
+        ),
+      );
+      setSelectedRow((prev) =>
+        prev?.id === scheduleModalRow.id
+          ? { ...prev, vendedor: scheduleDrafts.length ? vendorNames || null : null }
+          : prev,
+      );
       setScheduleRefreshKey((prev) => prev + 1);
     } catch (err) {
       setScheduleError(err instanceof Error ? err.message : "Erro ao salvar visitas.");
@@ -925,8 +1002,17 @@ export default function Agenda() {
       },
       {
         accessorKey: "data_da_ultima_visita",
-        header: ({ column }) => renderSortLabel(column, "Data ultima visita"),
+        header: ({ column }) => renderSortLabel(column, "Ultima visita"),
         cell: (info) => formatDate(info.getValue() as string | null),
+      },
+      {
+        accessorKey: "visit_completed_vidas",
+        header: ({ column }) => renderSortLabel(column, "Vidas ultima visita"),
+        cell: (info) => {
+          const row = info.row.original;
+          const value = info.getValue<number | null>();
+          return resolveLastCompletedVidas(row.id, value);
+        },
       },
       {
         accessorKey: "cod_1",
@@ -945,30 +1031,6 @@ export default function Agenda() {
                 setFilters((prev) => ({
                   ...prev,
                   columns: { ...prev.columns, cod_1: next },
-                }))
-              }
-            />
-          </div>
-        ),
-        cell: (info) => info.getValue<string | null>() ?? "-",
-      },
-      {
-        accessorKey: "supervisor",
-        header: ({ column }) => (
-          <div className="flex items-center justify-between gap-2">
-            {renderSortLabel(column, "Supervisor")}
-            <MultiSelectFilter
-              label={
-                (filters.columns.supervisor ?? []).length
-                  ? `Filtro (${filters.columns.supervisor.length})`
-                  : "Filtro"
-              }
-              options={filterOptions.supervisor ?? []}
-              value={filters.columns.supervisor}
-              onApply={(next) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  columns: { ...prev.columns, supervisor: next },
                 }))
               }
             />
@@ -1004,7 +1066,6 @@ export default function Agenda() {
           return (
             <div>
               <p className="text-sm font-semibold text-ink">{name}</p>
-              <p className="text-xs text-ink/60">{row.nome_fantasia ?? ""}</p>
             </div>
           );
         },
@@ -1058,28 +1119,6 @@ export default function Agenda() {
         cell: (info) => info.getValue<string | null>() ?? "-",
       },
       {
-        accessorKey: "uf",
-        header: ({ column }) => (
-          <div className="flex items-center justify-between gap-2">
-            {renderSortLabel(column, "UF")}
-            <MultiSelectFilter
-              label={
-                (filters.columns.uf ?? []).length ? `Filtro (${filters.columns.uf.length})` : "Filtro"
-              }
-              options={filterOptions.uf ?? []}
-              value={filters.columns.uf}
-              onApply={(next) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  columns: { ...prev.columns, uf: next },
-                }))
-              }
-            />
-          </div>
-        ),
-        cell: (info) => info.getValue<string | null>() ?? "-",
-      },
-      {
         accessorKey: "vendedor",
         header: ({ column }) => (
           <div className="flex items-center justify-between gap-2">
@@ -1101,7 +1140,10 @@ export default function Agenda() {
             />
           </div>
         ),
-        cell: (info) => info.getValue<string | null>() ?? "-",
+        cell: (info) => {
+          const row = info.row.original;
+          return resolveVendorsForAgenda(row.id, row.vendedor);
+        },
       },
       {
         accessorKey: "grupo",
@@ -1160,6 +1202,10 @@ export default function Agenda() {
       openScheduleModal,
       selectedAgendaSet,
       scheduledVisitsByAgenda,
+      visitVendorsByAgenda,
+      vendorById,
+      resolveVendorsForAgenda,
+      resolveLastCompletedVidas,
       setFilters,
       setVisibleSelection,
       toggleAgendaSelection,
@@ -1210,8 +1256,11 @@ export default function Agenda() {
       const toLabel = filters.dateRanges.data_da_ultima_visita.to
         ? formatDate(filters.dateRanges.data_da_ultima_visita.to)
         : "";
+      const isInsideRange = Boolean(filters.dateRanges.data_da_ultima_visita.invert);
       chips.push({
-        label: `Data ultima visita: ${fromLabel} - ${toLabel}`,
+        label: isInsideRange
+          ? `Ultima visita: ${fromLabel} - ${toLabel}`
+          : `Ultima visita (fora): ${fromLabel} - ${toLabel}`,
         onRemove: () =>
           setFilters((prev) => ({
             ...prev,
@@ -1224,17 +1273,47 @@ export default function Agenda() {
       const monthLabel = filters.dateRanges.data_da_ultima_visita.month
         ? MONTH_OPTIONS.find((option) => option.value === filters.dateRanges.data_da_ultima_visita.month)?.label
         : null;
+      const isInsideRange = Boolean(filters.dateRanges.data_da_ultima_visita.invert);
       chips.push({
         label: monthLabel
-          ? `Mes/Ano: ${monthLabel} ${filters.dateRanges.data_da_ultima_visita.year}`
-          : `Ano: ${filters.dateRanges.data_da_ultima_visita.year}`,
+          ? `${isInsideRange ? "Mes/Ano" : "Mes/Ano (fora)"}: ${monthLabel} ${
+              filters.dateRanges.data_da_ultima_visita.year
+            }`
+          : `${isInsideRange ? "Ano" : "Ano (fora)"}: ${filters.dateRanges.data_da_ultima_visita.year}`,
         onRemove: () =>
           setFilters((prev) => ({
             ...prev,
             dateRanges: {
               ...prev.dateRanges,
-              data_da_ultima_visita: { ...prev.dateRanges.data_da_ultima_visita, month: undefined, year: undefined },
+              data_da_ultima_visita: {
+                ...prev.dateRanges.data_da_ultima_visita,
+                month: undefined,
+                year: undefined,
+                invert: false,
+              },
             },
+          })),
+      });
+    }
+
+    if (
+      filters.ranges.vidas_ultima_visita.from ||
+      filters.ranges.vidas_ultima_visita.to
+    ) {
+      const fromLabel = filters.ranges.vidas_ultima_visita.from ?? "";
+      const toLabel = filters.ranges.vidas_ultima_visita.to ?? "";
+      const label =
+        fromLabel && toLabel
+          ? `Vidas ultima visita: ${fromLabel} a ${toLabel}`
+          : fromLabel
+            ? `Vidas ultima visita: a partir de ${fromLabel}`
+            : `Vidas ultima visita: ate ${toLabel}`;
+      chips.push({
+        label,
+        onRemove: () =>
+          setFilters((prev) => ({
+            ...prev,
+            ranges: { ...prev.ranges, vidas_ultima_visita: {} },
           })),
       });
     }
@@ -1257,7 +1336,7 @@ export default function Agenda() {
       </header>
 
       <section className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
-        <div className="flex flex-wrap items-start gap-4">
+        <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1">
             <label className="text-[11px] font-semibold text-ink/70">Busca global</label>
             <input
@@ -1269,163 +1348,241 @@ export default function Agenda() {
               placeholder="Empresa, cidade, vendedor..."
               id="agenda-global-search"
               name="agendaGlobalSearch"
-              className="w-64 rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
+              className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
             />
           </div>
 
-          <div className="flex flex-col gap-1 md:hidden">
-            <div className="flex items-center gap-2">
-              <label className="text-[11px] font-semibold text-ink/70">Bairro</label>
-              <MultiSelectFilter
-                label={
-                  (filters.columns.bairro ?? []).length
-                    ? `Selecionados (${filters.columns.bairro.length})`
-                    : "Selecionar"
-                }
-                options={filterOptions.bairro ?? []}
-                value={filters.columns.bairro}
-                onApply={(next) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    columns: { ...prev.columns, bairro: next },
-                  }))
-                }
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[11px] font-semibold text-ink/70">Data ultima visita</label>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                type="date"
-                value={filters.dateRanges.data_da_ultima_visita.from ?? ""}
-                onChange={(event) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    dateRanges: {
-                      ...prev.dateRanges,
-                      data_da_ultima_visita: {
-                        ...prev.dateRanges.data_da_ultima_visita,
-                        from: event.target.value || undefined,
-                        month: undefined,
-                        year: undefined,
-                      },
-                    },
-                  }))
-                }
-                id="agenda-duv-from"
-                name="agendaDuvFrom"
-                className="rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-              />
-              <span className="text-xs text-ink/50">ate</span>
-              <input
-                type="date"
-                value={filters.dateRanges.data_da_ultima_visita.to ?? ""}
-                onChange={(event) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    dateRanges: {
-                      ...prev.dateRanges,
-                      data_da_ultima_visita: {
-                        ...prev.dateRanges.data_da_ultima_visita,
-                        to: event.target.value || undefined,
-                        month: undefined,
-                        year: undefined,
-                      },
-                    },
-                  }))
-                }
-                id="agenda-duv-to"
-                name="agendaDuvTo"
-                className="rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-              />
-              <span className="w-full text-left text-xs font-semibold text-ink/50 md:w-auto md:pt-2">
-                Ou
-              </span>
-              <select
-                value={filters.dateRanges.data_da_ultima_visita.month ?? ""}
-                onChange={(event) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    dateRanges: {
-                      ...prev.dateRanges,
-                      data_da_ultima_visita: {
-                        ...prev.dateRanges.data_da_ultima_visita,
-                        month: event.target.value || undefined,
-                        year:
-                          event.target.value && !prev.dateRanges.data_da_ultima_visita.year
-                            ? String(new Date().getFullYear())
-                            : prev.dateRanges.data_da_ultima_visita.year,
-                        from: undefined,
-                        to: undefined,
-                      },
-                    },
-                  }))
-                }
-                id="agenda-duv-month"
-                name="agendaDuvMonth"
-                className="rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-              >
-                <option value="">Mes</option>
-                {MONTH_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="number"
-                inputMode="numeric"
-                placeholder="Ano"
-                value={filters.dateRanges.data_da_ultima_visita.year ?? ""}
-                onChange={(event) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    dateRanges: {
-                      ...prev.dateRanges,
-                      data_da_ultima_visita: {
-                        ...prev.dateRanges.data_da_ultima_visita,
-                        year: event.target.value || undefined,
-                        from: undefined,
-                        to: undefined,
-                      },
-                    },
-                  }))
-                }
-                id="agenda-duv-year"
-                name="agendaDuvYear"
-                className="w-24 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-              />
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={clearFilters}
-            className="self-end rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea md:mt-5"
-          >
-            Limpar filtros
-          </button>
-          {canGenerate && (
-            <div className="flex w-full items-center justify-between gap-2 md:ml-auto md:w-auto md:justify-start md:self-end md:mt-5">
-              <button
-                type="button"
-                onClick={() => {
-                  setGenerateMessage(null);
-                  setShowGenerateModal(true);
-                }}
-                disabled={totalCount === 0}
-                className="order-1 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60 md:order-2"
-              >
-                Gerar visitas
-              </button>
-              <div className="order-2 text-xs text-ink/60 md:order-1">
-                <div>Empresas: {totalCount}</div>
-                <div>Selecionadas: {selectedAgendaIds.length}</div>
+          <div className="grid gap-4">
+            <div className="flex flex-col gap-1 md:hidden">
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] font-semibold text-ink/70">Bairro</label>
+                <MultiSelectFilter
+                  label={
+                    (filters.columns.bairro ?? []).length
+                      ? `Selecionados (${filters.columns.bairro.length})`
+                      : "Selecionar"
+                  }
+                  options={filterOptions.bairro ?? []}
+                  value={filters.columns.bairro}
+                  onApply={(next) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      columns: { ...prev.columns, bairro: next },
+                    }))
+                  }
+                />
               </div>
             </div>
-          )}
+
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold text-ink/70">Ultima visita</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="date"
+                value={filters.dateRanges.data_da_ultima_visita.from ?? ""}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      dateRanges: {
+                        ...prev.dateRanges,
+                        data_da_ultima_visita: {
+                          ...prev.dateRanges.data_da_ultima_visita,
+                          from: event.target.value || undefined,
+                          month: undefined,
+                          year: undefined,
+                        },
+                      },
+                    }))
+                  }
+                  id="agenda-duv-from"
+                  name="agendaDuvFrom"
+                  className="min-w-[140px] flex-1 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                />
+                <span className="text-xs text-ink/50">ate</span>
+                <input
+                  type="date"
+                  value={filters.dateRanges.data_da_ultima_visita.to ?? ""}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      dateRanges: {
+                        ...prev.dateRanges,
+                        data_da_ultima_visita: {
+                          ...prev.dateRanges.data_da_ultima_visita,
+                          to: event.target.value || undefined,
+                          month: undefined,
+                          year: undefined,
+                        },
+                      },
+                    }))
+                  }
+                  id="agenda-duv-to"
+                  name="agendaDuvTo"
+                  className="min-w-[140px] flex-1 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                />
+                <span className="w-full text-left text-xs font-semibold text-ink/50 md:w-auto md:pt-2">
+                  Ou
+                </span>
+                <select
+                  value={filters.dateRanges.data_da_ultima_visita.month ?? ""}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      dateRanges: {
+                        ...prev.dateRanges,
+                        data_da_ultima_visita: {
+                          ...prev.dateRanges.data_da_ultima_visita,
+                          month: event.target.value || undefined,
+                          year:
+                            event.target.value && !prev.dateRanges.data_da_ultima_visita.year
+                              ? String(new Date().getFullYear())
+                              : prev.dateRanges.data_da_ultima_visita.year,
+                          from: undefined,
+                          to: undefined,
+                        },
+                      },
+                    }))
+                  }
+                  id="agenda-duv-month"
+                  name="agendaDuvMonth"
+                  className="min-w-[120px] rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                >
+                  <option value="">Mes</option>
+                  {MONTH_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  placeholder="Ano"
+                  value={filters.dateRanges.data_da_ultima_visita.year ?? ""}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      dateRanges: {
+                        ...prev.dateRanges,
+                        data_da_ultima_visita: {
+                          ...prev.dateRanges.data_da_ultima_visita,
+                          year: event.target.value || undefined,
+                          from: undefined,
+                          to: undefined,
+                        },
+                      },
+                    }))
+                  }
+                  id="agenda-duv-year"
+                  name="agendaDuvYear"
+                  className="w-24 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                />
+                <label className="flex items-center gap-2 text-[11px] font-semibold text-ink/60">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(filters.dateRanges.data_da_ultima_visita.invert)}
+                    onChange={(event) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        dateRanges: {
+                          ...prev.dateRanges,
+                          data_da_ultima_visita: {
+                            ...prev.dateRanges.data_da_ultima_visita,
+                            invert: event.target.checked,
+                          },
+                        },
+                      }))
+                    }
+                    className="h-3.5 w-3.5 accent-sea"
+                  />
+                  Inverter
+                </label>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-semibold text-ink/70">Vidas ultima visita</label>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  value={filters.ranges.vidas_ultima_visita.from ?? ""}
+                  onChange={(event) => {
+                    const nextValue = normalizeNumberInput(event.target.value);
+                    setFilters((prev) => ({
+                      ...prev,
+                      ranges: {
+                        ...prev.ranges,
+                        vidas_ultima_visita: {
+                          ...prev.ranges.vidas_ultima_visita,
+                          from: nextValue || undefined,
+                        },
+                      },
+                    }));
+                  }}
+                  placeholder="De"
+                  id="agenda-vidas-from"
+                  name="agendaVidasFrom"
+                  className="w-24 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                />
+                <span className="text-xs text-ink/50">ate</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  value={filters.ranges.vidas_ultima_visita.to ?? ""}
+                  onChange={(event) => {
+                    const nextValue = normalizeNumberInput(event.target.value);
+                    setFilters((prev) => ({
+                      ...prev,
+                      ranges: {
+                        ...prev.ranges,
+                        vidas_ultima_visita: {
+                          ...prev.ranges.vidas_ultima_visita,
+                          to: nextValue || undefined,
+                        },
+                      },
+                    }));
+                  }}
+                  placeholder="Ate"
+                  id="agenda-vidas-to"
+                  name="agendaVidasTo"
+                  className="w-24 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                />
+                <div className="ml-auto flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+                  >
+                    Limpar filtros
+                  </button>
+                  {canGenerate && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGenerateMessage(null);
+                        setShowGenerateModal(true);
+                      }}
+                      disabled={totalCount === 0}
+                      className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                    >
+                      Gerar visitas
+                    </button>
+                  )}
+                  {canGenerate && (
+                    <div className="text-xs text-ink/60 text-right">
+                      <div>Empresas: {totalCount}</div>
+                      <div>Selecionadas: {selectedAgendaIds.length}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          
         </div>
       </section>
 
@@ -1561,7 +1718,7 @@ export default function Agenda() {
               <div>
                 <h3 className="font-display text-lg text-ink">Visitas agendadas</h3>
                 <p className="mt-1 text-xs text-ink/60">
-                  {scheduleModalRow.empresa ?? scheduleModalRow.nome_fantasia ?? "Empresa"}
+                  {scheduleModalRow.empresa ?? "Empresa"}
                 </p>
               </div>
               <span className="rounded-full bg-sea/10 px-2 py-1 text-[10px] font-semibold text-sea">
@@ -1727,7 +1884,7 @@ export default function Agenda() {
           ) : (
             <div className="space-y-3 px-3 py-3">
               {data.map((row) => {
-                const empresaLabel = row.empresa ?? row.nome_fantasia ?? "Sem empresa";
+                const empresaLabel = row.empresa ?? "Sem empresa";
                 const locationLine = `${row.bairro ? `${row.bairro} · ` : ""}${row.cidade ?? ""}${
                   row.uf ? ` / ${row.uf}` : ""
                 }`;
@@ -1801,7 +1958,9 @@ export default function Agenda() {
                       </div>
                       <div className="rounded-xl bg-sand/60 px-2 py-2">
                         <p className="text-[10px] uppercase tracking-wide text-ink/40">Vendedor</p>
-                        <p className="text-[11px] font-semibold text-ink/70">{row.vendedor ?? "-"}</p>
+                        <p className="text-[11px] font-semibold text-ink/70">
+                          {resolveVendorsForAgenda(row.id, row.vendedor)}
+                        </p>
                       </div>
                       <div className="rounded-xl bg-sand/60 px-2 py-2">
                         <p className="text-[10px] uppercase tracking-wide text-ink/40">Ultima visita</p>

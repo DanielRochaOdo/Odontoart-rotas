@@ -30,6 +30,9 @@ const makeEmptyFilters = (): AgendaFilters => ({
   dateRanges: {
     data_da_ultima_visita: {},
   },
+  ranges: {
+    vidas_ultima_visita: {},
+  },
 });
 
 const serializeList = (values: string[]) =>
@@ -51,7 +54,10 @@ const parseFromSearchParams = (searchParams: URLSearchParams) => {
     searchParams.get("duv_from") ||
     searchParams.get("duv_to") ||
     searchParams.get("duv_month") ||
-    searchParams.get("duv_year");
+    searchParams.get("duv_year") ||
+    searchParams.get("duv_invert") ||
+    searchParams.get("vidas_from") ||
+    searchParams.get("vidas_to");
   if (!hasAny) return null;
 
   const next = makeEmptyFilters();
@@ -64,11 +70,20 @@ const parseFromSearchParams = (searchParams: URLSearchParams) => {
   const duvTo = searchParams.get("duv_to");
   const duvMonth = searchParams.get("duv_month");
   const duvYear = searchParams.get("duv_year");
+  const duvInvert = searchParams.get("duv_invert");
   next.dateRanges.data_da_ultima_visita = {
     ...(duvFrom ? { from: duvFrom } : {}),
     ...(duvTo ? { to: duvTo } : {}),
     ...(duvMonth ? { month: duvMonth } : {}),
     ...(duvYear ? { year: duvYear } : {}),
+    ...(duvInvert === "1" ? { invert: true } : {}),
+  };
+
+  const vidasFrom = searchParams.get("vidas_from");
+  const vidasTo = searchParams.get("vidas_to");
+  next.ranges.vidas_ultima_visita = {
+    ...(vidasFrom ? { from: vidasFrom } : {}),
+    ...(vidasTo ? { to: vidasTo } : {}),
   };
 
   return next;
@@ -88,12 +103,20 @@ const parseFromStorage = () => {
       });
     }
     if (parsed.dateRanges?.data_da_ultima_visita) {
-      const { from, to, month, year } = parsed.dateRanges.data_da_ultima_visita;
+      const { from, to, month, year, invert } = parsed.dateRanges.data_da_ultima_visita;
       base.dateRanges.data_da_ultima_visita = {
         ...(from ? { from } : {}),
         ...(to ? { to } : {}),
         ...(month ? { month } : {}),
         ...(year ? { year } : {}),
+        ...(invert ? { invert: true } : {}),
+      };
+    }
+    if (parsed.ranges?.vidas_ultima_visita) {
+      const { from, to } = parsed.ranges.vidas_ultima_visita;
+      base.ranges.vidas_ultima_visita = {
+        ...(from ? { from } : {}),
+        ...(to ? { to } : {}),
       };
     }
     return base;
@@ -123,6 +146,15 @@ const buildParams = (filters: AgendaFilters) => {
   }
   if (filters.dateRanges.data_da_ultima_visita.year) {
     params.set("duv_year", filters.dateRanges.data_da_ultima_visita.year);
+  }
+  if (filters.dateRanges.data_da_ultima_visita.invert) {
+    params.set("duv_invert", "1");
+  }
+  if (filters.ranges.vidas_ultima_visita.from) {
+    params.set("vidas_from", filters.ranges.vidas_ultima_visita.from);
+  }
+  if (filters.ranges.vidas_ultima_visita.to) {
+    params.set("vidas_to", filters.ranges.vidas_ultima_visita.to);
   }
   return params;
 };

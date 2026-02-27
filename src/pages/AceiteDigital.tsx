@@ -87,7 +87,9 @@ export default function AceiteDigital() {
           let visitsQuery = supabase
             .from("visits")
             .select("id", { count: "exact", head: true })
-            .eq("visit_date", yesterdayKey);
+            .eq("visit_date", yesterdayKey)
+            .not("completed_at", "is", null)
+            .is("no_visit_reason", null);
 
           if (session?.user.id && profile?.display_name) {
             visitsQuery = visitsQuery.or(

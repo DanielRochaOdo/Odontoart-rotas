@@ -291,7 +291,7 @@ export default function Routes() {
                       <option value="">Selecione</option>
                       {agendaOptions.map((option) => (
                         <option key={option.id} value={option.id}>
-                          {option.empresa ?? option.nome_fantasia ?? "Sem nome"} - {option.cidade ?? ""} {option.uf ?? ""}
+                          {option.empresa ?? "Sem nome"} - {option.cidade ?? ""} {option.uf ?? ""}
                         </option>
                       ))}
                     </select>
@@ -342,7 +342,7 @@ export default function Routes() {
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-sm font-semibold text-ink">
-                              {stop.agenda?.empresa ?? stop.agenda?.nome_fantasia ?? "Parada"}
+                              {stop.agenda?.empresa ?? "Parada"}
                             </p>
                             <p className="text-xs text-ink/60">{address || "Endereco nao informado"}</p>
                           </div>

@@ -95,12 +95,12 @@ const FIELDS = [
   { key: "valor", label: "Valor", type: "number" },
   { key: "tit", label: "TIT", type: "text" },
   { key: "endereco", label: "Endereco", type: "text", wide: true },
+  { key: "complemento", label: "Complemento", type: "text", wide: true },
   { key: "bairro", label: "Bairro", type: "text" },
   { key: "cidade", label: "Cidade", type: "text" },
   { key: "uf", label: "UF", type: "text" },
   { key: "supervisor", label: "Supervisor", type: "text" },
   { key: "vendedor", label: "Vendedor", type: "text" },
-  { key: "nome_fantasia", label: "Nome Fantasia", type: "text" },
   { key: "grupo", label: "Grupo", type: "text" },
   { key: "situacao", label: "Situacao", type: "text" },
   { key: "obs_contrato_1", label: "Obs. Contrato", type: "text", wide: true },
@@ -130,12 +130,12 @@ const buildFormState = (row: AgendaRow): AgendaFormState => ({
   valor: row.valor !== null && row.valor !== undefined ? formatCurrency(row.valor) : "",
   tit: row.tit ?? "",
   endereco: row.endereco ?? "",
+  complemento: row.complemento ?? "",
   bairro: row.bairro ?? "",
   cidade: row.cidade ?? "",
   uf: row.uf ?? "",
   supervisor: row.supervisor ?? "",
   vendedor: row.vendedor ?? "",
-  nome_fantasia: row.nome_fantasia ?? "",
   grupo: row.grupo ?? "",
   situacao: row.situacao ?? "",
   obs_contrato_1: row.obs_contrato_1 ?? "",
@@ -189,7 +189,7 @@ export default function AgendaDrawer({
 
   const displayTitle = useMemo(() => {
     if (!row) return "Detalhe";
-    return row.empresa ?? row.nome_fantasia ?? "Detalhe";
+    return row.empresa ?? "Detalhe";
   }, [row]);
 
   const mergedVendorOptions = useMemo(() => {
@@ -271,12 +271,12 @@ export default function AgendaDrawer({
       valor: formState.valor ? parseCurrency(formState.valor) : null,
       tit: formState.tit.trim() || null,
       endereco: formState.endereco.trim() || null,
+      complemento: formState.complemento.trim() || null,
       bairro: formState.bairro.trim() || null,
       cidade: formState.cidade.trim() || null,
       uf: formState.uf.trim() || null,
       supervisor: formState.supervisor.trim() || null,
       vendedor: formState.vendedor.trim() || null,
-      nome_fantasia: formState.nome_fantasia.trim() || null,
       grupo: formState.grupo.trim() || null,
       situacao: formState.situacao.trim() || null,
       obs_contrato_1: formState.obs_contrato_1.trim() || null,

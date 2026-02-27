@@ -1,10 +1,15 @@
 export type ClienteRow = {
   id: string;
   codigo: string | null;
+  corte: number | null;
+  venc: number | null;
+  tit: string | null;
   valor: number | null;
+  data_da_ultima_visita: string | null;
   cep: string | null;
   empresa: string | null;
   nome_fantasia: string | null;
+  complemento: string | null;
   perfil_visita: string | null;
   situacao: string | null;
   endereco: string | null;

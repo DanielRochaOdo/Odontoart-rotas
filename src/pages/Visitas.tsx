@@ -91,7 +91,8 @@ const toDateInput = (value: string | null) => {
 const normalize = (value: string | null) => (value ?? "").trim().toLowerCase();
 const formatVisitDate = (value: string | null) => {
   if (!value) return "-";
-  const date = new Date(value);
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const date = new Date(isDateOnly ? `${value}T12:00:00` : value);
   if (Number.isNaN(date.getTime())) return value;
   return format(date, "dd/MM/yyyy");
 };
@@ -156,7 +157,7 @@ export default function Visitas() {
   const isVendor = role === "VENDEDOR";
   const canManage = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canAccess = canManage || isVendor;
-  const canFilterBySupervisor = role === "ASSISTENTE";
+  const canFilterBySupervisor = role === "ASSISTENTE" || role === "SUPERVISOR";
   const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(new Date()));
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [loading, setLoading] = useState(true);
@@ -310,7 +311,9 @@ export default function Visitas() {
           let allVisitsQuery = supabase
             .from("visits")
             .select("id", { count: "exact", head: true })
-            .eq("visit_date", yesterdayKey);
+            .eq("visit_date", yesterdayKey)
+            .not("completed_at", "is", null)
+            .is("no_visit_reason", null);
 
           if (session?.user.id && profile?.display_name) {
             allVisitsQuery = allVisitsQuery.or(
@@ -836,14 +839,14 @@ export default function Visitas() {
       }
       const perfilOpcoesString = normalizedOptions.length > 0 ? normalizedOptions.join(" � ") : null;
 
+      const completedAt = new Date().toISOString();
       const { error: updateError } = await supabase
         .from("visits")
         .update({
-          completed_at: new Date().toISOString(),
+          completed_at: completedAt,
           completed_vidas: vidas,
           perfil_visita: completeVisit.perfil,
-          perfil_visita_opcoes:
-            perfilOpcoesString,
+          perfil_visita_opcoes: perfilOpcoesString,
           no_visit_reason: null,
         })
         .eq("id", completeVisit.id);
@@ -853,7 +856,11 @@ export default function Visitas() {
       if (visit.agenda_id && visit.visit_date) {
         const { error: agendaError } = await supabase
           .from("agenda")
-          .update({ data_da_ultima_visita: visit.visit_date })
+          .update({
+            data_da_ultima_visita: visit.visit_date,
+            visit_completed_at: completedAt,
+            visit_completed_vidas: vidas,
+          })
           .eq("id", visit.agenda_id);
         if (agendaError) throw new Error(agendaError.message);
       }
@@ -1035,7 +1042,7 @@ export default function Visitas() {
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <div>
                                     <p className="text-sm font-semibold text-ink">
-                                      {item.agenda?.empresa ?? item.agenda?.nome_fantasia ?? "Sem nome"}
+                                      {item.agenda?.empresa ?? "Sem nome"}
                                     </p>
                                     <p className="text-xs text-ink/60">
                                       {item.agenda?.bairro

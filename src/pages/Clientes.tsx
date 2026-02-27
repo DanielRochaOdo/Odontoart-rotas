@@ -26,9 +26,27 @@ import { fetchNominatimByAddress, fetchNominatimByCep } from "../lib/nominatim";
 
 const formatDate = (value: string | null) => {
   if (!value) return "-";
-  const date = new Date(value);
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const date = new Date(isDateOnly ? `${value}T12:00:00` : value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("pt-BR").format(date);
+};
+
+const toDateInput = (value: string | null) => {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+};
+
+const toIsoDateInput = (value: string) => {
+  if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return new Date(`${value}T12:00:00`).toISOString();
+  }
+  return parseImportDate(value);
 };
 
 const normalizeAddressValue = (value: string | null | undefined) =>
@@ -39,7 +57,10 @@ const normalizeAddressValue = (value: string | null | undefined) =>
     .trim()
     .toLowerCase();
 
-const isSameAddress = (a: Pick<ClienteRow, "endereco" | "cidade" | "uf">, b: Pick<ClienteRow, "endereco" | "cidade" | "uf">) => {
+const isSameAddress = (
+  a: Pick<ClienteRow, "endereco" | "cidade" | "uf">,
+  b: Pick<ClienteRow, "endereco" | "cidade" | "uf">,
+) => {
   const enderecoA = normalizeAddressValue(a.endereco);
   const enderecoB = normalizeAddressValue(b.endereco);
   if (!enderecoA || !enderecoB) return false;
@@ -52,6 +73,64 @@ const isSameAddress = (a: Pick<ClienteRow, "endereco" | "cidade" | "uf">, b: Pic
   if (ufA && ufB && ufA !== ufB) return false;
   return true;
 };
+
+type DuplicateEntry = {
+  newCliente: ClienteRow;
+  existing: ClienteRow[];
+  isTemp?: boolean;
+  payload?: ImportPayload;
+};
+
+type ImportPayload = {
+  codigo?: string | null;
+  valor?: number | null;
+  cep?: string | null;
+  empresa?: string | null;
+  situacao?: string | null;
+  perfil_visita?: string | null;
+  endereco?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
+  cidade?: string | null;
+  uf?: string | null;
+  corte?: number | null;
+  venc?: number | null;
+  tit?: string | null;
+  data_da_ultima_visita?: string | null;
+};
+
+const buildImportKey = (payload: {
+  codigo?: string | null;
+  empresa?: string | null;
+  endereco?: string | null;
+  cidade?: string | null;
+  uf?: string | null;
+}) =>
+  [
+    normalizeAddressValue(payload.codigo ?? ""),
+    normalizeAddressValue(payload.empresa ?? ""),
+    normalizeAddressValue(payload.endereco ?? ""),
+    normalizeAddressValue(payload.cidade ?? ""),
+    normalizeAddressValue(payload.uf ?? ""),
+  ].join("|");
+
+const buildClientePayloadFromImport = (payload: ImportPayload) => ({
+  codigo: payload.codigo ?? null,
+  corte: payload.corte ?? null,
+  venc: payload.venc ?? null,
+  tit: payload.tit ?? null,
+  valor: payload.valor ?? null,
+  data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
+  cep: payload.cep ?? null,
+  empresa: payload.empresa ?? null,
+  complemento: payload.complemento ?? null,
+  perfil_visita: payload.perfil_visita ?? null,
+  situacao: payload.situacao ?? "Ativo",
+  endereco: payload.endereco ?? null,
+  bairro: payload.bairro ?? null,
+  cidade: payload.cidade ?? null,
+  uf: payload.uf ?? null,
+});
 
 const buildPerfilState = (value: string | null) => {
   const normalized = normalizePerfilVisita(value);
@@ -153,6 +232,7 @@ const HEADER_MAP: Record<string, string> = {
   cod: "codigo",
   corte: "corte",
   venc: "venc",
+  vencimento: "venc",
   tit: "tit",
   titulo: "tit",
   "data ultima visita": "data_da_ultima_visita",
@@ -163,13 +243,12 @@ const HEADER_MAP: Record<string, string> = {
   valor: "valor",
   cep: "cep",
   empresa: "empresa",
-  "nome fantasia": "nome_fantasia",
-  fantasia: "nome_fantasia",
   situacao: "situacao",
   "perfil visita": "perfil_visita",
   perfil: "perfil_visita",
   perfil_visita: "perfil_visita",
   endereco: "endereco",
+  complemento: "complemento",
   bairro: "bairro",
   cidade: "cidade",
   uf: "uf",
@@ -214,12 +293,16 @@ export default function Clientes() {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
     codigo: "",
+    corte: "",
+    venc: "",
+    tit: "",
     valor: "",
+    data_da_ultima_visita: "",
     cep: "",
     empresa: "",
-    nome_fantasia: "",
     situacao: "Ativo",
     endereco: "",
+    complemento: "",
     bairro: "",
     cidade: "",
     uf: "",
@@ -239,12 +322,16 @@ export default function Clientes() {
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     codigo: "",
+    corte: "",
+    venc: "",
+    tit: "",
     valor: "",
+    data_da_ultima_visita: "",
     cep: "",
     empresa: "",
-    nome_fantasia: "",
     situacao: "",
     endereco: "",
+    complemento: "",
     bairro: "",
     cidade: "",
     uf: "",
@@ -287,11 +374,10 @@ export default function Clientes() {
   const [addressLookupError, setAddressLookupError] = useState<string | null>(null);
   const [addressLookupLoadingEdit, setAddressLookupLoadingEdit] = useState(false);
   const [addressLookupErrorEdit, setAddressLookupErrorEdit] = useState<string | null>(null);
-  const [duplicateModal, setDuplicateModal] = useState<{
-    newCliente: ClienteRow;
-    existing: ClienteRow[];
-  } | null>(null);
+  const [duplicateModal, setDuplicateModal] = useState<DuplicateEntry | null>(null);
+  const [duplicateQueue, setDuplicateQueue] = useState<DuplicateEntry[]>([]);
   const [duplicateResolving, setDuplicateResolving] = useState(false);
+  const [duplicateComplemento, setDuplicateComplemento] = useState("");
   const skipCepLookupRef = useRef(false);
   const skipCepLookupEditRef = useRef(false);
 
@@ -344,6 +430,24 @@ export default function Clientes() {
   }, []);
 
   useEffect(() => {
+    if (duplicateModal || duplicateQueue.length === 0) return;
+    setDuplicateModal(duplicateQueue[0]);
+    setDuplicateQueue((prev) => prev.slice(1));
+  }, [duplicateModal, duplicateQueue]);
+
+  useEffect(() => {
+    if (!duplicateModal) {
+      setDuplicateComplemento("");
+      return;
+    }
+    setDuplicateComplemento(
+      duplicateModal.payload?.complemento ??
+        duplicateModal.newCliente.complemento ??
+        "",
+    );
+  }, [duplicateModal]);
+
+  useEffect(() => {
     if (!restoredViewRef.current) return;
     const payload = {
       search,
@@ -380,12 +484,16 @@ export default function Clientes() {
     setHistorySupervisorId("all");
     setEditForm({
       codigo: selected.codigo ?? "",
+      corte: selected.corte !== null && selected.corte !== undefined ? String(selected.corte) : "",
+      venc: selected.venc !== null && selected.venc !== undefined ? String(selected.venc) : "",
+      tit: selected.tit ?? "",
       valor: selected.valor !== null && selected.valor !== undefined ? formatCurrency(selected.valor) : "",
+      data_da_ultima_visita: toDateInput(selected.data_da_ultima_visita),
       cep: selected.cep ?? "",
       empresa: selected.empresa ?? "",
-      nome_fantasia: selected.nome_fantasia ?? "",
       situacao: selected.situacao ?? "Ativo",
       endereco: selected.endereco ?? "",
+      complemento: selected.complemento ?? "",
       bairro: selected.bairro ?? "",
       cidade: selected.cidade ?? "",
       uf: selected.uf ?? "",
@@ -445,6 +553,7 @@ export default function Clientes() {
         setForm((prev) => ({
           ...prev,
           endereco: mapped.endereco ?? prev.endereco,
+          complemento: mapped.complemento ?? prev.complemento,
           bairro: mapped.bairro ?? prev.bairro,
           cidade: mapped.cidade ?? prev.cidade,
           uf: mapped.uf ?? prev.uf,
@@ -581,7 +690,6 @@ export default function Clientes() {
             cliente.codigo,
             cliente.cep,
             cliente.empresa,
-            cliente.nome_fantasia,
             cliente.situacao,
             cliente.cidade,
             cliente.uf,
@@ -602,8 +710,8 @@ export default function Clientes() {
       : base;
 
     return [...filteredByStatus].sort((a, b) => {
-      const nameA = (a.empresa ?? a.nome_fantasia ?? "").toLocaleLowerCase("pt-BR");
-      const nameB = (b.empresa ?? b.nome_fantasia ?? "").toLocaleLowerCase("pt-BR");
+      const nameA = (a.empresa ?? "").toLocaleLowerCase("pt-BR");
+      const nameB = (b.empresa ?? "").toLocaleLowerCase("pt-BR");
       return nameA.localeCompare(nameB, "pt-BR");
     });
   }, [clientes, search, situacaoFilter]);
@@ -611,8 +719,8 @@ export default function Clientes() {
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canCreate) return;
-    if (!form.empresa.trim() && !form.nome_fantasia.trim()) {
-      setError("Informe o nome da empresa ou nome fantasia.");
+    if (!form.empresa.trim()) {
+      setError("Informe o nome da empresa.");
       return;
     }
     setCreating(true);
@@ -624,15 +732,24 @@ export default function Clientes() {
           { endereco: cliente.endereco, cidade: cliente.cidade, uf: cliente.uf },
         ),
       );
+      const corteValue = form.corte ? Number(form.corte) : null;
+      const vencValue = form.venc ? Number(form.venc) : null;
+      const parsedCorte = Number.isFinite(corteValue ?? NaN) ? corteValue : null;
+      const parsedVenc = Number.isFinite(vencValue ?? NaN) ? vencValue : null;
+      const parsedDataUltimaVisita = toIsoDateInput(form.data_da_ultima_visita);
       const created = await createCliente({
         codigo: form.codigo.trim() || null,
+        corte: parsedCorte,
+        venc: parsedVenc,
+        tit: form.tit.trim() || null,
         valor: form.valor ? parseImportCurrency(form.valor) : null,
+        data_da_ultima_visita: parsedDataUltimaVisita,
         cep: form.cep.trim() || null,
         empresa: form.empresa.trim() || null,
-        nome_fantasia: form.nome_fantasia.trim() || null,
         perfil_visita: perfilCreate.perfil || null,
         situacao: form.situacao.trim() || "Ativo",
         endereco: form.endereco.trim() || null,
+        complemento: form.complemento.trim() || null,
         bairro: form.bairro.trim() || null,
         cidade: form.cidade.trim() || null,
         uf: form.uf.trim() || null,
@@ -645,12 +762,16 @@ export default function Clientes() {
       }
       setForm({
         codigo: "",
+        corte: "",
+        venc: "",
+        tit: "",
         valor: "",
+        data_da_ultima_visita: "",
         cep: "",
         empresa: "",
-        nome_fantasia: "",
         situacao: "Ativo",
         endereco: "",
+        complemento: "",
         bairro: "",
         cidade: "",
         uf: "",
@@ -668,11 +789,13 @@ export default function Clientes() {
     setDuplicateResolving(true);
     setError(null);
     try {
-      await deleteCliente(duplicateModal.newCliente.id);
-      setClientes((prev) => prev.filter((item) => item.id !== duplicateModal.newCliente.id));
-      if (selectedId === duplicateModal.newCliente.id) {
-        setSelected(null);
-        setSelectedId(null);
+      if (!duplicateModal.isTemp) {
+        await deleteCliente(duplicateModal.newCliente.id);
+        setClientes((prev) => prev.filter((item) => item.id !== duplicateModal.newCliente.id));
+        if (selectedId === duplicateModal.newCliente.id) {
+          setSelected(null);
+          setSelectedId(null);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao remover cliente duplicado.");
@@ -687,14 +810,34 @@ export default function Clientes() {
     setDuplicateResolving(true);
     setError(null);
     try {
-      const oldIds = duplicateModal.existing.map((item) => item.id);
-      await Promise.all(oldIds.map((id) => deleteCliente(id)));
-      setClientes((prev) => prev.filter((item) => !oldIds.includes(item.id)));
-      if (selectedId && oldIds.includes(selectedId)) {
-        setSelected(null);
-        setSelectedId(null);
+      if (duplicateModal.isTemp && duplicateModal.payload) {
+        const updatePayload = buildClientePayloadFromImport({
+          ...duplicateModal.payload,
+          complemento: duplicateComplemento,
+        });
+        const updated = await Promise.all(
+          duplicateModal.existing.map((item) => updateCliente(item.id, updatePayload)),
+        );
+        await Promise.all(updated.map((item) => syncAgendaForCliente(item)));
+        setClientes((prev) =>
+          prev.map((item) => updated.find((entry) => entry.id === item.id) ?? item),
+        );
+      } else {
+        const oldIds = duplicateModal.existing.map((item) => item.id);
+        await Promise.all(oldIds.map((id) => deleteCliente(id)));
+        setClientes((prev) => prev.filter((item) => !oldIds.includes(item.id)));
+        if (selectedId && oldIds.includes(selectedId)) {
+          setSelected(null);
+          setSelectedId(null);
+        }
+        const updatedNew = await updateCliente(duplicateModal.newCliente.id, {
+          complemento: duplicateComplemento.trim() || null,
+        });
+        await syncAgendaForCliente(updatedNew);
+        setClientes((prev) =>
+          prev.map((item) => (item.id === updatedNew.id ? updatedNew : item)),
+        );
       }
-      await syncAgendaForCliente(duplicateModal.newCliente);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao substituir cliente.");
     } finally {
@@ -708,7 +851,24 @@ export default function Clientes() {
     setDuplicateResolving(true);
     setError(null);
     try {
-      await syncAgendaForCliente(duplicateModal.newCliente);
+      if (duplicateModal.isTemp && duplicateModal.payload) {
+        const created = await createCliente(
+          buildClientePayloadFromImport({
+            ...duplicateModal.payload,
+            complemento: duplicateComplemento,
+          }),
+        );
+        await syncAgendaForCliente(created);
+        setClientes((prev) => [created, ...prev]);
+      } else {
+        const updated = await updateCliente(duplicateModal.newCliente.id, {
+          complemento: duplicateComplemento.trim() || null,
+        });
+        await syncAgendaForCliente(updated);
+        setClientes((prev) =>
+          prev.map((item) => (item.id === updated.id ? updated : item)),
+        );
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao manter os dois clientes.");
     } finally {
@@ -776,22 +936,31 @@ export default function Clientes() {
 
   const handleSaveEdit = async () => {
     if (!selected || !canEdit) return;
-    if (!editForm.empresa.trim() && !editForm.nome_fantasia.trim()) {
-      setError("Informe o nome da empresa ou nome fantasia.");
+    if (!editForm.empresa.trim()) {
+      setError("Informe o nome da empresa.");
       return;
     }
     setSavingEdit(true);
     setError(null);
     try {
+      const corteValue = editForm.corte ? Number(editForm.corte) : null;
+      const vencValue = editForm.venc ? Number(editForm.venc) : null;
+      const parsedCorte = Number.isFinite(corteValue ?? NaN) ? corteValue : null;
+      const parsedVenc = Number.isFinite(vencValue ?? NaN) ? vencValue : null;
+      const parsedDataUltimaVisita = toIsoDateInput(editForm.data_da_ultima_visita);
       const updated = await updateCliente(selected.id, {
         codigo: editForm.codigo.trim() || null,
+        corte: parsedCorte,
+        venc: parsedVenc,
+        tit: editForm.tit.trim() || null,
         valor: editForm.valor ? parseImportCurrency(editForm.valor) : null,
+        data_da_ultima_visita: parsedDataUltimaVisita,
         cep: editForm.cep.trim() || null,
         empresa: editForm.empresa.trim() || null,
-        nome_fantasia: editForm.nome_fantasia.trim() || null,
         perfil_visita: perfilEdit.perfil || null,
         situacao: editForm.situacao.trim() || "Ativo",
         endereco: editForm.endereco.trim() || null,
+        complemento: editForm.complemento.trim() || null,
         bairro: editForm.bairro.trim() || null,
         cidade: editForm.cidade.trim() || null,
         uf: editForm.uf.trim() || null,
@@ -824,6 +993,7 @@ export default function Clientes() {
       setEditForm((prev) => ({
         ...prev,
         endereco: mapped.endereco ?? prev.endereco,
+        complemento: mapped.complemento ?? prev.complemento,
         bairro: mapped.bairro ?? prev.bairro,
         cidade: mapped.cidade ?? prev.cidade,
         uf: mapped.uf ?? prev.uf,
@@ -868,16 +1038,16 @@ export default function Clientes() {
     const headers = [
       "codigo",
       "corte",
-      "venc",
+      "vencimento",
       "tit",
       "valor",
       "data_ultima_visita",
       "cep",
       "empresa",
-      "nome_fantasia",
       "situacao",
       "perfil_visita",
       "endereco",
+      "complemento",
       "bairro",
       "cidade",
       "uf",
@@ -909,6 +1079,7 @@ export default function Clientes() {
   const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    const existingSnapshot = clientes.length ? [...clientes] : await fetchClientes();
     setImporting(true);
     setImportMessage(null);
     setImportProgress(0);
@@ -958,21 +1129,53 @@ export default function Clientes() {
             data_da_ultima_visita: parsedDataUltimaVisita,
             cep: record.cep ?? null,
             empresa: record.empresa ?? null,
-            nome_fantasia: record.nome_fantasia ?? null,
             situacao: situacaoValue ?? record.situacao ?? "Ativo",
             perfil_visita: record.perfil_visita ?? null,
             endereco: record.endereco ?? null,
+            complemento: record.complemento ?? null,
             bairro: record.bairro ?? null,
             cidade: record.cidade ?? null,
             uf: record.uf ?? null,
           };
         })
-        .filter((record) => Boolean(record.empresa || record.nome_fantasia));
+        .filter((record) => Boolean(record.empresa));
 
       if (payloads.length === 0) {
         setImportMessage("Nenhum cliente valido encontrado.");
         return;
       }
+
+      const duplicateCandidates: DuplicateEntry[] = [];
+      payloads.forEach((payload, index) => {
+        const matches = existingSnapshot.filter((item) => isSameAddress(payload, item));
+        if (matches.length) {
+          duplicateCandidates.push({
+            newCliente: {
+              id: `import-${index}`,
+              codigo: payload.codigo ?? null,
+              corte: payload.corte ?? null,
+              venc: payload.venc ?? null,
+              tit: payload.tit ?? null,
+              valor: payload.valor ?? null,
+              data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
+              cep: payload.cep ?? null,
+              empresa: payload.empresa ?? null,
+              nome_fantasia: null,
+              complemento: payload.complemento ?? null,
+              perfil_visita: payload.perfil_visita ?? null,
+              situacao: payload.situacao ?? "Ativo",
+              endereco: payload.endereco ?? null,
+              bairro: payload.bairro ?? null,
+              cidade: payload.cidade ?? null,
+              uf: payload.uf ?? null,
+              created_at: null,
+            },
+            existing: matches,
+            isTemp: true,
+            payload,
+          });
+        }
+      });
 
       const checkable = payloads.filter((item) => {
         const cepDigits = sanitizeCep(item.cep ?? "");
@@ -1036,8 +1239,52 @@ export default function Clientes() {
       for (const cliente of created) {
         await syncAgendaForCliente(cliente);
       }
+
+      const duplicatesFromCreated: DuplicateEntry[] = [];
+      if (created.length > 0) {
+        const seen: ClienteRow[] = [...existingSnapshot];
+        created.forEach((cliente) => {
+          const matches = seen.filter((item) => isSameAddress(item, cliente));
+          if (matches.length) {
+            duplicatesFromCreated.push({ newCliente: cliente, existing: matches });
+          }
+          seen.push(cliente);
+        });
+      }
+
+      let mergedDuplicates: DuplicateEntry[] = [];
+      if (duplicateCandidates.length || duplicatesFromCreated.length) {
+        const createdByKey = new Map<string, ClienteRow>();
+        created.forEach((cliente) => createdByKey.set(buildImportKey(cliente), cliente));
+        const resolvedCandidates = duplicateCandidates.map((entry) => {
+          const key = buildImportKey(entry.newCliente);
+          const createdMatch = createdByKey.get(key);
+          if (!createdMatch) return entry;
+          return {
+            ...entry,
+            newCliente: createdMatch,
+            isTemp: false,
+          };
+        });
+        const merged = new Map<string, DuplicateEntry>();
+        resolvedCandidates.forEach((entry) => merged.set(buildImportKey(entry.newCliente), entry));
+        duplicatesFromCreated.forEach((entry) => {
+          const key = buildImportKey(entry.newCliente);
+          if (!merged.has(key)) {
+            merged.set(key, entry);
+          }
+        });
+        mergedDuplicates = Array.from(merged.values());
+        setDuplicateQueue((prev) => [...prev, ...mergedDuplicates]);
+      }
       await loadClientes();
-      setImportMessage(`Importacao concluida. ${created.length} cliente(s) adicionados.`);
+      if (mergedDuplicates.length > 0) {
+        setImportMessage("Existem duplicidades. Escolha o que fazer.");
+      } else if (created.length > 0) {
+        setImportMessage(`Importacao concluida. ${created.length} cliente(s) adicionados.`);
+      } else {
+        setImportMessage("Importacao concluida. Nenhum cliente novo encontrado.");
+      }
     } catch (err) {
       setImportMessage(err instanceof Error ? err.message : "Erro ao importar arquivo.");
     } finally {
@@ -1051,6 +1298,7 @@ export default function Clientes() {
   const canSearchEndereco = Boolean(form.endereco.trim() && canEditEndereco);
   const canEditEnderecoEdit = Boolean(editForm.cidade.trim() && editForm.uf.trim());
   const canSearchEnderecoEdit = Boolean(editForm.endereco.trim() && canEditEnderecoEdit);
+  const hasPendingDuplicates = Boolean(duplicateModal || duplicateQueue.length > 0);
 
   if (!canView) {
     return (
@@ -1080,27 +1328,71 @@ export default function Clientes() {
           onSubmit={handleCreate}
           className="grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-4 md:grid-cols-6"
         >
-        <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-          Codigo
-          <input
-            value={form.codigo}
-            onChange={(event) => setForm((prev) => ({ ...prev, codigo: event.target.value }))}
-            className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-          Valor
-          <input
-            value={form.valor}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, valor: formatCurrencyInput(event.target.value) }))
-            }
-            inputMode="decimal"
-            className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-          CEP
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+            Codigo
+            <input
+              value={form.codigo}
+              onChange={(event) => setForm((prev) => ({ ...prev, codigo: event.target.value }))}
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+            Corte
+            <input
+              value={form.corte}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, corte: sanitizeDigits(event.target.value) }))
+              }
+              inputMode="numeric"
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+            Vencimento
+            <input
+              value={form.venc}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, venc: sanitizeDigits(event.target.value) }))
+              }
+              inputMode="numeric"
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+            TIT
+            <input
+              value={form.tit}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, tit: sanitizeDigits(event.target.value) }))
+              }
+              inputMode="numeric"
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+            Valor
+            <input
+              value={form.valor}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, valor: formatCurrencyInput(event.target.value) }))
+              }
+              inputMode="decimal"
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+            Data da ultima visita
+            <input
+              type="date"
+              value={form.data_da_ultima_visita}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, data_da_ultima_visita: event.target.value }))
+              }
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+            CEP
             <input
               value={form.cep}
               onChange={(event) =>
@@ -1120,9 +1412,7 @@ export default function Clientes() {
             {cepLoading && (
               <span className="text-[11px] text-ink/60">Consultando CEP...</span>
             )}
-            {cepError && (
-              <span className="text-[11px] text-red-600">{cepError}</span>
-            )}
+            {cepError && <span className="text-[11px] text-red-600">{cepError}</span>}
           </label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             Empresa
@@ -1132,17 +1422,7 @@ export default function Clientes() {
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-            Nome fantasia
-            <input
-              value={form.nome_fantasia}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, nome_fantasia: event.target.value }))
-              }
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
             Situacao
             <select
               value={form.situacao}
@@ -1158,60 +1438,6 @@ export default function Clientes() {
                 </option>
               ))}
             </select>
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            Cidade
-            <input
-              value={form.cidade}
-              onChange={(event) => setForm((prev) => ({ ...prev, cidade: event.target.value }))}
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            UF
-            <input
-              value={form.uf}
-              onChange={(event) => setForm((prev) => ({ ...prev, uf: event.target.value }))}
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-            Endereco
-            <input
-              value={form.endereco}
-              onChange={(event) => setForm((prev) => ({ ...prev, endereco: event.target.value }))}
-              disabled={!canEditEndereco}
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-            {!canEditEndereco && (
-              <span className="text-[10px] font-normal text-ink/50">
-                Informe cidade e UF para editar o endereco.
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={handleAddressLookup}
-              disabled={!canSearchEndereco || addressLookupLoading}
-              className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
-            >
-              {addressLookupLoading ? "Buscando endereco..." : "Cadastrar via endereco"}
-            </button>
-            {addressLookupError && (
-              <span className="text-[11px] font-normal text-red-600">{addressLookupError}</span>
-            )}
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            Bairro
-            <input
-              value={form.bairro}
-              onChange={(event) => setForm((prev) => ({ ...prev, bairro: event.target.value }))}
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-            {bairroLoading && (
-              <span className="text-[10px] font-normal text-ink/50 animate-pulse">
-                Buscando bairro...
-              </span>
-            )}
           </label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             Perfil visita
@@ -1241,7 +1467,7 @@ export default function Clientes() {
             </select>
           </label>
           {perfilCreate.customEnabled && (
-            <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70">
+            <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70 md:col-span-2">
               Horarios customizados
               {perfilCreate.customTimes.map((time, index) => (
                 <div key={`${time}-${index}`} className="flex items-center gap-2">
@@ -1278,6 +1504,68 @@ export default function Clientes() {
               </button>
             </div>
           )}
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+            Endereco
+            <input
+              value={form.endereco}
+              onChange={(event) => setForm((prev) => ({ ...prev, endereco: event.target.value }))}
+              disabled={!canEditEndereco}
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+            {!canEditEndereco && (
+              <span className="text-[10px] font-normal text-ink/50">
+                Informe cidade e UF para editar o endereco.
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={handleAddressLookup}
+              disabled={!canSearchEndereco || addressLookupLoading}
+              className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
+            >
+              {addressLookupLoading ? "Buscando endereco..." : "Cadastrar via endereco"}
+            </button>
+            {addressLookupError && (
+              <span className="text-[11px] font-normal text-red-600">{addressLookupError}</span>
+            )}
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+            Complemento
+            <input
+              value={form.complemento}
+              onChange={(event) => setForm((prev) => ({ ...prev, complemento: event.target.value }))}
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+            Bairro
+            <input
+              value={form.bairro}
+              onChange={(event) => setForm((prev) => ({ ...prev, bairro: event.target.value }))}
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+            {bairroLoading && (
+              <span className="text-[10px] font-normal text-ink/50 animate-pulse">
+                Buscando bairro...
+              </span>
+            )}
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+            Cidade
+            <input
+              value={form.cidade}
+              onChange={(event) => setForm((prev) => ({ ...prev, cidade: event.target.value }))}
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+            UF
+            <input
+              value={form.uf}
+              onChange={(event) => setForm((prev) => ({ ...prev, uf: event.target.value }))}
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
           <div className="flex items-end md:col-span-2">
             <button
               type="submit"
@@ -1352,7 +1640,7 @@ export default function Clientes() {
                 >
                   <div>
                     <p className="font-semibold text-ink">
-                      {cliente.empresa ?? cliente.nome_fantasia ?? "Sem nome"}
+                      {cliente.empresa ?? "Sem nome"}
                     </p>
                     <p className="text-xs text-ink/60">
                       {cliente.cidade ? `${cliente.cidade} / ${cliente.uf ?? ""}` : ""}
@@ -1394,7 +1682,7 @@ export default function Clientes() {
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-muted">Cliente</p>
                 <h3 className="mt-2 font-display text-xl text-ink">
-                  {selected.empresa ?? selected.nome_fantasia ?? "Sem nome"}
+                  {selected.empresa ?? "Sem nome"}
                 </h3>
                 <p className="text-sm text-muted">
                   {selected.cidade ? `${selected.cidade} / ${selected.uf ?? ""}` : ""}
@@ -1424,12 +1712,47 @@ export default function Clientes() {
             </div>
 
             {isEditing ? (
-                  <div className="mt-6 grid gap-3 md:grid-cols-2">
+              <div className="mt-6 grid gap-3 md:grid-cols-2">
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
                   Codigo
                   <input
                     value={editForm.codigo}
-                    onChange={(event) => setEditForm((prev) => ({ ...prev, codigo: event.target.value }))}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, codigo: event.target.value }))
+                    }
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Corte
+                  <input
+                    value={editForm.corte}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, corte: sanitizeDigits(event.target.value) }))
+                    }
+                    inputMode="numeric"
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Vencimento
+                  <input
+                    value={editForm.venc}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, venc: sanitizeDigits(event.target.value) }))
+                    }
+                    inputMode="numeric"
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  TIT
+                  <input
+                    value={editForm.tit}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, tit: sanitizeDigits(event.target.value) }))
+                    }
+                    inputMode="numeric"
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
@@ -1441,6 +1764,20 @@ export default function Clientes() {
                       setEditForm((prev) => ({ ...prev, valor: formatCurrencyInput(event.target.value) }))
                     }
                     inputMode="decimal"
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Data da ultima visita
+                  <input
+                    type="date"
+                    value={editForm.data_da_ultima_visita}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({
+                        ...prev,
+                        data_da_ultima_visita: event.target.value,
+                      }))
+                    }
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
@@ -1465,15 +1802,15 @@ export default function Clientes() {
                   {cepLoadingEdit && (
                     <span className="text-[11px] text-ink/60">Consultando CEP...</span>
                   )}
-                  {cepErrorEdit && (
-                    <span className="text-[11px] text-red-600">{cepErrorEdit}</span>
-                  )}
+                  {cepErrorEdit && <span className="text-[11px] text-red-600">{cepErrorEdit}</span>}
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Empresa
                   <input
                     value={editForm.empresa}
-                    onChange={(event) => setEditForm((prev) => ({ ...prev, empresa: event.target.value }))}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, empresa: event.target.value }))
+                    }
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
@@ -1493,70 +1830,6 @@ export default function Clientes() {
                       </option>
                     ))}
                   </select>
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-                  Nome fantasia
-                  <input
-                    value={editForm.nome_fantasia}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, nome_fantasia: event.target.value }))
-                    }
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                  Cidade
-                  <input
-                    value={editForm.cidade}
-                    onChange={(event) => setEditForm((prev) => ({ ...prev, cidade: event.target.value }))}
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                  UF
-                  <input
-                    value={editForm.uf}
-                    onChange={(event) => setEditForm((prev) => ({ ...prev, uf: event.target.value }))}
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-                  Endereco
-                  <input
-                    value={editForm.endereco}
-                    onChange={(event) => setEditForm((prev) => ({ ...prev, endereco: event.target.value }))}
-                    disabled={!canEditEnderecoEdit}
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                  {!canEditEnderecoEdit && (
-                    <span className="text-[10px] font-normal text-ink/50">
-                      Informe cidade e UF para editar o endereco.
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleAddressLookupEdit}
-                    disabled={!canSearchEnderecoEdit || addressLookupLoadingEdit}
-                    className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
-                  >
-                    {addressLookupLoadingEdit ? "Buscando endereco..." : "Cadastrar via endereco"}
-                  </button>
-                  {addressLookupErrorEdit && (
-                    <span className="text-[11px] font-normal text-red-600">{addressLookupErrorEdit}</span>
-                  )}
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                  Bairro
-                  <input
-                    value={editForm.bairro}
-                    onChange={(event) => setEditForm((prev) => ({ ...prev, bairro: event.target.value }))}
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                  {bairroLoadingEdit && (
-                    <span className="text-[10px] font-normal text-ink/50 animate-pulse">
-                      Buscando bairro...
-                    </span>
-                  )}
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Perfil visita
@@ -1586,7 +1859,7 @@ export default function Clientes() {
                   </select>
                 </label>
                 {perfilEdit.customEnabled && (
-                  <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70">
+                  <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70 md:col-span-2">
                     Horarios customizados
                     {perfilEdit.customTimes.map((time, index) => (
                       <div key={`${time}-${index}`} className="flex items-center gap-2">
@@ -1623,18 +1896,94 @@ export default function Clientes() {
                     </button>
                   </div>
                 )}
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                  Endereco
+                  <input
+                    value={editForm.endereco}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, endereco: event.target.value }))
+                    }
+                    disabled={!canEditEnderecoEdit}
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                  {!canEditEnderecoEdit && (
+                    <span className="text-[10px] font-normal text-ink/50">
+                      Informe cidade e UF para editar o endereco.
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleAddressLookupEdit}
+                    disabled={!canSearchEnderecoEdit || addressLookupLoadingEdit}
+                    className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
+                  >
+                    {addressLookupLoadingEdit ? "Buscando endereco..." : "Cadastrar via endereco"}
+                  </button>
+                  {addressLookupErrorEdit && (
+                    <span className="text-[11px] font-normal text-red-600">{addressLookupErrorEdit}</span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                  Complemento
+                  <input
+                    value={editForm.complemento}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, complemento: event.target.value }))
+                    }
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Bairro
+                  <input
+                    value={editForm.bairro}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, bairro: event.target.value }))
+                    }
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                  {bairroLoadingEdit && (
+                    <span className="text-[10px] font-normal text-ink/50 animate-pulse">
+                      Buscando bairro...
+                    </span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Cidade
+                  <input
+                    value={editForm.cidade}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, cidade: event.target.value }))
+                    }
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                  UF
+                  <input
+                    value={editForm.uf}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, uf: event.target.value }))
+                    }
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
               </div>
             ) : (
               <div className="mt-6 space-y-3">
                 {[
                   ["Codigo", selected.codigo],
+                  ["Corte", selected.corte ?? null],
+                  ["Vencimento", selected.venc ?? null],
+                  ["TIT", selected.tit ?? null],
                   ["Valor", selected.valor !== null && selected.valor !== undefined ? formatCurrency(selected.valor) : null],
+                  ["Data da ultima visita", formatDate(selected.data_da_ultima_visita)],
                   ["CEP", selected.cep],
-                  ["Situacao", selected.situacao ?? "Ativo"],
                   ["Empresa", selected.empresa],
-                  ["Nome fantasia", selected.nome_fantasia],
+                  ["Situacao", selected.situacao ?? "Ativo"],
                   ["Perfil visita", selected.perfil_visita],
                   ["Endereco", selected.endereco],
+                  ["Complemento", selected.complemento],
                   ["Bairro", selected.bairro],
                   ["Cidade", selected.cidade],
                   ["UF", selected.uf],
@@ -1734,7 +2083,7 @@ export default function Clientes() {
       )}
 
       {duplicateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
           <div className="absolute inset-0 bg-ink/30" />
           <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Endereco duplicado</h3>
@@ -1747,9 +2096,7 @@ export default function Clientes() {
               <div className="rounded-2xl border border-sea/15 bg-sand/30 p-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-ink/50">Novo cadastro</p>
                 <p className="mt-2 text-sm font-semibold text-ink">
-                  {duplicateModal.newCliente.empresa ??
-                    duplicateModal.newCliente.nome_fantasia ??
-                    "Sem nome"}
+                  {duplicateModal.newCliente.empresa ?? "Sem nome"}
                 </p>
                 <p className="text-xs text-ink/60">
                   {duplicateModal.newCliente.endereco ?? "-"}
@@ -1765,7 +2112,7 @@ export default function Clientes() {
                 {duplicateModal.existing.map((item) => (
                   <div key={item.id} className="mt-2">
                     <p className="text-sm font-semibold text-ink">
-                      {item.empresa ?? item.nome_fantasia ?? "Sem nome"}
+                      {item.empresa ?? "Sem nome"}
                     </p>
                     <p className="text-xs text-ink/60">{item.endereco ?? "-"}</p>
                     <p className="text-[11px] text-ink/50">
@@ -1775,6 +2122,15 @@ export default function Clientes() {
                 ))}
               </div>
             </div>
+
+            <label className="mt-4 flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
+              Complemento (ao manter os dois)
+              <input
+                value={duplicateComplemento}
+                onChange={(event) => setDuplicateComplemento(event.target.value)}
+                className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+              />
+            </label>
 
             <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
               <button
@@ -1854,6 +2210,18 @@ export default function Clientes() {
               >
                 Baixar modelo
               </button>
+              {!importing && importMessage && !hasPendingDuplicates && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowImportModal(false);
+                    setImportMessage(null);
+                  }}
+                  className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+                >
+                  Ok
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
