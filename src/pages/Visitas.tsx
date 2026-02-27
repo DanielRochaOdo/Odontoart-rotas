@@ -753,6 +753,14 @@ export default function Visitas() {
 
       if (updateError) throw new Error(updateError.message);
 
+      if (visit.agenda_id && visit.visit_date) {
+        const { error: agendaError } = await supabase
+          .from("agenda")
+          .update({ data_da_ultima_visita: visit.visit_date })
+          .eq("id", visit.agenda_id);
+        if (agendaError) throw new Error(agendaError.message);
+      }
+
       setCompleteVisit(null);
       setRefreshKey((prev) => prev + 1);
     } catch (err) {

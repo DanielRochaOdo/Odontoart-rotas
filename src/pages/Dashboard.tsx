@@ -67,6 +67,7 @@ type DigitalSummary = {
   weekRegistered: number;
   pendingToday: string[];
   pendingWeek: string[];
+  hasAnyEntries: boolean;
 };
 
 const computeVisitStats = (data: Array<{ agenda_id: string | null; completed_at: string | null; completed_vidas: number | null; no_visit_reason: string | null }>): VisitStats => {
@@ -184,6 +185,7 @@ export default function Dashboard() {
   const [digitalSummary, setDigitalSummary] = useState<DigitalSummary | null>(null);
   const [digitalLoading, setDigitalLoading] = useState(false);
   const [digitalError, setDigitalError] = useState<string | null>(null);
+  const [showVendorVisitsModal, setShowVendorVisitsModal] = useState(false);
   const [scheduledCounts, setScheduledCounts] = useState<{ today: number; week: number; month: number }>({
     today: 0,
     week: 0,
@@ -700,6 +702,7 @@ export default function Dashboard() {
             weekRegistered: 0,
             pendingToday: [],
             pendingWeek: [],
+            hasAnyEntries: false,
           });
           setDigitalLoading(false);
           return;
@@ -789,6 +792,7 @@ export default function Dashboard() {
         let todayRegistered = 0;
         let weekRegistered = 0;
         let periodRegistered = 0;
+        const hasAnyEntries = (weekRows ?? []).length > 0;
 
         (vendors ?? []).forEach((vendor) => {
           const name = vendor.display_name ?? vendor.user_id ?? "Vendedor";
@@ -810,6 +814,11 @@ export default function Dashboard() {
           if (!isWeek) pendingWeek.push(name);
         });
 
+        const normalizePendingList = (list: string[]) =>
+          Array.from(new Set(list.map((name) => name.trim()).filter(Boolean)));
+        const pendingTodayList = normalizePendingList(pendingToday);
+        const pendingWeekList = normalizePendingList(pendingWeek);
+
         if (!active) return;
         setDigitalSummary({
           allTimeTotalVidas: sumRows(allRows),
@@ -820,8 +829,9 @@ export default function Dashboard() {
           todayRegistered,
           weekTotalVidas: sumRows(weekRows),
           weekRegistered,
-          pendingToday,
-          pendingWeek,
+          pendingToday: pendingTodayList,
+          pendingWeek: pendingWeekList,
+          hasAnyEntries,
         });
       } catch (err) {
         if (!active) return;
@@ -903,6 +913,14 @@ export default function Dashboard() {
 
     return { totals, topStatus, topCities, ranking, byVendor };
   }, [summaryRows]);
+
+  const vendorVisitsList = useMemo(
+    () =>
+      Object.entries(summary.byVendor)
+        .map(([label, value]) => ({ label, value }))
+        .sort((a, b) => b.value - a.value),
+    [summary.byVendor],
+  );
 
   const donutLabel = (value: number) => new Intl.NumberFormat("pt-BR").format(value);
   const dailyVidasTotal = useMemo(
@@ -1236,18 +1254,28 @@ export default function Dashboard() {
                   </div>
                   <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 md:col-span-5">
                     <p className="text-xs uppercase tracking-[0.2em] text-amber-700">Pendencias</p>
-                    <p className="mt-2 text-sm text-amber-700">
-                      Semana: {digitalSummary.pendingWeek.length} vendedor(es)
-                    </p>
-                    <p className="text-[11px] text-amber-700">
-                      {formatPendingList(digitalSummary.pendingWeek)}
-                    </p>
-                    <p className="mt-2 text-sm text-amber-700">
-                      Hoje: {digitalSummary.pendingToday.length} vendedor(es)
-                    </p>
-                    <p className="text-[11px] text-amber-700">
-                      {formatPendingList(digitalSummary.pendingToday)}
-                    </p>
+                    {!digitalSummary.hasAnyEntries ||
+                    (digitalSummary.pendingWeek.length === 0 &&
+                      digitalSummary.pendingToday.length === 0) ? (
+                      <p className="mt-2 text-sm text-amber-700">
+                        Nao ha pendencias ate o momento.
+                      </p>
+                    ) : (
+                      <>
+                        <p className="mt-2 text-sm text-amber-700">
+                          Semana: {digitalSummary.pendingWeek.length} vendedor(es)
+                        </p>
+                        <p className="text-[11px] text-amber-700">
+                          {formatPendingList(digitalSummary.pendingWeek)}
+                        </p>
+                        <p className="mt-2 text-sm text-amber-700">
+                          Hoje: {digitalSummary.pendingToday.length} vendedor(es)
+                        </p>
+                        <p className="text-[11px] text-amber-700">
+                          {formatPendingList(digitalSummary.pendingToday)}
+                        </p>
+                      </>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -1275,30 +1303,42 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
-          </section>
 
-          {(role === "SUPERVISOR" || role === "ASSISTENTE") && (
-            <section className="rounded-2xl border border-sea/15 bg-white/90 p-5">
-              <div className="flex items-center justify-between">
-                <h3 className="font-display text-lg text-ink">Visitas por vendedor</h3>
-                <span className="text-xs text-ink/60">Top 5</span>
+            {(role === "SUPERVISOR" || role === "ASSISTENTE") && (
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => setShowVendorVisitsModal(true)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setShowVendorVisitsModal(true);
+                  }
+                }}
+                className="cursor-pointer rounded-2xl border border-sea/15 bg-white/90 p-5 transition hover:border-sea/40 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-sea/40"
+              >
+                <div className="flex items-center justify-between">
+                  <h3 className="font-display text-lg text-ink">Visitas por vendedor</h3>
+                  <span className="text-xs text-ink/60">Top 5</span>
+                </div>
+                <div className="mt-4 space-y-2">
+                  {summary.ranking.length === 0 ? (
+                    <p className="text-sm text-ink/60">Sem dados.</p>
+                  ) : (
+                    summary.ranking.map(([label, value], index) => (
+                      <div key={label} className="flex items-center justify-between text-sm">
+                        <span className="text-ink">
+                          {index + 1}. {label}
+                        </span>
+                        <span className="font-semibold text-sea">{formatNumber(value)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <p className="mt-3 text-[11px] text-ink/50">Clique para ver todos</p>
               </div>
-              <div className="mt-4 space-y-2">
-                {summary.ranking.length === 0 ? (
-                  <p className="text-sm text-ink/60">Sem dados.</p>
-                ) : (
-                  summary.ranking.map(([label, value], index) => (
-                    <div key={label} className="flex items-center justify-between text-sm">
-                      <span className="text-ink">
-                        {index + 1}. {label}
-                      </span>
-                      <span className="font-semibold text-sea">{formatNumber(value)}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-          )}
+            )}
+          </section>
 
           {canViewTeamStats && (
             <section className="rounded-2xl border border-sea/15 bg-white/90 p-5">
@@ -1524,6 +1564,51 @@ export default function Dashboard() {
               )}
             </section>
           )}
+        </div>
+      )}
+
+      {showVendorVisitsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setShowVendorVisitsModal(false)}
+            aria-label="Fechar modal"
+          />
+          <div className="relative w-full max-w-2xl rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-display text-lg text-ink">Visitas por vendedor</h3>
+                <p className="mt-1 text-xs text-ink/60">
+                  Lista completa de vendedores e quantidade de visitas.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowVendorVisitsModal(false)}
+                className="rounded-full border border-sea/30 bg-white px-3 py-1 text-xs text-ink/70 hover:border-sea"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="mt-4 max-h-[60vh] overflow-y-auto rounded-2xl border border-sea/15 bg-sand/20">
+              {vendorVisitsList.length === 0 ? (
+                <div className="px-4 py-6 text-sm text-ink/60">Sem dados.</div>
+              ) : (
+                <div className="divide-y divide-sea/10">
+                  {vendorVisitsList.map((item, index) => (
+                    <div key={item.label} className="flex items-center justify-between px-4 py-3 text-sm">
+                      <span className="text-ink">
+                        {index + 1}. {item.label}
+                      </span>
+                      <span className="font-semibold text-sea">{formatNumber(item.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
