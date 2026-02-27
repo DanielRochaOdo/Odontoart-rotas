@@ -613,6 +613,20 @@ export default function Clientes() {
     }
   };
 
+  const handleDuplicateKeepBoth = async () => {
+    if (!duplicateModal) return;
+    setDuplicateResolving(true);
+    setError(null);
+    try {
+      await syncAgendaForCliente(duplicateModal.newCliente);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao manter os dois clientes.");
+    } finally {
+      setDuplicateResolving(false);
+      setDuplicateModal(null);
+    }
+  };
+
   const handleAddressLookup = async () => {
     const road = form.endereco.trim();
     const city = form.cidade.trim();
@@ -1592,7 +1606,7 @@ export default function Clientes() {
             <h3 className="font-display text-lg text-ink">Endereco duplicado</h3>
             <p className="mt-2 text-sm text-ink/70">
               O endereco informado ja existe para {duplicateModal.existing.length} cliente(s).
-              Deseja manter o antigo ou substituir pelo novo cadastro?
+              Escolha o que fazer com o cliente da planilha.
             </p>
 
             <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -1635,7 +1649,7 @@ export default function Clientes() {
                 disabled={duplicateResolving}
                 className="rounded-full border border-sea/30 bg-white px-4 py-2 text-xs font-semibold text-ink/70 hover:border-sea disabled:opacity-60"
               >
-                Manter antigo
+                Manter cliente do sistema
               </button>
               <button
                 type="button"
@@ -1643,7 +1657,15 @@ export default function Clientes() {
                 disabled={duplicateResolving}
                 className="rounded-full bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
-                Substituir
+                Substituir cliente
+              </button>
+              <button
+                type="button"
+                onClick={handleDuplicateKeepBoth}
+                disabled={duplicateResolving}
+                className="rounded-full border border-sea/30 bg-white px-4 py-2 text-xs font-semibold text-ink/70 hover:border-sea disabled:opacity-60"
+              >
+                Manter os dois
               </button>
             </div>
           </div>
