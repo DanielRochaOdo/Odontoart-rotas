@@ -76,7 +76,6 @@ const formatVisitBadge = (value: string | null) => {
   return formatted.replace(".", "").toUpperCase();
 };
 
-const escapeOrValue = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
 const normalizeNumberInput = (value: string) => value.replace(/\D/g, "");
 
 const MONTH_OPTIONS = [

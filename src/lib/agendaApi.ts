@@ -15,11 +15,6 @@ const GLOBAL_SEARCH_COLUMNS = [
   "bairro",
 ];
 
-const formatInValues = (values: string[]) =>
-  values
-    .map((value) => `"${value.replace(/"/g, '\\"')}"`)
-    .join(",");
-
 const normalizeOption = (value: string) =>
   value.trim().replace(/\s+/g, " ").toUpperCase();
 
@@ -131,7 +126,6 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
     if (expanded.length === 0) return;
 
     if (key === "empresa_nome") {
-      const inValues = formatInValues(expanded);
       next = next.in("empresa", expanded);
       return;
     }
