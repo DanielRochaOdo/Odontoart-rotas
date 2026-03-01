@@ -137,3 +137,19 @@
     text-decoration: none;
   }
 }
+
+.routes-map .leaflet-tooltip-pane {
+  z-index: 2000 !important;
+}
+
+.routes-map .leaflet-popup-pane {
+  z-index: 1990 !important;
+}
+
+.routes-map-tooltip {
+  z-index: 2100 !important;
+}
+
+.routes-map .leaflet-overlay-pane path {
+  vector-effect: non-scaling-stroke;
+}

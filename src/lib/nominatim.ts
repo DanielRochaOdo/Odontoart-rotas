@@ -30,6 +30,11 @@ type NominatimResult = {
   lat?: string;
   lon?: string;
 };
+export type NominatimCoordinates = {
+  latitude: number;
+  longitude: number;
+  mapped: CepMapped | null;
+};
 
 const BASE_URL = "https://nominatim.openstreetmap.org/search";
 const REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
@@ -212,14 +217,94 @@ export const fetchNominatimByAddress = async (
   state: string,
   signal?: AbortSignal,
 ) => {
-  const data = await fetchNominatim(
+  const normalizedRoad = road.replace(/\s*,\s*/g, ", ").replace(/\s+/g, " ").trim();
+  const normalizedCity = city.replace(/\s+/g, " ").trim();
+  const normalizedState = state.replace(/\s+/g, " ").trim();
+
+  const strictData = await fetchNominatim(
     {
-      street: road,
-      city,
-      state,
+      street: normalizedRoad,
+      city: normalizedCity,
+      state: normalizedState,
       country: "Brazil",
     },
     signal,
   );
-  return mapResult(data[0] ?? null);
+  const strictMapped = mapResult(strictData[0] ?? null);
+  if (strictMapped) return strictMapped;
+
+  const queryData = await fetchNominatim(
+    {
+      q: `${normalizedRoad}, ${normalizedCity}, ${normalizedState}, Brasil`,
+    },
+    signal,
+  );
+  return mapResult(queryData[0] ?? null);
+};
+
+export const fetchNominatimCoordinatesByAddress = async (
+  road: string,
+  city: string,
+  state: string,
+  signal?: AbortSignal,
+): Promise<NominatimCoordinates | null> => {
+  const normalizedRoad = road.replace(/\s*,\s*/g, ", ").replace(/\s+/g, " ").trim();
+  const normalizedCity = city.replace(/\s+/g, " ").trim();
+  const normalizedState = state.replace(/\s+/g, " ").trim();
+
+  const data = await fetchNominatim(
+    {
+      street: normalizedRoad,
+      city: normalizedCity,
+      state: normalizedState,
+      country: "Brazil",
+    },
+    signal,
+  );
+
+  let first = data[0] ?? null;
+  if (!first?.lat || !first?.lon) {
+    const queryData = await fetchNominatim(
+      {
+        q: `${normalizedRoad}, ${normalizedCity}, ${normalizedState}, Brasil`,
+      },
+      signal,
+    );
+    first = queryData[0] ?? null;
+  }
+  if (!first?.lat || !first?.lon) return null;
+
+  const latitude = Number(first.lat);
+  const longitude = Number(first.lon);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+  return {
+    latitude,
+    longitude,
+    mapped: mapResult(first),
+  };
+};
+
+export const fetchNominatimCoordinatesByQuery = async (
+  query: string,
+  signal?: AbortSignal,
+): Promise<NominatimCoordinates | null> => {
+  const data = await fetchNominatim(
+    {
+      q: query,
+    },
+    signal,
+  );
+  const first = data[0] ?? null;
+  if (!first?.lat || !first?.lon) return null;
+
+  const latitude = Number(first.lat);
+  const longitude = Number(first.lon);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+  return {
+    latitude,
+    longitude,
+    mapped: mapResult(first),
+  };
 };

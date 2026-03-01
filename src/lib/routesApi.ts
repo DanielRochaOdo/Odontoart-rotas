@@ -1,6 +1,28 @@
 ﻿import { supabase } from "./supabase";
 import type { Route, RouteStop } from "../types/routes";
 
+export type AgendaLookupRow = {
+  id: string;
+  empresa: string | null;
+  nome_fantasia: string | null;
+  cod_1: string | null;
+  vendedor: string | null;
+  supervisor: string | null;
+  situacao: string | null;
+  perfil_visita: string | null;
+  data_da_ultima_visita: string | null;
+  visit_completed_vidas: number | null;
+  grupo: string | null;
+  obs_contrato_1: string | null;
+  endereco: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+  latitude: number | null;
+  longitude: number | null;
+};
+
 export const fetchRoutes = async () => {
   const { data, error } = await supabase
     .from("routes")
@@ -41,7 +63,7 @@ export const fetchRouteStops = async (routeId: string) => {
   const { data, error } = await supabase
     .from("route_stops")
     .select(
-      "id, route_id, agenda_id, stop_order, notes, agenda:agenda_id (id, empresa, nome_fantasia, endereco, cidade, uf)",
+      "id, route_id, agenda_id, stop_order, notes, agenda:agenda_id (id, empresa, nome_fantasia, endereco, complemento, bairro, cidade, uf, latitude, longitude)",
     )
     .eq("route_id", routeId)
     .order("stop_order", { ascending: true });
@@ -65,7 +87,7 @@ export const createRouteStop = async (payload: {
       notes: payload.notes ?? null,
     })
     .select(
-      "id, route_id, agenda_id, stop_order, notes, agenda:agenda_id (id, empresa, nome_fantasia, endereco, cidade, uf)",
+      "id, route_id, agenda_id, stop_order, notes, agenda:agenda_id (id, empresa, nome_fantasia, endereco, complemento, bairro, cidade, uf, latitude, longitude)",
     )
     .single();
 
@@ -79,13 +101,29 @@ export const deleteRouteStop = async (stopId: string) => {
 };
 
 export const fetchAgendaLookup = async () => {
-  const { data, error } = await supabase
-    .from("agenda")
-    .select("id, empresa, nome_fantasia, endereco, cidade, uf")
-    .limit(2000);
+  const selectColumns =
+    "id, cod_1, empresa, nome_fantasia, vendedor, supervisor, situacao, perfil_visita, data_da_ultima_visita, visit_completed_vidas, grupo, obs_contrato_1, endereco, complemento, bairro, cidade, uf, latitude, longitude";
 
-  if (error) throw new Error(error.message);
-  return data ?? [];
+  const pageSize = 1000;
+  let from = 0;
+  const allRows: AgendaLookupRow[] = [];
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("agenda")
+      .select(selectColumns)
+      .range(from, from + pageSize - 1)
+      .order("id", { ascending: true });
+
+    if (error) throw new Error(error.message);
+    const batch = (data ?? []) as AgendaLookupRow[];
+    if (batch.length === 0) break;
+    allRows.push(...batch);
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return allRows;
 };
 
 export const fetchProfiles = async () => {
@@ -97,3 +135,23 @@ export const fetchProfiles = async () => {
   if (error) throw new Error(error.message);
   return data ?? [];
 };
+
+export const updateAgendaCoordinates = async (payload: {
+  id: string;
+  latitude: number;
+  longitude: number;
+  geocode_source?: string;
+}) => {
+  const { error } = await supabase
+    .from("agenda")
+    .update({
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      geocode_source: payload.geocode_source ?? "nominatim",
+      geocode_updated_at: new Date().toISOString(),
+    })
+    .eq("id", payload.id);
+
+  if (error) throw new Error(error.message);
+};
+

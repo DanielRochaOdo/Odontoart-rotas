@@ -18,7 +18,11 @@ export type RouteStop = {
     empresa: string | null;
     nome_fantasia: string | null;
     endereco: string | null;
+    bairro?: string | null;
+    complemento?: string | null;
     cidade: string | null;
     uf: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
   } | null;
 };

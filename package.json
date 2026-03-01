@@ -9,17 +9,21 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "import:agenda": "tsx scripts/import_agenda_xlsx.ts",
-    "backfill:bairro": "tsx scripts/backfill_bairro_nominatim.ts"
+    "backfill:bairro": "tsx scripts/backfill_bairro_nominatim.ts",
+    "backfill:coords": "tsx scripts/backfill_agenda_coordinates_nominatim.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",
     "@tanstack/react-table": "^8.21.3",
+    "@types/leaflet": "^1.9.21",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "dotenv": "^17.3.1",
+    "leaflet": "^1.9.4",
     "lucide-react": "^0.575.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-leaflet": "^5.0.0",
     "react-router-dom": "^7.13.1",
     "xlsx": "^0.18.5",
     "zod": "^4.3.6"

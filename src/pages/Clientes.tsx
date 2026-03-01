@@ -14,6 +14,7 @@ import {
   upsertClientes,
 } from "../lib/clientesApi";
 import { fetchSupervisores } from "../lib/agendaApi";
+import { supabase } from "../lib/supabase";
 import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import {
   PERFIL_VISITA_PRESETS,
@@ -352,7 +353,7 @@ const formatPerfilDisplay = (value: string | null) => {
 };
 
 export default function Clientes() {
-  const { role } = useAuth();
+  const { role, session } = useAuth();
   const canView = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canCreate = canView;
   const canEdit = role === "SUPERVISOR";
@@ -437,6 +438,8 @@ export default function Clientes() {
     }));
   };
   const [savingEdit, setSavingEdit] = useState(false);
+  const [deletePasswordEdit, setDeletePasswordEdit] = useState("");
+  const [deletingEdit, setDeletingEdit] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -572,6 +575,7 @@ export default function Clientes() {
   useEffect(() => {
     if (!selected) return;
     setIsEditing(false);
+    setDeletePasswordEdit("");
     setHistorySupervisorId("all");
     setHistoryDateFrom("");
     setHistoryDateTo("");
@@ -1087,6 +1091,43 @@ export default function Clientes() {
       setError(err instanceof Error ? err.message : "Erro ao atualizar cliente.");
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (!selected || !canEdit) return;
+    if (!deletePasswordEdit.trim()) {
+      setError("Informe sua senha para excluir a empresa.");
+      return;
+    }
+    const userEmail = session?.user?.email ?? null;
+    if (!userEmail) {
+      setError("Email do usuario nao encontrado para confirmacao.");
+      return;
+    }
+
+    setDeletingEdit(true);
+    setError(null);
+    try {
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email: userEmail,
+        password: deletePasswordEdit,
+      });
+      if (authError) {
+        setError("Senha invalida.");
+        return;
+      }
+
+      await deleteCliente(selected.id);
+      setClientes((prev) => prev.filter((item) => item.id !== selected.id));
+      setSelected(null);
+      setSelectedId(null);
+      setIsEditing(false);
+      setDeletePasswordEdit("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir empresa.");
+    } finally {
+      setDeletingEdit(false);
     }
   };
 
@@ -2297,6 +2338,32 @@ export default function Clientes() {
                 >
                   Cancelar
                 </button>
+              </div>
+            )}
+
+            {canEdit && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50/40 p-3">
+                <p className="text-xs font-semibold text-red-600">Excluir empresa</p>
+                <p className="mt-1 text-[11px] text-red-500">
+                  Para excluir, confirme com sua senha de usuario.
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <input
+                    type="password"
+                    value={deletePasswordEdit}
+                    onChange={(event) => setDeletePasswordEdit(event.target.value)}
+                    placeholder="Senha"
+                    className="w-48 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs text-ink outline-none focus:border-red-300"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleDeleteSelected}
+                    disabled={deletingEdit || !selected}
+                    className="rounded-lg border border-red-300 bg-red-500 px-3 py-2 text-xs font-semibold text-white hover:bg-red-600 disabled:opacity-60"
+                  >
+                    {deletingEdit ? "Excluindo..." : "Excluir"}
+                  </button>
+                </div>
               </div>
             )}
 

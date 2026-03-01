@@ -5,6 +5,7 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Agenda from "./pages/Agenda";
 import RoutesPage from "./pages/Routes";
+import RoutesMap from "./pages/RoutesMap";
 import Visitas from "./pages/Visitas";
 import AceiteDigital from "./pages/AceiteDigital";
 import Clientes from "./pages/Clientes";
@@ -22,6 +23,7 @@ export default function App() {
             <Route index element={<Dashboard />} />
             <Route path="agenda" element={<Agenda />} />
             <Route path="rotas" element={<RoutesPage />} />
+            <Route path="rotas/mapa" element={<RoutesMap />} />
             <Route path="visitas" element={<Visitas />} />
             <Route path="aceite-digital" element={<AceiteDigital />} />
             <Route path="clientes" element={<Clientes />} />

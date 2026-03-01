@@ -161,6 +161,7 @@ export default function Dashboard() {
   const [visitStats, setVisitStats] = useState<VisitStats | null>(null);
   const [visitStatsError, setVisitStatsError] = useState<string | null>(null);
   const [visitDailyVidas, setVisitDailyVidas] = useState<DonutSeries[]>([]);
+  const [vendorAceitePeriodVidas, setVendorAceitePeriodVidas] = useState(0);
   const [teamStats, setTeamStats] = useState<VisitStats | null>(null);
   const [teamStatsError, setTeamStatsError] = useState<string | null>(null);
   const [teamDailyVidas, setTeamDailyVidas] = useState<DonutSeries[]>([]);
@@ -435,43 +436,72 @@ export default function Dashboard() {
       if (!globalFrom || !globalTo) {
         setVisitStats(null);
         setVisitDailyVidas([]);
+        setVendorAceitePeriodVidas(0);
         return;
       }
       if (globalFrom > globalTo) {
         setVisitStatsError("Periodo invalido.");
         setVisitStats(null);
         setVisitDailyVidas([]);
+        setVendorAceitePeriodVidas(0);
         return;
       }
 
-      let query = supabase
+      let visitsQuery = supabase
         .from("visits")
         .select("agenda_id, completed_at, completed_vidas, no_visit_reason, visit_date")
         .gte("visit_date", globalFrom)
         .lte("visit_date", globalTo);
+      let aceiteQuery = supabase
+        .from("aceite_digital")
+        .select("vidas")
+        .gte("entry_date", globalFrom)
+        .lte("entry_date", globalTo);
 
       if (session?.user.id && profile?.display_name) {
-        query = query.or(
+        visitsQuery = visitsQuery.or(
           `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
         );
+        aceiteQuery = aceiteQuery.or(
+          `vendor_user_id.eq.${session.user.id},vendor_name.eq.${profile.display_name}`,
+        );
       } else if (session?.user.id) {
-        query = query.eq("assigned_to_user_id", session.user.id);
+        visitsQuery = visitsQuery.eq("assigned_to_user_id", session.user.id);
+        aceiteQuery = aceiteQuery.eq("vendor_user_id", session.user.id);
       } else if (profile?.display_name) {
-        query = query.eq("assigned_to_name", profile.display_name);
+        visitsQuery = visitsQuery.eq("assigned_to_name", profile.display_name);
+        aceiteQuery = aceiteQuery.eq("vendor_name", profile.display_name);
       }
 
-      const { data, error: supaError } = await query;
-      if (supaError) {
-        setVisitStatsError(supaError.message);
+      const [
+        { data: visitsData, error: visitsError },
+        { data: aceiteData, error: aceiteError },
+      ] = await Promise.all([visitsQuery, aceiteQuery]);
+
+      if (visitsError) {
+        setVisitStatsError(visitsError.message);
         setVisitStats(null);
         setVisitDailyVidas([]);
+        setVendorAceitePeriodVidas(0);
+        return;
+      }
+      if (aceiteError) {
+        setVisitStatsError(aceiteError.message);
+        setVisitStats(null);
+        setVisitDailyVidas([]);
+        setVendorAceitePeriodVidas(0);
         return;
       }
 
-      setVisitDailyVidas(buildDailyVidasSeries(data ?? []));
+      const totalAceite = (aceiteData ?? []).reduce((sum, item) => {
+        const value = Number(item.vidas ?? 0);
+        return sum + (Number.isFinite(value) ? value : 0);
+      }, 0);
+      setVendorAceitePeriodVidas(totalAceite);
+      setVisitDailyVidas(buildDailyVidasSeries(visitsData ?? []));
       setVisitStats(
         computeVisitStats(
-          (data ?? []).map((item) => ({
+          (visitsData ?? []).map((item) => ({
             agenda_id: item.agenda_id ?? null,
             completed_at: item.completed_at ?? null,
             completed_vidas: item.completed_vidas ?? null,
@@ -1045,6 +1075,14 @@ export default function Dashboard() {
     () => teamDailyVidas.reduce((sum, item) => sum + item.value, 0),
     [teamDailyVidas],
   );
+  const vendorImpactVidas = useMemo(
+    () => (visitStats?.totalVidas ?? 0) + vendorAceitePeriodVidas,
+    [vendorAceitePeriodVidas, visitStats],
+  );
+  const teamImpactVidas = useMemo(
+    () => (teamStats?.totalVidas ?? 0) + (digitalSummary?.periodTotalVidas ?? 0),
+    [digitalSummary, teamStats],
+  );
 
   const renderDonut = (
     title: string,
@@ -1551,9 +1589,13 @@ export default function Dashboard() {
                   )}
                   {renderDonut(
                     "Impacto no periodo",
-                    visitStats.totalVidas + visitStats.empresasVisitadas,
+                    vendorImpactVidas + visitStats.empresasVisitadas,
                     [
-                      { label: "Vidas registradas", value: visitStats.totalVidas, color: "#0f766e" },
+                      {
+                        label: "Vidas registradas (visitas + aceite digital)",
+                        value: vendorImpactVidas,
+                        color: "#0f766e",
+                      },
                       { label: "Empresas visitadas", value: visitStats.empresasVisitadas, color: "#38bdf8" },
                     ],
                     `${globalFrom} a ${globalTo}`,
@@ -1593,9 +1635,13 @@ export default function Dashboard() {
                   )}
                   {renderDonut(
                     "Impacto no periodo (equipe)",
-                    teamStats.totalVidas + teamStats.empresasVisitadas,
+                    teamImpactVidas + teamStats.empresasVisitadas,
                     [
-                      { label: "Vidas registradas", value: teamStats.totalVidas, color: "#0f766e" },
+                      {
+                        label: "Vidas registradas (visitas + aceite digital)",
+                        value: teamImpactVidas,
+                        color: "#0f766e",
+                      },
                       { label: "Empresas visitadas", value: teamStats.empresasVisitadas, color: "#38bdf8" },
                     ],
                     `${globalFrom} a ${globalTo}`,

@@ -74,6 +74,85 @@ const parseOptionalNumber = (value?: string) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const normalizeBusinessKey = (value: string | null | undefined) =>
+  (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+
+const rankAgendaRow = (row: Partial<AgendaRow>) => {
+  let score = 0;
+  if (row.data_da_ultima_visita) score += 4;
+  if (row.visit_completed_vidas !== null && row.visit_completed_vidas !== undefined) score += 3;
+  if (row.vendedor) score += 2;
+  if (row.supervisor) score += 2;
+  if (row.obs_contrato_1) score += 1;
+  return score;
+};
+
+const resolvePreferredAgendaRow = <T extends Partial<AgendaRow>>(current: T, candidate: T) => {
+  const currentScore = rankAgendaRow(current);
+  const candidateScore = rankAgendaRow(candidate);
+  if (candidateScore !== currentScore) return candidateScore > currentScore ? candidate : current;
+
+  const currentDate = current.data_da_ultima_visita ? new Date(current.data_da_ultima_visita).getTime() : 0;
+  const candidateDate = candidate.data_da_ultima_visita ? new Date(candidate.data_da_ultima_visita).getTime() : 0;
+  if (candidateDate !== currentDate) return candidateDate > currentDate ? candidate : current;
+
+  const currentCreated = current.created_at ? new Date(current.created_at).getTime() : 0;
+  const candidateCreated = candidate.created_at ? new Date(candidate.created_at).getTime() : 0;
+  return candidateCreated > currentCreated ? candidate : current;
+};
+
+const dedupeAgendaRows = <T extends Partial<AgendaRow>>(rows: T[]) => {
+  const byKey = new Map<string, T>();
+  for (const row of rows) {
+    const codeKey = normalizeBusinessKey(row.cod_1);
+    const companyKey = normalizeBusinessKey(row.empresa ?? row.nome_fantasia);
+    const cityKey = normalizeBusinessKey(row.cidade);
+    const ufKey = normalizeBusinessKey(row.uf);
+    const addrKey = normalizeBusinessKey(row.endereco);
+    const bairroKey = normalizeBusinessKey(row.bairro);
+    const key = codeKey
+      ? `COD:${codeKey}`
+      : `EMP:${companyKey}|CIDADE:${cityKey}|UF:${ufKey}|END:${addrKey}|BAIRRO:${bairroKey}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, row);
+      continue;
+    }
+    byKey.set(key, resolvePreferredAgendaRow(existing, row));
+  }
+  return Array.from(byKey.values());
+};
+
+const sortAgendaRows = (rows: AgendaRow[], sorting: SortingState) => {
+  if (!sorting.length) {
+    return [...rows].sort((a, b) => {
+      const aDate = a.data_da_ultima_visita ? new Date(a.data_da_ultima_visita).getTime() : 0;
+      const bDate = b.data_da_ultima_visita ? new Date(b.data_da_ultima_visita).getTime() : 0;
+      return bDate - aDate;
+    });
+  }
+
+  const { id, desc } = sorting[0];
+  return [...rows].sort((a, b) => {
+    const av = a[id as keyof AgendaRow];
+    const bv = b[id as keyof AgendaRow];
+    if (av === bv) return 0;
+    if (av === null || av === undefined) return desc ? -1 : 1;
+    if (bv === null || bv === undefined) return desc ? 1 : -1;
+    if (typeof av === "number" && typeof bv === "number") {
+      return desc ? bv - av : av - bv;
+    }
+    const as = String(av).toUpperCase();
+    const bs = String(bv).toUpperCase();
+    return desc ? bs.localeCompare(as) : as.localeCompare(bs);
+  });
+};
+
 const getVidasRange = (filters: AgendaFilters) => {
   const range = filters.ranges?.vidas_ultima_visita;
   const from = parseOptionalNumber(range?.from);
@@ -347,15 +426,15 @@ export const fetchAgenda = async (
     }
   }
 
-  let query = supabase
+  const baseQuery = () =>
+    supabase
     .from("agenda")
     .select(
       "id, data_da_ultima_visita, visit_completed_vidas, cod_1, empresa, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1, visit_generated_at, created_at",
-      { count: "exact" },
     )
     .ilike("situacao", "ativo%");
 
-  query = applyFilters(query, effectiveFilters);
+  let query = applyFilters(baseQuery(), effectiveFilters);
   if (agendaIdsByVidas) {
     if (agendaIdsByVidas.length === 0) {
       return { data: [], count: 0 };
@@ -363,23 +442,25 @@ export const fetchAgenda = async (
     query = query.in("id", agendaIdsByVidas);
   }
 
-  if (sorting.length) {
-    const { id, desc } = sorting[0];
-    query = query.order(id, { ascending: !desc });
-  } else {
-    query = query.order("data_da_ultima_visita", { ascending: false });
+  const allRows: AgendaRow[] = [];
+  const chunkSize = 1000;
+  let from = 0;
+  while (true) {
+    const { data, error } = await query.range(from, from + chunkSize - 1);
+    if (error) throw new Error(error.message);
+    const batch = (data ?? []) as AgendaRow[];
+    if (batch.length === 0) break;
+    allRows.push(...batch);
+    if (batch.length < chunkSize) break;
+    from += chunkSize;
   }
 
-  const from = pageIndex * pageSize;
-  const to = from + pageSize - 1;
-  const { data, error, count } = await query.range(from, to);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  const hydrated = await resolvePerfilFromClientes((data ?? []) as AgendaRow[]);
-  return { data: hydrated as AgendaRow[], count: count ?? 0 };
+  const hydrated = (await resolvePerfilFromClientes(allRows)) as AgendaRow[];
+  const deduped = dedupeAgendaRows(hydrated);
+  const sorted = sortAgendaRows(deduped, sorting);
+  const pageFrom = pageIndex * pageSize;
+  const pageTo = pageFrom + pageSize;
+  return { data: sorted.slice(pageFrom, pageTo), count: deduped.length };
 };
 
 export const fetchAgendaScheduledVisits = async (agendaIds: string[]) => {
@@ -526,8 +607,9 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
       results.push(...((data ?? []) as AgendaPerfilRow[]));
     }
 
-    const hydrated = await resolvePerfilFromClientes(results);
-    return hydrated.map((item) => ({ id: item.id, perfil_visita: item.perfil_visita ?? null }));
+    const hydrated = (await resolvePerfilFromClientes(results)) as AgendaPerfilRow[];
+    const deduped = dedupeAgendaRows(hydrated as Partial<AgendaRow>[] as AgendaRow[]) as unknown as AgendaPerfilRow[];
+    return deduped.map((item) => ({ id: item.id, perfil_visita: item.perfil_visita ?? null }));
   }
 
   const vidasRange = getVidasRange(filters);
@@ -566,8 +648,9 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
     from += pageSize;
   }
 
-  const hydrated = await resolvePerfilFromClientes(results);
-  return hydrated.map((item) => ({ id: item.id, perfil_visita: item.perfil_visita ?? null }));
+  const hydrated = (await resolvePerfilFromClientes(results)) as AgendaPerfilRow[];
+  const deduped = dedupeAgendaRows(hydrated as Partial<AgendaRow>[] as AgendaRow[]) as unknown as AgendaPerfilRow[];
+  return deduped.map((item) => ({ id: item.id, perfil_visita: item.perfil_visita ?? null }));
 };
 
 export const fetchVendedores = async () => {

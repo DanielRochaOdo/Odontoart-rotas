@@ -1,7 +1,7 @@
-﻿import { supabase } from "./supabase";
+import { supabase } from "./supabase";
 import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import { extractCustomTimes } from "./perfilVisita";
-
+import { fetchNominatimCoordinatesByAddress, fetchNominatimCoordinatesByQuery } from "./nominatim";
 const escapeOrValue = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
 const DEFAULT_SITUACAO = "Ativo";
 const normalizeAgendaKeyPart = (value?: string | null) =>
@@ -353,6 +353,55 @@ export const syncAgendaForCliente = async (cliente: ClienteRow) => {
 
   const { error } = await query;
   if (error) throw new Error(error.message);
+
+  const road = [cliente.endereco?.trim(), cliente.bairro?.trim()].filter(Boolean).join(", ");
+  const city = cliente.cidade?.trim();
+  const state = cliente.uf?.trim();
+  if (!road || !city || !state) return;
+
+  let geocoded = await fetchNominatimCoordinatesByAddress(road, city, state).catch(() => null);
+  if (!geocoded && cliente.bairro?.trim()) {
+    geocoded = await fetchNominatimCoordinatesByQuery(`${cliente.bairro.trim()}, ${city}, ${state}, Brasil`).catch(() => null);
+  }
+  if (!geocoded) {
+    geocoded = await fetchNominatimCoordinatesByQuery(`${city}, ${state}, Brasil`).catch(() => null);
+  }
+  if (!geocoded) return;
+
+  let missingCoordsQuery = supabase
+    .from("agenda")
+    .select("id, latitude, longitude");
+
+  if (empresa && nomeFantasia) {
+    missingCoordsQuery = missingCoordsQuery.or(
+      `empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
+    );
+  } else if (empresa) {
+    missingCoordsQuery = missingCoordsQuery.eq("empresa", empresa);
+  } else if (nomeFantasia) {
+    missingCoordsQuery = missingCoordsQuery.eq("nome_fantasia", nomeFantasia);
+  } else {
+    return;
+  }
+
+  const { data: matchingRows, error: missingError } = await missingCoordsQuery;
+  if (missingError) throw new Error(missingError.message);
+  const missingIds = (matchingRows ?? [])
+    .filter((row) => row.latitude === null || row.longitude === null)
+    .map((row) => row.id)
+    .filter(Boolean);
+  if (missingIds.length === 0) return;
+
+  const { error: coordsError } = await supabase
+    .from("agenda")
+    .update({
+      latitude: geocoded.latitude,
+      longitude: geocoded.longitude,
+      geocode_source: "nominatim",
+      geocode_updated_at: new Date().toISOString(),
+    })
+    .in("id", missingIds);
+  if (coordsError) throw new Error(coordsError.message);
 };
 
 export const fetchClienteHistory = async (cliente: ClienteRow) => {
@@ -403,4 +452,5 @@ export const fetchClienteHistory = async (cliente: ClienteRow) => {
     };
   }) as ClienteHistoryRow[];
 };
+
 

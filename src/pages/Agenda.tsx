@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
-import { MapPin, SquareCenterlineDashedHorizontal } from "lucide-react";
+import { Map as MapIcon, MapPin, SquareCenterlineDashedHorizontal } from "lucide-react";
 import {
   flexRender,
   type ColumnDef,
@@ -1620,8 +1620,17 @@ export default function Agenda() {
 
   return (
     <div className="space-y-6">
-      <header>
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-2xl text-ink">Rotas</h2>
+        <a
+          href="/rotas/mapa"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-2 rounded-lg border border-sea/30 bg-white/90 px-3 py-2 text-xs font-semibold text-ink hover:border-sea hover:text-sea"
+        >
+          <MapIcon size={14} />
+          Abrir modo mapa
+        </a>
       </header>
 
       <section className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
