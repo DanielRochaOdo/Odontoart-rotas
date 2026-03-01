@@ -654,6 +654,9 @@ export default function Settings() {
                             {supervisor.nome ?? supervisor.display_name ?? "Sem nome"}
                           </p>
                           <p className="text-xs text-ink/60">Supervisor</p>
+                          <p className="text-xs text-ink/60">
+                            Email: {getCurrentEmail(supervisor)}
+                          </p>
                         </div>
                       )}
                       {editingSupervisorId !== supervisor.id && (
@@ -814,6 +817,9 @@ export default function Settings() {
                           <p className="text-xs text-ink/60">
                             Supervisor: {vendor.supervisor?.display_name ?? "Nao informado"}
                           </p>
+                          <p className="text-xs text-ink/60">
+                            Email: {getCurrentEmail(vendor)}
+                          </p>
                         </div>
                       )}
                       {editingVendorId !== vendor.id && (
@@ -946,6 +952,9 @@ export default function Settings() {
                             {assistant.nome ?? assistant.display_name ?? "Sem nome"}
                           </p>
                           <p className="text-xs text-ink/60">Assistente</p>
+                          <p className="text-xs text-ink/60">
+                            Email: {getCurrentEmail(assistant)}
+                          </p>
                         </div>
                       )}
                       {editingAssistantId !== assistant.id && (
