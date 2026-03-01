@@ -290,7 +290,7 @@ export default function RoutesMap() {
     <div className="space-y-5">
       <header className="rounded-3xl border border-sea/15 bg-white/95 p-4 shadow-card sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><p className="text-[11px] uppercase tracking-[0.25em] text-ink/50">Modulo protegido</p><h2 className="mt-1 font-display text-2xl text-ink">Mapa de Rotas</h2><p className="mt-2 max-w-2xl text-sm text-ink/65">Logica 100% igual ao modo tabela, com visualizacao em mapa.</p></div>
+          <div><h2 className="mt-1 font-display text-2xl text-ink">Rotas</h2><p className="mt-2 max-w-2xl text-sm text-ink/65">Modo mapa</p></div>
           <a href="/agenda" className="inline-flex items-center gap-2 rounded-lg border border-sea/25 bg-sand/30 px-3 py-2 text-xs font-semibold text-ink hover:border-sea"><ExternalLink size={14} />Voltar ao modulo rotas</a>
         </div>
       </header>
@@ -362,7 +362,7 @@ export default function RoutesMap() {
           </div>
         </div>
         <div className="rounded-2xl border border-sea/15 bg-white/92 p-3 sm:p-4">
-          <div className="mb-3"><h3 className="text-base font-semibold text-ink">Mapa de empresas filtradas</h3><p className="text-xs text-ink/60">Passe o mouse para ver todas as colunas da tabela e clique para selecionar multiplas empresas.</p></div>
+          <div className="mb-3"><h3 className="text-base font-semibold text-ink">Mapa de empresas</h3><p className="text-xs text-ink/60">Passe o mouse para ver informações da empresas.</p></div>
           <div className="overflow-hidden rounded-xl border border-sea/15">
             <MapContainer center={RMF_CENTER} zoom={10} minZoom={6} maxZoom={16} maxBounds={CEARA_BOUNDS} maxBoundsViscosity={0.8} className="routes-map h-[58vh] min-h-[380px] w-full lg:h-[72vh]">
             <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
