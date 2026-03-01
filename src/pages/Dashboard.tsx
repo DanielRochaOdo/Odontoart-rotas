@@ -169,6 +169,10 @@ export default function Dashboard() {
     { id: string; display_name: string | null }[]
   >([]);
   const [selectedSupervisorId, setSelectedSupervisorId] = useState<string>("all");
+  const [vendedores, setVendedores] = useState<
+    { user_id: string | null; display_name: string | null }[]
+  >([]);
+  const [selectedVendorId, setSelectedVendorId] = useState<string>("all");
   const [teamVendorNames, setTeamVendorNames] = useState<string[]>([]);
   const [vendorVidasSeries, setVendorVidasSeries] = useState<VendorVidasSeries[]>([]);
   const [vendorVidasLoading, setVendorVidasLoading] = useState(false);
@@ -197,12 +201,17 @@ export default function Dashboard() {
   const canSelectSupervisor = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canViewTeamStats = role === "SUPERVISOR" || role === "ASSISTENTE";
   const activeSupervisorId = selectedSupervisorId === "all" ? null : selectedSupervisorId;
+  const activeVendorId = selectedVendorId === "all" ? null : selectedVendorId;
+  const activeVendorName = useMemo(() => {
+    if (!activeVendorId) return null;
+    return vendedores.find((vendor) => vendor.user_id === activeVendorId)?.display_name ?? null;
+  }, [activeVendorId, vendedores]);
   const todayKey = useMemo(() => toLocalDateInput(new Date()), []);
   const monthStartKey = useMemo(() => toLocalDateInput(startOfMonth(new Date())), []);
   const monthEndKey = useMemo(() => toLocalDateInput(new Date()), []);
   const weekStartKey = useMemo(() => toLocalDateInput(startOfWeek(new Date())), []);
-  const [digitalFrom, setDigitalFrom] = useState(() => toLocalDateInput(startOfMonth(new Date())));
-  const [digitalTo, setDigitalTo] = useState(() => toLocalDateInput(new Date()));
+  const globalFrom = vendorVidasFrom;
+  const globalTo = vendorVidasTo;
 
   useEffect(() => {
     if (!canSelectSupervisor) return;
@@ -238,6 +247,44 @@ export default function Dashboard() {
   }, [canSelectSupervisor, profile?.id, role]);
 
   useEffect(() => {
+    if (!canSelectSupervisor) return;
+    let active = true;
+
+    const loadVendedores = async () => {
+      let query = supabase
+        .from("profiles")
+        .select("user_id, display_name")
+        .eq("role", "VENDEDOR")
+        .order("display_name", { ascending: true });
+
+      if (activeSupervisorId) {
+        query = query.eq("supervisor_id", activeSupervisorId);
+      }
+
+      const { data, error: vendorsError } = await query;
+      if (!active) return;
+
+      if (vendorsError) {
+        console.error(vendorsError);
+        setVendedores([]);
+        setSelectedVendorId("all");
+        return;
+      }
+
+      const list = data ?? [];
+      setVendedores(list);
+      setSelectedVendorId((prev) =>
+        prev !== "all" && list.some((item) => item.user_id === prev) ? prev : "all",
+      );
+    };
+
+    loadVendedores();
+    return () => {
+      active = false;
+    };
+  }, [activeSupervisorId, canSelectSupervisor]);
+
+  useEffect(() => {
     const load = async () => {
       setLoading(true);
       setError(null);
@@ -264,6 +311,14 @@ export default function Dashboard() {
     const loadScheduledCounts = async () => {
       setScheduledCountsError(null);
       try {
+        if (!globalFrom || !globalTo) {
+          setScheduledCounts({ today: 0, week: 0, month: 0 });
+          return;
+        }
+        if (globalFrom > globalTo) {
+          throw new Error("Periodo invalido.");
+        }
+
         const now = new Date();
         const today = new Date(now);
         today.setHours(0, 0, 0, 0);
@@ -275,11 +330,8 @@ export default function Dashboard() {
         const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
         monthEnd.setHours(0, 0, 0, 0);
 
-        const startRange = weekStart < monthStart ? weekStart : monthStart;
-        const endRange = weekEnd > monthEnd ? weekEnd : monthEnd;
-
-        const startKey = toLocalDateInput(startRange);
-        const endKey = toLocalDateInput(endRange);
+        const startKey = globalFrom;
+        const endKey = globalTo;
         const todayKey = toLocalDateInput(today);
         const weekStartKeyLocal = toLocalDateInput(weekStart);
         const weekEndKeyLocal = toLocalDateInput(weekEnd);
@@ -301,6 +353,16 @@ export default function Dashboard() {
             baseQuery = baseQuery.eq("assigned_to_user_id", session.user.id);
           } else if (profile?.display_name) {
             baseQuery = baseQuery.eq("assigned_to_name", profile.display_name);
+          }
+        } else if (activeVendorId || activeVendorName) {
+          if (activeVendorId && activeVendorName) {
+            baseQuery = baseQuery.or(
+              `assigned_to_user_id.eq.${activeVendorId},assigned_to_name.eq.${activeVendorName}`,
+            );
+          } else if (activeVendorId) {
+            baseQuery = baseQuery.eq("assigned_to_user_id", activeVendorId);
+          } else if (activeVendorName) {
+            baseQuery = baseQuery.eq("assigned_to_name", activeVendorName);
           }
         } else if (activeSupervisorId) {
           const vendorsQuery = supabase
@@ -363,24 +425,30 @@ export default function Dashboard() {
     return () => {
       active = false;
     };
-  }, [activeSupervisorId, isVendor, profile?.display_name, session?.user.id]);
+  }, [activeSupervisorId, activeVendorId, activeVendorName, globalFrom, globalTo, isVendor, profile?.display_name, session?.user.id]);
 
   useEffect(() => {
     if (!isVendor) return;
 
     const loadVendorStats = async () => {
       setVisitStatsError(null);
-      const now = new Date();
-      const monthStart = startOfMonth(now);
-      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      const startKey = monthStart.toISOString().slice(0, 10);
-      const endKey = monthEnd.toISOString().slice(0, 10);
+      if (!globalFrom || !globalTo) {
+        setVisitStats(null);
+        setVisitDailyVidas([]);
+        return;
+      }
+      if (globalFrom > globalTo) {
+        setVisitStatsError("Periodo invalido.");
+        setVisitStats(null);
+        setVisitDailyVidas([]);
+        return;
+      }
 
       let query = supabase
         .from("visits")
         .select("agenda_id, completed_at, completed_vidas, no_visit_reason, visit_date")
-        .gte("visit_date", startKey)
-        .lte("visit_date", endKey);
+        .gte("visit_date", globalFrom)
+        .lte("visit_date", globalTo);
 
       if (session?.user.id && profile?.display_name) {
         query = query.or(
@@ -414,18 +482,24 @@ export default function Dashboard() {
     };
 
     loadVendorStats();
-  }, [isVendor, profile?.display_name, session?.user.id]);
+  }, [globalFrom, globalTo, isVendor, profile?.display_name, session?.user.id]);
 
   useEffect(() => {
     if (!canViewTeamStats) return;
 
     const loadTeamStats = async () => {
       setTeamStatsError(null);
-      const now = new Date();
-      const monthStart = startOfMonth(now);
-      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      const startKey = monthStart.toISOString().slice(0, 10);
-      const endKey = monthEnd.toISOString().slice(0, 10);
+      if (!globalFrom || !globalTo) {
+        setTeamStats(computeVisitStats([]));
+        setTeamDailyVidas([]);
+        return;
+      }
+      if (globalFrom > globalTo) {
+        setTeamStatsError("Periodo invalido.");
+        setTeamStats(computeVisitStats([]));
+        setTeamDailyVidas([]);
+        return;
+      }
 
       const vendorsQuery = supabase
         .from("profiles")
@@ -442,10 +516,20 @@ export default function Dashboard() {
         return;
       }
 
-      const vendorIds = (vendors ?? [])
+      const scopedVendors = (vendors ?? []).filter((vendor) => {
+        if (!activeVendorId && !activeVendorName) return true;
+        const byId = activeVendorId ? vendor.user_id === activeVendorId : false;
+        const byName =
+          activeVendorName && vendor.display_name
+            ? normalizeKey(vendor.display_name) === normalizeKey(activeVendorName)
+            : false;
+        return byId || byName;
+      });
+
+      const vendorIds = scopedVendors
         .map((vendor) => vendor.user_id)
         .filter((value): value is string => Boolean(value));
-      const vendorNames = (vendors ?? [])
+      const vendorNames = scopedVendors
         .map((vendor) => vendor.display_name)
         .filter((value): value is string => Boolean(value));
 
@@ -455,12 +539,13 @@ export default function Dashboard() {
       let visitsQuery = supabase
         .from("visits")
         .select("agenda_id, completed_at, completed_vidas, no_visit_reason, visit_date")
-        .gte("visit_date", startKey)
-        .lte("visit_date", endKey);
+        .gte("visit_date", globalFrom)
+        .lte("visit_date", globalTo);
 
-      if (activeSupervisorId) {
+      if (activeSupervisorId || activeVendorId || activeVendorName) {
         if (vendorIds.length === 0 && vendorNames.length === 0) {
           setTeamStats(computeVisitStats([]));
+          setTeamDailyVidas([]);
           return;
         }
 
@@ -497,7 +582,7 @@ export default function Dashboard() {
     };
 
     loadTeamStats();
-  }, [activeSupervisorId, canViewTeamStats]);
+  }, [activeSupervisorId, activeVendorId, activeVendorName, canViewTeamStats, globalFrom, globalTo]);
 
   useEffect(() => {
     if (!canViewTeamStats) return;
@@ -530,15 +615,25 @@ export default function Dashboard() {
           throw new Error(vendorsError.message);
         }
 
-        const vendorIds = (vendors ?? [])
+        const scopedVendors = (vendors ?? []).filter((vendor) => {
+          if (!activeVendorId && !activeVendorName) return true;
+          const byId = activeVendorId ? vendor.user_id === activeVendorId : false;
+          const byName =
+            activeVendorName && vendor.display_name
+              ? normalizeKey(vendor.display_name) === normalizeKey(activeVendorName)
+              : false;
+          return byId || byName;
+        });
+
+        const vendorIds = scopedVendors
           .map((vendor) => vendor.user_id)
           .filter((value): value is string => Boolean(value));
-        const vendorNames = (vendors ?? [])
+        const vendorNames = scopedVendors
           .map((vendor) => vendor.display_name)
           .filter((value): value is string => Boolean(value));
 
         const vendorNameById = new Map(
-          (vendors ?? [])
+          scopedVendors
             .filter((vendor) => vendor.user_id)
             .map((vendor) => [vendor.user_id as string, vendor.display_name ?? vendor.user_id]),
         );
@@ -551,9 +646,10 @@ export default function Dashboard() {
           .not("completed_at", "is", null)
           .is("no_visit_reason", null);
 
-        if (activeSupervisorId) {
+        if (activeSupervisorId || activeVendorId || activeVendorName) {
           if (vendorIds.length === 0 && vendorNames.length === 0) {
             setVendorVidasSeries([]);
+            setVendorVidasSummary({ total: 0, totalVisitas: 0, totalAceite: 0, totalVendors: 0, hiddenCount: 0 });
             setVendorVidasLoading(false);
             return;
           }
@@ -590,9 +686,10 @@ export default function Dashboard() {
           .gte("entry_date", vendorVidasFrom)
           .lte("entry_date", vendorVidasTo);
 
-        if (activeSupervisorId) {
+        if (activeSupervisorId || activeVendorId || activeVendorName) {
           if (vendorIds.length === 0 && vendorNames.length === 0) {
             setVendorVidasSeries([]);
+            setVendorVidasSummary({ total: 0, totalVisitas: 0, totalAceite: 0, totalVendors: 0, hiddenCount: 0 });
             setVendorVidasLoading(false);
             return;
           }
@@ -655,7 +752,7 @@ export default function Dashboard() {
     };
 
     loadVendorVidas();
-  }, [activeSupervisorId, canViewTeamStats, vendorVidasFrom, vendorVidasTo]);
+  }, [activeSupervisorId, activeVendorId, activeVendorName, canViewTeamStats, vendorVidasFrom, vendorVidasTo]);
 
   useEffect(() => {
     if (!canViewTeamStats) return;
@@ -677,20 +774,30 @@ export default function Dashboard() {
         if (!active) return;
         if (vendorsError) throw new Error(vendorsError.message);
 
-        const vendorIds = (vendors ?? [])
+        const scopedVendors = (vendors ?? []).filter((vendor) => {
+          if (!activeVendorId && !activeVendorName) return true;
+          const byId = activeVendorId ? vendor.user_id === activeVendorId : false;
+          const byName =
+            activeVendorName && vendor.display_name
+              ? normalizeKey(vendor.display_name) === normalizeKey(activeVendorName)
+              : false;
+          return byId || byName;
+        });
+
+        const vendorIds = scopedVendors
           .map((vendor) => vendor.user_id)
           .filter((value): value is string => Boolean(value));
-        const vendorNames = (vendors ?? [])
+        const vendorNames = scopedVendors
           .map((vendor) => vendor.display_name)
           .filter((value): value is string => Boolean(value));
-        if (!digitalFrom || !digitalTo) {
+        if (!globalFrom || !globalTo) {
           throw new Error("Informe o periodo do aceite digital.");
         }
-        if (digitalFrom > digitalTo) {
+        if (globalFrom > globalTo) {
           throw new Error("Periodo invalido.");
         }
 
-        if ((vendors ?? []).length === 0) {
+        if (scopedVendors.length === 0) {
           setDigitalSummary({
             allTimeTotalVidas: 0,
             monthTotalVidas: 0,
@@ -723,20 +830,22 @@ export default function Dashboard() {
           if (vendorNames.length) return query.in("vendor_name", vendorNames);
           return query;
         };
+        const applyGlobalRange = (query: ReturnType<typeof buildAceiteQuery>) =>
+          query.gte("entry_date", globalFrom).lte("entry_date", globalTo);
 
         const todayQuery = applyVendorFilter(
-          buildAceiteQuery().eq("entry_date", todayKey),
+          applyGlobalRange(buildAceiteQuery().eq("entry_date", todayKey)),
         );
         const weekQuery = applyVendorFilter(
-          buildAceiteQuery().gte("entry_date", weekStartKey).lte("entry_date", todayKey),
+          applyGlobalRange(buildAceiteQuery().gte("entry_date", weekStartKey).lte("entry_date", todayKey)),
         );
         const monthQuery = applyVendorFilter(
-          buildAceiteQuery().gte("entry_date", monthStartKey).lte("entry_date", monthEndKey),
+          applyGlobalRange(buildAceiteQuery().gte("entry_date", monthStartKey).lte("entry_date", monthEndKey)),
         );
         const periodQuery = applyVendorFilter(
-          buildAceiteQuery().gte("entry_date", digitalFrom).lte("entry_date", digitalTo),
+          applyGlobalRange(buildAceiteQuery()),
         );
-        const allTimeQuery = applyVendorFilter(buildAceiteQuery());
+        const allTimeQuery = applyVendorFilter(applyGlobalRange(buildAceiteQuery()));
 
         const [
           { data: todayRows, error: todayError },
@@ -794,7 +903,7 @@ export default function Dashboard() {
         let periodRegistered = 0;
         const hasAnyEntries = (weekRows ?? []).length > 0;
 
-        (vendors ?? []).forEach((vendor) => {
+        scopedVendors.forEach((vendor) => {
           const name = vendor.display_name ?? vendor.user_id ?? "Vendedor";
           const nameKey = vendor.display_name ? normalizeKey(vendor.display_name) : "";
           const isToday =
@@ -848,9 +957,11 @@ export default function Dashboard() {
     };
   }, [
     activeSupervisorId,
+    activeVendorId,
+    activeVendorName,
     canViewTeamStats,
-    digitalFrom,
-    digitalTo,
+    globalFrom,
+    globalTo,
     monthEndKey,
     monthStartKey,
     todayKey,
@@ -863,13 +974,16 @@ export default function Dashboard() {
   }, [teamVendorNames]);
 
   const summaryRows = useMemo(() => {
-    if (!canSelectSupervisor || !activeSupervisorId) return rows;
-    if (normalizedVendorNames.size === 0) return [];
+    if (!globalFrom || !globalTo || globalFrom > globalTo) return [];
     return rows.filter((row) => {
-      if (!row.vendedor) return false;
+      const dateKey = (row.data_da_ultima_visita ?? "").slice(0, 10);
+      if (!dateKey || dateKey < globalFrom || dateKey > globalTo) return false;
+
+      if (!canViewTeamStats || (!activeSupervisorId && !activeVendorId)) return true;
+      if (normalizedVendorNames.size === 0 || !row.vendedor) return false;
       return normalizedVendorNames.has(normalizeKey(row.vendedor));
     });
-  }, [activeSupervisorId, canSelectSupervisor, normalizedVendorNames, rows]);
+  }, [activeSupervisorId, activeVendorId, canViewTeamStats, globalFrom, globalTo, normalizedVendorNames, rows]);
 
   const summary = useMemo(() => {
     const now = new Date();
@@ -979,107 +1093,35 @@ export default function Dashboard() {
     );
   };
 
-  const exportVendorVidasPdf = () => {
-    if (vendorVidasSeries.length === 0) return;
-    const total =
-      vendorVidasSummary.total ||
-      vendorVidasSeries.reduce((acc, item) => acc + item.total, 0);
-    const maxValue = vendorVidasSeries[0]?.total ?? 1;
-    const periodLabel = `${vendorVidasFrom || "-"} a ${vendorVidasTo || "-"}`;
-    const supervisorLabel =
-      activeSupervisorId && supervisores.length
-        ? supervisores.find((item) => item.id === activeSupervisorId)?.display_name ?? "Supervisor"
-        : "Todos";
+  const exportDashboardPdf = () => {
+    const root = document.getElementById("dashboard-export-root");
+    if (!root) {
+      setVendorVidasError("Nao foi possivel preparar o PDF do dashboard.");
+      return;
+    }
 
-    const rowsHtml = vendorVidasSeries
-      .map((item, index) => {
-        const percent = total ? ((item.total / total) * 100).toFixed(1) : "0.0";
-        return `
-          <tr>
-            <td>${index + 1}</td>
-            <td>${item.label}</td>
-            <td style="text-align:right;">${formatNumber(item.visitas)}</td>
-            <td style="text-align:right;">${formatNumber(item.aceite)}</td>
-            <td style="text-align:right;">${formatNumber(item.total)}</td>
-            <td style="text-align:right;">${percent}%</td>
-          </tr>
-        `;
-      })
-      .join("");
-
-    const barsHtml = vendorVidasSeries
-      .map((item) => {
-        const visitasHeight = Math.max(8, Math.round((item.visitas / (maxValue || 1)) * 160));
-        const aceiteHeight = Math.max(8, Math.round((item.aceite / (maxValue || 1)) * 160));
-        return `
-          <div class="bar-item">
-            <div class="bar-value">${formatNumber(item.total)}</div>
-            <div class="bar-pair">
-              <div class="bar bar-visitas" style="height:${visitasHeight}px"></div>
-              <div class="bar bar-aceite" style="height:${aceiteHeight}px"></div>
-            </div>
-            <div class="bar-label">${item.label}</div>
-          </div>
-        `;
-      })
-      .join("");
+    const styles = Array.from(
+      document.querySelectorAll("style, link[rel='stylesheet']"),
+    )
+      .map((node) => node.outerHTML)
+      .join("\n");
 
     const html = `
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Vidas por vendedor</title>
+          <title>Dashboard</title>
+          ${styles}
           <style>
-            * { box-sizing: border-box; }
             * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            body { font-family: Arial, sans-serif; color: #0f172a; padding: 24px; }
-            h1 { margin: 0 0 6px; font-size: 20px; }
-            .meta { font-size: 12px; color: #475569; margin-bottom: 16px; }
-            .summary { display: flex; gap: 12px; margin-bottom: 16px; }
-            .summary .card { border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px 12px; font-size: 12px; }
-            .bars { display: flex; align-items: flex-end; gap: 16px; overflow-x: auto; padding-bottom: 8px; }
-            .bar-item { min-width: 72px; text-align: center; }
-            .bar-pair { display: flex; align-items: flex-end; justify-content: center; gap: 6px; margin: 6px auto 4px; }
-            .bar { width: 18px; border-radius: 10px 10px 0 0; border: 1px solid; }
-            .bar-visitas { background: #0f766e; color: #0f766e; }
-            .bar-aceite { background: #f59e0b; color: #f59e0b; }
-            .bar-value { font-size: 11px; font-weight: bold; }
-            .bar-label { font-size: 10px; color: #475569; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-            th, td { border-bottom: 1px solid #e2e8f0; padding: 6px 4px; font-size: 12px; text-align: left; }
-            th { color: #475569; font-weight: 600; }
+            body { margin: 0; padding: 16px; background: #ffffff; }
           </style>
         </head>
-        <body>
-          <h1>Vidas por vendedor</h1>
-          <div class="meta">Periodo: ${periodLabel} • Supervisor: ${supervisorLabel} • Fonte: visitas + aceite digital</div>
-          <div class="summary">
-            <div class="card">Total de vidas: <strong>${formatNumber(total)}</strong></div>
-            <div class="card">Vendedores: <strong>${vendorVidasSummary.totalVendors}</strong></div>
-            <div class="card">Visitas: <strong>${formatNumber(vendorVidasSummary.totalVisitas)}</strong></div>
-            <div class="card">Aceite digital: <strong>${formatNumber(vendorVidasSummary.totalAceite)}</strong></div>
-          </div>
-          <div class="bars">${barsHtml}</div>
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Vendedor</th>
-                <th style="text-align:right;">Visitas</th>
-                <th style="text-align:right;">Aceite</th>
-                <th style="text-align:right;">Total</th>
-                <th style="text-align:right;">%</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rowsHtml}
-            </tbody>
-          </table>
-        </body>
+        <body>${root.outerHTML}</body>
       </html>
     `;
 
-    const win = window.open("", "_blank", "width=900,height=700");
+    const win = window.open("", "_blank", "width=1280,height=900");
     if (!win) {
       setVendorVidasError("Nao foi possivel abrir a janela para exportar PDF.");
       return;
@@ -1100,7 +1142,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="space-y-6">
+    <div id="dashboard-export-root" className="space-y-6">
       <header className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -1109,29 +1151,79 @@ export default function Dashboard() {
               Indicadores gerais da agenda e visitas comerciais.
             </p>
           </div>
-          {canSelectSupervisor && (
-            <label className="flex min-w-[220px] flex-col gap-1 text-xs font-semibold text-ink/70">
-              Supervisor
-              <select
-                id="dashboard-supervisor-select"
-                name="dashboardSupervisorSelect"
-                value={selectedSupervisorId}
-                onChange={(event) => setSelectedSupervisorId(event.target.value || "all")}
+          <div className="flex flex-wrap items-end gap-3">
+            {canSelectSupervisor && (
+              <>
+                <label className="flex min-w-[220px] flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Supervisor
+                  <select
+                    id="dashboard-supervisor-select"
+                    name="dashboardSupervisorSelect"
+                    value={selectedSupervisorId}
+                    onChange={(event) => setSelectedSupervisorId(event.target.value || "all")}
+                    className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
+                  >
+                    <option value="all">Todos</option>
+                    {supervisores.length === 0 ? (
+                      <option value="all">Nenhum supervisor</option>
+                    ) : (
+                      supervisores.map((supervisor) => (
+                        <option key={supervisor.id} value={supervisor.id}>
+                          {supervisor.display_name ?? "Supervisor"}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </label>
+                <label className="flex min-w-[220px] flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Vendedor
+                  <select
+                    id="dashboard-vendor-select"
+                    name="dashboardVendorSelect"
+                    value={selectedVendorId}
+                    onChange={(event) => setSelectedVendorId(event.target.value || "all")}
+                    className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
+                  >
+                    <option value="all">Todos</option>
+                    {vendedores.length === 0 ? (
+                      <option value="all">Nenhum vendedor</option>
+                    ) : (
+                      vendedores.map((vendor) => (
+                        <option key={vendor.user_id ?? vendor.display_name ?? "vendor"} value={vendor.user_id ?? "all"}>
+                          {vendor.display_name ?? "Vendedor"}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </label>
+              </>
+            )}
+            <label className="flex min-w-[150px] flex-col gap-1 text-xs font-semibold text-ink/70">
+              De
+              <input
+                type="date"
+                value={globalFrom}
+                onChange={(event) => setVendorVidasFrom(event.target.value)}
                 className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
-              >
-                <option value="all">Todos</option>
-                {supervisores.length === 0 ? (
-                  <option value="all">Nenhum supervisor</option>
-                ) : (
-                  supervisores.map((supervisor) => (
-                    <option key={supervisor.id} value={supervisor.id}>
-                      {supervisor.display_name ?? "Supervisor"}
-                    </option>
-                  ))
-                )}
-              </select>
+              />
             </label>
-          )}
+            <label className="flex min-w-[150px] flex-col gap-1 text-xs font-semibold text-ink/70">
+              Ate
+              <input
+                type="date"
+                value={globalTo}
+                onChange={(event) => setVendorVidasTo(event.target.value)}
+                className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={exportDashboardPdf}
+              className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+            >
+              Exportar PDF
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1183,26 +1275,9 @@ export default function Dashboard() {
                     Resumo de registros de vidas e pendencias do time.
                   </p>
                 </div>
-                <div className="flex flex-wrap items-end gap-3">
-                  <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
-                    De
-                    <input
-                      type="date"
-                      value={digitalFrom}
-                      onChange={(event) => setDigitalFrom(event.target.value)}
-                      className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
-                    Ate
-                    <input
-                      type="date"
-                      value={digitalTo}
-                      onChange={(event) => setDigitalTo(event.target.value)}
-                      className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
-                    />
-                  </label>
-                </div>
+                <span className="text-[11px] font-semibold text-ink/60">
+                  Periodo global: {globalFrom || "-"} a {globalTo || "-"}
+                </span>
               </div>
 
               {digitalLoading ? (
@@ -1216,7 +1291,7 @@ export default function Dashboard() {
                     <p className="mt-2 text-2xl font-semibold text-ink">
                       {formatNumber(digitalSummary.allTimeTotalVidas)}
                     </p>
-                    <p className="text-[11px] text-ink/60">Todo o historico</p>
+                    <p className="text-[11px] text-ink/60">Periodo global</p>
                   </div>
                   <div className="rounded-xl border border-sea/15 bg-sand/30 px-4 py-3">
                     <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Periodo</p>
@@ -1349,34 +1424,9 @@ export default function Dashboard() {
                     Soma de vidas registradas por vendedor (visitas + aceite digital) no periodo selecionado.
                   </p>
                 </div>
-                <div className="flex flex-wrap items-end gap-3">
-                  <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
-                    De
-                    <input
-                      type="date"
-                      value={vendorVidasFrom}
-                      onChange={(event) => setVendorVidasFrom(event.target.value)}
-                      className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
-                    Ate
-                    <input
-                      type="date"
-                      value={vendorVidasTo}
-                      onChange={(event) => setVendorVidasTo(event.target.value)}
-                      className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={exportVendorVidasPdf}
-                    disabled={vendorVidasSeries.length === 0 || vendorVidasLoading}
-                    className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-60"
-                  >
-                    Exportar PDF
-                  </button>
-                </div>
+                <span className="text-[11px] font-semibold text-ink/60">
+                  Periodo global: {globalFrom || "-"} a {globalTo || "-"}
+                </span>
               </div>
 
               {vendorVidasError && (
@@ -1490,29 +1540,29 @@ export default function Dashboard() {
               ) : visitStats ? (
                 <>
                   {renderDonut(
-                    "Visitas do mes",
+                    "Visitas no periodo",
                     visitStats.visitasRealizadas + visitStats.visitasNaoRealizadas + visitStats.visitasPendentes,
                     [
                       { label: "Realizadas", value: visitStats.visitasRealizadas, color: "#1f7a5a" },
                       { label: "Nao realizadas", value: visitStats.visitasNaoRealizadas, color: "#f97316" },
                       { label: "Pendentes", value: visitStats.visitasPendentes, color: "#94a3b8" },
                     ],
-                    "Mes atual",
+                    `${globalFrom} a ${globalTo}`,
                   )}
                   {renderDonut(
-                    "Impacto do mes",
+                    "Impacto no periodo",
                     visitStats.totalVidas + visitStats.empresasVisitadas,
                     [
                       { label: "Vidas registradas", value: visitStats.totalVidas, color: "#0f766e" },
                       { label: "Empresas visitadas", value: visitStats.empresasVisitadas, color: "#38bdf8" },
                     ],
-                    "Mes atual",
+                    `${globalFrom} a ${globalTo}`,
                   )}
                   {renderDonut(
                     "Vidas por dia",
                     dailyVidasTotal,
                     visitDailyVidas,
-                    "Ultimos 7 dias",
+                    `${globalFrom} a ${globalTo}`,
                   )}
                 </>
               ) : (
@@ -1532,29 +1582,29 @@ export default function Dashboard() {
               ) : teamStats ? (
                 <>
                   {renderDonut(
-                    "Visitas do mes (equipe)",
+                    "Visitas no periodo (equipe)",
                     teamStats.visitasRealizadas + teamStats.visitasNaoRealizadas + teamStats.visitasPendentes,
                     [
                       { label: "Realizadas", value: teamStats.visitasRealizadas, color: "#1f7a5a" },
                       { label: "Nao realizadas", value: teamStats.visitasNaoRealizadas, color: "#f97316" },
                       { label: "Pendentes", value: teamStats.visitasPendentes, color: "#94a3b8" },
                     ],
-                    `Mes atual • ${teamVendorsCount} vendedor(es)`,
+                    `${globalFrom} a ${globalTo} • ${teamVendorsCount} vendedor(es)`,
                   )}
                   {renderDonut(
-                    "Impacto do mes (equipe)",
+                    "Impacto no periodo (equipe)",
                     teamStats.totalVidas + teamStats.empresasVisitadas,
                     [
                       { label: "Vidas registradas", value: teamStats.totalVidas, color: "#0f766e" },
                       { label: "Empresas visitadas", value: teamStats.empresasVisitadas, color: "#38bdf8" },
                     ],
-                    "Mes atual",
+                    `${globalFrom} a ${globalTo}`,
                   )}
                   {renderDonut(
                     "Vidas por dia (equipe)",
                     teamDailyVidasTotal,
                     teamDailyVidas,
-                    "Ultimos 7 dias",
+                    `${globalFrom} a ${globalTo}`,
                   )}
                 </>
               ) : (

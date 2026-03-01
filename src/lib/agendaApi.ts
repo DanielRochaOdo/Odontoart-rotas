@@ -1,6 +1,7 @@
 ﻿import { supabase } from "./supabase";
 import type { AgendaFilters, AgendaRow } from "../types/agenda";
 import type { SortingState } from "@tanstack/react-table";
+import { hydrateAgendaRowsFromClientes } from "./clientesCanonical";
 
 const GLOBAL_SEARCH_COLUMNS = [
   "empresa",
@@ -17,6 +18,53 @@ const GLOBAL_SEARCH_COLUMNS = [
 
 const normalizeOption = (value: string) =>
   value.trim().replace(/\s+/g, " ").toUpperCase();
+
+const normalizeMatchKey = (value: string) =>
+  normalizeOption(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const normalizePerfilVisitaOption = (value: string) => {
+  const match = normalizeMatchKey(value);
+  if (!match) return "";
+  if (match.includes("ALMOCO")) return "ALMOCO";
+  if (match.includes("JANTAR")) return "JANTAR";
+  if (match.includes("HORARIO COMERCIAL")) return "HORARIO COMERCIAL";
+  if (match.includes("HORARIO CUSTOMIZADO")) return "HORARIO CUSTOMIZADO";
+  if (/\b\d{1,2}:\d{2}\b/.test(match)) return "HORARIO CUSTOMIZADO";
+  return normalizeOption(value);
+};
+
+const extractPerfilVisitaOptions = (value: string) => {
+  const match = normalizeMatchKey(value);
+  if (!match) return [] as string[];
+
+  const tags = new Set<string>();
+  if (match.includes("ALMOCO")) tags.add("ALMOCO");
+  if (match.includes("JANTAR")) tags.add("JANTAR");
+  if (match.includes("HORARIO COMERCIAL")) tags.add("HORARIO COMERCIAL");
+  if (match.includes("HORARIO CUSTOMIZADO")) tags.add("HORARIO CUSTOMIZADO");
+  if (/\b\d{1,2}:\d{2}\b/.test(match)) tags.add("HORARIO CUSTOMIZADO");
+  if (tags.size === 0) tags.add(normalizeOption(value));
+  return Array.from(tags);
+};
+
+const buildPerfilVisitaCondition = (value: string) => {
+  const normalized = normalizePerfilVisitaOption(value);
+  if (normalized === "ALMOCO") {
+    return "perfil_visita.ilike.%ALMO%";
+  }
+  if (normalized === "JANTAR") {
+    return "perfil_visita.ilike.%JANTAR%";
+  }
+  if (normalized === "HORARIO COMERCIAL") {
+    return "perfil_visita.ilike.%COMERCIAL%";
+  }
+  if (normalized === "HORARIO CUSTOMIZADO") {
+    return "perfil_visita.ilike.%CUSTOMIZADO%";
+  }
+  return `perfil_visita.eq.${normalized}`;
+};
 
 const parseOptionalNumber = (value?: string) => {
   if (value === undefined || value === null) return null;
@@ -99,6 +147,16 @@ type OptionsCacheEntry = {
 };
 
 const optionsCache = new Map<string, OptionsCacheEntry>();
+const CLIENTES_FILTER_COLUMN_MAP: Record<string, string> = {
+  cod_1: "codigo",
+  empresa_nome: "empresa",
+  perfil_visita: "perfil_visita",
+  bairro: "bairro",
+  cidade: "cidade",
+  uf: "uf",
+  endereco: "endereco",
+  situacao: "situacao",
+};
 
 export const clearAgendaOptionsCache = () => {
   optionsCache.clear();
@@ -114,6 +172,17 @@ const expandFilterValues = (key: string, values: string[]) => {
   return Array.from(new Set(expanded)).filter(Boolean);
 };
 
+type AgendaPerfilRow = {
+  id: string;
+  perfil_visita: string | null;
+  cod_1?: string | null;
+  empresa?: string | null;
+  nome_fantasia?: string | null;
+};
+
+const resolvePerfilFromClientes = async <T extends AgendaPerfilRow>(rows: T[]) =>
+  hydrateAgendaRowsFromClientes(rows);
+
 const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let next: any = query;
@@ -127,6 +196,19 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
 
     if (key === "empresa_nome") {
       next = next.in("empresa", expanded);
+      return;
+    }
+
+    if (key === "perfil_visita") {
+      const cacheEntry = optionsCache.get(key);
+      if (cacheEntry) {
+        next = next.in("perfil_visita", expanded);
+      } else {
+        const conditions = cleaned.map(buildPerfilVisitaCondition).filter(Boolean);
+        if (conditions.length) {
+          next = next.or(conditions.join(","));
+        }
+      }
       return;
     }
 
@@ -232,6 +314,7 @@ export type AgendaScheduledVisit = {
   assigned_to_user_id: string | null;
   assigned_to_name: string | null;
   perfil_visita: string | null;
+  instructions: string | null;
   completed_at: string | null;
   route_id: string | null;
 };
@@ -267,7 +350,7 @@ export const fetchAgenda = async (
   let query = supabase
     .from("agenda")
     .select(
-      "id, data_da_ultima_visita, visit_completed_vidas, cod_1, empresa, perfil_visita, corte, venc, valor, tit, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1, visit_generated_at, created_at",
+      "id, data_da_ultima_visita, visit_completed_vidas, cod_1, empresa, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1, visit_generated_at, created_at",
       { count: "exact" },
     )
     .ilike("situacao", "ativo%");
@@ -295,7 +378,8 @@ export const fetchAgenda = async (
     throw new Error(error.message);
   }
 
-  return { data: (data ?? []) as AgendaRow[], count: count ?? 0 };
+  const hydrated = await resolvePerfilFromClientes((data ?? []) as AgendaRow[]);
+  return { data: hydrated as AgendaRow[], count: count ?? 0 };
 };
 
 export const fetchAgendaScheduledVisits = async (agendaIds: string[]) => {
@@ -303,7 +387,7 @@ export const fetchAgendaScheduledVisits = async (agendaIds: string[]) => {
   const { data, error } = await supabase
     .from("visits")
     .select(
-      "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, completed_at, route_id",
+      "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, instructions, completed_at, route_id",
     )
     .in("agenda_id", agendaIds)
     .is("completed_at", null)
@@ -340,22 +424,70 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
 
   const normalizedMap = new Map<string, Set<string>>();
 
-  for (const column of columns) {
+  if (filterKey === "perfil_visita") {
     const { data, error } = await supabase
-      .from("agenda")
-      .select(column)
-      .not(column, "is", null)
+      .from("clientes")
+      .select("perfil_visita")
+      .not("perfil_visita", "is", null)
+      .limit(4000);
+    if (error) throw new Error(error.message);
+
+    data?.forEach((row) => {
+      const rawValue = row.perfil_visita;
+      if (!rawValue) return;
+      const rawText = String(rawValue);
+      const normalizedValues = extractPerfilVisitaOptions(rawText);
+      normalizedValues.forEach((normalized) => {
+        if (!normalized) return;
+        if (!normalizedMap.has(normalized)) {
+          normalizedMap.set(normalized, new Set());
+        }
+        normalizedMap.get(normalized)?.add(rawText);
+      });
+    });
+
+    const options = Array.from(normalizedMap.keys()).sort((a, b) => a.localeCompare(b));
+    const rawMap = new Map<string, string[]>();
+    normalizedMap.forEach((set, key) => {
+      rawMap.set(key, Array.from(set));
+    });
+    optionsCache.set(filterKey, { options, rawMap });
+    return options;
+  }
+
+  const clientesColumn = CLIENTES_FILTER_COLUMN_MAP[filterKey];
+  const sourceTable = clientesColumn ? "clientes" : "agenda";
+
+  for (const column of columns) {
+    const targetColumn = clientesColumn ?? column;
+    const query = supabase
+      .from(sourceTable)
+      .select(targetColumn)
+      .not(targetColumn, "is", null)
       .ilike("situacao", "ativo%")
       .limit(2000);
+    const { data, error } = await query;
 
     if (error) {
       throw new Error(error.message);
     }
 
-    data?.forEach((row) => {
-      const rawValue = row[column as keyof typeof row];
+    (data ?? []).forEach((row) => {
+      const rawValue = row[targetColumn as keyof typeof row];
       if (!rawValue) return;
       const rawText = String(rawValue);
+      if (filterKey === "perfil_visita") {
+        const normalizedValues = extractPerfilVisitaOptions(rawText);
+        normalizedValues.forEach((normalized) => {
+          if (!normalized) return;
+          if (!normalizedMap.has(normalized)) {
+            normalizedMap.set(normalized, new Set());
+          }
+          normalizedMap.get(normalized)?.add(rawText);
+        });
+        return;
+      }
+
       const normalized = normalizeOption(rawText);
       if (!normalized) return;
       if (!normalizedMap.has(normalized)) {
@@ -378,23 +510,24 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
   const buildQuery = () =>
     supabase
       .from("agenda")
-      .select("id, perfil_visita")
+      .select("id, perfil_visita, cod_1, empresa, nome_fantasia")
       .is("visit_generated_at", null)
       .ilike("situacao", "ativo%")
       .order("id", { ascending: true });
 
   if (ids && ids.length > 0) {
-    const results: { id: string; perfil_visita: string | null }[] = [];
+    const results: AgendaPerfilRow[] = [];
     const chunkSize = 500;
 
     for (let i = 0; i < ids.length; i += chunkSize) {
       const chunk = ids.slice(i, i + chunkSize);
       const { data, error } = await buildQuery().in("id", chunk);
       if (error) throw new Error(error.message);
-      results.push(...((data ?? []) as { id: string; perfil_visita: string | null }[]));
+      results.push(...((data ?? []) as AgendaPerfilRow[]));
     }
 
-    return results;
+    const hydrated = await resolvePerfilFromClientes(results);
+    return hydrated.map((item) => ({ id: item.id, perfil_visita: item.perfil_visita ?? null }));
   }
 
   const vidasRange = getVidasRange(filters);
@@ -419,21 +552,22 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
     query = query.in("id", agendaIdsByVidas);
   }
 
-  const results: { id: string; perfil_visita: string | null }[] = [];
+  const results: AgendaPerfilRow[] = [];
   const pageSize = 1000;
   let from = 0;
 
   while (true) {
     const { data, error } = await query.range(from, from + pageSize - 1);
     if (error) throw new Error(error.message);
-    const batch = (data ?? []) as { id: string; perfil_visita: string | null }[];
+    const batch = (data ?? []) as AgendaPerfilRow[];
     if (batch.length === 0) break;
     results.push(...batch);
     if (batch.length < pageSize) break;
     from += pageSize;
   }
 
-  return results;
+  const hydrated = await resolvePerfilFromClientes(results);
+  return hydrated.map((item) => ({ id: item.id, perfil_visita: item.perfil_visita ?? null }));
 };
 
 export const fetchVendedores = async () => {
@@ -450,10 +584,11 @@ export const fetchVendedores = async () => {
 export const fetchSupervisores = async () => {
   const { data, error } = await supabase
     .from("profiles")
-    .select("user_id, display_name, role")
+    .select("id, user_id, display_name, role")
     .eq("role", "SUPERVISOR")
     .order("display_name", { ascending: true });
 
   if (error) throw new Error(error.message);
   return data ?? [];
 };
+

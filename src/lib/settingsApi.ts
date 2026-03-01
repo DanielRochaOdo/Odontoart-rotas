@@ -1,6 +1,8 @@
 import { supabase } from "./supabase";
 import type { UserRole } from "../types/roles";
 
+let supportsListManagedUserEmails = true;
+
 export type ManagedProfile = {
   id: string;
   user_id: string | null;
@@ -88,6 +90,24 @@ export const updateManagedUserCredentials = async (payload: {
 
   if (error) throw new Error(error.message);
   return data ?? { success: true };
+};
+
+export const fetchManagedUserEmails = async (userIds: string[]) => {
+  if (!supportsListManagedUserEmails) return {} as Record<string, string>;
+
+  const uniqueIds = [...new Set(userIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return {} as Record<string, string>;
+
+  const { data, error } = await supabase.functions.invoke("manage-users", {
+    body: { action: "list-emails", payload: { user_ids: uniqueIds } },
+  });
+
+  // Backward-compatible fallback: older deployed function may not support list-emails yet.
+  if (error) {
+    supportsListManagedUserEmails = false;
+    return {} as Record<string, string>;
+  }
+  return (data?.emails ?? {}) as Record<string, string>;
 };
 
 export const deleteProfileOnly = async (id: string) => {

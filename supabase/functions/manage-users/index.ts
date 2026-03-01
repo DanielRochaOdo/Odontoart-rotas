@@ -26,6 +26,10 @@ type UpdatePayload = {
   password?: string | null;
 };
 
+type ListEmailsPayload = {
+  user_ids: string[];
+};
+
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
@@ -71,7 +75,10 @@ serve(async (req) => {
     return jsonResponse(403, { error: "Acesso negado." });
   }
 
-  let body: { action?: string; payload?: CreatePayload | DeletePayload } | null = null;
+  let body: {
+    action?: string;
+    payload?: CreatePayload | DeletePayload | UpdatePayload | ListEmailsPayload;
+  } | null = null;
   try {
     body = await req.json();
   } catch {
@@ -168,6 +175,44 @@ serve(async (req) => {
     }
 
     return jsonResponse(200, { success: true });
+  }
+
+  if (body.action === "list-emails") {
+    const payload = body.payload as ListEmailsPayload;
+    if (!Array.isArray(payload.user_ids)) {
+      return jsonResponse(400, { error: "user_ids deve ser um array." });
+    }
+
+    const targetIds = [...new Set(payload.user_ids.filter(Boolean))];
+    if (targetIds.length === 0) {
+      return jsonResponse(200, { emails: {} });
+    }
+
+    const remainingIds = new Set(targetIds);
+    const emailsByUserId: Record<string, string> = {};
+    let page = 1;
+    const perPage = 1000;
+
+    while (remainingIds.size > 0) {
+      const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+      if (error) {
+        return jsonResponse(400, { error: error.message });
+      }
+
+      const users = data?.users ?? [];
+      if (users.length === 0) break;
+
+      for (const authUser of users) {
+        if (!remainingIds.has(authUser.id)) continue;
+        emailsByUserId[authUser.id] = authUser.email ?? "";
+        remainingIds.delete(authUser.id);
+      }
+
+      if (users.length < perPage) break;
+      page += 1;
+    }
+
+    return jsonResponse(200, { emails: emailsByUserId });
   }
 
   return jsonResponse(400, { error: "Acao desconhecida." });

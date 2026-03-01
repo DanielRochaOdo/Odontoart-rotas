@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import type { AgendaRow } from "../../types/agenda";
 import { supabase } from "../../lib/supabase";
 import { fetchNominatimByAddress } from "../../lib/nominatim";
+import { syncAgendaRowAcrossModules } from "../../lib/empresaSync";
 import {
   PERFIL_VISITA_PRESETS,
   extractCustomTimes,
+  getSingleTimePerfilBase,
+  getSingleTimePerfilValue,
   isPresetPerfilVisita,
   normalizePerfilVisita,
 } from "../../lib/perfilVisita";
@@ -32,6 +35,30 @@ const formatDate = (value: string | null) => {
   const date = new Date(isDateOnly ? `${value}T12:00:00` : value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("pt-BR").format(date);
+};
+
+const formatPerfilDisplay = (value: string | null) => {
+  if (!value) return "-";
+  const parts = value
+    .replace(/â€¢/g, "•")
+    .split(/[,\u2022]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return "-";
+  const formatted = parts.map((item) => {
+    const base = getSingleTimePerfilBase(item);
+    if (!base) return item;
+    const time = getSingleTimePerfilValue(item);
+    return time ? `${base} ${time}` : base;
+  });
+  const unique = Array.from(
+    new Set(
+      formatted
+        .map((item) => item.replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+    ),
+  );
+  return unique.join(" • ");
 };
 
 const toDateInput = (value: string | null) => {
@@ -82,7 +109,7 @@ const sanitizeDecimal = (value: string) => {
 
 const SITUACAO_OPTIONS = ["Ativo", "Inativo"];
 
-const NUMERIC_ONLY_FIELDS = new Set(["cod_1", "corte", "venc", "tit"]);
+const NUMERIC_ONLY_FIELDS = new Set(["cod_1", "corte", "venc"]);
 const DECIMAL_FIELDS = new Set(["valor"]);
 
 const FIELDS = [
@@ -93,7 +120,6 @@ const FIELDS = [
   { key: "corte", label: "Corte", type: "number" },
   { key: "venc", label: "Venc", type: "number" },
   { key: "valor", label: "Valor", type: "number" },
-  { key: "tit", label: "TIT", type: "text" },
   { key: "endereco", label: "Endereco", type: "text", wide: true },
   { key: "complemento", label: "Complemento", type: "text", wide: true },
   { key: "bairro", label: "Bairro", type: "text" },
@@ -128,7 +154,6 @@ const buildFormState = (row: AgendaRow): AgendaFormState => ({
   corte: row.corte?.toString() ?? "",
   venc: row.venc?.toString() ?? "",
   valor: row.valor !== null && row.valor !== undefined ? formatCurrency(row.valor) : "",
-  tit: row.tit ?? "",
   endereco: row.endereco ?? "",
   complemento: row.complemento ?? "",
   bairro: row.bairro ?? "",
@@ -161,13 +186,20 @@ export default function AgendaDrawer({
   const [bairroLoading, setBairroLoading] = useState(false);
   const initialPerfilValue = normalizePerfilVisita(row?.perfil_visita ?? "");
   const initialCustomTimes = extractCustomTimes(row?.perfil_visita ?? null);
-  const initialPerfilIsCustom = initialPerfilValue !== "" && !isPresetPerfilVisita(initialPerfilValue);
+  const initialSingleTimeBase = getSingleTimePerfilBase(row?.perfil_visita ?? null);
+  const initialSingleTimeValue = getSingleTimePerfilValue(row?.perfil_visita ?? null);
+  const initialPerfilIsCustom =
+    initialPerfilValue !== "" && !isPresetPerfilVisita(initialPerfilValue) && !initialSingleTimeBase;
   const [perfilCustomEnabled, setPerfilCustomEnabled] = useState(initialPerfilIsCustom);
   const [perfilCustomTimes, setPerfilCustomTimes] = useState<string[]>(
     initialPerfilIsCustom ? (initialCustomTimes.length ? initialCustomTimes : [""]) : [],
   );
+  const [perfilSingleTimeBase, setPerfilSingleTimeBase] = useState<string>(initialSingleTimeBase ?? "");
+  const [perfilSingleTimeValue, setPerfilSingleTimeValue] = useState<string>(initialSingleTimeValue);
 
   const applyCustomTimes = (times: string[]) => {
+    setPerfilSingleTimeBase("");
+    setPerfilSingleTimeValue("");
     setPerfilCustomTimes(times);
     const cleaned = times.map((time) => time.trim()).filter(Boolean);
     setFormState((prev) =>
@@ -176,15 +208,27 @@ export default function AgendaDrawer({
   };
 
   const syncPerfilState = (value: string | null) => {
+    const singleBase = getSingleTimePerfilBase(value);
+    if (singleBase) {
+      setPerfilCustomEnabled(false);
+      setPerfilCustomTimes([]);
+      setPerfilSingleTimeBase(singleBase);
+      setPerfilSingleTimeValue(getSingleTimePerfilValue(value));
+      return;
+    }
     const normalized = normalizePerfilVisita(value);
     const times = extractCustomTimes(value);
     if (normalized && !isPresetPerfilVisita(normalized)) {
       setPerfilCustomEnabled(true);
+      setPerfilSingleTimeBase("");
+      setPerfilSingleTimeValue("");
       applyCustomTimes(times.length ? times : [""]);
       return;
     }
     setPerfilCustomEnabled(false);
     setPerfilCustomTimes([]);
+    setPerfilSingleTimeBase("");
+    setPerfilSingleTimeValue("");
   };
 
   const displayTitle = useMemo(() => {
@@ -250,7 +294,7 @@ export default function AgendaDrawer({
       controller.abort();
       setBairroLoading(false);
     };
-  }, [isEditing, formState?.endereco, formState?.cidade, formState?.uf]);
+  }, [formState, isEditing, formState?.endereco, formState?.cidade, formState?.uf]);
 
   if (!row || !formState) return null;
 
@@ -269,7 +313,6 @@ export default function AgendaDrawer({
       corte: formState.corte ? parseNumber(formState.corte) : null,
       venc: formState.venc ? parseNumber(formState.venc) : null,
       valor: formState.valor ? parseCurrency(formState.valor) : null,
-      tit: formState.tit.trim() || null,
       endereco: formState.endereco.trim() || null,
       complemento: formState.complemento.trim() || null,
       bairro: formState.bairro.trim() || null,
@@ -296,6 +339,26 @@ export default function AgendaDrawer({
     }
 
     const updatedRow = data as AgendaRow;
+    await syncAgendaRowAcrossModules({
+      id: updatedRow.id,
+      codigo: updatedRow.cod_1,
+      corte: updatedRow.corte,
+      venc: updatedRow.venc,
+      valor: updatedRow.valor,
+      data_da_ultima_visita: updatedRow.data_da_ultima_visita,
+      cep: (updatedRow as AgendaRow & { cep?: string | null }).cep ?? null,
+      empresa: updatedRow.empresa,
+      pessoa: (updatedRow as AgendaRow & { pessoa?: string | null }).pessoa ?? null,
+      contato: (updatedRow as AgendaRow & { contato?: string | null }).contato ?? null,
+      nome_fantasia: updatedRow.nome_fantasia,
+      complemento: (updatedRow as AgendaRow & { complemento?: string | null }).complemento ?? null,
+      perfil_visita: updatedRow.perfil_visita,
+      situacao: updatedRow.situacao,
+      endereco: updatedRow.endereco,
+      bairro: updatedRow.bairro,
+      cidade: updatedRow.cidade,
+      uf: updatedRow.uf,
+    });
     setFormState(buildFormState(updatedRow));
     syncPerfilState(updatedRow.perfil_visita ?? "");
     setIsEditing(false);
@@ -462,18 +525,35 @@ export default function AgendaDrawer({
                       value={
                         perfilCustomEnabled
                           ? "__custom__"
-                          : normalizePerfilVisita(formState.perfil_visita)
+                          : perfilSingleTimeBase || normalizePerfilVisita(formState.perfil_visita)
                       }
                       onChange={(event) => {
                         const value = event.target.value;
                         if (value === "__custom__") {
                           setPerfilCustomEnabled(true);
+                          setPerfilSingleTimeBase("");
+                          setPerfilSingleTimeValue("");
                           if (perfilCustomTimes.length === 0) {
                             applyCustomTimes([""]);
                           }
+                        } else if (value === "ALMOCO" || value === "JANTAR") {
+                          setPerfilCustomEnabled(false);
+                          setPerfilCustomTimes([]);
+                          setPerfilSingleTimeBase(value);
+                          setPerfilSingleTimeValue("");
+                          setFormState((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  perfil_visita: value,
+                                }
+                              : prev,
+                          );
                         } else {
                           setPerfilCustomEnabled(false);
                           setPerfilCustomTimes([]);
+                          setPerfilSingleTimeBase("");
+                          setPerfilSingleTimeValue("");
                           setFormState((prev) =>
                             prev
                               ? {
@@ -494,6 +574,30 @@ export default function AgendaDrawer({
                       ))}
                       <option value="__custom__">Horario customizado</option>
                     </select>
+                    {(perfilSingleTimeBase === "ALMOCO" || perfilSingleTimeBase === "JANTAR") && (
+                      <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
+                        HH:MM
+                        <input
+                          type="time"
+                          value={perfilSingleTimeValue}
+                          onChange={(event) => {
+                            const nextTime = event.target.value;
+                            setPerfilSingleTimeValue(nextTime);
+                            setFormState((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    perfil_visita: nextTime
+                                      ? `${perfilSingleTimeBase} ${nextTime}`
+                                      : perfilSingleTimeBase,
+                                  }
+                                : prev,
+                            );
+                          }}
+                          className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                        />
+                      </label>
+                    )}
                     {perfilCustomEnabled && (
                       <div className="flex flex-col gap-2">
                         {perfilCustomTimes.map((time, index) => (
@@ -613,6 +717,8 @@ export default function AgendaDrawer({
                 <span className="text-sm text-ink">
                   {field.type === "date"
                     ? formatDate(row[field.key] as string | null)
+                    : field.key === "perfil_visita"
+                      ? formatPerfilDisplay(row[field.key] as string | null)
                     : field.key === "valor"
                       ? formatCurrency(row[field.key] as number | string | null)
                       : formatValue(row[field.key] as string | number | null)}

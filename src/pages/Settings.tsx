@@ -7,6 +7,7 @@ import {
   deleteManagedUser,
   deleteProfileOnly,
   fetchManagedProfiles,
+  fetchManagedUserEmails,
   updateManagedProfile,
   updateManagedUserCredentials,
   type ManagedProfile,
@@ -44,6 +45,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<ManagedProfile[]>([]);
+  const [userEmailsByUserId, setUserEmailsByUserId] = useState<Record<string, string>>({});
   const [cep, setCep] = useState("");
   const [cepResult, setCepResult] = useState<CepMapped | null>(null);
   const [cepLoading, setCepLoading] = useState(false);
@@ -101,11 +103,20 @@ export default function Settings() {
     try {
       const data = await fetchManagedProfiles();
       setProfiles(data);
+      const userIds = data.map((profile) => profile.user_id).filter((value): value is string => Boolean(value));
+      const emails = await fetchManagedUserEmails(userIds);
+      setUserEmailsByUserId(emails);
     } catch (err) {
+      setUserEmailsByUserId({});
       setError(err instanceof Error ? err.message : "Erro ao carregar perfis.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const getCurrentEmail = (profile: ManagedProfile) => {
+    if (!profile.user_id) return "Sem usuario vinculado";
+    return userEmailsByUserId[profile.user_id] || "Nao disponivel";
   };
 
   useEffect(() => {
@@ -546,6 +557,7 @@ export default function Settings() {
                   Email
                   <input
                     type="email"
+                    autoComplete="email"
                     value={supervisorForm.email}
                     onChange={(event) => setSupervisorForm((prev) => ({ ...prev, email: event.target.value }))}
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
@@ -555,6 +567,7 @@ export default function Settings() {
                   Senha
                   <input
                     type="password"
+                    autoComplete="new-password"
                     value={supervisorForm.password}
                     onChange={(event) =>
                       setSupervisorForm((prev) => ({ ...prev, password: event.target.value }))
@@ -584,7 +597,16 @@ export default function Settings() {
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2"
                     >
                       {editingSupervisorId === supervisor.id ? (
-                        <div className="flex flex-1 flex-wrap items-center gap-2">
+                        <form
+                          className="flex flex-1 flex-wrap items-center gap-2"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            handleSaveSupervisor();
+                          }}
+                        >
+                          <span className="text-xs text-ink/60">
+                            Email atual: {getCurrentEmail(supervisor)}
+                          </span>
                           <input
                             value={supervisorEdit.display_name}
                             onChange={(event) =>
@@ -594,6 +616,7 @@ export default function Settings() {
                           />
                           <input
                             type="email"
+                            autoComplete="email"
                             placeholder="Novo email"
                             value={supervisorEdit.email}
                             onChange={(event) =>
@@ -603,6 +626,7 @@ export default function Settings() {
                           />
                           <input
                             type="password"
+                            autoComplete="new-password"
                             placeholder="Nova senha"
                             value={supervisorEdit.password}
                             onChange={(event) =>
@@ -611,8 +635,7 @@ export default function Settings() {
                             className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
                           />
                           <button
-                            type="button"
-                            onClick={handleSaveSupervisor}
+                            type="submit"
                             className="rounded-lg bg-sea px-2 py-1 text-[11px] font-semibold text-white hover:bg-seaLight"
                           >
                             Salvar
@@ -624,7 +647,7 @@ export default function Settings() {
                           >
                             Cancelar
                           </button>
-                        </div>
+                        </form>
                       ) : (
                         <div>
                           <p className="text-sm font-semibold text-ink">
@@ -673,6 +696,7 @@ export default function Settings() {
                   Email
                   <input
                     type="email"
+                    autoComplete="email"
                     value={vendorForm.email}
                     onChange={(event) => setVendorForm((prev) => ({ ...prev, email: event.target.value }))}
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
@@ -682,6 +706,7 @@ export default function Settings() {
                   Senha
                   <input
                     type="password"
+                    autoComplete="new-password"
                     value={vendorForm.password}
                     onChange={(event) => setVendorForm((prev) => ({ ...prev, password: event.target.value }))}
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
@@ -724,7 +749,16 @@ export default function Settings() {
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2"
                     >
                       {editingVendorId === vendor.id ? (
-                        <div className="flex flex-1 flex-wrap items-center gap-2">
+                        <form
+                          className="flex flex-1 flex-wrap items-center gap-2"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            handleSaveVendor();
+                          }}
+                        >
+                          <span className="text-xs text-ink/60">
+                            Email atual: {getCurrentEmail(vendor)}
+                          </span>
                           <input
                             value={vendorEdit.display_name}
                             onChange={(event) => setVendorEdit((prev) => ({ ...prev, display_name: event.target.value }))}
@@ -744,6 +778,7 @@ export default function Settings() {
                           </select>
                           <input
                             type="email"
+                            autoComplete="email"
                             placeholder="Novo email"
                             value={vendorEdit.email}
                             onChange={(event) => setVendorEdit((prev) => ({ ...prev, email: event.target.value }))}
@@ -751,14 +786,14 @@ export default function Settings() {
                           />
                           <input
                             type="password"
+                            autoComplete="new-password"
                             placeholder="Nova senha"
                             value={vendorEdit.password}
                             onChange={(event) => setVendorEdit((prev) => ({ ...prev, password: event.target.value }))}
                             className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
                           />
                           <button
-                            type="button"
-                            onClick={handleSaveVendor}
+                            type="submit"
                             className="rounded-lg bg-sea px-2 py-1 text-[11px] font-semibold text-white hover:bg-seaLight"
                           >
                             Salvar
@@ -770,7 +805,7 @@ export default function Settings() {
                           >
                             Cancelar
                           </button>
-                        </div>
+                        </form>
                       ) : (
                         <div>
                           <p className="text-sm font-semibold text-ink">
@@ -822,6 +857,7 @@ export default function Settings() {
                   Email
                   <input
                     type="email"
+                    autoComplete="email"
                     value={assistantForm.email}
                     onChange={(event) => setAssistantForm((prev) => ({ ...prev, email: event.target.value }))}
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
@@ -831,6 +867,7 @@ export default function Settings() {
                   Senha
                   <input
                     type="password"
+                    autoComplete="new-password"
                     value={assistantForm.password}
                     onChange={(event) => setAssistantForm((prev) => ({ ...prev, password: event.target.value }))}
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
@@ -858,7 +895,16 @@ export default function Settings() {
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2"
                     >
                       {editingAssistantId === assistant.id ? (
-                        <div className="flex flex-1 flex-wrap items-center gap-2">
+                        <form
+                          className="flex flex-1 flex-wrap items-center gap-2"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            handleSaveAssistant();
+                          }}
+                        >
+                          <span className="text-xs text-ink/60">
+                            Email atual: {getCurrentEmail(assistant)}
+                          </span>
                           <input
                             value={assistantEdit.display_name}
                             onChange={(event) => setAssistantEdit((prev) => ({ ...prev, display_name: event.target.value }))}
@@ -866,6 +912,7 @@ export default function Settings() {
                           />
                           <input
                             type="email"
+                            autoComplete="email"
                             placeholder="Novo email"
                             value={assistantEdit.email}
                             onChange={(event) => setAssistantEdit((prev) => ({ ...prev, email: event.target.value }))}
@@ -873,14 +920,14 @@ export default function Settings() {
                           />
                           <input
                             type="password"
+                            autoComplete="new-password"
                             placeholder="Nova senha"
                             value={assistantEdit.password}
                             onChange={(event) => setAssistantEdit((prev) => ({ ...prev, password: event.target.value }))}
                             className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
                           />
                           <button
-                            type="button"
-                            onClick={handleSaveAssistant}
+                            type="submit"
                             className="rounded-lg bg-sea px-2 py-1 text-[11px] font-semibold text-white hover:bg-seaLight"
                           >
                             Salvar
@@ -892,7 +939,7 @@ export default function Settings() {
                           >
                             Cancelar
                           </button>
-                        </div>
+                        </form>
                       ) : (
                         <div>
                           <p className="text-sm font-semibold text-ink">

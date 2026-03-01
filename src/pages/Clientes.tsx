@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { Plus } from "lucide-react";
+import { MapPin, Plus, Search } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -18,6 +18,8 @@ import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import {
   PERFIL_VISITA_PRESETS,
   extractCustomTimes,
+  getSingleTimePerfilBase,
+  getSingleTimePerfilValue,
   isPresetPerfilVisita,
   normalizePerfilVisita,
 } from "../lib/perfilVisita";
@@ -30,6 +32,14 @@ const formatDate = (value: string | null) => {
   const date = new Date(isDateOnly ? `${value}T12:00:00` : value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("pt-BR").format(date);
+};
+
+const getDateMs = (value: string | null) => {
+  if (!value) return null;
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const date = new Date(isDateOnly ? `${value}T12:00:00` : value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.getTime();
 };
 
 const toDateInput = (value: string | null) => {
@@ -86,6 +96,8 @@ type ImportPayload = {
   valor?: number | null;
   cep?: string | null;
   empresa?: string | null;
+  pessoa?: string | null;
+  contato?: string | null;
   situacao?: string | null;
   perfil_visita?: string | null;
   endereco?: string | null;
@@ -95,7 +107,6 @@ type ImportPayload = {
   uf?: string | null;
   corte?: number | null;
   venc?: number | null;
-  tit?: string | null;
   data_da_ultima_visita?: string | null;
 };
 
@@ -118,11 +129,12 @@ const buildClientePayloadFromImport = (payload: ImportPayload) => ({
   codigo: payload.codigo ?? null,
   corte: payload.corte ?? null,
   venc: payload.venc ?? null,
-  tit: payload.tit ?? null,
   valor: payload.valor ?? null,
   data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
   cep: payload.cep ?? null,
   empresa: payload.empresa ?? null,
+  pessoa: payload.pessoa ?? null,
+  contato: normalizeContato(payload.contato ?? ""),
   complemento: payload.complemento ?? null,
   perfil_visita: payload.perfil_visita ?? null,
   situacao: payload.situacao ?? "Ativo",
@@ -135,11 +147,28 @@ const buildClientePayloadFromImport = (payload: ImportPayload) => ({
 const buildPerfilState = (value: string | null) => {
   const normalized = normalizePerfilVisita(value);
   const customTimes = extractCustomTimes(value);
+  const singleTimeBase = normalized.startsWith("ALMOCO")
+    ? "ALMOCO"
+    : normalized.startsWith("JANTAR")
+      ? "JANTAR"
+      : "";
+  const singleTimeValue = singleTimeBase ? customTimes[0] ?? "" : "";
+  if (singleTimeBase) {
+    return {
+      perfil: singleTimeValue ? `${singleTimeBase} ${singleTimeValue}` : singleTimeBase,
+      customEnabled: false,
+      customTimes: [],
+      singleTimeBase,
+      singleTimeValue,
+    };
+  }
   const isCustom = normalized !== "" && !isPresetPerfilVisita(normalized);
   return {
-    perfil: isCustom ? customTimes.join(" • ") : normalized,
+    perfil: isCustom ? customTimes.join(" â€¢ ") : normalized,
     customEnabled: isCustom,
     customTimes: isCustom ? (customTimes.length ? customTimes : [""]) : [],
+    singleTimeBase: "",
+    singleTimeValue: "",
   };
 };
 
@@ -153,8 +182,28 @@ const normalizeHeader = (value: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-const IMPORT_NUMERIC_FIELDS = new Set(["corte", "venc", "tit"]);
+const IMPORT_NUMERIC_FIELDS = new Set(["corte", "venc"]);
 const sanitizeDigits = (value: string) => value.replace(/\D/g, "");
+
+const formatContato = (value: string) => {
+  const digits = sanitizeDigits(value).slice(0, 11);
+  if (!digits) return "";
+  const area = digits.slice(0, 2);
+  const first = digits.slice(2, 3);
+  const middle = digits.slice(3, 7);
+  const last = digits.slice(7, 11);
+  if (digits.length <= 2) return `(${area}`;
+  let formatted = `(${area})`;
+  if (first) formatted += ` ${first}`;
+  if (middle) formatted += ` ${middle}`;
+  if (last) formatted += ` ${last}`;
+  return formatted;
+};
+
+const normalizeContato = (value: string) => {
+  const digits = sanitizeDigits(value);
+  return digits ? formatContato(digits) : null;
+};
 
 const parseImportCurrency = (value: string) => {
   const cleaned = value.replace(/[^\d.,-]/g, "");
@@ -204,7 +253,7 @@ const parseImportDate = (value: string) => {
     return `${trimmed}T12:00:00.000Z`;
   }
 
-  const match = trimmed.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
+  const match = trimmed.match(/^(\d{2})[/-](\d{2})[/-](\d{4})$/);
   if (match) {
     const [, day, month, year] = match;
     const dateKey = `${year}-${month}-${day}`;
@@ -233,8 +282,6 @@ const HEADER_MAP: Record<string, string> = {
   corte: "corte",
   venc: "venc",
   vencimento: "venc",
-  tit: "tit",
-  titulo: "tit",
   "data ultima visita": "data_da_ultima_visita",
   "data da ultima visita": "data_da_ultima_visita",
   data_ultima_visita: "data_da_ultima_visita",
@@ -243,6 +290,8 @@ const HEADER_MAP: Record<string, string> = {
   valor: "valor",
   cep: "cep",
   empresa: "empresa",
+  pessoa: "pessoa",
+  contato: "contato",
   situacao: "situacao",
   "perfil visita": "perfil_visita",
   perfil: "perfil_visita",
@@ -269,13 +318,37 @@ const normalizeName = (value: string | null) =>
     .trim();
 
 const formatPerfilDisplay = (value: string | null) => {
-  if (!value) return null;
+  if (!value) return "Sem perfil";
   const parts = value
+    .replace(/â€¢/g, "•")
     .split(/[,\u2022]/)
     .map((item) => item.trim())
     .filter(Boolean);
-  if (parts.length <= 1) return value;
-  return parts.join(" • ");
+  if (parts.length === 0) return "Sem perfil";
+
+  const formatted = parts.map((item) => {
+    const base = getSingleTimePerfilBase(item);
+    if (base) {
+      const time = getSingleTimePerfilValue(item);
+      return time ? `${base} - ${time}` : base;
+    }
+    const normalized = normalizePerfilVisita(item);
+    if (normalized === "HORARIO COMERCIAL") return "HORARIO COMERCIAL";
+    const customTimes = extractCustomTimes(item);
+    if (customTimes.length > 0) {
+      return `HORARIO CUSTOMIZADO - ${customTimes.join(", ")}`;
+    }
+    return normalized || item;
+  });
+
+  const unique = Array.from(
+    new Set(
+      formatted
+        .map((item) => item.replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+    ),
+  );
+  return unique.join(", ");
 };
 
 export default function Clientes() {
@@ -295,11 +368,12 @@ export default function Clientes() {
     codigo: "",
     corte: "",
     venc: "",
-    tit: "",
     valor: "",
     data_da_ultima_visita: "",
     cep: "",
     empresa: "",
+    pessoa: "",
+    contato: "",
     situacao: "Ativo",
     endereco: "",
     complemento: "",
@@ -316,6 +390,8 @@ export default function Clientes() {
     { user_id: string; display_name: string | null }[]
   >([]);
   const [historySupervisorId, setHistorySupervisorId] = useState<string>("all");
+  const [historyDateFrom, setHistoryDateFrom] = useState("");
+  const [historyDateTo, setHistoryDateTo] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const restoredViewRef = useRef(false);
   const pendingEditRestoreRef = useRef<boolean | null>(null);
@@ -324,11 +400,12 @@ export default function Clientes() {
     codigo: "",
     corte: "",
     venc: "",
-    tit: "",
     valor: "",
     data_da_ultima_visita: "",
     cep: "",
     empresa: "",
+    pessoa: "",
+    contato: "",
     situacao: "",
     endereco: "",
     complemento: "",
@@ -344,6 +421,8 @@ export default function Clientes() {
         perfil: string;
         customEnabled: boolean;
         customTimes: string[];
+        singleTimeBase: string;
+        singleTimeValue: string;
       }>
     >,
     times: string[],
@@ -353,6 +432,8 @@ export default function Clientes() {
       ...prev,
       customTimes: times,
       perfil: cleaned.join(" • "),
+      singleTimeBase: "",
+      singleTimeValue: "",
     }));
   };
   const [savingEdit, setSavingEdit] = useState(false);
@@ -388,7 +469,7 @@ export default function Clientes() {
       const data = await fetchClientes();
       setClientes(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao carregar clientes.");
+      setError(err instanceof Error ? err.message : "Erro ao carregar empresas.");
     } finally {
       setLoading(false);
     }
@@ -413,12 +494,20 @@ export default function Clientes() {
         selectedId: string | null;
         isEditing: boolean;
         historySupervisorId: string;
+        historyDateFrom: string;
+        historyDateTo: string;
       }>;
       if (typeof parsed.search === "string") setSearch(parsed.search);
       if (parsed.situacaoFilter) setSituacaoFilter(parsed.situacaoFilter);
       if (typeof parsed.selectedId === "string") setSelectedId(parsed.selectedId);
       if (typeof parsed.historySupervisorId === "string") {
         setHistorySupervisorId(parsed.historySupervisorId);
+      }
+      if (typeof parsed.historyDateFrom === "string") {
+        setHistoryDateFrom(parsed.historyDateFrom);
+      }
+      if (typeof parsed.historyDateTo === "string") {
+        setHistoryDateTo(parsed.historyDateTo);
       }
       if (typeof parsed.isEditing === "boolean") {
         pendingEditRestoreRef.current = parsed.isEditing;
@@ -455,13 +544,15 @@ export default function Clientes() {
       selectedId,
       isEditing,
       historySupervisorId,
+      historyDateFrom,
+      historyDateTo,
     };
     try {
       sessionStorage.setItem("clientesViewState", JSON.stringify(payload));
     } catch {
       // ignore
     }
-  }, [historySupervisorId, isEditing, search, selectedId, situacaoFilter]);
+  }, [historyDateFrom, historyDateTo, historySupervisorId, isEditing, search, selectedId, situacaoFilter]);
 
   useEffect(() => {
     if (!canView) return;
@@ -482,15 +573,18 @@ export default function Clientes() {
     if (!selected) return;
     setIsEditing(false);
     setHistorySupervisorId("all");
+    setHistoryDateFrom("");
+    setHistoryDateTo("");
     setEditForm({
       codigo: selected.codigo ?? "",
       corte: selected.corte !== null && selected.corte !== undefined ? String(selected.corte) : "",
       venc: selected.venc !== null && selected.venc !== undefined ? String(selected.venc) : "",
-      tit: selected.tit ?? "",
       valor: selected.valor !== null && selected.valor !== undefined ? formatCurrency(selected.valor) : "",
       data_da_ultima_visita: toDateInput(selected.data_da_ultima_visita),
       cep: selected.cep ?? "",
       empresa: selected.empresa ?? "",
+      pessoa: selected.pessoa ?? "",
+      contato: selected.contato ?? "",
       situacao: selected.situacao ?? "Ativo",
       endereco: selected.endereco ?? "",
       complemento: selected.complemento ?? "",
@@ -520,16 +614,30 @@ export default function Clientes() {
   }, [clientes, selected, selectedId]);
 
   const filteredHistory = useMemo(() => {
-    if (historySupervisorId === "all") return history;
-    const supervisor = historySupervisores.find(
-      (item) => item.user_id === historySupervisorId,
-    );
-    const supervisorName = normalizeName(supervisor?.display_name ?? "");
-    if (!supervisorName) return history;
-    return history.filter(
-      (visit) => normalizeName(visit.supervisor) === supervisorName,
-    );
-  }, [history, historySupervisorId, historySupervisores]);
+    let next = history;
+
+    if (historySupervisorId !== "all") {
+      const supervisor = historySupervisores.find(
+        (item) => item.user_id === historySupervisorId,
+      );
+      const supervisorName = normalizeName(supervisor?.display_name ?? "");
+      if (supervisorName) {
+        next = next.filter((visit) => normalizeName(visit.supervisor) === supervisorName);
+      }
+    }
+
+    const fromMs = historyDateFrom ? getDateMs(historyDateFrom) : null;
+    const toMs = historyDateTo ? getDateMs(historyDateTo) : null;
+    if (fromMs === null && toMs === null) return next;
+
+    return next.filter((visit) => {
+      const visitMs = getDateMs(visit.visit_date);
+      if (visitMs === null) return false;
+      if (fromMs !== null && visitMs < fromMs) return false;
+      if (toMs !== null && visitMs > toMs) return false;
+      return true;
+    });
+  }, [history, historyDateFrom, historyDateTo, historySupervisorId, historySupervisores]);
 
   useEffect(() => {
     if (skipCepLookupRef.current) {
@@ -690,6 +798,8 @@ export default function Clientes() {
             cliente.codigo,
             cliente.cep,
             cliente.empresa,
+            cliente.pessoa,
+            cliente.contato,
             cliente.situacao,
             cliente.cidade,
             cliente.uf,
@@ -741,11 +851,12 @@ export default function Clientes() {
         codigo: form.codigo.trim() || null,
         corte: parsedCorte,
         venc: parsedVenc,
-        tit: form.tit.trim() || null,
         valor: form.valor ? parseImportCurrency(form.valor) : null,
         data_da_ultima_visita: parsedDataUltimaVisita,
         cep: form.cep.trim() || null,
         empresa: form.empresa.trim() || null,
+        pessoa: form.pessoa.trim() || null,
+        contato: normalizeContato(form.contato),
         perfil_visita: perfilCreate.perfil || null,
         situacao: form.situacao.trim() || "Ativo",
         endereco: form.endereco.trim() || null,
@@ -764,11 +875,12 @@ export default function Clientes() {
         codigo: "",
         corte: "",
         venc: "",
-        tit: "",
         valor: "",
         data_da_ultima_visita: "",
         cep: "",
         empresa: "",
+        pessoa: "",
+        contato: "",
         situacao: "Ativo",
         endereco: "",
         complemento: "",
@@ -870,7 +982,7 @@ export default function Clientes() {
         );
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao manter os dois clientes.");
+      setError(err instanceof Error ? err.message : "Erro ao manter as duas empresas.");
     } finally {
       setDuplicateResolving(false);
       setDuplicateModal(null);
@@ -900,7 +1012,7 @@ export default function Clientes() {
         bairro: mapped.bairro ?? prev.bairro,
         cep: mapped.cep ? formatCep(mapped.cep) : prev.cep,
       }));
-    } catch (err) {
+    } catch {
       setAddressLookupError("Endereco nao encontrado ou API indisponivel.");
     } finally {
       setAddressLookupLoading(false);
@@ -927,7 +1039,7 @@ export default function Clientes() {
         cidade: mapped.cidade ?? prev.cidade,
         uf: mapped.uf ?? prev.uf,
       }));
-    } catch (err) {
+    } catch {
       setCepError("CEP nao encontrado ou API indisponivel.");
     } finally {
       setCepLoading(false);
@@ -952,11 +1064,12 @@ export default function Clientes() {
         codigo: editForm.codigo.trim() || null,
         corte: parsedCorte,
         venc: parsedVenc,
-        tit: editForm.tit.trim() || null,
         valor: editForm.valor ? parseImportCurrency(editForm.valor) : null,
         data_da_ultima_visita: parsedDataUltimaVisita,
         cep: editForm.cep.trim() || null,
         empresa: editForm.empresa.trim() || null,
+        pessoa: editForm.pessoa.trim() || null,
+        contato: normalizeContato(editForm.contato),
         perfil_visita: perfilEdit.perfil || null,
         situacao: editForm.situacao.trim() || "Ativo",
         endereco: editForm.endereco.trim() || null,
@@ -998,7 +1111,7 @@ export default function Clientes() {
         cidade: mapped.cidade ?? prev.cidade,
         uf: mapped.uf ?? prev.uf,
       }));
-    } catch (err) {
+    } catch {
       setCepErrorEdit("CEP nao encontrado ou API indisponivel.");
     } finally {
       setCepLoadingEdit(false);
@@ -1027,7 +1140,7 @@ export default function Clientes() {
         bairro: mapped.bairro ?? prev.bairro,
         cep: mapped.cep ? formatCep(mapped.cep) : prev.cep,
       }));
-    } catch (err) {
+    } catch {
       setAddressLookupErrorEdit("Endereco nao encontrado ou API indisponivel.");
     } finally {
       setAddressLookupLoadingEdit(false);
@@ -1037,20 +1150,21 @@ export default function Clientes() {
   const handleDownloadTemplate = () => {
     const headers = [
       "codigo",
+      "empresa",
+      "pessoa",
+      "contato",
       "corte",
       "vencimento",
-      "tit",
       "valor",
       "data_ultima_visita",
-      "cep",
-      "empresa",
-      "situacao",
       "perfil_visita",
+      "situacao",
+      "cidade",
+      "uf",
       "endereco",
       "complemento",
       "bairro",
-      "cidade",
-      "uf",
+      "cep",
     ];
     const sheet = XLSX.utils.aoa_to_sheet([headers]);
     const workbook = XLSX.utils.book_new();
@@ -1124,11 +1238,12 @@ export default function Clientes() {
             codigo: record.codigo ?? null,
             corte: parsedCorte,
             venc: parsedVenc,
-            tit: record.tit ?? null,
             valor: parsedValor,
             data_da_ultima_visita: parsedDataUltimaVisita,
             cep: record.cep ?? null,
             empresa: record.empresa ?? null,
+            pessoa: record.pessoa ?? null,
+            contato: normalizeContato(record.contato ?? ""),
             situacao: situacaoValue ?? record.situacao ?? "Ativo",
             perfil_visita: record.perfil_visita ?? null,
             endereco: record.endereco ?? null,
@@ -1155,11 +1270,12 @@ export default function Clientes() {
               codigo: payload.codigo ?? null,
               corte: payload.corte ?? null,
               venc: payload.venc ?? null,
-              tit: payload.tit ?? null,
               valor: payload.valor ?? null,
               data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
               cep: payload.cep ?? null,
               empresa: payload.empresa ?? null,
+              pessoa: payload.pessoa ?? null,
+              contato: payload.contato ?? null,
               nome_fantasia: null,
               complemento: payload.complemento ?? null,
               perfil_visita: payload.perfil_visita ?? null,
@@ -1281,7 +1397,7 @@ export default function Clientes() {
       if (mergedDuplicates.length > 0) {
         setImportMessage("Existem duplicidades. Escolha o que fazer.");
       } else if (created.length > 0) {
-        setImportMessage(`Importacao concluida. ${created.length} cliente(s) adicionados.`);
+        setImportMessage(`Importacao concluida. ${created.length} empresa(s) adicionadas.`);
       } else {
         setImportMessage("Importacao concluida. Nenhum cliente novo encontrado.");
       }
@@ -1311,7 +1427,7 @@ export default function Clientes() {
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="font-display text-2xl text-ink">Clientes</h2>
+        <h2 className="font-display text-2xl text-ink">Empresas</h2>
         <p className="mt-2 text-sm text-ink/60">
           Gestao de empresas cadastradas e historico de visitas.
         </p>
@@ -1336,84 +1452,6 @@ export default function Clientes() {
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            Corte
-            <input
-              value={form.corte}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, corte: sanitizeDigits(event.target.value) }))
-              }
-              inputMode="numeric"
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            Vencimento
-            <input
-              value={form.venc}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, venc: sanitizeDigits(event.target.value) }))
-              }
-              inputMode="numeric"
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            TIT
-            <input
-              value={form.tit}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, tit: sanitizeDigits(event.target.value) }))
-              }
-              inputMode="numeric"
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            Valor
-            <input
-              value={form.valor}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, valor: formatCurrencyInput(event.target.value) }))
-              }
-              inputMode="decimal"
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            Data da ultima visita
-            <input
-              type="date"
-              value={form.data_da_ultima_visita}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, data_da_ultima_visita: event.target.value }))
-              }
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            CEP
-            <input
-              value={form.cep}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, cep: formatCep(event.target.value) }))
-              }
-              placeholder="00000-000"
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-            <button
-              type="button"
-              onClick={handleCepLookup}
-              disabled={cepLoading || sanitizeCep(form.cep).length !== 8}
-              className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
-            >
-              {cepLoading ? "Buscando CEP..." : "Cadastrar via CEP"}
-            </button>
-            {cepLoading && (
-              <span className="text-[11px] text-ink/60">Consultando CEP...</span>
-            )}
-            {cepError && <span className="text-[11px] text-red-600">{cepError}</span>}
-          </label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             Empresa
             <input
@@ -1422,114 +1460,256 @@ export default function Clientes() {
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            Situacao
-            <select
-              value={form.situacao}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, situacao: event.target.value }))
-              }
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            >
-              <option value="">Selecione</option>
-              {SITUACAO_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-            Perfil visita
-            <select
-              value={perfilCreate.customEnabled ? "__custom__" : perfilCreate.perfil}
-              onChange={(event) => {
-                const value = event.target.value;
-                if (value === "__custom__") {
-                  setPerfilCreate((prev) => ({
-                    ...prev,
-                    customEnabled: true,
-                    customTimes: prev.customTimes.length ? prev.customTimes : [""],
-                  }));
-                } else {
-                  setPerfilCreate({ perfil: value, customEnabled: false, customTimes: [] });
-                }
-              }}
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            >
-              <option value="">Selecione</option>
-              {PERFIL_VISITA_PRESETS.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-              <option value="__custom__">Horario customizado</option>
-            </select>
-          </label>
-          {perfilCreate.customEnabled && (
-            <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70 md:col-span-2">
-              Horarios customizados
-              {perfilCreate.customTimes.map((time, index) => (
-                <div key={`${time}-${index}`} className="flex items-center gap-2">
-                  <input
-                    type="time"
-                    value={time}
-                    onChange={(event) => {
-                      const next = [...perfilCreate.customTimes];
-                      next[index] = event.target.value;
-                      applyPerfilTimes(setPerfilCreate, next);
-                    }}
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                  {perfilCreate.customTimes.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = perfilCreate.customTimes.filter((_, idx) => idx !== index);
-                        applyPerfilTimes(setPerfilCreate, next.length ? next : [""]);
-                      }}
-                      className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] text-ink/70"
-                    >
-                      Remover
-                    </button>
-                  )}
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={() => applyPerfilTimes(setPerfilCreate, [...perfilCreate.customTimes, ""])}
-                className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] text-ink/70"
-              >
-                Adicionar horario
-              </button>
-            </div>
-          )}
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
-            Endereco
+            Pessoa
             <input
-              value={form.endereco}
-              onChange={(event) => setForm((prev) => ({ ...prev, endereco: event.target.value }))}
-              disabled={!canEditEndereco}
+              value={form.pessoa}
+              onChange={(event) => setForm((prev) => ({ ...prev, pessoa: event.target.value }))}
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
-            {!canEditEndereco && (
-              <span className="text-[10px] font-normal text-ink/50">
-                Informe cidade e UF para editar o endereco.
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={handleAddressLookup}
-              disabled={!canSearchEndereco || addressLookupLoading}
-              className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
-            >
-              {addressLookupLoading ? "Buscando endereco..." : "Cadastrar via endereco"}
-            </button>
-            {addressLookupError && (
-              <span className="text-[11px] font-normal text-red-600">{addressLookupError}</span>
-            )}
           </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+            Contato
+            <input
+              value={form.contato}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, contato: formatContato(event.target.value) }))
+              }
+              inputMode="numeric"
+              placeholder="(00) 0 0000 0000"
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
+          <div className="md:col-span-6 flex flex-wrap items-end gap-2">
+            <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              Corte
+              <input
+                value={form.corte}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, corte: sanitizeDigits(event.target.value).slice(0, 2) }))
+                }
+                inputMode="numeric"
+                maxLength={2}
+                className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+              />
+            </label>
+            <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              Venc
+              <input
+                value={form.venc}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, venc: sanitizeDigits(event.target.value).slice(0, 2) }))
+                }
+                inputMode="numeric"
+                maxLength={2}
+                className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+              />
+            </label>
+            <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              Valor
+              <input
+                value={form.valor}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, valor: formatCurrencyInput(event.target.value) }))
+                }
+                inputMode="decimal"
+                className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+              />
+            </label>
+            <label className="w-40 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              Data da ultima visita
+              <input
+                type="date"
+                value={form.data_da_ultima_visita}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, data_da_ultima_visita: event.target.value }))
+                }
+                className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+              />
+            </label>
+            <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              Perfil visita
+              <select
+                value={
+                  perfilCreate.customEnabled
+                    ? "__custom__"
+                    : perfilCreate.singleTimeBase || perfilCreate.perfil
+                }
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === "__custom__") {
+                    setPerfilCreate((prev) => ({
+                      ...prev,
+                      customEnabled: true,
+                      customTimes: prev.customTimes.length ? prev.customTimes : [""],
+                      singleTimeBase: "",
+                      singleTimeValue: "",
+                      perfil: prev.customEnabled ? prev.perfil : "",
+                    }));
+                  } else if (value === "ALMOCO" || value === "JANTAR") {
+                    setPerfilCreate((prev) => ({
+                      ...prev,
+                      customEnabled: false,
+                      customTimes: [],
+                      singleTimeBase: value,
+                      singleTimeValue: "",
+                      perfil: value,
+                    }));
+                  } else {
+                    setPerfilCreate({
+                      perfil: value,
+                      customEnabled: false,
+                      customTimes: [],
+                      singleTimeBase: "",
+                      singleTimeValue: "",
+                    });
+                  }
+                }}
+                className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+              >
+                <option value="">Selecione</option>
+                {PERFIL_VISITA_PRESETS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+                <option value="__custom__">Horario customizado</option>
+              </select>
+            </label>
+            {(perfilCreate.singleTimeBase === "ALMOCO" || perfilCreate.singleTimeBase === "JANTAR") && (
+              <label className="w-28 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                HH:MM
+                <input
+                  type="time"
+                  value={perfilCreate.singleTimeValue}
+                  onChange={(event) =>
+                    setPerfilCreate((prev) => ({
+                      ...prev,
+                      singleTimeValue: event.target.value,
+                      perfil: event.target.value
+                        ? `${prev.singleTimeBase} ${event.target.value}`
+                        : prev.singleTimeBase,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
+            )}
+            {perfilCreate.customEnabled && (
+              <div className="shrink-0 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                <span>Horarios customizados</span>
+                <div className="flex w-fit max-w-[24rem] items-end gap-2 overflow-x-auto pb-1 pr-1">
+                {perfilCreate.customTimes.map((time, index) => (
+                  <div key={`${time}-${index}`} className="shrink-0 flex items-center gap-2">
+                    <input
+                      type="time"
+                      value={time}
+                      onChange={(event) => {
+                        const next = [...perfilCreate.customTimes];
+                        next[index] = event.target.value;
+                        applyPerfilTimes(setPerfilCreate, next);
+                      }}
+                      className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                    {index === perfilCreate.customTimes.length - 1 && (
+                      <button
+                        type="button"
+                        onClick={() => applyPerfilTimes(setPerfilCreate, [...perfilCreate.customTimes, ""])}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                        title="Adicionar horario"
+                        aria-label="Adicionar horario"
+                      >
+                        <Plus size={14} />
+                      </button>
+                    )}
+                    {perfilCreate.customTimes.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = perfilCreate.customTimes.filter((_, idx) => idx !== index);
+                          applyPerfilTimes(setPerfilCreate, next.length ? next : [""]);
+                        }}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                        title="Remover horario"
+                        aria-label="Remover horario"
+                      >
+                        <span className="text-base leading-none">-</span>
+                      </button>
+                    )}
+                  </div>
+                ))}
+                </div>
+              </div>
+            )}
+            <label className="w-36 shrink-0 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              Situacao
+              <select
+                value={form.situacao}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, situacao: event.target.value }))
+                }
+                className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+              >
+                <option value="">Selecione</option>
+                {SITUACAO_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+            Cidade
+            <input
+              value={form.cidade}
+              onChange={(event) => setForm((prev) => ({ ...prev, cidade: event.target.value }))}
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
+          <div className="md:col-span-4 grid gap-3 md:grid-cols-[80px_minmax(0,1fr)] md:items-start">
+            <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              UF
+              <input
+                value={form.uf}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, uf: event.target.value.toUpperCase().slice(0, 3) }))
+                }
+                maxLength={3}
+                className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm uppercase tracking-wide text-ink outline-none focus:border-sea"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              <span>
+                Endereco
+                {!canEditEndereco && (
+                  <span className="font-normal text-ink/50"> (Informe cidade e UF para editar o endereco.)</span>
+                )}
+              </span>
+              <div className="flex items-end gap-2">
+                <input
+                  value={form.endereco}
+                  onChange={(event) => setForm((prev) => ({ ...prev, endereco: event.target.value }))}
+                  disabled={!canEditEndereco}
+                  className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddressLookup}
+                  disabled={!canSearchEndereco || addressLookupLoading}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                  title={addressLookupLoading ? "Buscando endereco..." : "Cadastrar via endereco"}
+                  aria-label={addressLookupLoading ? "Buscando endereco..." : "Cadastrar via endereco"}
+                >
+                  <MapPin size={15} className={addressLookupLoading ? "animate-pulse" : ""} />
+                </button>
+              </div>
+              {addressLookupError && (
+                <span className="text-[11px] font-normal text-red-600">{addressLookupError}</span>
+              )}
+            </label>
+          </div>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             Complemento
             <input
               value={form.complemento}
@@ -1551,20 +1731,31 @@ export default function Clientes() {
             )}
           </label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-            Cidade
-            <input
-              value={form.cidade}
-              onChange={(event) => setForm((prev) => ({ ...prev, cidade: event.target.value }))}
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-            UF
-            <input
-              value={form.uf}
-              onChange={(event) => setForm((prev) => ({ ...prev, uf: event.target.value }))}
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
+            CEP
+            <div className="flex items-end gap-2">
+              <input
+                value={form.cep}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, cep: formatCep(event.target.value) }))
+                }
+                placeholder="00000-000"
+                className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+              />
+              <button
+                type="button"
+                onClick={handleCepLookup}
+                disabled={cepLoading || sanitizeCep(form.cep).length !== 8}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                title={cepLoading ? "Buscando CEP..." : "Buscar CEP"}
+                aria-label={cepLoading ? "Buscando CEP..." : "Buscar CEP"}
+              >
+                <Search size={15} className={cepLoading ? "animate-pulse" : ""} />
+              </button>
+            </div>
+            {cepLoading && (
+              <span className="text-[11px] text-ink/60">Consultando CEP...</span>
+            )}
+            {cepError && <span className="text-[11px] text-red-600">{cepError}</span>}
           </label>
           <div className="flex items-end md:col-span-2">
             <button
@@ -1582,7 +1773,7 @@ export default function Clientes() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="font-display text-lg text-ink">Empresas cadastradas</h3>
-          <p className="text-xs text-ink/60">{clientes.length} cliente(s).</p>
+          <p className="text-xs text-ink/60">{clientes.length} empresa(s).</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {canCreate && (
@@ -1594,7 +1785,7 @@ export default function Clientes() {
               }}
               className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
             >
-              Importar XLSX
+              Importar empresa
             </button>
           )}
           <select
@@ -1620,7 +1811,7 @@ export default function Clientes() {
 
       {loading ? (
         <div className="rounded-2xl border border-sea/20 bg-sand/30 p-6 text-sm text-ink/70">
-          Carregando clientes...
+          Carregando empresas...
         </div>
       ) : (
         <div className="rounded-2xl border border-sea/15 bg-white/95">
@@ -1647,7 +1838,13 @@ export default function Clientes() {
                     </p>
                   </div>
                   <div className="text-right text-xs text-ink/60">
-                    <div>{cliente.perfil_visita ?? "Sem perfil"}</div>
+                    <div>{formatPerfilDisplay(cliente.perfil_visita)}</div>
+                    {cliente.pessoa ? (
+                      <div className="mt-1 text-[11px] text-ink/50">Pessoa: {cliente.pessoa}</div>
+                    ) : null}
+                    {cliente.contato ? (
+                      <div className="text-[11px] text-ink/50">Contato: {cliente.contato}</div>
+                    ) : null}
                     {cliente.situacao ? (
                       <div className="mt-1 text-[11px] text-ink/50">
                         Situacao: {cliente.situacao}
@@ -1668,16 +1865,25 @@ export default function Clientes() {
       )}
 
       {selected && (
-        <div className="fixed inset-0 z-50 flex justify-end">
+        <div
+          className={`fixed inset-0 z-50 flex ${isEditing ? "items-center justify-center p-4" : "justify-end"}`}
+        >
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
             onClick={() => {
+              setIsEditing(false);
               setSelected(null);
               setSelectedId(null);
             }}
           />
-          <div className="relative h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl">
+          <div
+            className={`relative w-full overflow-y-auto bg-white shadow-2xl ${
+              isEditing
+                ? "max-h-[92vh] max-w-6xl rounded-2xl p-6"
+                : "h-full max-w-xl p-6"
+            }`}
+          >
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-muted">Cliente</p>
@@ -1701,6 +1907,7 @@ export default function Clientes() {
                 <button
                   type="button"
                   onClick={() => {
+                    setIsEditing(false);
                     setSelected(null);
                     setSelectedId(null);
                   }}
@@ -1712,8 +1919,8 @@ export default function Clientes() {
             </div>
 
             {isEditing ? (
-              <div className="mt-6 grid gap-3 md:grid-cols-2">
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-12">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Codigo
                   <input
                     value={editForm.codigo}
@@ -1723,88 +1930,7 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                  Corte
-                  <input
-                    value={editForm.corte}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, corte: sanitizeDigits(event.target.value) }))
-                    }
-                    inputMode="numeric"
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                  Vencimento
-                  <input
-                    value={editForm.venc}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, venc: sanitizeDigits(event.target.value) }))
-                    }
-                    inputMode="numeric"
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                  TIT
-                  <input
-                    value={editForm.tit}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, tit: sanitizeDigits(event.target.value) }))
-                    }
-                    inputMode="numeric"
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                  Valor
-                  <input
-                    value={editForm.valor}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, valor: formatCurrencyInput(event.target.value) }))
-                    }
-                    inputMode="decimal"
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                  Data da ultima visita
-                  <input
-                    type="date"
-                    value={editForm.data_da_ultima_visita}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({
-                        ...prev,
-                        data_da_ultima_visita: event.target.value,
-                      }))
-                    }
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                  CEP
-                  <input
-                    value={editForm.cep}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, cep: formatCep(event.target.value) }))
-                    }
-                    placeholder="00000-000"
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleCepLookupEdit}
-                    disabled={cepLoadingEdit || sanitizeCep(editForm.cep).length !== 8}
-                    className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
-                  >
-                    {cepLoadingEdit ? "Buscando CEP..." : "Cadastrar via CEP"}
-                  </button>
-                  {cepLoadingEdit && (
-                    <span className="text-[11px] text-ink/60">Consultando CEP...</span>
-                  )}
-                  {cepErrorEdit && <span className="text-[11px] text-red-600">{cepErrorEdit}</span>}
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
                   Empresa
                   <input
                     value={editForm.empresa}
@@ -1814,141 +1940,211 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-                  Situacao
-                  <select
-                    value={editForm.situacao}
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+                  Pessoa
+                  <input
+                    value={editForm.pessoa}
                     onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, situacao: event.target.value }))
+                      setEditForm((prev) => ({ ...prev, pessoa: event.target.value }))
                     }
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  >
-                    <option value="">Selecione</option>
-                    {SITUACAO_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+                  Contato
+                  <input
+                    value={editForm.contato}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, contato: formatContato(event.target.value) }))
+                    }
+                    inputMode="numeric"
+                    placeholder="(00) 0 0000 0000"
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-                  Perfil visita
-                  <select
-                    value={perfilEdit.customEnabled ? "__custom__" : perfilEdit.perfil}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (value === "__custom__") {
-                        setPerfilEdit((prev) => ({
-                          ...prev,
-                          customEnabled: true,
-                          customTimes: prev.customTimes.length ? prev.customTimes : [""],
-                        }));
-                      } else {
-                        setPerfilEdit({ perfil: value, customEnabled: false, customTimes: [] });
+                    Corte
+                    <input
+                      value={editForm.corte}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({ ...prev, corte: sanitizeDigits(event.target.value).slice(0, 2) }))
                       }
-                    }}
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  >
-                    <option value="">Selecione</option>
-                    {PERFIL_VISITA_PRESETS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                    <option value="__custom__">Horario customizado</option>
-                  </select>
-                </label>
-                {perfilEdit.customEnabled && (
-                  <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70 md:col-span-2">
-                    Horarios customizados
-                    {perfilEdit.customTimes.map((time, index) => (
-                      <div key={`${time}-${index}`} className="flex items-center gap-2">
-                        <input
-                          type="time"
-                          value={time}
-                          onChange={(event) => {
-                            const next = [...perfilEdit.customTimes];
-                            next[index] = event.target.value;
-                            applyPerfilTimes(setPerfilEdit, next);
-                          }}
-                          className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                        />
-                        {perfilEdit.customTimes.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const next = perfilEdit.customTimes.filter((_, idx) => idx !== index);
-                              applyPerfilTimes(setPerfilEdit, next.length ? next : [""]);
-                            }}
-                            className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] text-ink/70"
-                          >
-                            Remover
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => applyPerfilTimes(setPerfilEdit, [...perfilEdit.customTimes, ""])}
-                      className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] text-ink/70"
+                      inputMode="numeric"
+                      maxLength={2}
+                      className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                    Venc
+                    <input
+                      value={editForm.venc}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({ ...prev, venc: sanitizeDigits(event.target.value).slice(0, 2) }))
+                      }
+                      inputMode="numeric"
+                      maxLength={2}
+                      className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+                    Valor
+                    <input
+                      value={editForm.valor}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({ ...prev, valor: formatCurrencyInput(event.target.value) }))
+                      }
+                      inputMode="decimal"
+                      className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-5">
+                    Data da ultima visita
+                    <input
+                      type="date"
+                      value={editForm.data_da_ultima_visita}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({
+                          ...prev,
+                          data_da_ultima_visita: event.target.value,
+                        }))
+                      }
+                      className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+                    Perfil visita
+                    <select
+                      value={
+                        perfilEdit.customEnabled
+                          ? "__custom__"
+                          : perfilEdit.singleTimeBase || perfilEdit.perfil
+                      }
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (value === "__custom__") {
+                          setPerfilEdit((prev) => ({
+                            ...prev,
+                            customEnabled: true,
+                            customTimes: prev.customTimes.length ? prev.customTimes : [""],
+                            singleTimeBase: "",
+                            singleTimeValue: "",
+                            perfil: prev.customEnabled ? prev.perfil : "",
+                          }));
+                        } else if (value === "ALMOCO" || value === "JANTAR") {
+                          setPerfilEdit((prev) => ({
+                            ...prev,
+                            customEnabled: false,
+                            customTimes: [],
+                            singleTimeBase: value,
+                            singleTimeValue: "",
+                            perfil: value,
+                          }));
+                        } else {
+                          setPerfilEdit({
+                            perfil: value,
+                            customEnabled: false,
+                            customTimes: [],
+                            singleTimeBase: "",
+                            singleTimeValue: "",
+                          });
+                        }
+                      }}
+                      className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                     >
-                      Adicionar horario
-                    </button>
-                  </div>
-                )}
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-                  Endereco
-                  <input
-                    value={editForm.endereco}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, endereco: event.target.value }))
-                    }
-                    disabled={!canEditEnderecoEdit}
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                  {!canEditEnderecoEdit && (
-                    <span className="text-[10px] font-normal text-ink/50">
-                      Informe cidade e UF para editar o endereco.
-                    </span>
+                      <option value="">Selecione</option>
+                      {PERFIL_VISITA_PRESETS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                        <option value="__custom__">Horario customizado</option>
+                      </select>
+                  </label>
+                <div className="min-w-0 md:col-span-6">
+                  {(perfilEdit.singleTimeBase === "ALMOCO" || perfilEdit.singleTimeBase === "JANTAR") && (
+                    <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                      HH:MM
+                      <input
+                        type="time"
+                        value={perfilEdit.singleTimeValue}
+                        onChange={(event) =>
+                          setPerfilEdit((prev) => ({
+                            ...prev,
+                            singleTimeValue: event.target.value,
+                            perfil: event.target.value
+                              ? `${prev.singleTimeBase} ${event.target.value}`
+                              : prev.singleTimeBase,
+                          }))
+                        }
+                        className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                      />
+                    </label>
                   )}
-                  <button
-                    type="button"
-                    onClick={handleAddressLookupEdit}
-                    disabled={!canSearchEnderecoEdit || addressLookupLoadingEdit}
-                    className="self-start rounded-lg border border-sea/30 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
-                  >
-                    {addressLookupLoadingEdit ? "Buscando endereco..." : "Cadastrar via endereco"}
-                  </button>
-                  {addressLookupErrorEdit && (
-                    <span className="text-[11px] font-normal text-red-600">{addressLookupErrorEdit}</span>
+                  {perfilEdit.customEnabled && (
+                    <div className="flex min-w-0 flex-col gap-1 text-xs font-semibold text-ink/70">
+                      <span>Horarios customizados</span>
+                      <div className="flex min-w-0 items-end gap-2 overflow-x-auto pb-1 pr-1">
+                      {perfilEdit.customTimes.map((time, index) => (
+                        <div key={`${time}-${index}`} className="shrink-0 flex items-center gap-2">
+                          <input
+                            type="time"
+                            value={time}
+                            onChange={(event) => {
+                              const next = [...perfilEdit.customTimes];
+                              next[index] = event.target.value;
+                              applyPerfilTimes(setPerfilEdit, next);
+                            }}
+                            className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                          />
+                          {index === perfilEdit.customTimes.length - 1 && (
+                            <button
+                              type="button"
+                              onClick={() => applyPerfilTimes(setPerfilEdit, [...perfilEdit.customTimes, ""])}
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                              title="Adicionar horario"
+                              aria-label="Adicionar horario"
+                            >
+                              <Plus size={14} />
+                            </button>
+                          )}
+                          {perfilEdit.customTimes.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = perfilEdit.customTimes.filter((_, idx) => idx !== index);
+                                applyPerfilTimes(setPerfilEdit, next.length ? next : [""]);
+                              }}
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                              title="Remover horario"
+                              aria-label="Remover horario"
+                            >
+                              <span className="text-base leading-none">-</span>
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      </div>
+                    </div>
                   )}
+                </div>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+                    Situacao
+                    <select
+                      value={editForm.situacao}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({ ...prev, situacao: event.target.value }))
+                      }
+                      className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    >
+                      <option value="">Selecione</option>
+                      {SITUACAO_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-                  Complemento
-                  <input
-                    value={editForm.complemento}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, complemento: event.target.value }))
-                    }
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                  Bairro
-                  <input
-                    value={editForm.bairro}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, bairro: event.target.value }))
-                    }
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                  {bairroLoadingEdit && (
-                    <span className="text-[10px] font-normal text-ink/50 animate-pulse">
-                      Buscando bairro...
-                    </span>
-                  )}
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
                   Cidade
                   <input
                     value={editForm.cidade}
@@ -1963,10 +2159,97 @@ export default function Clientes() {
                   <input
                     value={editForm.uf}
                     onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, uf: event.target.value }))
+                      setEditForm((prev) => ({
+                        ...prev,
+                        uf: event.target.value.toUpperCase().slice(0, 3),
+                      }))
+                    }
+                    maxLength={3}
+                    className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm uppercase tracking-wide text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-7">
+                  <span>
+                    Endereco
+                    {!canEditEnderecoEdit && (
+                      <span className="font-normal text-ink/50"> (Informe cidade e UF para editar o endereco.)</span>
+                    )}
+                  </span>
+                  <div className="flex items-end gap-2">
+                    <input
+                      value={editForm.endereco}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({ ...prev, endereco: event.target.value }))
+                      }
+                      disabled={!canEditEnderecoEdit}
+                      className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddressLookupEdit}
+                      disabled={!canSearchEnderecoEdit || addressLookupLoadingEdit}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                      title={addressLookupLoadingEdit ? "Buscando endereco..." : "Cadastrar via endereco"}
+                      aria-label={addressLookupLoadingEdit ? "Buscando endereco..." : "Cadastrar via endereco"}
+                    >
+                      <MapPin size={15} className={addressLookupLoadingEdit ? "animate-pulse" : ""} />
+                    </button>
+                  </div>
+                  {addressLookupErrorEdit && (
+                    <span className="text-[11px] font-normal text-red-600">{addressLookupErrorEdit}</span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
+                  Complemento
+                  <input
+                    value={editForm.complemento}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, complemento: event.target.value }))
                     }
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
+                  Bairro
+                  <input
+                    value={editForm.bairro}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, bairro: event.target.value }))
+                    }
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                  {bairroLoadingEdit && (
+                    <span className="text-[10px] font-normal text-ink/50 animate-pulse">
+                      Buscando bairro...
+                    </span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
+                  CEP
+                  <div className="flex items-end gap-2">
+                    <input
+                      value={editForm.cep}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({ ...prev, cep: formatCep(event.target.value) }))
+                      }
+                      placeholder="00000-000"
+                      className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCepLookupEdit}
+                      disabled={cepLoadingEdit || sanitizeCep(editForm.cep).length !== 8}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                      title={cepLoadingEdit ? "Buscando CEP..." : "Buscar CEP"}
+                      aria-label={cepLoadingEdit ? "Buscando CEP..." : "Buscar CEP"}
+                    >
+                      <Search size={15} className={cepLoadingEdit ? "animate-pulse" : ""} />
+                    </button>
+                  </div>
+                  {cepLoadingEdit && (
+                    <span className="text-[11px] text-ink/60">Consultando CEP...</span>
+                  )}
+                  {cepErrorEdit && <span className="text-[11px] text-red-600">{cepErrorEdit}</span>}
                 </label>
               </div>
             ) : (
@@ -1974,14 +2257,15 @@ export default function Clientes() {
                 {[
                   ["Codigo", selected.codigo],
                   ["Corte", selected.corte ?? null],
-                  ["Vencimento", selected.venc ?? null],
-                  ["TIT", selected.tit ?? null],
+                  ["Venc", selected.venc ?? null],
                   ["Valor", selected.valor !== null && selected.valor !== undefined ? formatCurrency(selected.valor) : null],
                   ["Data da ultima visita", formatDate(selected.data_da_ultima_visita)],
                   ["CEP", selected.cep],
                   ["Empresa", selected.empresa],
+                  ["Pessoa", selected.pessoa],
+                  ["Contato", selected.contato],
                   ["Situacao", selected.situacao ?? "Ativo"],
-                  ["Perfil visita", selected.perfil_visita],
+                  ["Perfil visita", formatPerfilDisplay(selected.perfil_visita)],
                   ["Endereco", selected.endereco],
                   ["Complemento", selected.complemento],
                   ["Bairro", selected.bairro],
@@ -2019,21 +2303,41 @@ export default function Clientes() {
             <div className="mt-8 border-t border-mist/40 pt-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h4 className="font-display text-lg text-ink">Historico de visitas</h4>
-                <label className="flex items-center gap-2 text-xs font-semibold text-ink/70">
-                  Supervisor
-                  <select
-                    value={historySupervisorId}
-                    onChange={(event) => setHistorySupervisorId(event.target.value)}
-                    className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
-                  >
-                    <option value="all">Todos</option>
-                    {historySupervisores.map((supervisor) => (
-                      <option key={supervisor.user_id} value={supervisor.user_id}>
-                        {supervisor.display_name ?? "Supervisor"}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-ink/70">
+                    Supervisor
+                    <select
+                      value={historySupervisorId}
+                      onChange={(event) => setHistorySupervisorId(event.target.value)}
+                      className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                    >
+                      <option value="all">Todos</option>
+                      {historySupervisores.map((supervisor) => (
+                        <option key={supervisor.user_id} value={supervisor.user_id}>
+                          {supervisor.display_name ?? "Supervisor"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs font-semibold text-ink/70">
+                    De
+                    <input
+                      type="date"
+                      value={historyDateFrom}
+                      onChange={(event) => setHistoryDateFrom(event.target.value)}
+                      className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-xs font-semibold text-ink/70">
+                    Ate
+                    <input
+                      type="date"
+                      value={historyDateTo}
+                      onChange={(event) => setHistoryDateTo(event.target.value)}
+                      className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                    />
+                  </label>
+                </div>
               </div>
               {historyLoading ? (
                 <p className="mt-2 text-sm text-ink/60">Carregando historico...</p>
@@ -2062,14 +2366,14 @@ export default function Clientes() {
                       {visit.perfil_visita || visit.perfil_visita_opcoes ? (
                         <div className="mt-1 text-xs text-ink/60">
                           Perfil:{" "}
-                          {formatPerfilDisplay(visit.perfil_visita_opcoes ?? visit.perfil_visita)}
+                          {formatPerfilDisplay(visit.perfil_visita ?? visit.perfil_visita_opcoes)}
                         </div>
                       ) : null}
                       {visit.completed_at ? (
                         <div className="mt-1 text-[11px] text-ink/50">
                           Concluida em {formatDate(visit.completed_at)}
                           {typeof visit.completed_vidas === "number"
-                            ? ` • Vidas: ${visit.completed_vidas}`
+                            ? ` â€¢ Vidas: ${visit.completed_vidas}`
                             : ""}
                         </div>
                       ) : null}
@@ -2088,7 +2392,7 @@ export default function Clientes() {
           <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Endereco duplicado</h3>
             <p className="mt-2 text-sm text-ink/70">
-              O endereco informado ja existe para {duplicateModal.existing.length} cliente(s).
+              O endereco informado ja existe para {duplicateModal.existing.length} empresa(s).
               Escolha o que fazer com o cliente da planilha.
             </p>
 
@@ -2170,9 +2474,9 @@ export default function Clientes() {
             onClick={() => (importing ? null : setShowImportModal(false))}
           />
           <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
-            <h3 className="font-display text-lg text-ink">Importar clientes (XLSX)</h3>
+            <h3 className="font-display text-lg text-ink">Importar empresas (XLSX)</h3>
             <p className="mt-1 text-xs text-ink/60">
-              Baixe o modelo, preencha os clientes e envie para importar.
+              Baixe o modelo, preencha as empresas e envie para importar.
             </p>
 
             {importMessage && (
@@ -2244,3 +2548,8 @@ export default function Clientes() {
     </div>
   );
 }
+
+
+
+
+

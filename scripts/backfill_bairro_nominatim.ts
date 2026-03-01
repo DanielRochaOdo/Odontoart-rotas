@@ -91,7 +91,7 @@ const fetchAll = async <T,>(table: string, select: string): Promise<T[]> => {
 
 const hasValue = (value: string | null) => Boolean(value && value.trim());
 
-const escapeOrValue = (value: string) => `"${value.replace(/\"/g, '\\\"')}"`;
+const escapeOrValue = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
 
 const updateAgendaForCliente = async (cliente: BaseRow, bairro: string) => {
   const empresa = cliente.empresa?.trim();

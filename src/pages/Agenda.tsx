@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { MapPin, SquareCenterlineDashedHorizontal } from "lucide-react";
 import {
   flexRender,
   type ColumnDef,
@@ -25,7 +26,14 @@ import AgendaDrawer from "../components/agenda/AgendaDrawer";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { onProfilesUpdated } from "../lib/profileEvents";
-import { PERFIL_VISITA_PRESETS, isPresetPerfilVisita } from "../lib/perfilVisita";
+import {
+  PERFIL_VISITA_PRESETS,
+  extractCustomTimes,
+  getSingleTimePerfilBase,
+  getSingleTimePerfilValue,
+  isPresetPerfilVisita,
+  normalizePerfilVisita,
+} from "../lib/perfilVisita";
 
 const FILTER_SOURCES: Record<string, string[]> = {
   supervisor: ["supervisor"],
@@ -58,11 +66,38 @@ const parseDateValue = (value: string) => {
   return new Date(value);
 };
 
+const escapeOrValue = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
+
 const formatDate = (value: string | null) => {
   if (!value) return "-";
   const date = parseDateValue(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("pt-BR").format(date);
+};
+
+const formatPerfilVisitaDisplay = (value: string | null) => {
+  if (!value) return "-";
+  const parts = value
+    .replace(/â€¢/g, "•")
+    .split(/[,\u2022]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return "-";
+
+  const formatted = parts.map((item) => {
+    const base = getSingleTimePerfilBase(item);
+    if (!base) return item;
+    const time = getSingleTimePerfilValue(item);
+    return time ? `${base} - ${time}` : base;
+  });
+  const unique = Array.from(
+    new Set(
+      formatted
+        .map((item) => item.replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+    ),
+  );
+  return unique.join(", ");
 };
 
 const formatVisitBadge = (value: string | null) => {
@@ -93,6 +128,28 @@ const MONTH_OPTIONS = [
   { value: "12", label: "Dezembro" },
 ];
 
+type ScheduleDraft = {
+  id?: string;
+  vendorId: string;
+  vendorName: string;
+  date: string;
+  perfil: string;
+  customTimes?: string[];
+  instructions: string;
+  perfilCustom?: boolean;
+  perfilSingleTimeBase?: string;
+  perfilSingleTimeValue?: string;
+  routeId?: string | null;
+};
+
+type PendingAgendaModalState = {
+  schedule: {
+    open: boolean;
+    rowId: string | null;
+    drafts: ScheduleDraft[];
+  } | null;
+};
+
 export default function Agenda() {
   const { role, session } = useAuth();
   const canAccess = role === "SUPERVISOR" || role === "ASSISTENTE";
@@ -117,35 +174,28 @@ export default function Agenda() {
     Record<string, AgendaVisitVendor[]>
   >({});
   const [scheduleModalRow, setScheduleModalRow] = useState<AgendaRow | null>(null);
-  const [scheduleDrafts, setScheduleDrafts] = useState<
-    Array<{
-      id?: string;
-      vendorId: string;
-      vendorName: string;
-      date: string;
-      perfil: string;
-      perfilCustom?: boolean;
-      routeId?: string | null;
-    }>
-  >([]);
+  const [scheduleDrafts, setScheduleDrafts] = useState<ScheduleDraft[]>([]);
   const [scheduleOriginal, setScheduleOriginal] = useState<AgendaScheduledVisit[]>([]);
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
   const [vendedores, setVendedores] = useState<
-    { user_id: string; display_name: string | null; role: string }[]
+    { user_id: string; display_name: string | null; role: string; supervisor_id?: string | null }[]
   >([]);
   const [supervisores, setSupervisores] = useState<
-    { user_id: string; display_name: string | null; role: string }[]
+    { id?: string; user_id: string; display_name: string | null; role: string }[]
   >([]);
   const [selectedVendorIds, setSelectedVendorIds] = useState<string[]>([]);
   const [vendorQuery, setVendorQuery] = useState("");
   const [visitDate, setVisitDate] = useState("");
+  const [visitInstructions, setVisitInstructions] = useState("");
   const [generating, setGenerating] = useState(false);
   const [generateMessage, setGenerateMessage] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const restoredViewRef = useRef(false);
+  const restoredModalRef = useRef(false);
+  const pendingModalRestoreRef = useRef<PendingAgendaModalState | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -187,6 +237,128 @@ export default function Agenda() {
     }
   }, [pageIndex, pageSize, selectedRowId, sorting]);
 
+  useEffect(() => {
+    if (restoredModalRef.current) return;
+    try {
+      const raw = sessionStorage.getItem("agendaModalState");
+      if (!raw) {
+        restoredModalRef.current = true;
+        return;
+      }
+      const parsed = JSON.parse(raw) as Partial<{
+        generate: {
+          open: boolean;
+          selectedVendorIds: string[];
+          vendorQuery: string;
+          visitDate: string;
+          visitInstructions: string;
+        };
+        schedule: {
+          open: boolean;
+          rowId: string | null;
+          drafts: ScheduleDraft[];
+        };
+      }>;
+
+      if (parsed.generate?.open) {
+        setShowGenerateModal(true);
+        setSelectedVendorIds(parsed.generate.selectedVendorIds ?? []);
+        setVendorQuery(parsed.generate.vendorQuery ?? "");
+        setVisitDate(parsed.generate.visitDate ?? "");
+        setVisitInstructions(parsed.generate.visitInstructions ?? "");
+      }
+
+      pendingModalRestoreRef.current = {
+        schedule: parsed.schedule
+          ? {
+              open: Boolean(parsed.schedule.open),
+              rowId: parsed.schedule.rowId ?? null,
+              drafts: Array.isArray(parsed.schedule.drafts) ? parsed.schedule.drafts : [],
+            }
+          : null,
+      };
+      restoredModalRef.current = true;
+    } catch {
+      restoredModalRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!restoredModalRef.current) return;
+    const pending = pendingModalRestoreRef.current;
+    if (!pending?.schedule?.open || !pending.schedule.rowId) return;
+    if (scheduleModalRow) {
+      pendingModalRestoreRef.current = null;
+      return;
+    }
+    const row = data.find((item) => item.id === pending.schedule?.rowId);
+    if (!row) return;
+    const visits = scheduledVisitsByAgenda[row.id] ?? [];
+    setScheduleModalRow(row);
+    if (pending.schedule.drafts.length > 0) {
+      setScheduleDrafts(pending.schedule.drafts);
+	    } else {
+	      const drafts = visits.map((visit) => {
+        const basePerfil = visit.perfil_visita ?? row.perfil_visita ?? "";
+        const singleTimeBase = getSingleTimePerfilBase(basePerfil);
+        const isCustom = Boolean(basePerfil && !isPresetPerfilVisita(basePerfil) && !singleTimeBase);
+        return {
+          id: visit.id,
+          vendorId: visit.assigned_to_user_id ?? "",
+          vendorName: visit.assigned_to_name ?? "",
+          date: visit.visit_date,
+          perfil: basePerfil,
+          customTimes: isCustom
+            ? (() => {
+                const times = extractCustomTimes(basePerfil);
+                return times.length ? times : [""];
+              })()
+            : [],
+          instructions: visit.instructions ?? "",
+          perfilCustom: isCustom,
+          perfilSingleTimeBase: singleTimeBase ?? "",
+          perfilSingleTimeValue: getSingleTimePerfilValue(basePerfil),
+          routeId: visit.route_id ?? null,
+        };
+      });
+      setScheduleDrafts(drafts);
+    }
+    setScheduleOriginal(visits);
+    setScheduleError(null);
+    pendingModalRestoreRef.current = null;
+  }, [data, scheduleModalRow, scheduledVisitsByAgenda]);
+
+  useEffect(() => {
+    if (!restoredModalRef.current) return;
+    const payload = {
+      generate: {
+        open: showGenerateModal,
+        selectedVendorIds,
+        vendorQuery,
+        visitDate,
+        visitInstructions,
+      },
+      schedule: {
+        open: Boolean(scheduleModalRow),
+        rowId: scheduleModalRow?.id ?? null,
+        drafts: scheduleDrafts,
+      },
+    };
+    try {
+      sessionStorage.setItem("agendaModalState", JSON.stringify(payload));
+    } catch {
+      // ignore
+    }
+  }, [
+    scheduleDrafts,
+    scheduleModalRow,
+    selectedVendorIds,
+    showGenerateModal,
+    vendorQuery,
+    visitDate,
+    visitInstructions,
+  ]);
+
   const canGenerate = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canEdit = role === "SUPERVISOR" || role === "ASSISTENTE";
 
@@ -202,8 +374,42 @@ export default function Agenda() {
   );
 
   const vendorById = useMemo(
-    () => new Map(vendedores.map((vendor) => [vendor.user_id, vendor.display_name ?? vendor.user_id])),
+    () =>
+      new Map<string, string>(
+        vendedores.map((vendor) => [vendor.user_id, vendor.display_name ?? vendor.user_id] as const),
+      ),
     [vendedores],
+  );
+  const supervisorByProfileId = useMemo(
+    () =>
+      new Map<string, string>(
+        supervisores
+          .map((supervisor) => [supervisor.id ?? "", supervisor.display_name ?? ""] as const)
+          .filter(([id, name]) => Boolean(id && name)),
+      ),
+    [supervisores],
+  );
+  const supervisorByUserId = useMemo(
+    () =>
+      new Map<string, string>(
+        supervisores
+          .map((supervisor) => [supervisor.user_id ?? "", supervisor.display_name ?? ""] as const)
+          .filter(([id, name]) => Boolean(id && name)),
+      ),
+    [supervisores],
+  );
+  const supervisorNameByVendorId = useMemo(
+    () =>
+      new Map<string, string>(
+        vendedores.map((vendor) => {
+          const mappedName =
+            (vendor.supervisor_id ? supervisorByProfileId.get(vendor.supervisor_id) : "") ||
+            (vendor.supervisor_id ? supervisorByUserId.get(vendor.supervisor_id) : "") ||
+            "";
+          return [vendor.user_id, mappedName] as const;
+        }),
+      ),
+    [supervisorByProfileId, supervisorByUserId, vendedores],
   );
 
   const resolveVendorsForAgenda = (agendaId: string, fallback?: string | null) => {
@@ -465,6 +671,14 @@ export default function Agenda() {
             .filter(Boolean),
         ),
       ).join(", ");
+      const supervisorNames = Array.from(
+        new Set(
+          selectedVendors
+            .map((vendor) => supervisorNameByVendorId.get(vendor.user_id) ?? "")
+            .map((name) => name.trim())
+            .filter(Boolean),
+        ),
+      ).join(", ");
 
       for (const vendor of selectedVendors) {
         const routeName = `Visitas ${displayDate} - ${vendor.display_name ?? "Vendedor"}`;
@@ -504,6 +718,7 @@ export default function Agenda() {
           assigned_to_name: vendor.display_name ?? vendor.user_id,
           visit_date: routeDate,
           perfil_visita: row.perfil_visita ?? null,
+          instructions: visitInstructions.trim() || null,
           route_id: route.id,
           created_by: session?.user.id ?? null,
         }));
@@ -537,7 +752,7 @@ export default function Agenda() {
 
         const { error: vendorError } = await supabase
           .from("agenda")
-          .update({ vendedor: vendorNames || null })
+          .update({ vendedor: vendorNames || null, supervisor: supervisorNames || null })
           .in("id", chunkIds);
         if (vendorError) {
           throw new Error(vendorError.message);
@@ -552,6 +767,7 @@ export default function Agenda() {
       setSelectedVendorIds([]);
       setVendorQuery("");
       setVisitDate("");
+      setVisitInstructions("");
       setShowGenerateModal(false);
       setRefreshKey((value) => value + 1);
     } catch (err) {
@@ -576,14 +792,18 @@ export default function Agenda() {
   const openScheduleModal = (row: AgendaRow) => {
     const visits = scheduledVisitsByAgenda[row.id] ?? [];
     const drafts = visits.map((visit) => {
-      const basePerfil = visit.perfil_visita ?? row.perfil_visita ?? "";
+      const basePerfil = visit.perfil_visita ?? "";
+      const singleTimeBase = getSingleTimePerfilBase(basePerfil);
       return {
         id: visit.id,
         vendorId: visit.assigned_to_user_id ?? "",
         vendorName: visit.assigned_to_name ?? "",
         date: visit.visit_date,
         perfil: basePerfil,
-        perfilCustom: Boolean(basePerfil && !isPresetPerfilVisita(basePerfil)),
+        instructions: visit.instructions ?? "",
+        perfilCustom: Boolean(basePerfil && !isPresetPerfilVisita(basePerfil) && !singleTimeBase),
+        perfilSingleTimeBase: singleTimeBase ?? "",
+        perfilSingleTimeValue: getSingleTimePerfilValue(basePerfil),
         routeId: visit.route_id ?? null,
       };
     });
@@ -605,6 +825,8 @@ export default function Agenda() {
     const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
     const fallbackDate = scheduleDrafts[0]?.date ?? local.toISOString().slice(0, 10);
     const fallbackPerfil = scheduleModalRow?.perfil_visita ?? "";
+    const singleTimeBase = getSingleTimePerfilBase(fallbackPerfil);
+    const isCustom = Boolean(fallbackPerfil && !isPresetPerfilVisita(fallbackPerfil) && !singleTimeBase);
     setScheduleDrafts((prev) => [
       ...prev,
       {
@@ -612,7 +834,16 @@ export default function Agenda() {
         vendorName: "",
         date: fallbackDate,
         perfil: fallbackPerfil,
-        perfilCustom: Boolean(fallbackPerfil && !isPresetPerfilVisita(fallbackPerfil)),
+        customTimes: isCustom
+          ? (() => {
+              const times = extractCustomTimes(fallbackPerfil);
+              return times.length ? times : [""];
+            })()
+          : [],
+        instructions: "",
+        perfilCustom: isCustom,
+        perfilSingleTimeBase: singleTimeBase ?? "",
+        perfilSingleTimeValue: getSingleTimePerfilValue(fallbackPerfil),
       },
     ]);
   };
@@ -625,6 +856,22 @@ export default function Agenda() {
 
   const removeScheduleDraft = (index: number) => {
     setScheduleDrafts((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const buildVisitPerfilPayload = (perfil: string) => {
+    const cleaned = perfil.replace(/\s+/g, " ").trim();
+    if (!cleaned) {
+      return { perfil_visita: null as string | null, perfil_visita_opcoes: null as string | null };
+    }
+    const singleTimeBase = getSingleTimePerfilBase(cleaned);
+    const isPreset = isPresetPerfilVisita(cleaned);
+    const customTimes = extractCustomTimes(cleaned);
+    const hasMultipleTimes = customTimes.length > 1;
+    const isCustom = !isPreset && !singleTimeBase;
+    return {
+      perfil_visita: cleaned,
+      perfil_visita_opcoes: hasMultipleTimes || isCustom ? cleaned : null,
+    };
   };
 
   const ensureRoute = async (vendorId: string, vendorName: string, dateValue: string) => {
@@ -748,6 +995,7 @@ export default function Agenda() {
           vendorById.get(draft.vendorId) ?? draft.vendorName ?? draft.vendorId ?? "Vendedor";
         if (!draft.id) {
           const routeId = await ensureRoute(draft.vendorId, vendorName, draft.date);
+          const perfilPayload = buildVisitPerfilPayload(draft.perfil);
           const { data, error } = await supabase
             .from("visits")
             .insert({
@@ -755,7 +1003,9 @@ export default function Agenda() {
               assigned_to_user_id: draft.vendorId,
               assigned_to_name: vendorName,
               visit_date: draft.date,
-              perfil_visita: draft.perfil.trim() || null,
+              perfil_visita: perfilPayload.perfil_visita,
+              perfil_visita_opcoes: perfilPayload.perfil_visita_opcoes,
+              instructions: draft.instructions.trim() || null,
               route_id: routeId,
               created_by: session?.user.id ?? null,
             })
@@ -772,9 +1022,11 @@ export default function Agenda() {
         const vendorChanged = (original.assigned_to_user_id ?? "") !== draft.vendorId;
         const dateChanged = original.visit_date !== draft.date;
         const perfilChanged = (original.perfil_visita ?? "") !== draft.perfil;
+        const instructionsChanged = (original.instructions ?? "") !== (draft.instructions ?? "");
 
         if (vendorChanged || dateChanged) {
           const routeId = await ensureRoute(draft.vendorId, vendorName, draft.date);
+          const perfilPayload = buildVisitPerfilPayload(draft.perfil);
           if (original.route_id && original.route_id !== routeId) {
             await removeRouteStop(original.route_id, original.agenda_id);
           }
@@ -786,16 +1038,21 @@ export default function Agenda() {
               assigned_to_user_id: draft.vendorId,
               assigned_to_name: vendorName,
               visit_date: draft.date,
-              perfil_visita: draft.perfil.trim() || null,
+              perfil_visita: perfilPayload.perfil_visita,
+              perfil_visita_opcoes: perfilPayload.perfil_visita_opcoes,
+              instructions: draft.instructions.trim() || null,
               route_id: routeId,
             })
             .eq("id", draft.id);
           if (error) throw new Error(error.message);
-        } else if (perfilChanged) {
+        } else if (perfilChanged || instructionsChanged) {
+          const perfilPayload = buildVisitPerfilPayload(draft.perfil);
           const { error } = await supabase
             .from("visits")
             .update({
-              perfil_visita: draft.perfil.trim() || null,
+              perfil_visita: perfilPayload.perfil_visita,
+              perfil_visita_opcoes: perfilPayload.perfil_visita_opcoes,
+              instructions: draft.instructions.trim() || null,
             })
             .eq("id", draft.id);
           if (error) throw new Error(error.message);
@@ -810,11 +1067,19 @@ export default function Agenda() {
             .filter(Boolean),
         ),
       ).join(", ");
+      const supervisorNames = Array.from(
+        new Set(
+          scheduleDrafts
+            .map((draft) => supervisorNameByVendorId.get(draft.vendorId) ?? "")
+            .map((name) => name.trim())
+            .filter(Boolean),
+        ),
+      ).join(", ");
 
       if (scheduleDrafts.length === 0) {
         const { error } = await supabase
           .from("agenda")
-          .update({ visit_generated_at: null, vendedor: null })
+          .update({ visit_generated_at: null, vendedor: null, supervisor: null })
           .eq("id", scheduleModalRow.id);
         if (error) throw new Error(error.message);
       } else {
@@ -827,16 +1092,20 @@ export default function Agenda() {
 
         const { error: vendorError } = await supabase
           .from("agenda")
-          .update({ vendedor: vendorNames || null })
+          .update({ vendedor: vendorNames || null, supervisor: supervisorNames || null })
           .eq("id", scheduleModalRow.id);
         if (vendorError) throw new Error(vendorError.message);
       }
 
       if (scheduleDrafts.length > 0) {
-        const resolvedPerfil =
-          scheduleDrafts
-            .map((draft) => draft.perfil.trim())
-            .find((value) => value.length > 0) ?? null;
+        const resolvedPerfilValues = Array.from(
+          new Set(
+            scheduleDrafts
+              .map((draft) => draft.perfil.replace(/\s+/g, " ").trim())
+              .filter((value) => value.length > 0),
+          ),
+        );
+        const resolvedPerfil = resolvedPerfilValues.length > 0 ? resolvedPerfilValues.join(" • ") : null;
         const currentPerfil = scheduleModalRow.perfil_visita ?? null;
 
         if (resolvedPerfil !== currentPerfil) {
@@ -848,20 +1117,28 @@ export default function Agenda() {
 
           const codigo = scheduleModalRow.cod_1?.trim() ?? "";
           const empresa = scheduleModalRow.empresa?.trim() ?? "";
-
-          let clientesQuery = supabase.from("clientes").update({ perfil_visita: resolvedPerfil });
-          let hasClienteFilter = false;
-          if (codigo) {
-            clientesQuery = clientesQuery.eq("codigo", codigo);
-            hasClienteFilter = true;
-          } else if (empresa) {
-            clientesQuery = clientesQuery.eq("empresa", empresa);
-            hasClienteFilter = true;
-          }
-
-          if (hasClienteFilter) {
-            const { error: clienteError } = await clientesQuery;
-            if (clienteError) throw new Error(clienteError.message);
+          const nomeFantasia = scheduleModalRow.nome_fantasia?.trim() ?? "";
+          if (codigo || empresa || nomeFantasia) {
+            let clientesQuery = supabase
+              .from("clientes")
+              .update({ perfil_visita: resolvedPerfil });
+            if (codigo && empresa && nomeFantasia) {
+              clientesQuery = clientesQuery.or(
+                `codigo.eq.${escapeOrValue(codigo)},empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
+              );
+            } else if (codigo) {
+              clientesQuery = clientesQuery.eq("codigo", codigo);
+            } else if (empresa && nomeFantasia) {
+              clientesQuery = clientesQuery.or(
+                `empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
+              );
+            } else if (empresa) {
+              clientesQuery = clientesQuery.eq("empresa", empresa);
+            } else {
+              clientesQuery = clientesQuery.eq("nome_fantasia", nomeFantasia);
+            }
+            const { error: clientePerfilError } = await clientesQuery;
+            if (clientePerfilError) throw new Error(clientePerfilError.message);
           }
 
           setData((prev) =>
@@ -881,13 +1158,21 @@ export default function Agenda() {
       setData((prev) =>
         prev.map((row) =>
           row.id === scheduleModalRow.id
-            ? { ...row, vendedor: scheduleDrafts.length ? vendorNames || null : null }
+            ? {
+                ...row,
+                vendedor: scheduleDrafts.length ? vendorNames || null : null,
+                supervisor: scheduleDrafts.length ? supervisorNames || null : null,
+              }
             : row,
         ),
       );
       setSelectedRow((prev) =>
         prev?.id === scheduleModalRow.id
-          ? { ...prev, vendedor: scheduleDrafts.length ? vendorNames || null : null }
+          ? {
+              ...prev,
+              vendedor: scheduleDrafts.length ? vendorNames || null : null,
+              supervisor: scheduleDrafts.length ? supervisorNames || null : null,
+            }
           : prev,
       );
       setScheduleRefreshKey((prev) => prev + 1);
@@ -919,7 +1204,7 @@ export default function Agenda() {
             <span className="leading-tight">{label}</span>
             {column.getIsSorted() ? (
               <span className="text-[10px] text-sea">
-                {column.getIsSorted() === "desc" ? "▼" : "▲"}
+                {column.getIsSorted() === "desc" ? "?" : "?"}
               </span>
             ) : null}
           </button>
@@ -976,8 +1261,15 @@ export default function Agenda() {
           const visits = scheduledVisitsByAgenda[rowId] ?? [];
           if (visits.length === 0) return null;
           const visitDate = visits[0]?.visit_date ?? null;
+          const firstInstructions = visits[0]?.instructions?.trim();
           const badgeText = formatVisitBadge(visitDate);
-          const titleText = visitDate ? `Visita agendada: ${formatDate(visitDate)}` : "Visita agendada";
+          const titleText = visitDate
+            ? `Visita agendada: ${formatDate(visitDate)}${
+                firstInstructions ? ` | Instrucoes: ${firstInstructions}` : ""
+              }`
+            : firstInstructions
+              ? `Instrucoes: ${firstInstructions}`
+              : "Visita agendada";
           return (
             <div className="flex items-center justify-center">
               <button
@@ -1190,7 +1482,7 @@ export default function Agenda() {
             />
           </div>
         ),
-        cell: (info) => info.getValue<string | null>() ?? "-",
+        cell: (info) => formatPerfilVisitaDisplay(info.getValue<string | null>()),
       },
     ];
     },
@@ -1201,8 +1493,6 @@ export default function Agenda() {
       openScheduleModal,
       selectedAgendaSet,
       scheduledVisitsByAgenda,
-      visitVendorsByAgenda,
-      vendorById,
       resolveVendorsForAgenda,
       resolveLastCompletedVidas,
       setFilters,
@@ -1331,7 +1621,7 @@ export default function Agenda() {
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="font-display text-2xl text-ink">Agenda</h2>
+        <h2 className="font-display text-2xl text-ink">Rotas</h2>
       </header>
 
       <section className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
@@ -1375,7 +1665,7 @@ export default function Agenda() {
 
             <div className="flex flex-col gap-1">
               <span className="text-[11px] font-semibold text-ink/70">Ultima visita</span>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 md:flex-nowrap">
                 <input
                   type="date"
                 value={filters.dateRanges.data_da_ultima_visita.from ?? ""}
@@ -1395,7 +1685,7 @@ export default function Agenda() {
                   }
                   id="agenda-duv-from"
                   name="agendaDuvFrom"
-                  className="min-w-[140px] flex-1 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                  className="w-52 shrink-0 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
                 />
                 <span className="text-xs text-ink/50">ate</span>
                 <input
@@ -1417,7 +1707,7 @@ export default function Agenda() {
                   }
                   id="agenda-duv-to"
                   name="agendaDuvTo"
-                  className="min-w-[140px] flex-1 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                  className="w-52 shrink-0 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
                 />
                 <span className="w-full text-left text-xs font-semibold text-ink/50 md:w-auto md:pt-2">
                   Ou
@@ -1477,31 +1767,34 @@ export default function Agenda() {
                   className="w-24 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
                 />
                 <label className="flex items-center gap-2 text-[11px] font-semibold text-ink/60">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(filters.dateRanges.data_da_ultima_visita.invert)}
-                    onChange={(event) =>
+                  <button
+                    type="button"
+                    onClick={() =>
                       setFilters((prev) => ({
                         ...prev,
                         dateRanges: {
-                          ...prev.dateRanges,
+                            ...prev.dateRanges,
                           data_da_ultima_visita: {
                             ...prev.dateRanges.data_da_ultima_visita,
-                            invert: event.target.checked,
+                            invert: !prev.dateRanges.data_da_ultima_visita.invert,
                           },
                         },
                       }))
                     }
-                    className="h-3.5 w-3.5 accent-sea"
-                  />
+                    aria-label="Alternar inversao do filtro de ultima visita"
+                    className={[
+                      "inline-flex h-6 w-6 items-center justify-center rounded-md border transition",
+                      filters.dateRanges.data_da_ultima_visita.invert
+                        ? "border-sea bg-sea/10 text-sea"
+                        : "border-sea/30 bg-white text-ink/50 hover:border-sea hover:text-sea",
+                    ].join(" ")}
+                  >
+                    <SquareCenterlineDashedHorizontal size={14} />
+                  </button>
                   Inverter
                 </label>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-ink/70">Vidas ultima visita</label>
-              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-2 md:ml-2">
+                  <label className="text-[11px] font-semibold text-ink/70">Vidas ultima visita</label>
                 <input
                   type="number"
                   inputMode="numeric"
@@ -1549,7 +1842,8 @@ export default function Agenda() {
                   name="agendaVidasTo"
                   className="w-24 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
                 />
-                <div className="ml-auto flex flex-wrap items-center gap-3">
+                </div>
+                <div className="ml-auto flex items-center gap-3">
                   <button
                     type="button"
                     onClick={clearFilters}
@@ -1557,27 +1851,29 @@ export default function Agenda() {
                   >
                     Limpar filtros
                   </button>
-                  {canGenerate && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setGenerateMessage(null);
-                        setShowGenerateModal(true);
-                      }}
-                      disabled={totalCount === 0}
-                      className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
-                    >
-                      Gerar visitas
-                    </button>
-                  )}
-                  {canGenerate && (
-                    <div className="text-xs text-ink/60 text-right">
-                      <div>Empresas: {totalCount}</div>
-                      <div>Selecionadas: {selectedAgendaIds.length}</div>
-                    </div>
-                  )}
                 </div>
               </div>
+              {canGenerate && (
+                <div className="mt-2 flex items-center justify-start gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGenerateMessage(null);
+                      setVisitInstructions("");
+                      setShowGenerateModal(true);
+                    }}
+                    disabled={totalCount === 0}
+                    className="inline-flex items-center gap-1 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                  >
+                    <MapPin size={14} />
+                    Gerar rota
+                  </button>
+                  <div className="text-xs text-ink/60 text-right">
+                    <div>Empresas: {totalCount}</div>
+                    <div>Selecionadas: {selectedAgendaIds.length}</div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1601,7 +1897,7 @@ export default function Agenda() {
           <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Gerar visitas</h3>
             <p className="mt-1 text-xs text-ink/60">
-              Selecione os vendedores, a data e as empresas marcadas na lista para gerar as visitas.
+              Selecione os vendedores, a data, as instrucoes e as empresas marcadas na lista para gerar as visitas.
             </p>
             <p className="mt-2 text-xs text-ink/60">
               Empresas selecionadas: {selectedAgendaIds.length}
@@ -1672,6 +1968,18 @@ export default function Agenda() {
                 />
               </label>
             </div>
+            <label className="mt-3 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              Instrucoes
+              <textarea
+                value={visitInstructions}
+                onChange={(event) => setVisitInstructions(event.target.value)}
+                id="agenda-generate-visit-instructions"
+                name="agendaGenerateVisitInstructions"
+                rows={3}
+                placeholder="Ex.: visitar recepcao primeiro e validar documentos pendentes."
+                className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+              />
+            </label>
 
             {generateMessage && (
               <p className="mt-3 text-xs text-ink/70">{generateMessage}</p>
@@ -1775,16 +2083,41 @@ export default function Agenda() {
                           value={
                             draft.perfilCustom
                               ? "__custom__"
-                              : draft.perfil
-                                ? draft.perfil
-                                : ""
+                              : draft.perfilSingleTimeBase || getSingleTimePerfilBase(draft.perfil) || normalizePerfilVisita(draft.perfil)
                           }
-                          onChange={(event) =>
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            if (value === "__custom__") {
+                              updateScheduleDraft(index, {
+                                perfilCustom: true,
+                                perfilSingleTimeBase: "",
+                                perfilSingleTimeValue: "",
+                                perfil: draft.perfilCustom ? draft.perfil : "",
+                                customTimes:
+                                  draft.perfilCustom && (draft.customTimes?.length ?? 0) > 0
+                                    ? draft.customTimes
+                                    : [""],
+                              });
+                              return;
+                            }
+                            if (value === "ALMOCO" || value === "JANTAR") {
+                              updateScheduleDraft(index, {
+                                perfilCustom: false,
+                                perfilSingleTimeBase: value,
+                                perfilSingleTimeValue: "",
+                                perfil: value,
+                                customTimes: [],
+                              });
+                              return;
+                            }
                             updateScheduleDraft(index, {
-                              perfilCustom: event.target.value === "__custom__",
-                              perfil: event.target.value === "__custom__" ? draft.perfil : event.target.value,
-                            })
-                          }
+                              perfilCustom: false,
+                              perfilSingleTimeBase: "",
+                              perfilSingleTimeValue: "",
+                              perfil: value,
+                              customTimes: [],
+                            });
+                          }}
                           disabled={scheduleSaving}
                           className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea disabled:opacity-60"
                         >
@@ -1796,14 +2129,87 @@ export default function Agenda() {
                           ))}
                           <option value="__custom__">Horario customizado</option>
                         </select>
-                        {draft.perfilCustom && (
+                        {!draft.perfilCustom &&
+                          ((draft.perfilSingleTimeBase || getSingleTimePerfilBase(draft.perfil)) === "ALMOCO" ||
+                            (draft.perfilSingleTimeBase || getSingleTimePerfilBase(draft.perfil)) === "JANTAR") && (
                           <input
-                            value={draft.perfil}
-                            onChange={(event) => updateScheduleDraft(index, { perfil: event.target.value })}
+                            type="time"
+                            value={draft.perfilSingleTimeValue ?? getSingleTimePerfilValue(draft.perfil)}
+                            onChange={(event) =>
+                              updateScheduleDraft(index, {
+                                perfilSingleTimeValue: event.target.value,
+                                perfil: event.target.value
+                                  ? `${draft.perfilSingleTimeBase || getSingleTimePerfilBase(draft.perfil)} ${event.target.value}`
+                                  : draft.perfilSingleTimeBase || getSingleTimePerfilBase(draft.perfil) || "",
+                              })
+                            }
                             disabled={scheduleSaving}
-                            placeholder="Informe o horario customizado"
                             className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-[11px] text-ink outline-none focus:border-sea disabled:opacity-60"
                           />
+                        )}
+                        {draft.perfilCustom && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {(draft.customTimes && draft.customTimes.length ? draft.customTimes : [""]).map(
+                              (time, timeIndex) => (
+                                <div
+                                  key={`${draft.id ?? index}-custom-${timeIndex}`}
+                                  className="flex items-center gap-2"
+                                >
+                                  <input
+                                    type="time"
+                                    value={time}
+                                    onChange={(event) => {
+                                      const base = draft.customTimes && draft.customTimes.length ? draft.customTimes : [""];
+                                      const next = [...base];
+                                      next[timeIndex] = event.target.value;
+                                      const cleaned = next.map((item) => item.trim()).filter(Boolean);
+                                      updateScheduleDraft(index, {
+                                        customTimes: next,
+                                        perfil: cleaned.join(" • "),
+                                      });
+                                    }}
+                                    disabled={scheduleSaving}
+                                    className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-[11px] text-ink outline-none focus:border-sea disabled:opacity-60"
+                                  />
+                                  {timeIndex === (draft.customTimes && draft.customTimes.length ? draft.customTimes.length : 1) - 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const base = draft.customTimes && draft.customTimes.length ? draft.customTimes : [""];
+                                        updateScheduleDraft(index, { customTimes: [...base, ""] });
+                                      }}
+                                      disabled={scheduleSaving}
+                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-60"
+                                      title="Adicionar horario"
+                                      aria-label="Adicionar horario"
+                                    >
+                                      +
+                                    </button>
+                                  )}
+                                  {(draft.customTimes?.length ?? 0) > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const base = draft.customTimes && draft.customTimes.length ? draft.customTimes : [""];
+                                        const next = base.filter((_, idx) => idx !== timeIndex);
+                                        const cleaned = next.map((item) => item.trim()).filter(Boolean);
+                                        updateScheduleDraft(index, {
+                                          customTimes: next.length ? next : [""],
+                                          perfil: cleaned.join(" • "),
+                                        });
+                                      }}
+                                      disabled={scheduleSaving}
+                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-60"
+                                      title="Remover horario"
+                                      aria-label="Remover horario"
+                                    >
+                                      -
+                                    </button>
+                                  )}
+                                </div>
+                              ),
+                            )}
+                          </div>
                         )}
                       </label>
                       <button
@@ -1815,6 +2221,19 @@ export default function Agenda() {
                         Remover
                       </button>
                     </div>
+                    <label className="mt-3 flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
+                      Instrucoes
+                      <textarea
+                        value={draft.instructions}
+                        onChange={(event) =>
+                          updateScheduleDraft(index, { instructions: event.target.value })
+                        }
+                        disabled={scheduleSaving}
+                        rows={2}
+                        placeholder="Instrucoes especificas para esta visita"
+                        className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea disabled:opacity-60"
+                      />
+                    </label>
                   </div>
                 ))
               )}
@@ -1866,7 +2285,7 @@ export default function Agenda() {
               onClick={chip.onRemove}
               className="rounded-full border border-sea/30 bg-white/80 px-3 py-1 text-xs text-sea hover:border-sea hover:text-seaLight"
             >
-              {chip.label} ✕
+              {chip.label} ?
             </button>
           ))}
         </div>
@@ -1921,8 +2340,15 @@ export default function Agenda() {
                           const scheduled = scheduledVisitsByAgenda[row.id] ?? [];
                           if (scheduled.length === 0) return null;
                           const visitDate = scheduled[0]?.visit_date ?? null;
+                          const firstInstructions = scheduled[0]?.instructions?.trim();
                           const badgeText = formatVisitBadge(visitDate);
-                          const titleText = visitDate ? `Visita agendada: ${formatDate(visitDate)}` : "Visita agendada";
+                          const titleText = visitDate
+                            ? `Visita agendada: ${formatDate(visitDate)}${
+                                firstInstructions ? ` | Instrucoes: ${firstInstructions}` : ""
+                              }`
+                            : firstInstructions
+                              ? `Instrucoes: ${firstInstructions}`
+                              : "Visita agendada";
                           return (
                             <button
                               type="button"
@@ -1944,7 +2370,7 @@ export default function Agenda() {
                         </span>
                         {row.perfil_visita && (
                           <span className="rounded-full bg-sand px-2 py-1 text-[10px] font-semibold text-ink/70">
-                            {row.perfil_visita}
+                            {formatPerfilVisitaDisplay(row.perfil_visita)}
                           </span>
                         )}
                       </div>
@@ -2159,4 +2585,7 @@ export default function Agenda() {
     </div>
   );
 }
+
+
+
 

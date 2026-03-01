@@ -1,7 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import {
-  CalendarDays,
   LayoutDashboard,
   LogOut,
   ChevronRight,
@@ -15,7 +14,7 @@ import {
   CheckSquare,
   Sun,
   Moon,
-  ClipboardList,
+  History,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { ROLE_LABELS } from "../types/roles";
@@ -29,11 +28,11 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { label: "Dashboard", to: "/", icon: LayoutDashboard, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
-  { label: "Agenda", to: "/agenda", icon: CalendarDays, roles: ["SUPERVISOR", "ASSISTENTE"] },
-  { label: "Visitas", to: "/visitas", icon: CalendarCheck, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
+  { label: "Rotas", to: "/agenda", icon: MapPin, roles: ["SUPERVISOR", "ASSISTENTE"] },
+  { label: "Agenda", to: "/visitas", icon: CalendarCheck, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
   { label: "Aceite digital", to: "/aceite-digital", icon: CheckSquare, roles: ["VENDEDOR"] },
-  { label: "Clientes", to: "/clientes", icon: Building2, roles: ["SUPERVISOR", "ASSISTENTE"] },
-  { label: "Logs", to: "/logs", icon: ClipboardList, roles: ["SUPERVISOR"] },
+  { label: "Empresas", to: "/clientes", icon: Building2, roles: ["SUPERVISOR", "ASSISTENTE"] },
+  { label: "Logs", to: "/logs", icon: History, roles: ["SUPERVISOR"] },
   { label: "Configuracoes", to: "/configuracoes", icon: Settings, roles: ["SUPERVISOR"] },
 ];
 
@@ -116,7 +115,7 @@ export default function AppLayout() {
       <div className="flex min-h-screen w-full flex-col gap-4 px-4 py-4 md:flex-row md:items-start md:gap-6 md:px-0 md:py-6">
         <aside
           className={[
-            "mb-6 hidden w-full shrink-0 rounded-none border border-sea/20 bg-gradient-to-b from-white via-white to-sand/60 shadow-card md:mb-0 md:sticky md:top-0 md:flex md:flex-col md:rounded-r-3xl md:border-l-0",
+            "mb-6 hidden w-full shrink-0 rounded-none border border-sea/20 bg-gradient-to-b from-white via-white to-sand/60 shadow-card md:fixed md:bottom-6 md:left-0 md:top-6 md:z-30 md:mb-0 md:flex md:flex-col md:overflow-y-auto md:rounded-r-3xl md:border-l-0",
             collapsed ? "p-4 md:w-20 md:py-6" : "p-5 md:w-56",
           ].join(" ")}
         >
@@ -227,7 +226,12 @@ export default function AppLayout() {
           </button>
         </aside>
 
-        <main className="min-w-0 flex-1 rounded-2xl border border-sea/15 bg-white/95 p-4 shadow-card md:mr-6 md:rounded-3xl md:p-6">
+        <main
+          className={[
+            "min-w-0 flex-1 rounded-2xl border border-sea/15 bg-white/95 p-4 shadow-card transition-[margin] duration-200 md:mr-6 md:rounded-3xl md:p-6",
+            collapsed ? "md:ml-24" : "md:ml-60",
+          ].join(" ")}
+        >
           <Outlet />
         </main>
       </div>

@@ -7,7 +7,6 @@
   corte: number | null;
   venc: number | null;
   valor: number | null;
-  tit: string | null;
   endereco: string | null;
   complemento: string | null;
   bairro: string | null;

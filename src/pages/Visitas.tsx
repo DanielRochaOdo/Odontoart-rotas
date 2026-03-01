@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { addDays, endOfMonth, endOfWeek, format, isAfter, isSameDay, isSameMonth, startOfMonth, startOfWeek } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, MapPin, Pencil } from "lucide-react";
@@ -6,9 +6,12 @@ import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { fetchVendedores } from "../lib/agendaApi";
 import { onProfilesUpdated } from "../lib/profileEvents";
+import { hydrateAgendaRowsFromClientes } from "../lib/clientesCanonical";
 import {
   PERFIL_VISITA_PRESETS,
   extractCustomTimes,
+  getSingleTimePerfilBase,
+  getSingleTimePerfilValue,
   isPresetPerfilVisita,
   normalizePerfilVisita,
 } from "../lib/perfilVisita";
@@ -25,10 +28,13 @@ type VisitRow = {
   completed_at: string | null;
   completed_vidas: number | null;
   no_visit_reason: string | null;
+  instructions: string | null;
   agenda?: {
     id: string;
     empresa: string | null;
     nome_fantasia: string | null;
+    pessoa: string | null;
+    contato: string | null;
     endereco: string | null;
     bairro: string | null;
     cidade: string | null;
@@ -99,8 +105,8 @@ const formatVisitDate = (value: string | null) => {
 
 const NO_VISIT_REASONS = [
   "NAO AUTORIZADO",
-  "NÃO CHEGOU A TEMPO",
-  "ENDEREÇO NAO LOCALIZADO",
+  "NÃƒO CHEGOU A TEMPO",
+  "ENDEREÃ‡O NAO LOCALIZADO",
   "AUSENTE NO DIA",
 ];
 
@@ -177,6 +183,25 @@ export default function Visitas() {
   >([]);
   const [selectedSupervisorId, setSelectedSupervisorId] = useState<string>("all");
   const restoredViewRef = useRef(false);
+  const pendingModalRestoreRef = useRef<{
+    confirmVisitId: string | null;
+    noVisit: { id: string; reason: string } | null;
+    completeVisit:
+      | {
+          id: string;
+          agendaId: string;
+          vidas: string;
+          perfil: string;
+          customManual: boolean;
+          customTime: string;
+          singleTimeBase: string;
+          singleTimeValue: string;
+          customOptions: string[];
+          customEditEnabled: boolean;
+          instructions: string;
+        }
+      | null;
+  } | null>(null);
 
   useEffect(() => {
     if (restoredViewRef.current) return;
@@ -216,8 +241,52 @@ export default function Visitas() {
       // ignore
     }
   }, [currentMonth, expandedVendor, selectedDate, selectedSupervisorId]);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("visitasModalState");
+      if (!raw) {
+        setRestoredModalState(true);
+        return;
+      }
+      const parsed = JSON.parse(raw) as {
+        confirmVisitId?: string | null;
+        noVisit?: { id: string; reason: string } | null;
+        completeVisit?: {
+          id: string;
+          agendaId: string;
+          vidas: string;
+          perfil: string;
+          customManual: boolean;
+          customTime: string;
+          singleTimeBase: string;
+          singleTimeValue: string;
+          customOptions: string[];
+          customEditEnabled: boolean;
+          instructions?: string;
+        } | null;
+      };
+	      pendingModalRestoreRef.current = {
+	        confirmVisitId: parsed.confirmVisitId ?? null,
+	        noVisit: parsed.noVisit ?? null,
+	        completeVisit: parsed.completeVisit
+	          ? {
+	              ...parsed.completeVisit,
+	              singleTimeBase: parsed.completeVisit.singleTimeBase ?? "",
+	              singleTimeValue: parsed.completeVisit.singleTimeValue ?? "",
+	              instructions: parsed.completeVisit.instructions ?? "",
+	            }
+	          : null,
+	      };
+    } catch {
+      // ignore
+    } finally {
+      setRestoredModalState(true);
+    }
+  }, []);
   const [confirmVisit, setConfirmVisit] = useState<VisitRow | null>(null);
   const [noVisit, setNoVisit] = useState<{ id: string; reason: string } | null>(null);
+  const [restoredModalState, setRestoredModalState] = useState(false);
   const [completeVisit, setCompleteVisit] = useState<{
     id: string;
     agendaId: string;
@@ -225,8 +294,11 @@ export default function Visitas() {
     perfil: string;
     customManual: boolean;
     customTime: string;
+    singleTimeBase: string;
+    singleTimeValue: string;
     customOptions: string[];
     customEditEnabled: boolean;
+    instructions: string;
   } | null>(null);
 
   useEffect(() => {
@@ -366,14 +438,28 @@ export default function Visitas() {
         setBlockMessage(null);
       }
 
-      const { data, error: supaError } = await supabase
+      let visitsQuery = supabase
         .from("visits")
         .select(
-          "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, agenda:agenda_id (id, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, perfil_visita, supervisor)",
+          "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, agenda:agenda_id (id, empresa, nome_fantasia, pessoa, contato, endereco, bairro, cidade, uf, situacao, perfil_visita, supervisor)",
         )
         .gte("visit_date", startDate)
         .lte("visit_date", effectiveEnd)
         .order("visit_date", { ascending: true });
+
+      if (isVendor) {
+        if (session?.user.id && profile?.display_name) {
+          visitsQuery = visitsQuery.or(
+            `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
+          );
+        } else if (session?.user.id) {
+          visitsQuery = visitsQuery.eq("assigned_to_user_id", session.user.id);
+        } else if (profile?.display_name) {
+          visitsQuery = visitsQuery.eq("assigned_to_name", profile.display_name);
+        }
+      }
+
+      const { data, error: supaError } = await visitsQuery;
 
       if (supaError) {
         setError(supaError.message);
@@ -387,7 +473,18 @@ export default function Visitas() {
           const agenda = Array.isArray(item.agenda) ? item.agenda[0] ?? null : item.agenda ?? null;
           return { ...item, agenda };
         }) as VisitRow[];
-        setVisits(normalized);
+        const hydratedAgenda = await hydrateAgendaRowsFromClientes(
+          normalized
+            .map((visit) => visit.agenda)
+            .filter((agenda): agenda is NonNullable<VisitRow["agenda"]> => Boolean(agenda)),
+        );
+        const agendaById = new Map(hydratedAgenda.map((agenda) => [agenda.id, agenda]));
+        setVisits(
+          normalized.map((visit) => {
+            if (!visit.agenda) return visit;
+            return { ...visit, agenda: agendaById.get(visit.agenda.id) ?? visit.agenda };
+          }),
+        );
       }
 
       setLoading(false);
@@ -463,6 +560,47 @@ export default function Visitas() {
     const key = format(selectedDate, "yyyy-MM-dd");
     return visitsByDate.get(key) ?? [];
   }, [selectedDate, visitsByDate]);
+
+  useEffect(() => {
+    if (!restoredModalState) return;
+    const pending = pendingModalRestoreRef.current;
+    if (!pending) return;
+
+    if (!confirmVisit && pending.confirmVisitId) {
+      const visit = visits.find((item) => item.id === pending.confirmVisitId);
+      if (visit) setConfirmVisit(visit);
+    }
+
+    if (!noVisit && pending.noVisit) {
+      const visitExists = visits.some((item) => item.id === pending.noVisit?.id);
+      if (visitExists) {
+        setNoVisit(pending.noVisit);
+      }
+    }
+
+    if (!completeVisit && pending.completeVisit) {
+      const visitExists = visits.some((item) => item.id === pending.completeVisit?.id);
+      if (visitExists) {
+        setCompleteVisit(pending.completeVisit);
+      }
+    }
+
+    pendingModalRestoreRef.current = null;
+  }, [completeVisit, confirmVisit, noVisit, restoredModalState, visits]);
+
+  useEffect(() => {
+    if (!restoredModalState) return;
+    const payload = {
+      confirmVisitId: confirmVisit?.id ?? null,
+      noVisit,
+      completeVisit,
+    };
+    try {
+      sessionStorage.setItem("visitasModalState", JSON.stringify(payload));
+    } catch {
+      // ignore
+    }
+  }, [completeVisit, confirmVisit, noVisit, restoredModalState]);
 
   const vendorById = useMemo(
     () => new Map(vendors.map((vendor) => [vendor.user_id, vendor])),
@@ -647,6 +785,7 @@ export default function Visitas() {
                 assigned_to_name: vendorName,
                 visit_date: state.date,
                 perfil_visita: visit.perfil_visita ?? null,
+                instructions: visit.instructions ?? null,
                 route_id: routeId,
                 created_by: session?.user.id ?? null,
               },
@@ -749,13 +888,17 @@ export default function Visitas() {
     const visitOptions = extractCustomTimes(visitOptionsRaw || visitPerfil);
     const customOptions =
       agendaOptions.length >= visitOptions.length ? agendaOptions : visitOptions;
-    const rawPerfil = agendaPerfil || visitOptionsRaw || visitPerfil;
+    const rawPerfil = visitOptionsRaw || visitPerfil || agendaPerfil;
+    const singleTimeBase = getSingleTimePerfilBase(rawPerfil);
+    const singleTimeValue = getSingleTimePerfilValue(rawPerfil);
     const normalized = normalizePerfilVisita(rawPerfil);
     const isPreset = normalized !== "" && isPresetPerfilVisita(normalized);
-    const hasCustomOptions = customOptions.length > 0 && !isPreset;
+    const hasCustomOptions = customOptions.length > 0 && !isPreset && !singleTimeBase;
     const selectedPerfil = hasCustomOptions
       ? customOptions.find((option) => option === visitPerfil) ?? customOptions[0]
-      : normalized;
+      : singleTimeBase && singleTimeValue
+        ? `${singleTimeBase} ${singleTimeValue}`
+        : normalized;
     setCompleteVisit({
       id: item.id,
       agendaId: item.agenda_id,
@@ -763,8 +906,11 @@ export default function Visitas() {
       perfil: selectedPerfil,
       customManual: false,
       customTime: hasCustomOptions ? selectedPerfil : "",
+      singleTimeBase: singleTimeBase ?? "",
+      singleTimeValue,
       customOptions: hasCustomOptions ? customOptions : [],
       customEditEnabled: false,
+      instructions: item.instructions ?? "",
     });
   };
 
@@ -837,7 +983,7 @@ export default function Visitas() {
       if (customTime && !normalizedOptions.includes(customTime)) {
         normalizedOptions.push(customTime);
       }
-      const perfilOpcoesString = normalizedOptions.length > 0 ? normalizedOptions.join(" � ") : null;
+      const perfilOpcoesString = normalizedOptions.length > 0 ? normalizedOptions.join(" • ") : null;
 
       const completedAt = new Date().toISOString();
       const { error: updateError } = await supabase
@@ -852,19 +998,6 @@ export default function Visitas() {
         .eq("id", completeVisit.id);
 
       if (updateError) throw new Error(updateError.message);
-
-      if (visit.agenda_id && visit.visit_date) {
-        const { error: agendaError } = await supabase
-          .from("agenda")
-          .update({
-            data_da_ultima_visita: visit.visit_date,
-            visit_completed_at: completedAt,
-            visit_completed_vidas: vidas,
-          })
-          .eq("id", visit.agenda_id);
-        if (agendaError) throw new Error(agendaError.message);
-      }
-
       setCompleteVisit(null);
       setRefreshKey((prev) => prev + 1);
     } catch (err) {
@@ -895,7 +1028,7 @@ export default function Visitas() {
       <header className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 className="font-display text-2xl text-ink">Visitas</h2>
+            <h2 className="font-display text-2xl text-ink">Agenda</h2>
             <p className="mt-2 text-sm text-ink/60">
               Calendario de visitas por vendedor. Clique em um dia para ver as visitas detalhadas.
             </p>
@@ -974,18 +1107,30 @@ export default function Visitas() {
                     type="button"
                     onClick={() => (isDisabled ? null : setSelectedDate(day))}
                     disabled={isDisabled}
-                    className={[
-                      "flex h-16 flex-col items-center justify-center rounded-xl border px-1 text-xs transition",
-                      isSameMonth(day, currentMonth) ? "border-sea/20 bg-white" : "border-mist/50 bg-white/50 text-ink/40",
-                      isSelected ? "border-sea bg-sand/60 shadow-sm" : "hover:border-sea hover:bg-sand/40",
-                      isDisabled ? "cursor-not-allowed opacity-40 hover:border-sea/20 hover:bg-white/50" : "",
-                    ].join(" ")}
-                  >
-                    <span className="text-sm font-semibold text-ink">{format(day, "d")}</span>
-                    <span className="text-[10px] text-ink/60">{count} visitas</span>
-                  </button>
-                );
-              })}
+	                    className={[
+	                      "flex h-16 flex-col items-center justify-center rounded-xl border px-1 text-xs transition",
+	                      isSameMonth(day, currentMonth)
+	                        ? isSelected
+	                          ? "border-orange-300"
+	                          : "border-sea/20 bg-white"
+	                        : isSelected
+	                          ? "border-orange-300"
+	                          : "border-mist/50 bg-white/50 text-ink/40",
+	                      isSelected
+	                        ? "bg-orange-200 shadow-lg shadow-orange-200/70 ring-2 ring-orange-200"
+	                        : "hover:border-sea hover:bg-sand/40",
+	                      isDisabled ? "cursor-not-allowed opacity-40 hover:border-sea/20 hover:bg-white/50" : "",
+	                    ].join(" ")}
+	                  >
+	                    <span className={["text-sm font-semibold", isSelected ? "text-green-700" : "text-ink"].join(" ")}>
+	                      {format(day, "d")}
+	                    </span>
+	                    <span className={["text-[10px]", isSelected ? "text-green-700/80" : "text-ink/60"].join(" ")}>
+	                      {count} visitas
+	                    </span>
+	                  </button>
+	                );
+	              })}
             </div>
 
             {loading && (
@@ -1053,6 +1198,16 @@ export default function Visitas() {
                                     </p>
                                     {item.agenda?.endereco ? (
                                       <p className="text-[11px] text-ink/50">{item.agenda.endereco}</p>
+                                    ) : null}
+                                    {item.agenda?.pessoa ? (
+                                      <p className="text-[11px] text-ink/50">
+                                        Pessoa: {item.agenda.pessoa}
+                                      </p>
+                                    ) : null}
+                                    {item.agenda?.contato ? (
+                                      <p className="text-[11px] text-ink/50">
+                                        Contato: {item.agenda.contato}
+                                      </p>
                                     ) : null}
                                   </div>
                                   <div className="flex items-center gap-2">
@@ -1155,9 +1310,12 @@ export default function Visitas() {
                                   <div className="mt-3 grid gap-1 text-[11px] text-ink/60">
                                     <span>Vendedor: {displayVendor}</span>
                                     <span>
-                                      Perfil visita: {item.agenda?.perfil_visita ?? item.perfil_visita ?? "-"}
+                                      Perfil visita: {item.perfil_visita ?? item.perfil_visita_opcoes ?? item.agenda?.perfil_visita ?? "-"}
                                     </span>
                                     <span>Data: {formatVisitDate(item.visit_date)}</span>
+                                    {item.instructions ? (
+                                      <span>Instrucoes: {item.instructions}</span>
+                                    ) : null}
                                     {isCompleted ? (
                                       <span className="rounded-lg border border-amber-300 bg-amber-100 px-2 py-1 text-[11px] font-semibold text-red-600">
                                         Visita registrada. Edicao bloqueada.
@@ -1171,9 +1329,12 @@ export default function Visitas() {
                                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                                     <div className="grid gap-1 text-[11px] text-ink/60">
                                       <span>
-                                        Perfil visita: {item.agenda?.perfil_visita ?? item.perfil_visita ?? "-"}
+                                        Perfil visita: {item.perfil_visita ?? item.perfil_visita_opcoes ?? item.agenda?.perfil_visita ?? "-"}
                                       </span>
                                       <span>Data: {formatVisitDate(item.visit_date)}</span>
+                                      {item.instructions ? (
+                                        <span>Instrucoes: {item.instructions}</span>
+                                      ) : null}
                                       {item.no_visit_reason ? (
                                         <span>Motivo: {item.no_visit_reason}</span>
                                       ) : null}
@@ -1224,6 +1385,11 @@ export default function Visitas() {
             <p className="mt-1 text-xs text-ink/60">
               Informe a quantidade de vidas e o horario da visita.
             </p>
+            {completeVisit.instructions ? (
+              <p className="mt-2 rounded-lg border border-sea/20 bg-sand/40 px-3 py-2 text-[11px] text-ink/70">
+                Instrucoes: {completeVisit.instructions}
+              </p>
+            ) : null}
 
             <div className="mt-4 grid gap-3">
               <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
@@ -1341,7 +1507,11 @@ export default function Visitas() {
                   </div>
                 ) : (
                   <select
-                    value={completeVisit.customManual ? "__custom__" : completeVisit.perfil}
+                    value={
+                      completeVisit.customManual
+                        ? "__custom__"
+                        : completeVisit.singleTimeBase || getSingleTimePerfilBase(completeVisit.perfil) || completeVisit.perfil
+                    }
                     onChange={(event) => {
                       const value = event.target.value;
                       if (value === "__custom__") {
@@ -1350,7 +1520,22 @@ export default function Visitas() {
                             ? {
                                 ...prev,
                                 customManual: true,
-                                perfil: prev.customTime,
+                                singleTimeBase: "",
+                                singleTimeValue: "",
+                                customTime: prev.customManual ? prev.customTime : "",
+                                perfil: prev.customManual ? prev.customTime : "",
+                              }
+                            : prev,
+                        );
+                      } else if (value === "ALMOCO" || value === "JANTAR") {
+                        setCompleteVisit((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                customManual: false,
+                                singleTimeBase: value,
+                                singleTimeValue: "",
+                                perfil: value,
                               }
                             : prev,
                         );
@@ -1360,6 +1545,8 @@ export default function Visitas() {
                             ? {
                                 ...prev,
                                 customManual: false,
+                                singleTimeBase: "",
+                                singleTimeValue: "",
                                 perfil: value,
                               }
                             : prev,
@@ -1378,6 +1565,30 @@ export default function Visitas() {
                   </select>
                 )}
               </label>
+              {((completeVisit.singleTimeBase || getSingleTimePerfilBase(completeVisit.perfil)) === "ALMOCO" ||
+                (completeVisit.singleTimeBase || getSingleTimePerfilBase(completeVisit.perfil)) === "JANTAR") && (
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  HH:MM
+                  <input
+                    type="time"
+                    value={completeVisit.singleTimeValue || getSingleTimePerfilValue(completeVisit.perfil)}
+                    onChange={(event) =>
+                      setCompleteVisit((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              singleTimeValue: event.target.value,
+                              perfil: event.target.value
+                                ? `${prev.singleTimeBase || getSingleTimePerfilBase(prev.perfil)} ${event.target.value}`
+                                : prev.singleTimeBase || getSingleTimePerfilBase(prev.perfil) || "",
+                            }
+                          : prev,
+                      )
+                    }
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+              )}
               {completeVisit.customManual && (
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
                   Horario customizado
@@ -1512,3 +1723,5 @@ export default function Visitas() {
     </div>
   );
 }
+
+
