@@ -1153,6 +1153,10 @@ export default function Dashboard() {
           <style>
             * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             body { margin: 0; padding: 16px; background: #ffffff; }
+
+            @media print {
+              .print\\:hidden { display: none !important; }
+            }
           </style>
         </head>
         <body>${root.outerHTML}</body>
@@ -1257,7 +1261,7 @@ export default function Dashboard() {
             <button
               type="button"
               onClick={exportDashboardPdf}
-              className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea print:hidden"
             >
               Exportar PDF
             </button>
@@ -1368,8 +1372,8 @@ export default function Dashboard() {
                   <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 md:col-span-5">
                     <p className="text-xs uppercase tracking-[0.2em] text-amber-700">Pendencias</p>
                     {!digitalSummary.hasAnyEntries ||
-                    (digitalSummary.pendingWeek.length === 0 &&
-                      digitalSummary.pendingToday.length === 0) ? (
+                      (digitalSummary.pendingWeek.length === 0 &&
+                        digitalSummary.pendingToday.length === 0) ? (
                       <p className="mt-2 text-sm text-amber-700">
                         Nao ha pendencias ate o momento.
                       </p>
@@ -1475,23 +1479,23 @@ export default function Dashboard() {
               ) : vendorVidasSeries.length === 0 ? (
                 <p className="mt-3 text-xs text-ink/60">Sem dados para o periodo.</p>
               ) : (
-                  <div className="mt-5 space-y-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink/60">
-                      <span>Total de vidas: {formatNumber(vendorVidasSummary.total)}</span>
-                      <span>
-                        Mostrando top 10{vendorVidasSummary.hiddenCount > 0 ? ` (+${vendorVidasSummary.hiddenCount} outros)` : ""}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-ink/60">
-                      <span className="inline-flex items-center gap-2">
-                        <span className="h-2.5 w-2.5 rounded-sm bg-sea" />
-                        Visitas
-                      </span>
-                      <span className="inline-flex items-center gap-2">
-                        <span className="h-2.5 w-2.5 rounded-sm bg-amber-400" />
-                        Aceite digital
-                      </span>
-                    </div>
+                <div className="mt-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink/60">
+                    <span>Total de vidas: {formatNumber(vendorVidasSummary.total)}</span>
+                    <span>
+                      Mostrando top 10{vendorVidasSummary.hiddenCount > 0 ? ` (+${vendorVidasSummary.hiddenCount} outros)` : ""}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-ink/60">
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-sm bg-sea" />
+                      Visitas
+                    </span>
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-sm bg-amber-400" />
+                      Aceite digital
+                    </span>
+                  </div>
                   <div className="flex items-end gap-4 overflow-x-auto pb-2">
                     {(() => {
                       const maxValue = vendorVidasSeries[0]?.total ?? 1;

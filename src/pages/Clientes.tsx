@@ -1722,7 +1722,7 @@ export default function Clientes() {
             </label>
             <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
               <span>
-                Endereco
+                Endereco + Nº
                 {!canEditEndereco && (
                   <span className="font-normal text-ink/50"> (Informe cidade e UF para editar o endereco.)</span>
                 )}
