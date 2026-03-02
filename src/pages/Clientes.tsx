@@ -173,7 +173,7 @@ const buildPerfilState = (value: string | null) => {
   };
 };
 
-const SITUACAO_OPTIONS = ["Ativo", "Inativo"] as const;
+const SITUACAO_OPTIONS = ["Ativo", "Suspenso/Inadimplente", "Cancelado"] as const;
 
 const normalizeHeader = (value: string) =>
   value
@@ -307,7 +307,7 @@ const HEADER_MAP: Record<string, string> = {
 const normalizeStatus = (value: string) => {
   const cleaned = value.trim().toLowerCase();
   if (cleaned === "ativo") return "Ativo";
-  if (cleaned === "inativo") return "Inativo";
+  if (cleaned === "cancelado") return "Cancelado";
   return null;
 };
 
@@ -362,7 +362,7 @@ export default function Clientes() {
   const [error, setError] = useState<string | null>(null);
   const [clientes, setClientes] = useState<ClienteRow[]>([]);
   const [search, setSearch] = useState("");
-  const [situacaoFilter, setSituacaoFilter] = useState<"" | "Ativo" | "Inativo">("");
+  const [situacaoFilter, setSituacaoFilter] = useState<"" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado">("");
 
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
@@ -493,7 +493,7 @@ export default function Clientes() {
       }
       const parsed = JSON.parse(raw) as Partial<{
         search: string;
-        situacaoFilter: "" | "Ativo" | "Inativo";
+        situacaoFilter: "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado";
         selectedId: string | null;
         isEditing: boolean;
         historySupervisorId: string;
@@ -1831,7 +1831,7 @@ export default function Clientes() {
           )}
           <select
             value={situacaoFilter}
-            onChange={(event) => setSituacaoFilter(event.target.value as "" | "Ativo" | "Inativo")}
+            onChange={(event) => setSituacaoFilter(event.target.value as "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado")}
             className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
           >
             <option value="">Todas situacoes</option>

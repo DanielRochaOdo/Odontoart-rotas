@@ -124,7 +124,7 @@ const normalizeSituacao = (value: unknown): string | null => {
   if (!text) return null;
   const cleaned = text.toLowerCase();
   if (cleaned.startsWith("ativo")) return "Ativo";
-  if (cleaned.startsWith("inativo")) return "Inativo";
+  if (cleaned.startsWith("cancelado")) return "Cancelado";
   return text;
 };
 

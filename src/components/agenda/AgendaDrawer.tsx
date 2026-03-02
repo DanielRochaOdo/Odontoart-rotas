@@ -107,7 +107,7 @@ const sanitizeDecimal = (value: string) => {
   return `${integerPart}${separator}${decimalPart}`;
 };
 
-const SITUACAO_OPTIONS = ["Ativo", "Inativo"];
+const SITUACAO_OPTIONS = ["Ativo", "Suspenso/Inadimplente", "Cancelado"];
 
 const NUMERIC_ONLY_FIELDS = new Set(["cod_1", "corte", "venc"]);
 const DECIMAL_FIELDS = new Set(["valor"]);
