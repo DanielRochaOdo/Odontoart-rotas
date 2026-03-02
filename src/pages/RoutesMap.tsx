@@ -198,7 +198,7 @@ export default function RoutesMap() {
   const [filterOptions, setFilterOptions] = useState<Record<string, string[]>>({});
 
   // ====== SELEÇÃO POR RAIO (AGORA COM 1KM) ======
-  const [radiusKm, setRadiusKm] = useState<1 | 3 | 5 | 10>(3);
+  const [radiusKm, setRadiusKm] = useState<0.5 | 1 | 3 | 5 | 10>(1);
   const [radiusMode, setRadiusMode] = useState(true);
   const [radiusCenter, setRadiusCenter] = useState<L.LatLng | null>(null);
   const [radiusReplaceSelection, setRadiusReplaceSelection] = useState(true);
@@ -824,9 +824,10 @@ export default function RoutesMap() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <select
                   value={radiusKm}
-                  onChange={(e) => setRadiusKm(Number(e.target.value) as 1 | 3 | 5 | 10)}
+                  onChange={(e) => setRadiusKm(Number(e.target.value) as 0.5 | 1 | 3 | 5 | 10)}
                   className="min-w-[120px] rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
                 >
+                  <option value={0.5}>500 m</option>
                   <option value={1}>1 km</option>
                   <option value={3}>3 km</option>
                   <option value={5}>5 km</option>
