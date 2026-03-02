@@ -115,8 +115,8 @@ export default function AppLayout() {
       <div className="flex min-h-screen w-full flex-col gap-4 px-4 py-4 md:flex-row md:items-start md:gap-6 md:px-0 md:py-6">
         <aside
           className={[
-            "mb-6 hidden w-full shrink-0 rounded-none border border-sea/20 bg-gradient-to-b from-white via-white to-sand/60 shadow-card md:fixed md:bottom-6 md:left-0 md:top-6 md:z-30 md:mb-0 md:flex md:flex-col md:overflow-y-auto md:rounded-r-3xl md:border-l-0",
-            collapsed ? "p-4 md:w-20 md:py-6" : "p-5 md:w-56",
+            "mb-6 hidden w-full shrink-0 rounded-none border border-sea/20 bg-gradient-to-b from-white via-white to-sand/60 shadow-card md:fixed md:bottom-4 md:left-0 md:top-4 md:z-30 md:mb-0 md:flex md:flex-col md:overflow-y-auto md:overflow-x-hidden md:rounded-r-3xl md:border-l-0 no-scrollbar",
+            collapsed ? "p-4 md:w-24 md:py-5" : "p-5 md:w-60",
           ].join(" ")}
         >
           {collapsed ? (
@@ -229,7 +229,7 @@ export default function AppLayout() {
         <main
           className={[
             "min-w-0 flex-1 rounded-2xl border border-sea/15 bg-white/95 p-4 shadow-card transition-[margin] duration-200 md:mr-6 md:rounded-3xl md:p-6",
-            collapsed ? "md:ml-24" : "md:ml-60",
+            collapsed ? "md:ml-28" : "md:ml-64",
           ].join(" ")}
         >
           <Outlet />
