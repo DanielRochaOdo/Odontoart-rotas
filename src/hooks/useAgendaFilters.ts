@@ -12,6 +12,7 @@ const FILTER_KEYS = [
   "grupo",
   "perfil_visita",
   "empresa_nome",
+  "situacao",
 ] as const;
 
 const makeEmptyFilters = (): AgendaFilters => ({
@@ -26,6 +27,7 @@ const makeEmptyFilters = (): AgendaFilters => ({
     grupo: [],
     perfil_visita: [],
     empresa_nome: [],
+    situacao: [],
   },
   dateRanges: {
     data_da_ultima_visita: {},

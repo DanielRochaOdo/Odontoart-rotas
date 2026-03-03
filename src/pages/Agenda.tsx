@@ -45,6 +45,7 @@ const FILTER_SOURCES: Record<string, string[]> = {
   grupo: ["grupo"],
   perfil_visita: ["perfil_visita"],
   empresa_nome: ["empresa"],
+  situacao: ["situacao"],
 };
 
 const FILTER_LABELS: Record<string, string> = {
@@ -57,6 +58,7 @@ const FILTER_LABELS: Record<string, string> = {
   grupo: "Grupo",
   perfil_visita: "Perfil Visita",
   empresa_nome: "Empresa",
+  situacao: "Situacao",
 };
 
 const parseDateValue = (value: string) => {

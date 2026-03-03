@@ -100,6 +100,7 @@ const FILTER_SOURCES: Record<string, string[]> = {
   vendedor: ["vendedor"],
   grupo: ["grupo"],
   perfil_visita: ["perfil_visita"],
+  situacao: ["situacao"],
 };
 
 const FILTER_LABELS: Record<string, string> = {
@@ -110,6 +111,7 @@ const FILTER_LABELS: Record<string, string> = {
   vendedor: "Vendedor",
   grupo: "Grupo",
   perfil_visita: "Perfil visita",
+  situacao: "Situacao",
 };
 
 const normalize = (v: string | null | undefined) =>
@@ -327,6 +329,7 @@ export default function RoutesMap() {
         grupo: r.grupo ?? "",
         perfil_visita: r.perfil_visita ?? "",
         empresa_nome: r.empresa ?? r.nome_fantasia ?? "",
+        situacao: r.situacao ?? "",
       };
 
       for (const [k, vals] of Object.entries(filters.columns)) {

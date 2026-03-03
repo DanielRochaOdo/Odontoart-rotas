@@ -19,6 +19,21 @@ const GLOBAL_SEARCH_COLUMNS = [
 const normalizeOption = (value: string) =>
   value.trim().replace(/\s+/g, " ").toUpperCase();
 
+const SITUACAO_OPTIONS = ["Ativo", "Suspenso/Inadimplente", "Cancelado"] as const;
+
+const buildSituacaoRawMap = () => {
+  const rawMap = new Map<string, string[]>();
+  rawMap.set(normalizeOption("Ativo"), ["Ativo", "ATIVO"]);
+  rawMap.set(normalizeOption("Suspenso/Inadimplente"), [
+    "Suspenso/Inadimplente",
+    "Suspenso/Inadimlente",
+    "SUSPENSO/INADIMPLENTE",
+    "SUSPENSO/INADIMLENTE",
+  ]);
+  rawMap.set(normalizeOption("Cancelado"), ["Cancelado", "CANCELADO"]);
+  return rawMap;
+};
+
 const normalizeMatchKey = (value: string) =>
   normalizeOption(value)
     .normalize("NFD")
@@ -501,6 +516,12 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
   const cached = optionsCache.get(filterKey);
   if (cached) {
     return cached.options;
+  }
+
+  if (filterKey === "situacao") {
+    const options = [...SITUACAO_OPTIONS];
+    optionsCache.set(filterKey, { options, rawMap: buildSituacaoRawMap() });
+    return options;
   }
 
   const normalizedMap = new Map<string, Set<string>>();
