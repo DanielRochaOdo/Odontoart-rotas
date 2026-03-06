@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { ROLE_LABELS } from "../types/roles";
+import PwaInstallHint from "../components/PwaInstallHint";
 
 type NavItem = {
   label: string;
@@ -109,6 +110,9 @@ export default function AppLayout() {
           >
             <Menu size={18} />
           </button>
+        </div>
+        <div className="px-4 pt-3">
+          <PwaInstallHint />
         </div>
       </div>
 
