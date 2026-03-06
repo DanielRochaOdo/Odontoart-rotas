@@ -10,6 +10,8 @@ type ClienteCanonicalRow = {
   empresa: string | null;
   pessoa: string | null;
   contato: string | null;
+  grupo: string | null;
+  obs_comercial: string | null;
   nome_fantasia: string | null;
   complemento: string | null;
   perfil_visita: string | null;
@@ -30,6 +32,8 @@ type AgendaSharedLike = {
   empresa?: string | null;
   pessoa?: string | null;
   contato?: string | null;
+  grupo?: string | null;
+  obs_contrato_1?: string | null;
   nome_fantasia?: string | null;
   complemento?: string | null;
   perfil_visita?: string | null;
@@ -90,7 +94,7 @@ export const hydrateAgendaRowsFromClientes = async <T extends AgendaSharedLike>(
     const { data, error } = await supabase
       .from("clientes")
       .select(
-        "codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf",
+        "codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, grupo, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf",
       )
       .in("codigo", codigos);
     if (error) throw new Error(error.message);
@@ -103,7 +107,7 @@ export const hydrateAgendaRowsFromClientes = async <T extends AgendaSharedLike>(
 
   if (empresas.length > 0 || fantasias.length > 0) {
     let query = supabase.from("clientes").select(
-      "codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf",
+      "codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, grupo, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf",
     );
     if (empresas.length > 0 && fantasias.length > 0) {
       query = query.or(`empresa.in.(${empresas.map((v) => `"${v.replace(/"/g, '\\"')}"`).join(",")}),nome_fantasia.in.(${fantasias.map((v) => `"${v.replace(/"/g, '\\"')}"`).join(",")})`);
@@ -138,6 +142,8 @@ export const hydrateAgendaRowsFromClientes = async <T extends AgendaSharedLike>(
       empresa: canonical.empresa,
       pessoa: canonical.pessoa,
       contato: canonical.contato,
+      grupo: canonical.grupo,
+      obs_contrato_1: canonical.obs_comercial,
       nome_fantasia: canonical.nome_fantasia,
       complemento: canonical.complemento,
       perfil_visita: canonical.perfil_visita,

@@ -99,6 +99,8 @@ type ImportPayload = {
   empresa?: string | null;
   pessoa?: string | null;
   contato?: string | null;
+  grupo?: string | null;
+  obs_comercial?: string | null;
   situacao?: string | null;
   perfil_visita?: string | null;
   endereco?: string | null;
@@ -136,9 +138,11 @@ const buildClientePayloadFromImport = (payload: ImportPayload) => ({
   empresa: payload.empresa ?? null,
   pessoa: payload.pessoa ?? null,
   contato: normalizeContato(payload.contato ?? ""),
+  grupo: payload.grupo ?? null,
+  obs_comercial: payload.obs_comercial ?? null,
   complemento: payload.complemento ?? null,
   perfil_visita: payload.perfil_visita ?? null,
-  situacao: payload.situacao ?? "Ativo",
+  situacao: "Ativo",
   endereco: payload.endereco ?? null,
   bairro: payload.bairro ?? null,
   cidade: payload.cidade ?? null,
@@ -185,25 +189,22 @@ const normalizeHeader = (value: string) =>
 
 const IMPORT_NUMERIC_FIELDS = new Set(["corte", "venc"]);
 const sanitizeDigits = (value: string) => value.replace(/\D/g, "");
-
-const formatContato = (value: string) => {
-  const digits = sanitizeDigits(value).slice(0, 11);
-  if (!digits) return "";
-  const area = digits.slice(0, 2);
-  const first = digits.slice(2, 3);
-  const middle = digits.slice(3, 7);
-  const last = digits.slice(7, 11);
-  if (digits.length <= 2) return `(${area}`;
-  let formatted = `(${area})`;
-  if (first) formatted += ` ${first}`;
-  if (middle) formatted += ` ${middle}`;
-  if (last) formatted += ` ${last}`;
-  return formatted;
-};
+const sanitizeContatoInput = (value: string) =>
+  value
+    .replace(/\./g, ",")
+    .replace(/[^\d,]/g, "")
+    .replace(/,+/g, ",")
+    .replace(/^,+/, "");
 
 const normalizeContato = (value: string) => {
-  const digits = sanitizeDigits(value);
-  return digits ? formatContato(digits) : null;
+  const contatos = sanitizeContatoInput(value)
+    .replace(/^,+|,+$/g, "")
+    .split(",")
+    .map((item) => sanitizeDigits(item).slice(0, 11))
+    .map((digits) => (digits ? digits : ""))
+    .filter(Boolean);
+  if (!contatos.length) return null;
+  return contatos.join(", ");
 };
 
 const parseImportCurrency = (value: string) => {
@@ -293,6 +294,11 @@ const HEADER_MAP: Record<string, string> = {
   empresa: "empresa",
   pessoa: "pessoa",
   contato: "contato",
+  grupo: "grupo",
+  "obs comercial": "obs_comercial",
+  obs_comercial: "obs_comercial",
+  "obs. comercial": "obs_comercial",
+  "observacao comercial": "obs_comercial",
   situacao: "situacao",
   "perfil visita": "perfil_visita",
   perfil: "perfil_visita",
@@ -382,6 +388,8 @@ export default function Clientes() {
     empresa: "",
     pessoa: "",
     contato: "",
+    grupo: "",
+    obs_comercial: "",
     situacao: "Ativo",
     endereco: "",
     complemento: "",
@@ -414,6 +422,8 @@ export default function Clientes() {
     empresa: "",
     pessoa: "",
     contato: "",
+    grupo: "",
+    obs_comercial: "",
     situacao: "",
     endereco: "",
     complemento: "",
@@ -595,7 +605,9 @@ export default function Clientes() {
       cep: selected.cep ?? "",
       empresa: selected.empresa ?? "",
       pessoa: selected.pessoa ?? "",
-      contato: selected.contato ?? "",
+      contato: sanitizeContatoInput(selected.contato ?? ""),
+      grupo: selected.grupo ?? "",
+      obs_comercial: selected.obs_comercial ?? "",
       situacao: selected.situacao ?? "Ativo",
       endereco: selected.endereco ?? "",
       complemento: selected.complemento ?? "",
@@ -811,6 +823,8 @@ export default function Clientes() {
             cliente.empresa,
             cliente.pessoa,
             cliente.contato,
+            cliente.grupo,
+            cliente.obs_comercial,
             cliente.situacao,
             cliente.cidade,
             cliente.uf,
@@ -868,6 +882,8 @@ export default function Clientes() {
         empresa: form.empresa.trim() || null,
         pessoa: form.pessoa.trim() || null,
         contato: normalizeContato(form.contato),
+        grupo: form.grupo.trim() || null,
+        obs_comercial: form.obs_comercial.trim() || null,
         perfil_visita: perfilCreate.perfil || null,
         situacao: form.situacao.trim() || "Ativo",
         endereco: form.endereco.trim() || null,
@@ -892,6 +908,8 @@ export default function Clientes() {
         empresa: "",
         pessoa: "",
         contato: "",
+        grupo: "",
+        obs_comercial: "",
         situacao: "Ativo",
         endereco: "",
         complemento: "",
@@ -1081,6 +1099,8 @@ export default function Clientes() {
         empresa: editForm.empresa.trim() || null,
         pessoa: editForm.pessoa.trim() || null,
         contato: normalizeContato(editForm.contato),
+        grupo: editForm.grupo.trim() || null,
+        obs_comercial: editForm.obs_comercial.trim() || null,
         perfil_visita: perfilEdit.perfil || null,
         situacao: editForm.situacao.trim() || "Ativo",
         endereco: editForm.endereco.trim() || null,
@@ -1201,12 +1221,13 @@ export default function Clientes() {
       "empresa",
       "pessoa",
       "contato",
+      "grupo",
+      "obs_comercial",
       "corte",
       "vencimento",
       "valor",
       "data_ultima_visita",
       "perfil_visita",
-      "situacao",
       "cidade",
       "uf",
       "endereco",
@@ -1214,7 +1235,26 @@ export default function Clientes() {
       "bairro",
       "cep",
     ];
-    const sheet = XLSX.utils.aoa_to_sheet([headers]);
+    const sampleRow = [
+      "",
+      "",
+      "",
+      "85999999999,85988888888",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+    ];
+    const sheet = XLSX.utils.aoa_to_sheet([headers, sampleRow]);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, sheet, "CLIENTES");
     XLSX.writeFile(workbook, "modelo_clientes.xlsx");
@@ -1272,7 +1312,6 @@ export default function Clientes() {
             record[target] = target === "cep" ? formatCep(cleaned) : cleaned;
           });
 
-          const situacaoValue = record.situacao ? normalizeStatus(record.situacao) : null;
           const corteValue = record.corte ? Number(record.corte) : null;
           const vencValue = record.venc ? Number(record.venc) : null;
           const parsedCorte = Number.isFinite(corteValue ?? NaN) ? corteValue : null;
@@ -1292,7 +1331,9 @@ export default function Clientes() {
             empresa: record.empresa ?? null,
             pessoa: record.pessoa ?? null,
             contato: normalizeContato(record.contato ?? ""),
-            situacao: situacaoValue ?? record.situacao ?? "Ativo",
+            grupo: record.grupo ?? null,
+            obs_comercial: record.obs_comercial ?? null,
+            situacao: "Ativo",
             perfil_visita: record.perfil_visita ?? null,
             endereco: record.endereco ?? null,
             complemento: record.complemento ?? null,
@@ -1324,10 +1365,12 @@ export default function Clientes() {
               empresa: payload.empresa ?? null,
               pessoa: payload.pessoa ?? null,
               contato: payload.contato ?? null,
+              grupo: payload.grupo ?? null,
+              obs_comercial: payload.obs_comercial ?? null,
               nome_fantasia: null,
               complemento: payload.complemento ?? null,
               perfil_visita: payload.perfil_visita ?? null,
-              situacao: payload.situacao ?? "Ativo",
+              situacao: "Ativo",
               endereco: payload.endereco ?? null,
               bairro: payload.bairro ?? null,
               cidade: payload.cidade ?? null,
@@ -1342,12 +1385,15 @@ export default function Clientes() {
       });
 
       const checkable = payloads.filter((item) => {
+        const hasBairro = Boolean(item.bairro?.trim());
+        if (hasBairro) return false;
         const cepDigits = sanitizeCep(item.cep ?? "");
-        if (cepDigits.length === 8) return true;
+        const hasCep = cepDigits.length === 8;
         const road = item.endereco?.trim() ?? "";
         const city = item.cidade?.trim() ?? "";
         const state = item.uf?.trim() ?? "";
-        return Boolean(road && city && state);
+        const canCheckAddress = Boolean(road && city && state);
+        return canCheckAddress || hasCep;
       });
 
       setImportTotal(checkable.length);
@@ -1357,19 +1403,18 @@ export default function Clientes() {
         let processed = 0;
         const lastRequestAt = { current: 0 };
         for (const item of checkable) {
+          const hasBairro = Boolean(item.bairro?.trim());
+          if (hasBairro) {
+            processed += 1;
+            setImportProgress(processed);
+            continue;
+          }
           const cepDigits = sanitizeCep(item.cep ?? "");
           const hasCep = cepDigits.length === 8;
           const road = item.endereco?.trim() ?? "";
           const city = item.cidade?.trim() ?? "";
           const state = item.uf?.trim() ?? "";
           const canCheckAddress = Boolean(road && city && state);
-          const hasRequest = hasCep || canCheckAddress;
-
-          if (!hasRequest) {
-            processed += 1;
-            setImportProgress(processed);
-            continue;
-          }
 
           const now = Date.now();
           const wait = Math.max(0, 1000 - (now - lastRequestAt.current));
@@ -1379,13 +1424,22 @@ export default function Clientes() {
           lastRequestAt.current = Date.now();
 
           try {
-            if (hasCep) {
-              const mapped = await fetchNominatimByCep(cepDigits);
+            if (canCheckAddress) {
+              const mapped = await fetchNominatimByAddress(road, city, state);
               if (mapped?.bairro) {
                 item.bairro = mapped.bairro;
               }
-            } else if (canCheckAddress) {
-              const mapped = await fetchNominatimByAddress(road, city, state);
+              if (mapped?.cep && sanitizeCep(item.cep ?? "").length !== 8) {
+                item.cep = formatCep(mapped.cep);
+              }
+              if (!item.bairro && hasCep) {
+                const mappedByCep = await fetchNominatimByCep(cepDigits);
+                if (mappedByCep?.bairro) {
+                  item.bairro = mappedByCep.bairro;
+                }
+              }
+            } else if (hasCep) {
+              const mapped = await fetchNominatimByCep(cepDigits);
               if (mapped?.bairro) {
                 item.bairro = mapped.bairro;
               }
@@ -1521,10 +1575,27 @@ export default function Clientes() {
             <input
               value={form.contato}
               onChange={(event) =>
-                setForm((prev) => ({ ...prev, contato: formatContato(event.target.value) }))
+                setForm((prev) => ({ ...prev, contato: sanitizeContatoInput(event.target.value) }))
               }
-              inputMode="numeric"
-              placeholder="(00) 0 0000 0000"
+              placeholder="85999999999,85988888888"
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+            Grupo
+            <input
+              value={form.grupo}
+              onChange={(event) => setForm((prev) => ({ ...prev, grupo: event.target.value }))}
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
+            Obs comercial
+            <input
+              value={form.obs_comercial}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, obs_comercial: event.target.value }))
+              }
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
           </label>
@@ -1893,6 +1964,14 @@ export default function Clientes() {
                     {cliente.contato ? (
                       <div className="text-[11px] text-ink/50">Contato: {cliente.contato}</div>
                     ) : null}
+                    {cliente.grupo ? (
+                      <div className="text-[11px] text-ink/50">Grupo: {cliente.grupo}</div>
+                    ) : null}
+                    {cliente.obs_comercial ? (
+                      <div className="text-[11px] text-ink/50">
+                        Obs comercial: {cliente.obs_comercial}
+                      </div>
+                    ) : null}
                     {cliente.situacao ? (
                       <div className="mt-1 text-[11px] text-ink/50">
                         Situacao: {cliente.situacao}
@@ -2003,10 +2082,32 @@ export default function Clientes() {
                   <input
                     value={editForm.contato}
                     onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, contato: formatContato(event.target.value) }))
+                      setEditForm((prev) => ({
+                        ...prev,
+                        contato: sanitizeContatoInput(event.target.value),
+                      }))
                     }
-                    inputMode="numeric"
-                    placeholder="(00) 0 0000 0000"
+                    placeholder="85999999999,85988888888"
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+                  Grupo
+                  <input
+                    value={editForm.grupo}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, grupo: event.target.value }))
+                    }
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-9">
+                  Obs comercial
+                  <input
+                    value={editForm.obs_comercial}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, obs_comercial: event.target.value }))
+                    }
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
@@ -2312,6 +2413,8 @@ export default function Clientes() {
                   ["Empresa", selected.empresa],
                   ["Pessoa", selected.pessoa],
                   ["Contato", selected.contato],
+                  ["Grupo", selected.grupo],
+                  ["Obs comercial", selected.obs_comercial],
                   ["Situacao", selected.situacao ?? "Ativo"],
                   ["Perfil visita", formatPerfilDisplay(selected.perfil_visita)],
                   ["Endereco", selected.endereco],

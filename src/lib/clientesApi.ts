@@ -11,6 +11,8 @@ const normalizeAgendaKeyPart = (value?: string | null) =>
     .replace(/\s+/g, " ");
 const buildAgendaDedupeKey = (empresa?: string | null, nomeFantasia?: string | null) =>
   `${normalizeAgendaKeyPart(empresa)}|${normalizeAgendaKeyPart(nomeFantasia)}||`;
+const CLIENTES_SELECT_COLUMNS =
+  "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, grupo, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at";
 
 const normalizePerfilTimes = (value: string | null) => {
   if (!value) return { perfil: null as string | null, opcoes: null as string | null };
@@ -33,6 +35,8 @@ const upsertAgendaFromClientesPayloads = async (
     empresa?: string | null;
     pessoa?: string | null;
     contato?: string | null;
+    grupo?: string | null;
+    obs_comercial?: string | null;
     nome_fantasia?: string | null;
     complemento?: string | null;
     perfil_visita?: string | null;
@@ -58,6 +62,8 @@ const upsertAgendaFromClientesPayloads = async (
         empresa,
         pessoa: payload.pessoa ?? null,
         contato: payload.contato ?? null,
+        grupo: payload.grupo ?? null,
+        obs_contrato_1: payload.obs_comercial ?? null,
         nome_fantasia: nomeFantasia,
         complemento: payload.complemento ?? null,
         perfil_visita: payload.perfil_visita ?? null,
@@ -109,11 +115,7 @@ const upsertAgendaFromClientesPayloads = async (
 };
 
 export const fetchClientes = async () => {
-  const { data, error } = await supabase
-    .from("clientes")
-    .select(
-      "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
-    );
+  const { data, error } = await supabase.from("clientes").select(CLIENTES_SELECT_COLUMNS);
 
   if (error) throw new Error(error.message);
   return (data ?? []) as ClienteRow[];
@@ -129,6 +131,8 @@ export const createCliente = async (payload: {
   empresa?: string | null;
   pessoa?: string | null;
   contato?: string | null;
+  grupo?: string | null;
+  obs_comercial?: string | null;
   nome_fantasia?: string | null;
   complemento?: string | null;
   perfil_visita?: string | null;
@@ -150,6 +154,8 @@ export const createCliente = async (payload: {
       empresa: payload.empresa ?? null,
       pessoa: payload.pessoa ?? null,
       contato: payload.contato ?? null,
+      grupo: payload.grupo ?? null,
+      obs_comercial: payload.obs_comercial ?? null,
       nome_fantasia: payload.nome_fantasia ?? null,
       complemento: payload.complemento ?? null,
       perfil_visita: payload.perfil_visita ?? null,
@@ -159,9 +165,7 @@ export const createCliente = async (payload: {
       cidade: payload.cidade ?? null,
       uf: payload.uf ?? null,
     })
-    .select(
-      "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
-    )
+    .select(CLIENTES_SELECT_COLUMNS)
     .single();
 
   if (error) throw new Error(error.message);
@@ -187,6 +191,8 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
   setIfDefined("empresa");
   setIfDefined("pessoa");
   setIfDefined("contato");
+  setIfDefined("grupo");
+  setIfDefined("obs_comercial");
   setIfDefined("nome_fantasia");
   setIfDefined("complemento");
   setIfDefined("perfil_visita");
@@ -197,13 +203,7 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
   setIfDefined("uf");
 
   if (Object.keys(updatePayload).length === 0) {
-    const { data, error } = await supabase
-      .from("clientes")
-      .select(
-        "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
-      )
-      .eq("id", id)
-      .single();
+    const { data, error } = await supabase.from("clientes").select(CLIENTES_SELECT_COLUMNS).eq("id", id).single();
     if (error) throw new Error(error.message);
     return data as ClienteRow;
   }
@@ -212,9 +212,7 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
     .from("clientes")
     .update(updatePayload)
     .eq("id", id)
-    .select(
-      "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
-    )
+    .select(CLIENTES_SELECT_COLUMNS)
     .single();
 
   if (error) throw new Error(error.message);
@@ -272,6 +270,8 @@ export const upsertClientes = async (
     empresa?: string | null;
     pessoa?: string | null;
     contato?: string | null;
+    grupo?: string | null;
+    obs_comercial?: string | null;
     nome_fantasia?: string | null;
     complemento?: string | null;
     perfil_visita?: string | null;
@@ -293,6 +293,8 @@ export const upsertClientes = async (
     empresa: payload.empresa ?? null,
     pessoa: payload.pessoa ?? null,
     contato: payload.contato ?? null,
+    grupo: payload.grupo ?? null,
+    obs_comercial: payload.obs_comercial ?? null,
     nome_fantasia: payload.nome_fantasia ?? null,
     complemento: payload.complemento ?? null,
     perfil_visita: payload.perfil_visita ?? null,
@@ -306,9 +308,7 @@ export const upsertClientes = async (
   const { data, error } = await supabase
     .from("clientes")
     .upsert(clientesRows, { onConflict: "dedupe_key", ignoreDuplicates: true })
-    .select(
-      "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at",
-    );
+    .select(CLIENTES_SELECT_COLUMNS);
   if (error) throw new Error(error.message);
   await upsertAgendaFromClientesPayloads(normalized);
   return (data ?? []) as ClienteRow[];
@@ -329,6 +329,8 @@ export const syncAgendaForCliente = async (cliente: ClienteRow) => {
     empresa: cliente.empresa ?? null,
     pessoa: cliente.pessoa ?? null,
     contato: cliente.contato ?? null,
+    grupo: cliente.grupo ?? null,
+    obs_contrato_1: cliente.obs_comercial ?? null,
     nome_fantasia: cliente.nome_fantasia ?? null,
     perfil_visita: cliente.perfil_visita ?? null,
     valor: cliente.valor ?? null,

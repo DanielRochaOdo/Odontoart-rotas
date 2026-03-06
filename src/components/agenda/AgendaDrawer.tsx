@@ -350,6 +350,8 @@ export default function AgendaDrawer({
       empresa: updatedRow.empresa,
       pessoa: (updatedRow as AgendaRow & { pessoa?: string | null }).pessoa ?? null,
       contato: (updatedRow as AgendaRow & { contato?: string | null }).contato ?? null,
+      grupo: updatedRow.grupo,
+      obs_comercial: updatedRow.obs_contrato_1,
       nome_fantasia: updatedRow.nome_fantasia,
       complemento: (updatedRow as AgendaRow & { complemento?: string | null }).complemento ?? null,
       perfil_visita: updatedRow.perfil_visita,

@@ -12,6 +12,8 @@ type ClienteSyncPayload = {
   empresa?: string | null;
   pessoa?: string | null;
   contato?: string | null;
+  grupo?: string | null;
+  obs_comercial?: string | null;
   nome_fantasia?: string | null;
   complemento?: string | null;
   perfil_visita?: string | null;
@@ -54,6 +56,8 @@ export const syncAgendaRowAcrossModules = async (row: ClienteSyncPayload) => {
   if (row.empresa !== undefined) clientePayload.empresa = row.empresa;
   if (row.pessoa !== undefined) clientePayload.pessoa = row.pessoa;
   if (row.contato !== undefined) clientePayload.contato = row.contato;
+  if (row.grupo !== undefined) clientePayload.grupo = row.grupo;
+  if (row.obs_comercial !== undefined) clientePayload.obs_comercial = row.obs_comercial;
   if (row.nome_fantasia !== undefined) clientePayload.nome_fantasia = row.nome_fantasia;
   if (row.complemento !== undefined) clientePayload.complemento = row.complemento;
   if (row.perfil_visita !== undefined) clientePayload.perfil_visita = row.perfil_visita;
