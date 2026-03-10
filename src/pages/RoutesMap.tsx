@@ -14,7 +14,6 @@ import {
   CircleMarker,
   GeoJSON,
   MapContainer,
-  Marker,
   Pane,
   Popup,
   TileLayer,
@@ -35,38 +34,14 @@ import {
 import { onProfilesUpdated } from "../lib/profileEvents";
 import { useAgendaFilters } from "../hooks/useAgendaFilters";
 import {
-  clearAgendaOptionsCache,
   fetchAgendaForGeneration,
-  fetchDistinctOptions,
   fetchSupervisores,
   fetchVendedores,
 } from "../lib/agendaApi";
 import { supabase } from "../lib/supabase";
 import MultiSelectFilter from "../components/agenda/MultiSelectFilter";
-import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
-import markerIcon from "leaflet/dist/images/marker-icon.png";
-import markerShadow from "leaflet/dist/images/marker-shadow.png";
 import cearaCitiesRaw from "../data/ceara_municipios.geojson?raw";
 import fortalezaBairrosRaw from "../data/fortaleza_bairros.geojson?raw";
-
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: markerIcon2x,
-  iconUrl: markerIcon,
-  shadowUrl: markerShadow,
-});
-
-const COMPANY_MARKER_ICON = L.icon({
-  iconRetinaUrl:
-    markerIcon2x || "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  iconUrl:
-    markerIcon || "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  shadowUrl:
-    markerShadow || "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
-});
 
 const RMF_CENTER: [number, number] = [-3.86, -38.62];
 const CEARA_BOUNDS: [[number, number], [number, number]] = [
@@ -260,8 +235,6 @@ export default function RoutesMap() {
   const [generating, setGenerating] = useState(false);
   const [showGeocodeConfirm, setShowGeocodeConfirm] = useState(false);
 
-  const [filterOptions, setFilterOptions] = useState<Record<string, string[]>>({});
-
   // ====== SELEÇÃO POR RAIO (AGORA COM 1KM) ======
   const [radiusKm, setRadiusKm] = useState<0.5 | 1 | 3 | 5 | 10>(1);
   const [radiusMode, setRadiusMode] = useState(true);
@@ -314,24 +287,6 @@ export default function RoutesMap() {
     };
   }, [canGenerate]);
 
-  useEffect(() => {
-    let active = true;
-    const loadOptions = async () => {
-      clearAgendaOptionsCache();
-      const entries = await Promise.all(
-        Object.entries(FILTER_SOURCES).map(async ([key, sources]) => [
-          key,
-          await fetchDistinctOptions(key, sources),
-        ]),
-      );
-      if (active) setFilterOptions(Object.fromEntries(entries));
-    };
-    loadOptions().catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, []);
-
   const supById = useMemo(
     () => new Map(supervisores.map((s) => [s.user_id, s.display_name ?? s.user_id])),
     [supervisores],
@@ -354,6 +309,35 @@ export default function RoutesMap() {
   }, [vendorQuery, vendedores]);
 
   const dedupedAgendaRows = useMemo(() => dedupeAgendaLookupRows(agendaRows), [agendaRows]);
+
+  const filterOptions = useMemo<Record<string, string[]>>(() => {
+    const options = Object.fromEntries(
+      Object.keys(FILTER_SOURCES).map((key) => [key, new Set<string>()]),
+    ) as Record<string, Set<string>>;
+
+    dedupedAgendaRows.forEach((row) => {
+      const valuesByKey: Record<string, string | null | undefined> = {
+        cod_1: row.cod_1,
+        empresa_nome: row.empresa ?? row.nome_fantasia,
+        bairro: row.bairro,
+        cidade: row.cidade,
+        vendedor: row.vendedor,
+        grupo: row.grupo,
+        perfil_visita: row.perfil_visita,
+        situacao: row.situacao,
+      };
+
+      Object.entries(valuesByKey).forEach(([key, value]) => {
+        const normalized = (value ?? "").trim();
+        if (!normalized) return;
+        options[key]?.add(normalized);
+      });
+    });
+
+    return Object.fromEntries(
+      Object.entries(options).map(([key, set]) => [key, Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"))]),
+    );
+  }, [dedupedAgendaRows]);
 
   const rowsMatchingFilters = useMemo(() => {
     const term = normalize(filters.global);
@@ -475,7 +459,6 @@ export default function RoutesMap() {
   );
 
   const selSet = useMemo(() => new Set(selectedAgendaIds), [selectedAgendaIds]);
-  const selectedRows = useMemo(() => mapRows.filter((r) => selSet.has(r.id)), [mapRows, selSet]);
 
   const computeIdsWithinRadius = (rows: AgendaLookupRow[], center: L.LatLng, km: number) => {
     const radiusMeters = km * 1000;
@@ -1094,6 +1077,7 @@ export default function RoutesMap() {
               maxZoom={16}
               maxBounds={CEARA_BOUNDS}
               maxBoundsViscosity={0.8}
+              preferCanvas
               className="routes-map h-[58vh] min-h-[380px] w-full lg:h-[72vh]"
             >
               <TileLayer
@@ -1141,11 +1125,19 @@ export default function RoutesMap() {
 
               {mapRows.map((r) => {
                 const sel = selSet.has(r.id);
+                const markerColor = r.isApproximatePoint ? "#f59e0b" : "#0f766e";
+                const markerBorderColor = r.isApproximatePoint ? "#b45309" : "#0b5b4f";
                 return (
-                  <Marker
+                  <CircleMarker
                     key={r.id}
-                    position={[r.latitude as number, r.longitude as number]}
-                    icon={COMPANY_MARKER_ICON}
+                    center={[r.latitude, r.longitude]}
+                    radius={sel ? 8 : 6}
+                    pathOptions={{
+                      color: sel ? "#0f766e" : markerBorderColor,
+                      fillColor: sel ? "#14b8a6" : markerColor,
+                      fillOpacity: sel ? 0.6 : 0.45,
+                      weight: sel ? 2.2 : 1.4,
+                    }}
                     eventHandlers={{ click: () => toggleAgenda(r.id) }}
                   >
                     <Tooltip direction="right" offset={[12, -4]} opacity={0.98} sticky className="routes-map-tooltip">
@@ -1188,25 +1180,9 @@ export default function RoutesMap() {
                         </button>
                       </div>
                     </Popup>
-                  </Marker>
+                  </CircleMarker>
                 );
               })}
-
-              {selectedRows.map((r) =>
-                typeof r.latitude === "number" && typeof r.longitude === "number" ? (
-                  <CircleMarker
-                    key={`selected-${r.id}`}
-                    center={[r.latitude, r.longitude]}
-                    radius={16}
-                    pathOptions={{
-                      color: "#0f766e",
-                      fillColor: "#14b8a6",
-                      fillOpacity: 0.25,
-                      weight: 2,
-                    }}
-                  />
-                ) : null,
-              )}
             </MapContainer>
           </div>
         </div>

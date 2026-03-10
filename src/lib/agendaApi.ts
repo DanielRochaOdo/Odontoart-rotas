@@ -100,29 +100,30 @@ const dedupeAgendaRows = <T extends Partial<AgendaRow>>(rows: T[]) => {
   return Array.from(byId.values());
 };
 
-const sortAgendaRows = (rows: AgendaRow[], sorting: SortingState) => {
+const AGENDA_SORTABLE_COLUMNS = new Set<string>([
+  "data_da_ultima_visita",
+  "visit_completed_vidas",
+  "cod_1",
+  "empresa",
+  "bairro",
+  "cidade",
+  "vendedor",
+  "grupo",
+  "perfil_visita",
+]);
+
+const applyAgendaSorting = <T,>(query: T, sorting: SortingState): T => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let next: any = query;
   if (!sorting.length) {
-    return [...rows].sort((a, b) => {
-      const aDate = a.data_da_ultima_visita ? new Date(a.data_da_ultima_visita).getTime() : 0;
-      const bDate = b.data_da_ultima_visita ? new Date(b.data_da_ultima_visita).getTime() : 0;
-      return bDate - aDate;
-    });
+    next = next.order("data_da_ultima_visita", { ascending: false, nullsFirst: false });
+    return next as T;
   }
 
   const { id, desc } = sorting[0];
-  return [...rows].sort((a, b) => {
-    const av = a[id as keyof AgendaRow];
-    const bv = b[id as keyof AgendaRow];
-    if (av === bv) return 0;
-    if (av === null || av === undefined) return desc ? -1 : 1;
-    if (bv === null || bv === undefined) return desc ? 1 : -1;
-    if (typeof av === "number" && typeof bv === "number") {
-      return desc ? bv - av : av - bv;
-    }
-    const as = String(av).toUpperCase();
-    const bs = String(bv).toUpperCase();
-    return desc ? bs.localeCompare(as) : as.localeCompare(bs);
-  });
+  const sortColumn = AGENDA_SORTABLE_COLUMNS.has(id) ? id : "data_da_ultima_visita";
+  next = next.order(sortColumn, { ascending: !desc, nullsFirst: false });
+  return next as T;
 };
 
 const getVidasRange = (filters: AgendaFilters) => {
@@ -403,6 +404,7 @@ export const fetchAgenda = async (
     .from("agenda")
     .select(
       "id, data_da_ultima_visita, visit_completed_vidas, cod_1, empresa, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1, visit_generated_at, created_at",
+      { count: "exact" },
     )
     .ilike("situacao", "ativo%");
 
@@ -414,25 +416,18 @@ export const fetchAgenda = async (
     query = query.in("id", agendaIdsByVidas);
   }
 
-  const allRows: AgendaRow[] = [];
-  const chunkSize = 1000;
-  let from = 0;
-  while (true) {
-    const { data, error } = await query.range(from, from + chunkSize - 1);
-    if (error) throw new Error(error.message);
-    const batch = (data ?? []) as AgendaRow[];
-    if (batch.length === 0) break;
-    allRows.push(...batch);
-    if (batch.length < chunkSize) break;
-    from += chunkSize;
-  }
-
-  const hydrated = (await resolvePerfilFromClientes(allRows)) as AgendaRow[];
-  const deduped = dedupeAgendaRows(hydrated);
-  const sorted = sortAgendaRows(deduped, sorting);
   const pageFrom = pageIndex * pageSize;
-  const pageTo = pageFrom + pageSize;
-  return { data: sorted.slice(pageFrom, pageTo), count: deduped.length };
+  const pageTo = pageFrom + pageSize - 1;
+
+  query = applyAgendaSorting(query, sorting);
+  const { data, error, count } = await query.range(pageFrom, pageTo);
+  if (error) throw new Error(error.message);
+
+  const pageRows = (data ?? []) as AgendaRow[];
+  const hydrated = (await resolvePerfilFromClientes(pageRows)) as AgendaRow[];
+  const deduped = dedupeAgendaRows(hydrated);
+
+  return { data: deduped, count: count ?? deduped.length };
 };
 
 export const fetchAgendaScheduledVisits = async (agendaIds: string[]) => {

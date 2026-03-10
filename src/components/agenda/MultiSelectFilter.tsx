@@ -20,9 +20,6 @@ export default function MultiSelectFilter({
   onApply,
   onOpen,
 }: MultiSelectFilterProps) {
-  const debug = Boolean(
-    import.meta.env?.DEV && String(import.meta.env?.VITE_DEBUG_MULTISELECT).toLowerCase() === "true",
-  );
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<string[]>(value);
@@ -31,23 +28,6 @@ export default function MultiSelectFilter({
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const fieldId = useMemo(() => makeFieldId(label), [label]);
-
-  useEffect(() => {
-    if (!debug) return;
-    console.log("[MultiSelectFilter] state", { label, open });
-  }, [debug, label, open]);
-
-  useEffect(() => {
-    if (!debug) return;
-    console.log("[MultiSelectFilter] position", { label, position });
-  }, [debug, label, position]);
-
-  useEffect(() => {
-    if (!debug) return;
-    return () => {
-      console.log("[MultiSelectFilter] unmount", { label });
-    };
-  }, [debug, label]);
 
   const computePosition = () => {
     const button = buttonRef.current;
@@ -67,13 +47,6 @@ export default function MultiSelectFilter({
   const openMenu = (event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    if (debug) {
-      console.log("[MultiSelectFilter] pointerdown trigger", {
-        label,
-        open,
-        target: (event.target as HTMLElement | null)?.tagName,
-      });
-    }
     if (open) {
       setOpen(false);
       return;
@@ -108,35 +81,19 @@ export default function MultiSelectFilter({
         if (!element) return false;
         return element.contains(target) || path.includes(element);
       });
-      if (debug) {
-        console.log("[MultiSelectFilter] document pointerdown", {
-          label,
-          isInside,
-          target: (event.target as HTMLElement | null)?.tagName,
-        });
-      }
       if (isInside) return;
-      if (debug) {
-        console.log("[MultiSelectFilter] close by outside pointerdown", {
-          label,
-          target: (event.target as HTMLElement | null)?.tagName,
-        });
-      }
       setOpen(false);
     };
     document.addEventListener("pointerdown", handler, true);
     return () => {
       document.removeEventListener("pointerdown", handler, true);
     };
-  }, [open, debug, label]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        if (debug) {
-          console.log("[MultiSelectFilter] close by ESC", { label });
-        }
         setOpen(false);
       }
     };
@@ -144,7 +101,7 @@ export default function MultiSelectFilter({
     return () => {
       window.removeEventListener("keydown", handleKey);
     };
-  }, [open, debug, label]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -173,9 +130,6 @@ export default function MultiSelectFilter({
         onPointerDown={openMenu}
         onClick={(event) => {
           event.stopPropagation();
-          if (debug) {
-            console.log("[MultiSelectFilter] click trigger", { label });
-          }
         }}
         className="relative inline-flex h-6 w-6 items-center justify-center rounded-md border border-sea/20 bg-white/80 text-ink/50 transition hover:border-sea hover:text-sea"
         aria-label={label}

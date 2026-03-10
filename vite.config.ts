@@ -55,7 +55,10 @@ export default defineConfig({
         enabled: false,
       },
       workbox: {
-        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+        maximumFileSizeToCacheInBytes: 2 * 1024 * 1024,
+        cleanupOutdatedCaches: true,
+        clientsClaim: true,
+        skipWaiting: true,
         navigateFallbackAllowlist: [/^\/.*$/],
       },
     }),

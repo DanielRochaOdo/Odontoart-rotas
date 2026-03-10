@@ -8,7 +8,6 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import {
-  clearAgendaOptionsCache,
   fetchAgenda,
   fetchAgendaForGeneration,
   fetchAgendaScheduledVisits,
@@ -475,7 +474,6 @@ export default function Agenda() {
 
   useEffect(() => {
     const loadOptions = async () => {
-      clearAgendaOptionsCache();
       const entries = await Promise.all(
         Object.entries(FILTER_SOURCES).map(async ([key, sources]) => [
           key,
@@ -488,7 +486,7 @@ export default function Agenda() {
     loadOptions().catch((err) => {
       console.error(err);
     });
-  }, [refreshKey]);
+  }, []);
 
   useEffect(() => {
     if (!canGenerate) return;
