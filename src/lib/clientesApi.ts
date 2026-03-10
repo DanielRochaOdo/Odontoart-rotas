@@ -46,6 +46,9 @@ const upsertAgendaFromClientesPayloads = async (
     cidade?: string | null;
     uf?: string | null;
   }>,
+  options?: {
+    skipDataUltimaVisitaSync?: boolean;
+  },
 ) => {
   const agendaRows = payloads
     .map((payload) => {
@@ -88,6 +91,8 @@ const upsertAgendaFromClientesPayloads = async (
 
   if (error) throw new Error(error.message);
 
+  if (options?.skipDataUltimaVisitaSync) return;
+
   const updates = payloads.filter(
     (payload) =>
       payload.data_da_ultima_visita &&
@@ -115,10 +120,28 @@ const upsertAgendaFromClientesPayloads = async (
 };
 
 export const fetchClientes = async () => {
-  const { data, error } = await supabase.from("clientes").select(CLIENTES_SELECT_COLUMNS);
+  const PAGE_SIZE = 1000;
+  const rows: ClienteRow[] = [];
+  let from = 0;
 
-  if (error) throw new Error(error.message);
-  return (data ?? []) as ClienteRow[];
+  while (true) {
+    const to = from + PAGE_SIZE - 1;
+    const { data, error } = await supabase
+      .from("clientes")
+      .select(CLIENTES_SELECT_COLUMNS)
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (error) throw new Error(error.message);
+
+    const batch = (data ?? []) as ClienteRow[];
+    rows.push(...batch);
+
+    if (batch.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+
+  return rows;
 };
 
 export const createCliente = async (payload: {
@@ -281,6 +304,9 @@ export const upsertClientes = async (
     cidade?: string | null;
     uf?: string | null;
   }>,
+  options?: {
+    skipAgendaDataUltimaVisitaSync?: boolean;
+  },
 ) => {
   if (payloads.length === 0) return [];
   const normalized = payloads.map((payload) => ({
@@ -310,7 +336,9 @@ export const upsertClientes = async (
     .upsert(clientesRows, { onConflict: "dedupe_key", ignoreDuplicates: true })
     .select(CLIENTES_SELECT_COLUMNS);
   if (error) throw new Error(error.message);
-  await upsertAgendaFromClientesPayloads(normalized);
+  await upsertAgendaFromClientesPayloads(normalized, {
+    skipDataUltimaVisitaSync: options?.skipAgendaDataUltimaVisitaSync,
+  });
   return (data ?? []) as ClienteRow[];
 };
 

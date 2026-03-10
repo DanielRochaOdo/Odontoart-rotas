@@ -20,7 +20,9 @@ export default function MultiSelectFilter({
   onApply,
   onOpen,
 }: MultiSelectFilterProps) {
-  const debug = Boolean(import.meta.env?.DEV);
+  const debug = Boolean(
+    import.meta.env?.DEV && String(import.meta.env?.VITE_DEBUG_MULTISELECT).toLowerCase() === "true",
+  );
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<string[]>(value);

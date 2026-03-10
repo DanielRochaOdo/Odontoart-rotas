@@ -68,10 +68,14 @@ const normalizeAddressValue = (value: string | null | undefined) =>
     .trim()
     .toLowerCase();
 
-const isSameAddress = (
-  a: Pick<ClienteRow, "endereco" | "cidade" | "uf">,
-  b: Pick<ClienteRow, "endereco" | "cidade" | "uf">,
-) => {
+type AddressIdentity = {
+  endereco?: string | null;
+  cidade?: string | null;
+  uf?: string | null;
+  complemento?: string | null;
+};
+
+const isSameAddress = (a: AddressIdentity, b: AddressIdentity) => {
   const enderecoA = normalizeAddressValue(a.endereco);
   const enderecoB = normalizeAddressValue(b.endereco);
   if (!enderecoA || !enderecoB) return false;
@@ -82,7 +86,9 @@ const isSameAddress = (
   const ufB = normalizeAddressValue(b.uf);
   if (cidadeA && cidadeB && cidadeA !== cidadeB) return false;
   if (ufA && ufB && ufA !== ufB) return false;
-  return true;
+  const complementoA = normalizeAddressValue(a.complemento);
+  const complementoB = normalizeAddressValue(b.complemento);
+  return complementoA === complementoB;
 };
 
 type DuplicateEntry = {
@@ -119,6 +125,7 @@ const buildImportKey = (payload: {
   endereco?: string | null;
   cidade?: string | null;
   uf?: string | null;
+  complemento?: string | null;
 }) =>
   [
     normalizeAddressValue(payload.codigo ?? ""),
@@ -126,6 +133,7 @@ const buildImportKey = (payload: {
     normalizeAddressValue(payload.endereco ?? ""),
     normalizeAddressValue(payload.cidade ?? ""),
     normalizeAddressValue(payload.uf ?? ""),
+    normalizeAddressValue(payload.complemento ?? ""),
   ].join("|");
 
 const buildClientePayloadFromImport = (payload: ImportPayload) => ({
@@ -188,6 +196,9 @@ const normalizeHeader = (value: string) =>
     .trim();
 
 const IMPORT_NUMERIC_FIELDS = new Set(["corte", "venc"]);
+const IMPORT_BATCH_SIZE = 80;
+const BAIRRO_LOOKUP_DELAY_MS = 450;
+const CLIENTES_PER_PAGE = 50;
 const sanitizeDigits = (value: string) => value.replace(/\D/g, "");
 const sanitizeContatoInput = (value: string) =>
   value
@@ -467,8 +478,11 @@ export default function Clientes() {
   const [cepErrorEdit, setCepErrorEdit] = useState<string | null>(null);
   const [importProgress, setImportProgress] = useState(0);
   const [importTotal, setImportTotal] = useState(0);
+  const [importInserted, setImportInserted] = useState(0);
+  const [importStageLabel, setImportStageLabel] = useState("Aguardando arquivo");
   const [importStartedAt, setImportStartedAt] = useState<number | null>(null);
   const [importTick, setImportTick] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
   const [bairroLoading, setBairroLoading] = useState(false);
   const [bairroLoadingEdit, setBairroLoadingEdit] = useState(false);
   const [addressLookupLoading, setAddressLookupLoading] = useState(false);
@@ -850,6 +864,21 @@ export default function Clientes() {
       return nameA.localeCompare(nameB, "pt-BR");
     });
   }, [clientes, search, situacaoFilter]);
+  const totalPages = Math.max(1, Math.ceil(filteredClientes.length / CLIENTES_PER_PAGE));
+  const paginatedClientes = useMemo(() => {
+    const start = (currentPage - 1) * CLIENTES_PER_PAGE;
+    return filteredClientes.slice(start, start + CLIENTES_PER_PAGE);
+  }, [filteredClientes, currentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, situacaoFilter]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -863,8 +892,18 @@ export default function Clientes() {
     try {
       const existingMatches = clientes.filter((cliente) =>
         isSameAddress(
-          { endereco: form.endereco, cidade: form.cidade, uf: form.uf },
-          { endereco: cliente.endereco, cidade: cliente.cidade, uf: cliente.uf },
+          {
+            endereco: form.endereco,
+            cidade: form.cidade,
+            uf: form.uf,
+            complemento: form.complemento,
+          },
+          {
+            endereco: cliente.endereco,
+            cidade: cliente.cidade,
+            uf: cliente.uf,
+            complemento: cliente.complemento,
+          },
         ),
       );
       const corteValue = form.corte ? Number(form.corte) : null;
@@ -1277,6 +1316,15 @@ export default function Clientes() {
   };
 
   const delay = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+  const isStatementTimeoutError = (error: unknown) => {
+    if (!(error instanceof Error)) return false;
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("statement timeout") ||
+      message.includes("canceling statement due to statement timeout") ||
+      message.includes("canceling statement due to user request")
+    );
+  };
 
   const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1284,8 +1332,10 @@ export default function Clientes() {
     const existingSnapshot = clientes.length ? [...clientes] : await fetchClientes();
     setImporting(true);
     setImportMessage(null);
+    setImportStageLabel("Lendo arquivo...");
     setImportProgress(0);
     setImportTotal(0);
+    setImportInserted(0);
     setImportStartedAt(Date.now());
     try {
       const buffer = await file.arrayBuffer();
@@ -1396,19 +1446,16 @@ export default function Clientes() {
         return canCheckAddress || hasCep;
       });
 
-      setImportTotal(checkable.length);
+      setImportTotal(payloads.length);
+      setImportProgress(0);
+      setImportInserted(0);
 
       if (checkable.length > 0) {
-        setImportMessage("Checando bairros via API...");
+        setImportStageLabel("Checando bairros");
+        setImportMessage(`Checando bairros via API... 0/${checkable.length}`);
         let processed = 0;
         const lastRequestAt = { current: 0 };
         for (const item of checkable) {
-          const hasBairro = Boolean(item.bairro?.trim());
-          if (hasBairro) {
-            processed += 1;
-            setImportProgress(processed);
-            continue;
-          }
           const cepDigits = sanitizeCep(item.cep ?? "");
           const hasCep = cepDigits.length === 8;
           const road = item.endereco?.trim() ?? "";
@@ -1417,7 +1464,7 @@ export default function Clientes() {
           const canCheckAddress = Boolean(road && city && state);
 
           const now = Date.now();
-          const wait = Math.max(0, 1000 - (now - lastRequestAt.current));
+          const wait = Math.max(0, BAIRRO_LOOKUP_DELAY_MS - (now - lastRequestAt.current));
           if (wait) {
             await delay(wait);
           }
@@ -1448,14 +1495,64 @@ export default function Clientes() {
             // ignore individual lookup errors, keep import running
           } finally {
             processed += 1;
-            setImportProgress(processed);
+            if (processed % 10 === 0 || processed === checkable.length) {
+              setImportMessage(`Checando bairros via API... ${processed}/${checkable.length}`);
+            }
           }
         }
       }
 
-      const created = await upsertClientes(payloads);
-      for (const cliente of created) {
-        await syncAgendaForCliente(cliente);
+      setImportStageLabel("Importando registros");
+      setImportMessage("Importando registros...");
+      const created: ClienteRow[] = [];
+      let processedImport = 0;
+      const totalBatches = Math.ceil(payloads.length / IMPORT_BATCH_SIZE);
+      const upsertBatchWithFallback = async (
+        batch: Array<{
+          codigo: string | null;
+          corte: number | null;
+          venc: number | null;
+          valor: number | null;
+          data_da_ultima_visita: string | null;
+          cep: string | null;
+          empresa: string | null;
+          pessoa: string | null;
+          contato: string | null;
+          grupo: string | null;
+          obs_comercial: string | null;
+          situacao: string;
+          perfil_visita: string | null;
+          endereco: string | null;
+          complemento: string | null;
+          bairro: string | null;
+          cidade: string | null;
+          uf: string | null;
+        }>,
+      ): Promise<ClienteRow[]> => {
+        try {
+          return await upsertClientes(batch, { skipAgendaDataUltimaVisitaSync: true });
+        } catch (error) {
+          if (!isStatementTimeoutError(error) || batch.length <= 1) {
+            throw error;
+          }
+          const half = Math.ceil(batch.length / 2);
+          setImportMessage(`Timeout no lote (${batch.length}). Tentando sublotes menores...`);
+          await delay(150);
+          const first = await upsertBatchWithFallback(batch.slice(0, half));
+          const second = await upsertBatchWithFallback(batch.slice(half));
+          return [...first, ...second];
+        }
+      };
+
+      for (let index = 0; index < payloads.length; index += IMPORT_BATCH_SIZE) {
+        const batchNumber = Math.floor(index / IMPORT_BATCH_SIZE) + 1;
+        const batch = payloads.slice(index, index + IMPORT_BATCH_SIZE);
+        setImportMessage(`Importando lote ${batchNumber}/${totalBatches}...`);
+        const createdBatch = await upsertBatchWithFallback(batch);
+        created.push(...createdBatch);
+        processedImport += batch.length;
+        setImportProgress(processedImport);
+        setImportInserted(created.length);
       }
 
       const duplicatesFromCreated: DuplicateEntry[] = [];
@@ -1517,6 +1614,9 @@ export default function Clientes() {
   const canEditEnderecoEdit = Boolean(editForm.cidade.trim() && editForm.uf.trim());
   const canSearchEnderecoEdit = Boolean(editForm.endereco.trim() && canEditEnderecoEdit);
   const hasPendingDuplicates = Boolean(duplicateModal || duplicateQueue.length > 0);
+  const importElapsedSeconds = importStartedAt ? Math.max(0, (importTick - importStartedAt) / 1000) : 0;
+  const importRemaining = Math.max(0, importTotal - importProgress);
+  const importEstimatedSeconds = importProgress > 0 ? (importElapsedSeconds / importProgress) * importRemaining : null;
 
   if (!canView) {
     return (
@@ -1900,6 +2000,10 @@ export default function Clientes() {
               type="button"
               onClick={() => {
                 setImportMessage(null);
+                setImportStageLabel("Aguardando arquivo");
+                setImportProgress(0);
+                setImportTotal(0);
+                setImportInserted(0);
                 setShowImportModal(true);
               }}
               className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
@@ -1938,7 +2042,7 @@ export default function Clientes() {
             {filteredClientes.length === 0 ? (
               <div className="px-4 py-6 text-sm text-ink/60">Nenhum cliente encontrado.</div>
             ) : (
-              filteredClientes.map((cliente) => (
+              paginatedClientes.map((cliente) => (
                 <button
                   key={cliente.id}
                   type="button"
@@ -1988,6 +2092,31 @@ export default function Clientes() {
               ))
             )}
           </div>
+          {filteredClientes.length > 0 && (
+            <div className="flex items-center justify-between border-t border-sea/10 px-4 py-3 text-xs text-ink/60">
+              <span>
+                Pagina {currentPage} de {totalPages}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  className="rounded-lg border border-sea/30 bg-white px-3 py-1 font-semibold text-ink/70 hover:border-sea disabled:opacity-50"
+                >
+                  Anterior
+                </button>
+                <button
+                  type="button"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  className="rounded-lg border border-sea/30 bg-white px-3 py-1 font-semibold text-ink/70 hover:border-sea disabled:opacity-50"
+                >
+                  Proxima
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2671,13 +2800,19 @@ export default function Clientes() {
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-ink/60">
                   <span>
-                    Checagem de bairros: {importProgress}/{importTotal}
+                    {importStageLabel}: {importProgress}/{importTotal}
                   </span>
                   <span>
-                    Tempo corrido: {formatDuration(importStartedAt ? (importTick - importStartedAt) / 1000 : 0)}
+                    Importados: {importInserted}
                   </span>
                   <span>
-                    Tempo estimado: {formatDuration(Math.max(0, importTotal - importProgress))}
+                    Faltam: {importRemaining}
+                  </span>
+                  <span>
+                    Tempo corrido: {formatDuration(importElapsedSeconds)}
+                  </span>
+                  <span>
+                    Tempo estimado: {importEstimatedSeconds === null ? "--:--" : formatDuration(importEstimatedSeconds)}
                   </span>
                 </div>
               </div>

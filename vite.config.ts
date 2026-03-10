@@ -52,10 +52,11 @@ export default defineConfig({
         ],
       },
       devOptions: {
-        enabled: true,
+        enabled: false,
       },
       workbox: {
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+        navigateFallbackAllowlist: [/^\/.*$/],
       },
     }),
   ],

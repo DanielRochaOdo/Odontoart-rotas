@@ -134,38 +134,101 @@ const fmtDate = (v: string | null) =>
 const addr = (r: AgendaLookupRow) =>
   [r.endereco, r.complemento, r.bairro, r.cidade, r.uf].filter(Boolean).join(", ");
 
-const dedupeAgendaLookupRows = (rows: AgendaLookupRow[]) => {
-  const byKey = new Map<string, AgendaLookupRow>();
+type RenderableMapRow = AgendaLookupRow & {
+  latitude: number;
+  longitude: number;
+  isApproximatePoint: boolean;
+};
 
-  for (const row of rows) {
-    const codeKey = normalize(row.cod_1);
-    const companyKey = normalize(row.empresa ?? row.nome_fantasia);
-    const cityKey = normalize(row.cidade);
-    const ufKey = normalize(row.uf);
-    const bairroKey = normalize(row.bairro);
-    const addressKey = normalize(row.endereco);
+const hasRealCoordinates = (row: Pick<AgendaLookupRow, "latitude" | "longitude">) =>
+  Number.isFinite(row.latitude) && Number.isFinite(row.longitude);
 
-    const key = codeKey
-      ? `COD:${codeKey}`
-      : `EMP:${companyKey}|CIDADE:${cityKey}|UF:${ufKey}|BAIRRO:${bairroKey}|END:${addressKey}`;
+const collectCoordinatePairs = (value: unknown, target: Array<[number, number]>) => {
+  if (!Array.isArray(value)) return;
 
-    if (!byKey.has(key)) {
-      byKey.set(key, row);
-      continue;
-    }
-
-    const current = byKey.get(key)!;
-    const currentScore =
-      Number(Boolean(current.data_da_ultima_visita)) +
-      Number(Boolean(current.visit_completed_vidas !== null && current.visit_completed_vidas !== undefined));
-    const nextScore =
-      Number(Boolean(row.data_da_ultima_visita)) +
-      Number(Boolean(row.visit_completed_vidas !== null && row.visit_completed_vidas !== undefined));
-
-    if (nextScore > currentScore) byKey.set(key, row);
+  if (
+    value.length >= 2 &&
+    typeof value[0] === "number" &&
+    typeof value[1] === "number" &&
+    Number.isFinite(value[0]) &&
+    Number.isFinite(value[1])
+  ) {
+    target.push([value[0], value[1]]);
+    return;
   }
 
-  return Array.from(byKey.values());
+  value.forEach((item) => collectCoordinatePairs(item, target));
+};
+
+const getGeometryCenter = (geometry: unknown): [number, number] | null => {
+  if (!geometry || typeof geometry !== "object") return null;
+  const coords = (geometry as { coordinates?: unknown }).coordinates;
+  if (!coords) return null;
+
+  const pairs: Array<[number, number]> = [];
+  collectCoordinatePairs(coords, pairs);
+  if (pairs.length === 0) return null;
+
+  const [sumLng, sumLat] = pairs.reduce<[number, number]>(
+    (acc, [lng, lat]) => [acc[0] + lng, acc[1] + lat],
+    [0, 0],
+  );
+  return [sumLat / pairs.length, sumLng / pairs.length];
+};
+
+const addCentroidKeys = (map: Map<string, [number, number]>, rawName: string, center: [number, number]) => {
+  const key = normalize(rawName);
+  if (key && !map.has(key)) {
+    map.set(key, center);
+  }
+
+  const alternate = normalize(rawName.replace(/[\\/|]/g, " "));
+  if (alternate && !map.has(alternate)) {
+    map.set(alternate, center);
+  }
+};
+
+const buildCentroidMap = (geojson: GeoJsonObject, nameKeys: string[]) => {
+  const map = new Map<string, [number, number]>();
+  const features = (geojson as { features?: Array<{ geometry?: unknown; properties?: Record<string, unknown> }> })
+    .features;
+  if (!Array.isArray(features)) return map;
+
+  features.forEach((feature) => {
+    const center = getGeometryCenter(feature.geometry);
+    if (!center) return;
+    const props = feature.properties ?? {};
+    nameKeys.forEach((key) => {
+      const rawName = props[key];
+      if (typeof rawName !== "string" || !rawName.trim()) return;
+      addCentroidKeys(map, rawName, center);
+    });
+  });
+
+  return map;
+};
+
+const CITY_CENTER_MAP = buildCentroidMap(CEARA_CITIES_GEOJSON, ["name", "description"]);
+const BAIRRO_CENTER_MAP = buildCentroidMap(FORTALEZA_BAIRROS_GEOJSON, ["Nome"]);
+
+const getIdFallbackPoint = (id: string): [number, number] => {
+  let hash = 0;
+  for (let i = 0; i < id.length; i += 1) {
+    hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  }
+  const latOffset = ((hash % 200) - 100) * 0.0002;
+  const lngOffset = (((Math.floor(hash / 200) % 200) - 100) * 0.0002);
+  return [RMF_CENTER[0] + latOffset, RMF_CENTER[1] + lngOffset];
+};
+
+const dedupeAgendaLookupRows = (rows: AgendaLookupRow[]) => {
+  const byId = new Map<string, AgendaLookupRow>();
+  rows.forEach((row) => {
+    if (!byId.has(row.id)) {
+      byId.set(row.id, row);
+    }
+  });
+  return Array.from(byId.values());
 };
 
 export default function RoutesMap() {
@@ -376,14 +439,39 @@ export default function RoutesMap() {
     });
   }, [dedupedAgendaRows, filters]);
 
-  const mapRows = useMemo(
-    () => rowsMatchingFilters.filter((r) => typeof r.latitude === "number" && typeof r.longitude === "number"),
-    [rowsMatchingFilters],
-  );
+  const mapRows = useMemo<RenderableMapRow[]>(() => {
+    return rowsMatchingFilters.map((row) => {
+      if (hasRealCoordinates(row)) {
+        return {
+          ...row,
+          latitude: row.latitude as number,
+          longitude: row.longitude as number,
+          isApproximatePoint: false,
+        };
+      }
 
-  const missingAll = useMemo(
-    () => dedupedAgendaRows.filter((r) => !(typeof r.latitude === "number" && typeof r.longitude === "number")),
-    [dedupedAgendaRows],
+      const cityKey = normalize(row.cidade);
+      const useBairroFallback = cityKey === "FORTALEZA";
+      const bairroKey = useBairroFallback ? normalize(row.bairro) : "";
+
+      const center =
+        (bairroKey ? BAIRRO_CENTER_MAP.get(bairroKey) : null) ??
+        (cityKey ? CITY_CENTER_MAP.get(cityKey) : null) ??
+        getIdFallbackPoint(row.id);
+
+      return {
+        ...row,
+        latitude: center[0],
+        longitude: center[1],
+        isApproximatePoint: true,
+      };
+    });
+  }, [rowsMatchingFilters]);
+
+  const missingAll = useMemo(() => dedupedAgendaRows.filter((r) => !hasRealCoordinates(r)), [dedupedAgendaRows]);
+  const missingFromFiltersCount = useMemo(
+    () => rowsMatchingFilters.filter((r) => !hasRealCoordinates(r)).length,
+    [rowsMatchingFilters],
   );
 
   const selSet = useMemo(() => new Set(selectedAgendaIds), [selectedAgendaIds]);
@@ -983,6 +1071,8 @@ export default function RoutesMap() {
 
               <div className="ml-auto text-right text-xs text-ink/60">
                 <div>Empresas: {rowsMatchingFilters.length}</div>
+                <div>Pontos no mapa: {mapRows.length}</div>
+                <div>Sem coordenada real: {missingFromFiltersCount}</div>
                 <div>Selecionadas: {selectedAgendaIds.length}</div>
               </div>
             </div>
@@ -1073,9 +1163,13 @@ export default function RoutesMap() {
                         <p className="text-ink/70">VENDEDOR: {r.vendedor ?? "-"}</p>
                         <p className="text-ink/70">GRUPO: {r.grupo ?? "-"}</p>
                         <p className="text-ink/70">PERFIL VISITA: {r.perfil_visita ?? "-"}</p>
+                        {r.isApproximatePoint && (
+                          <p className="text-amber-700">PONTO APROXIMADO (bairro/cidade)</p>
+                        )}
                         <p className="break-words whitespace-normal text-ink/60">ENDERECO: {addr(r) || "-"}</p>
                         <p className="break-words whitespace-normal text-ink/60">
-                          LAT/LNG: {(r.latitude as number).toFixed(6)}, {(r.longitude as number).toFixed(6)}
+                          LAT/LNG: {r.latitude.toFixed(6)}, {r.longitude.toFixed(6)}
+                          {r.isApproximatePoint ? " (aprox.)" : ""}
                         </p>
                       </div>
                     </Tooltip>

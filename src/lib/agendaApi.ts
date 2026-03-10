@@ -89,58 +89,15 @@ const parseOptionalNumber = (value?: string) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const normalizeBusinessKey = (value: string | null | undefined) =>
-  (value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toUpperCase();
-
-const rankAgendaRow = (row: Partial<AgendaRow>) => {
-  let score = 0;
-  if (row.data_da_ultima_visita) score += 4;
-  if (row.visit_completed_vidas !== null && row.visit_completed_vidas !== undefined) score += 3;
-  if (row.vendedor) score += 2;
-  if (row.supervisor) score += 2;
-  if (row.obs_contrato_1) score += 1;
-  return score;
-};
-
-const resolvePreferredAgendaRow = <T extends Partial<AgendaRow>>(current: T, candidate: T) => {
-  const currentScore = rankAgendaRow(current);
-  const candidateScore = rankAgendaRow(candidate);
-  if (candidateScore !== currentScore) return candidateScore > currentScore ? candidate : current;
-
-  const currentDate = current.data_da_ultima_visita ? new Date(current.data_da_ultima_visita).getTime() : 0;
-  const candidateDate = candidate.data_da_ultima_visita ? new Date(candidate.data_da_ultima_visita).getTime() : 0;
-  if (candidateDate !== currentDate) return candidateDate > currentDate ? candidate : current;
-
-  const currentCreated = current.created_at ? new Date(current.created_at).getTime() : 0;
-  const candidateCreated = candidate.created_at ? new Date(candidate.created_at).getTime() : 0;
-  return candidateCreated > currentCreated ? candidate : current;
-};
-
 const dedupeAgendaRows = <T extends Partial<AgendaRow>>(rows: T[]) => {
-  const byKey = new Map<string, T>();
+  const byId = new Map<string, T>();
   for (const row of rows) {
-    const codeKey = normalizeBusinessKey(row.cod_1);
-    const companyKey = normalizeBusinessKey(row.empresa ?? row.nome_fantasia);
-    const cityKey = normalizeBusinessKey(row.cidade);
-    const ufKey = normalizeBusinessKey(row.uf);
-    const addrKey = normalizeBusinessKey(row.endereco);
-    const bairroKey = normalizeBusinessKey(row.bairro);
-    const key = codeKey
-      ? `COD:${codeKey}`
-      : `EMP:${companyKey}|CIDADE:${cityKey}|UF:${ufKey}|END:${addrKey}|BAIRRO:${bairroKey}`;
-    const existing = byKey.get(key);
-    if (!existing) {
-      byKey.set(key, row);
-      continue;
+    if (!row.id) continue;
+    if (!byId.has(row.id)) {
+      byId.set(row.id, row);
     }
-    byKey.set(key, resolvePreferredAgendaRow(existing, row));
   }
-  return Array.from(byKey.values());
+  return Array.from(byId.values());
 };
 
 const sortAgendaRows = (rows: AgendaRow[], sorting: SortingState) => {

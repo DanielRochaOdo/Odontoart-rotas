@@ -44,6 +44,10 @@ type AgendaSharedLike = {
   uf?: string | null;
 };
 
+const CLIENTES_CANONICAL_SELECT =
+  "codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, grupo, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf";
+const CLIENTES_CANONICAL_CHUNK_SIZE = 50;
+
 const normalize = (value: string | null | undefined) =>
   (value ?? "")
     .trim()
@@ -61,6 +65,33 @@ const makeEmpresaFantasiaKey = (empresa: string | null | undefined, nomeFantasia
   const fantasiaKey = normalize(nomeFantasia);
   if (!empresaKey && !fantasiaKey) return "";
   return `empresa:${empresaKey}|fantasia:${fantasiaKey}`;
+};
+
+const splitIntoChunks = <T,>(values: T[], chunkSize: number) => {
+  const chunks: T[][] = [];
+  for (let i = 0; i < values.length; i += chunkSize) {
+    chunks.push(values.slice(i, i + chunkSize));
+  }
+  return chunks;
+};
+
+const fetchClientesCanonicalByIn = async (
+  column: "codigo" | "empresa" | "nome_fantasia",
+  values: string[],
+) => {
+  const rows: ClienteCanonicalRow[] = [];
+  const chunks = splitIntoChunks(values, CLIENTES_CANONICAL_CHUNK_SIZE);
+
+  for (const chunk of chunks) {
+    const { data, error } = await supabase
+      .from("clientes")
+      .select(CLIENTES_CANONICAL_SELECT)
+      .in(column, chunk);
+    if (error) throw new Error(error.message);
+    rows.push(...((data ?? []) as ClienteCanonicalRow[]));
+  }
+
+  return rows;
 };
 
 export const hydrateAgendaRowsFromClientes = async <T extends AgendaSharedLike>(rows: T[]) => {
@@ -91,34 +122,26 @@ export const hydrateAgendaRowsFromClientes = async <T extends AgendaSharedLike>(
   const canonicalByKey = new Map<string, ClienteCanonicalRow>();
 
   if (codigos.length > 0) {
-    const { data, error } = await supabase
-      .from("clientes")
-      .select(
-        "codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, grupo, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf",
-      )
-      .in("codigo", codigos);
-    if (error) throw new Error(error.message);
-    (data ?? []).forEach((item) => {
+    const data = await fetchClientesCanonicalByIn("codigo", codigos);
+    data.forEach((item) => {
       const cliente = item as ClienteCanonicalRow;
       const key = makeCodigoKey(cliente.codigo);
       if (key) canonicalByKey.set(key, cliente);
     });
   }
 
-  if (empresas.length > 0 || fantasias.length > 0) {
-    let query = supabase.from("clientes").select(
-      "codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, grupo, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf",
-    );
-    if (empresas.length > 0 && fantasias.length > 0) {
-      query = query.or(`empresa.in.(${empresas.map((v) => `"${v.replace(/"/g, '\\"')}"`).join(",")}),nome_fantasia.in.(${fantasias.map((v) => `"${v.replace(/"/g, '\\"')}"`).join(",")})`);
-    } else if (empresas.length > 0) {
-      query = query.in("empresa", empresas);
-    } else if (fantasias.length > 0) {
-      query = query.in("nome_fantasia", fantasias);
-    }
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-    (data ?? []).forEach((item) => {
+  if (empresas.length > 0) {
+    const data = await fetchClientesCanonicalByIn("empresa", empresas);
+    data.forEach((item) => {
+      const cliente = item as ClienteCanonicalRow;
+      const key = makeEmpresaFantasiaKey(cliente.empresa, cliente.nome_fantasia);
+      if (key) canonicalByKey.set(key, cliente);
+    });
+  }
+
+  if (fantasias.length > 0) {
+    const data = await fetchClientesCanonicalByIn("nome_fantasia", fantasias);
+    data.forEach((item) => {
       const cliente = item as ClienteCanonicalRow;
       const key = makeEmpresaFantasiaKey(cliente.empresa, cliente.nome_fantasia);
       if (key) canonicalByKey.set(key, cliente);
