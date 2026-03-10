@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ExternalLink,
@@ -51,6 +51,7 @@ const CEARA_BOUNDS: [[number, number], [number, number]] = [
 
 const CEARA_CITIES_GEOJSON = JSON.parse(cearaCitiesRaw) as GeoJsonObject;
 const FORTALEZA_BAIRROS_GEOJSON = JSON.parse(fortalezaBairrosRaw) as GeoJsonObject;
+const LIGHT_MODE_POINT_LIMIT = 1200;
 
 const MONTH_OPTIONS = [
   { value: "1", label: "Janeiro" },
@@ -113,6 +114,11 @@ type RenderableMapRow = AgendaLookupRow & {
   latitude: number;
   longitude: number;
   isApproximatePoint: boolean;
+};
+
+type MapViewport = {
+  bounds: L.LatLngBounds;
+  zoom: number;
 };
 
 const hasRealCoordinates = (row: Pick<AgendaLookupRow, "latitude" | "longitude">) =>
@@ -241,6 +247,9 @@ export default function RoutesMap() {
   const [radiusCenter, setRadiusCenter] = useState<L.LatLng | null>(null);
   const [radiusReplaceSelection, setRadiusReplaceSelection] = useState(true);
   const [radiusResultIds, setRadiusResultIds] = useState<string[]>([]);
+  const [isLightMapMode, setIsLightMapMode] = useState(true);
+  const [showBaseMap, setShowBaseMap] = useState(true);
+  const [mapViewport, setMapViewport] = useState<MapViewport | null>(null);
   // ==============================================
 
   useEffect(() => {
@@ -476,6 +485,46 @@ export default function RoutesMap() {
     return mapRows.filter((r) => set.has(r.id));
   }, [mapRows, radiusResultIds]);
 
+  const updateMapViewport = useCallback((bounds: L.LatLngBounds, zoom: number) => {
+    setMapViewport((prev) => {
+      if (prev && prev.zoom === zoom && prev.bounds.equals(bounds)) return prev;
+      return { bounds, zoom };
+    });
+  }, []);
+
+  const rowsToRender = useMemo(() => {
+    if (!isLightMapMode) return mapRows;
+
+    const selectedOrRadiusIds = new Set([...selectedAgendaIds, ...radiusResultIds]);
+    const selectedOrRadiusRows: RenderableMapRow[] = [];
+    const regularRows: RenderableMapRow[] = [];
+    const bounds = mapViewport?.bounds ?? null;
+    const south = bounds?.getSouth() ?? -90;
+    const north = bounds?.getNorth() ?? 90;
+    const west = bounds?.getWest() ?? -180;
+    const east = bounds?.getEast() ?? 180;
+
+    for (const row of mapRows) {
+      const insideViewport =
+        row.latitude >= south && row.latitude <= north && row.longitude >= west && row.longitude <= east;
+      if (bounds && !insideViewport && !selectedOrRadiusIds.has(row.id)) {
+        continue;
+      }
+
+      if (selectedOrRadiusIds.has(row.id)) {
+        selectedOrRadiusRows.push(row);
+      } else {
+        regularRows.push(row);
+      }
+
+      if (selectedOrRadiusRows.length + regularRows.length >= LIGHT_MODE_POINT_LIMIT) break;
+    }
+
+    return [...selectedOrRadiusRows, ...regularRows];
+  }, [isLightMapMode, mapRows, mapViewport, radiusResultIds, selectedAgendaIds]);
+
+  const hiddenPointsCount = mapRows.length - rowsToRender.length;
+
   function RadiusClickHandler() {
     useMapEvents({
       click(e) {
@@ -494,6 +543,23 @@ export default function RoutesMap() {
         });
       },
     });
+
+    return null;
+  }
+
+  function MapViewportHandler() {
+    const map = useMapEvents({
+      moveend() {
+        updateMapViewport(map.getBounds(), map.getZoom());
+      },
+      zoomend() {
+        updateMapViewport(map.getBounds(), map.getZoom());
+      },
+    });
+
+    useEffect(() => {
+      updateMapViewport(map.getBounds(), map.getZoom());
+    }, [map, updateMapViewport]);
 
     return null;
   }
@@ -991,6 +1057,38 @@ export default function RoutesMap() {
               )}
             </div>
 
+            <div className="rounded-xl border border-sea/20 bg-white/75 p-3">
+              <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-ink/55">Performance do mapa</h3>
+              <div className="mt-3 grid gap-2">
+                <label className="flex items-center justify-between gap-2 text-xs text-ink/75">
+                  <span>Modo leve</span>
+                  <input
+                    type="checkbox"
+                    checked={isLightMapMode}
+                    onChange={(e) => {
+                      setIsLightMapMode(e.target.checked);
+                    }}
+                    className="h-4 w-4 accent-sea"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between gap-2 text-xs text-ink/75">
+                  <span>Mostrar ruas</span>
+                  <input
+                    type="checkbox"
+                    checked={showBaseMap}
+                    onChange={(e) => setShowBaseMap(e.target.checked)}
+                    className="h-4 w-4 accent-sea"
+                  />
+                </label>
+
+                <p className="text-[11px] text-ink/60">
+                  No modo leve: sem limites administrativos, tooltip simplificado e com limite de{" "}
+                  {LIGHT_MODE_POINT_LIMIT} pontos.
+                </p>
+              </div>
+            </div>
+
             {/* Filtros de colunas */}
             <div className="rounded-xl border border-sea/20 bg-white/75 p-3">
               <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-ink/55">Filtros de colunas</h3>
@@ -1055,6 +1153,10 @@ export default function RoutesMap() {
               <div className="ml-auto text-right text-xs text-ink/60">
                 <div>Empresas: {rowsMatchingFilters.length}</div>
                 <div>Pontos no mapa: {mapRows.length}</div>
+                <div>
+                  Renderizados: {rowsToRender.length}
+                  {isLightMapMode && hiddenPointsCount > 0 ? ` (${hiddenPointsCount} ocultos)` : ""}
+                </div>
                 <div>Sem coordenada real: {missingFromFiltersCount}</div>
                 <div>Selecionadas: {selectedAgendaIds.length}</div>
               </div>
@@ -1078,14 +1180,20 @@ export default function RoutesMap() {
               maxBounds={CEARA_BOUNDS}
               maxBoundsViscosity={0.8}
               preferCanvas
+              zoomAnimation={!isLightMapMode}
+              fadeAnimation={!isLightMapMode}
+              markerZoomAnimation={!isLightMapMode}
               className="routes-map h-[58vh] min-h-[380px] w-full lg:h-[72vh]"
             >
-              <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              />
+              {showBaseMap && (
+                <TileLayer
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
+              )}
 
               <RadiusClickHandler />
+              <MapViewportHandler />
 
               {radiusCenter && (
                 <Circle
@@ -1095,35 +1203,37 @@ export default function RoutesMap() {
                 />
               )}
 
-              <Pane name="admin-boundaries" style={{ zIndex: 480 }}>
-                {CEARA_CITIES_GEOJSON && (
-                  <GeoJSON
-                    data={CEARA_CITIES_GEOJSON}
-                    style={{
-                      color: "#7f1d1d",
-                      weight: 2.6,
-                      opacity: 1,
-                      fillOpacity: 0.02,
-                      dashArray: "4,3",
-                    }}
-                    interactive={false}
-                  />
-                )}
-                {FORTALEZA_BAIRROS_GEOJSON && (
-                  <GeoJSON
-                    data={FORTALEZA_BAIRROS_GEOJSON}
-                    style={{
-                      color: "#ef4444",
-                      weight: 2,
-                      opacity: 1,
-                      fillOpacity: 0.05,
-                    }}
-                    interactive={false}
-                  />
-                )}
-              </Pane>
+              {!isLightMapMode && (
+                <Pane name="admin-boundaries" style={{ zIndex: 480 }}>
+                  {CEARA_CITIES_GEOJSON && (
+                    <GeoJSON
+                      data={CEARA_CITIES_GEOJSON}
+                      style={{
+                        color: "#7f1d1d",
+                        weight: 2.6,
+                        opacity: 1,
+                        fillOpacity: 0.02,
+                        dashArray: "4,3",
+                      }}
+                      interactive={false}
+                    />
+                  )}
+                  {FORTALEZA_BAIRROS_GEOJSON && (
+                    <GeoJSON
+                      data={FORTALEZA_BAIRROS_GEOJSON}
+                      style={{
+                        color: "#ef4444",
+                        weight: 2,
+                        opacity: 1,
+                        fillOpacity: 0.05,
+                      }}
+                      interactive={false}
+                    />
+                  )}
+                </Pane>
+              )}
 
-              {mapRows.map((r) => {
+              {rowsToRender.map((r) => {
                 const sel = selSet.has(r.id);
                 const markerColor = r.isApproximatePoint ? "#f59e0b" : "#0f766e";
                 const markerBorderColor = r.isApproximatePoint ? "#b45309" : "#0b5b4f";
@@ -1141,45 +1251,57 @@ export default function RoutesMap() {
                     eventHandlers={{ click: () => toggleAgenda(r.id) }}
                   >
                     <Tooltip direction="right" offset={[12, -4]} opacity={0.98} sticky className="routes-map-tooltip">
-                      <div className="w-[320px] max-w-[320px] space-y-1 text-xs [overflow-wrap:anywhere]">
-                        <p className="font-semibold text-ink">
-                          OBS:{" "}
-                          {r.data_da_ultima_visita ? fmtDate(r.data_da_ultima_visita) : r.obs_contrato_1 ?? "-"}
-                        </p>
-                        <p className="text-ink/70">ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}</p>
-                        <p className="text-ink/70">VIDAS ULTIMA VISITA: {r.visit_completed_vidas ?? "-"}</p>
-                        <p className="text-ink/70">CODIGO: {r.cod_1 ?? "-"}</p>
-                        <p className="text-ink/70">EMPRESA: {r.empresa ?? r.nome_fantasia ?? "-"}</p>
-                        <p className="text-ink/70">BAIRRO: {r.bairro ?? "-"}</p>
-                        <p className="text-ink/70">CIDADE: {r.cidade ?? "-"}</p>
-                        <p className="text-ink/70">VENDEDOR: {r.vendedor ?? "-"}</p>
-                        <p className="text-ink/70">GRUPO: {r.grupo ?? "-"}</p>
-                        <p className="text-ink/70">PERFIL VISITA: {r.perfil_visita ?? "-"}</p>
-                        {r.isApproximatePoint && (
-                          <p className="text-amber-700">PONTO APROXIMADO (bairro/cidade)</p>
-                        )}
-                        <p className="break-words whitespace-normal text-ink/60">ENDERECO: {addr(r) || "-"}</p>
-                        <p className="break-words whitespace-normal text-ink/60">
-                          LAT/LNG: {r.latitude.toFixed(6)}, {r.longitude.toFixed(6)}
-                          {r.isApproximatePoint ? " (aprox.)" : ""}
-                        </p>
-                      </div>
+                      {isLightMapMode ? (
+                        <div className="w-[260px] max-w-[260px] space-y-1 text-xs [overflow-wrap:anywhere]">
+                          <p className="font-semibold text-ink">{r.empresa ?? r.nome_fantasia ?? "-"}</p>
+                          <p className="text-ink/70">COD: {r.cod_1 ?? "-"}</p>
+                          <p className="text-ink/70">
+                            {r.bairro ?? "-"} • {r.cidade ?? "-"}
+                          </p>
+                          <p className="text-ink/60">ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}</p>
+                          {r.isApproximatePoint && <p className="text-amber-700">PONTO APROXIMADO</p>}
+                        </div>
+                      ) : (
+                        <div className="w-[320px] max-w-[320px] space-y-1 text-xs [overflow-wrap:anywhere]">
+                          <p className="font-semibold text-ink">
+                            OBS:{" "}
+                            {r.data_da_ultima_visita ? fmtDate(r.data_da_ultima_visita) : r.obs_contrato_1 ?? "-"}
+                          </p>
+                          <p className="text-ink/70">ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}</p>
+                          <p className="text-ink/70">VIDAS ULTIMA VISITA: {r.visit_completed_vidas ?? "-"}</p>
+                          <p className="text-ink/70">CODIGO: {r.cod_1 ?? "-"}</p>
+                          <p className="text-ink/70">EMPRESA: {r.empresa ?? r.nome_fantasia ?? "-"}</p>
+                          <p className="text-ink/70">BAIRRO: {r.bairro ?? "-"}</p>
+                          <p className="text-ink/70">CIDADE: {r.cidade ?? "-"}</p>
+                          <p className="text-ink/70">VENDEDOR: {r.vendedor ?? "-"}</p>
+                          <p className="text-ink/70">GRUPO: {r.grupo ?? "-"}</p>
+                          <p className="text-ink/70">PERFIL VISITA: {r.perfil_visita ?? "-"}</p>
+                          {r.isApproximatePoint && <p className="text-amber-700">PONTO APROXIMADO (bairro/cidade)</p>}
+                          <p className="break-words whitespace-normal text-ink/60">ENDERECO: {addr(r) || "-"}</p>
+                          <p className="break-words whitespace-normal text-ink/60">
+                            LAT/LNG: {r.latitude.toFixed(6)}, {r.longitude.toFixed(6)}
+                            {r.isApproximatePoint ? " (aprox.)" : ""}
+                          </p>
+                        </div>
+                      )}
                     </Tooltip>
 
-                    <Popup>
-                      <div className="space-y-2 text-xs">
-                        <p className="font-semibold text-ink">{r.empresa ?? r.nome_fantasia ?? "Empresa"}</p>
-                        <p className="text-ink/70">{addr(r) || "Endereco nao informado"}</p>
-                        <button
-                          type="button"
-                          onClick={() => toggleAgenda(r.id)}
-                          className="inline-flex items-center gap-1 rounded border border-sea/30 px-2 py-1 text-[11px] font-semibold text-ink"
-                        >
-                          {sel ? <Check size={12} /> : <Plus size={12} />}
-                          {sel ? "Remover selecao" : "Selecionar"}
-                        </button>
-                      </div>
-                    </Popup>
+                    {!isLightMapMode && (
+                      <Popup>
+                        <div className="space-y-2 text-xs">
+                          <p className="font-semibold text-ink">{r.empresa ?? r.nome_fantasia ?? "Empresa"}</p>
+                          <p className="text-ink/70">{addr(r) || "Endereco nao informado"}</p>
+                          <button
+                            type="button"
+                            onClick={() => toggleAgenda(r.id)}
+                            className="inline-flex items-center gap-1 rounded border border-sea/30 px-2 py-1 text-[11px] font-semibold text-ink"
+                          >
+                            {sel ? <Check size={12} /> : <Plus size={12} />}
+                            {sel ? "Remover selecao" : "Selecionar"}
+                          </button>
+                        </div>
+                      </Popup>
+                    )}
                   </CircleMarker>
                 );
               })}
