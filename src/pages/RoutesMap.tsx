@@ -51,7 +51,7 @@ const CEARA_BOUNDS: [[number, number], [number, number]] = [
 
 const CEARA_CITIES_GEOJSON = JSON.parse(cearaCitiesRaw) as GeoJsonObject;
 const FORTALEZA_BAIRROS_GEOJSON = JSON.parse(fortalezaBairrosRaw) as GeoJsonObject;
-const LIGHT_MODE_POINT_LIMIT = 1200;
+const LIGHT_MODE_POINT_LIMIT = 3000;
 
 const MONTH_OPTIONS = [
   { value: "1", label: "Janeiro" },
@@ -247,8 +247,8 @@ export default function RoutesMap() {
   const [radiusCenter, setRadiusCenter] = useState<L.LatLng | null>(null);
   const [radiusReplaceSelection, setRadiusReplaceSelection] = useState(true);
   const [radiusResultIds, setRadiusResultIds] = useState<string[]>([]);
-  const [isLightMapMode, setIsLightMapMode] = useState(true);
-  const [showBaseMap, setShowBaseMap] = useState(true);
+  const [isLightMapMode] = useState(true);
+  const [showBaseMap] = useState(true);
   const [mapViewport, setMapViewport] = useState<MapViewport | null>(null);
   // ==============================================
 
@@ -494,6 +494,7 @@ export default function RoutesMap() {
 
   const rowsToRender = useMemo(() => {
     if (!isLightMapMode) return mapRows;
+    if (mapRows.length <= LIGHT_MODE_POINT_LIMIT) return mapRows;
 
     const selectedOrRadiusIds = new Set([...selectedAgendaIds, ...radiusResultIds]);
     const selectedOrRadiusRows: RenderableMapRow[] = [];
@@ -522,8 +523,6 @@ export default function RoutesMap() {
 
     return [...selectedOrRadiusRows, ...regularRows];
   }, [isLightMapMode, mapRows, mapViewport, radiusResultIds, selectedAgendaIds]);
-
-  const hiddenPointsCount = mapRows.length - rowsToRender.length;
 
   function RadiusClickHandler() {
     useMapEvents({
@@ -1057,38 +1056,6 @@ export default function RoutesMap() {
               )}
             </div>
 
-            <div className="rounded-xl border border-sea/20 bg-white/75 p-3">
-              <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-ink/55">Performance do mapa</h3>
-              <div className="mt-3 grid gap-2">
-                <label className="flex items-center justify-between gap-2 text-xs text-ink/75">
-                  <span>Modo leve</span>
-                  <input
-                    type="checkbox"
-                    checked={isLightMapMode}
-                    onChange={(e) => {
-                      setIsLightMapMode(e.target.checked);
-                    }}
-                    className="h-4 w-4 accent-sea"
-                  />
-                </label>
-
-                <label className="flex items-center justify-between gap-2 text-xs text-ink/75">
-                  <span>Mostrar ruas</span>
-                  <input
-                    type="checkbox"
-                    checked={showBaseMap}
-                    onChange={(e) => setShowBaseMap(e.target.checked)}
-                    className="h-4 w-4 accent-sea"
-                  />
-                </label>
-
-                <p className="text-[11px] text-ink/60">
-                  No modo leve: sem limites administrativos, tooltip simplificado e com limite de{" "}
-                  {LIGHT_MODE_POINT_LIMIT} pontos.
-                </p>
-              </div>
-            </div>
-
             {/* Filtros de colunas */}
             <div className="rounded-xl border border-sea/20 bg-white/75 p-3">
               <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-ink/55">Filtros de colunas</h3>
@@ -1152,12 +1119,7 @@ export default function RoutesMap() {
 
               <div className="ml-auto text-right text-xs text-ink/60">
                 <div>Empresas: {rowsMatchingFilters.length}</div>
-                <div>Pontos no mapa: {mapRows.length}</div>
-                <div>
-                  Renderizados: {rowsToRender.length}
-                  {isLightMapMode && hiddenPointsCount > 0 ? ` (${hiddenPointsCount} ocultos)` : ""}
-                </div>
-                <div>Sem coordenada real: {missingFromFiltersCount}</div>
+                {missingFromFiltersCount > 0 && <div>Sem coordenada real: {missingFromFiltersCount}</div>}
                 <div>Selecionadas: {selectedAgendaIds.length}</div>
               </div>
             </div>
