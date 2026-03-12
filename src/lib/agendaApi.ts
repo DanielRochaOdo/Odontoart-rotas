@@ -227,6 +227,7 @@ const expandFilterValues = (key: string, values: string[]) => {
 type AgendaPerfilRow = {
   id: string;
   perfil_visita: string | null;
+  instructions?: string | null;
   cod_1?: string | null;
   empresa?: string | null;
   nome_fantasia?: string | null;
@@ -403,7 +404,7 @@ export const fetchAgenda = async (
     supabase
     .from("agenda")
     .select(
-      "id, data_da_ultima_visita, visit_completed_vidas, cod_1, empresa, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1, visit_generated_at, created_at",
+      "id, data_da_ultima_visita, visit_completed_vidas, cod_1, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1, visit_generated_at, created_at",
       { count: "exact" },
     )
     .ilike("situacao", "ativo%");
@@ -564,7 +565,7 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
   const buildQuery = () =>
     supabase
       .from("agenda")
-      .select("id, perfil_visita, cod_1, empresa, nome_fantasia")
+      .select("id, perfil_visita, instructions, cod_1, empresa, nome_fantasia")
       .is("visit_generated_at", null)
       .ilike("situacao", "ativo%")
       .order("id", { ascending: true });
@@ -582,7 +583,11 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
 
     const hydrated = (await resolvePerfilFromClientes(results)) as AgendaPerfilRow[];
     const deduped = dedupeAgendaRows(hydrated as Partial<AgendaRow>[] as AgendaRow[]) as unknown as AgendaPerfilRow[];
-    return deduped.map((item) => ({ id: item.id, perfil_visita: item.perfil_visita ?? null }));
+    return deduped.map((item) => ({
+      id: item.id,
+      perfil_visita: item.perfil_visita ?? null,
+      instructions: (item as { instructions?: string | null }).instructions ?? null,
+    }));
   }
 
   const vidasRange = getVidasRange(filters);
@@ -623,7 +628,11 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
 
   const hydrated = (await resolvePerfilFromClientes(results)) as AgendaPerfilRow[];
   const deduped = dedupeAgendaRows(hydrated as Partial<AgendaRow>[] as AgendaRow[]) as unknown as AgendaPerfilRow[];
-  return deduped.map((item) => ({ id: item.id, perfil_visita: item.perfil_visita ?? null }));
+  return deduped.map((item) => ({
+    id: item.id,
+    perfil_visita: item.perfil_visita ?? null,
+    instructions: (item as { instructions?: string | null }).instructions ?? null,
+  }));
 };
 
 export const fetchVendedores = async () => {

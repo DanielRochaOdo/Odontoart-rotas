@@ -26,6 +26,7 @@ import {
 } from "../lib/perfilVisita";
 import { formatCep, sanitizeCep } from "../lib/cep";
 import { fetchNominatimByAddress, fetchNominatimByCep } from "../lib/nominatim";
+import { fetchEmpresaByEmpresaId, type OdontoartEmpresaResponseRow } from "../lib/odontoartEmpresaApi";
 
 const formatDate = (value: string | null) => {
   if (!value) return "-";
@@ -98,6 +99,17 @@ type DuplicateEntry = {
   payload?: ImportPayload;
 };
 
+type CodigoDuplicadoOrigem = "create" | "edit";
+
+type CodigoDuplicadoModalState = {
+  codigo: string;
+  empresa: string;
+  obs: string;
+  origem: CodigoDuplicadoOrigem;
+  existingObs: string[];
+  error: string | null;
+};
+
 type ImportPayload = {
   codigo?: string | null;
   valor?: number | null;
@@ -107,6 +119,7 @@ type ImportPayload = {
   contato?: string | null;
   grupo?: string | null;
   obs_comercial?: string | null;
+  obs?: string | null;
   situacao?: string | null;
   perfil_visita?: string | null;
   endereco?: string | null;
@@ -148,6 +161,7 @@ const buildClientePayloadFromImport = (payload: ImportPayload) => ({
   contato: normalizeContato(payload.contato ?? ""),
   grupo: payload.grupo ?? null,
   obs_comercial: payload.obs_comercial ?? null,
+  obs: payload.obs ?? null,
   complemento: payload.complemento ?? null,
   perfil_visita: payload.perfil_visita ?? null,
   situacao: "Ativo",
@@ -247,6 +261,67 @@ const formatCurrencyInput = (value: string) => {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(amount);
 };
 
+const parseNumberFromUnknown = (value: unknown) => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const normalized = value.replace(/\./g, "").replace(",", ".").trim();
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const resolveValorTitular = (empresa: OdontoartEmpresaResponseRow) => {
+  const direct = parseNumberFromUnknown(empresa.ValorTitular);
+  if (direct !== null) return direct;
+  return parseNumberFromUnknown(empresa.PrecoPlano?.[0]?.ValorTitular);
+};
+
+const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigoFallback: string) => {
+  const codigo =
+    empresa.Id !== null && empresa.Id !== undefined
+      ? String(empresa.Id).trim()
+      : codigoFallback.trim();
+  const logradouro = (empresa.Logradouro ?? "").trim();
+  const numero =
+    empresa.Numero !== null && empresa.Numero !== undefined
+      ? String(empresa.Numero).trim()
+      : "";
+  const endereco = [logradouro, numero].filter(Boolean).join(", ");
+  const valorTitular = resolveValorTitular(empresa);
+
+  return {
+    codigo,
+    corte:
+      empresa.Corte !== null && empresa.Corte !== undefined
+        ? String(empresa.Corte).trim()
+        : "",
+    venc:
+      empresa.Vencimento !== null && empresa.Vencimento !== undefined
+        ? String(empresa.Vencimento).trim()
+        : "",
+    valor: valorTitular !== null ? formatCurrency(valorTitular) : "",
+    data_da_ultima_visita: "",
+    cep: formatCep((empresa.Cep ?? "").trim()),
+    empresa: (empresa.RazaoSocial ?? "").trim(),
+    pessoa: "",
+    contato: "",
+    grupo: "",
+    obs_comercial: (empresa.ObservacaoComercial ?? "").trim(),
+    obs: "",
+    situacao: "",
+    endereco,
+    complemento: "",
+    bairro: (empresa.BairroNome ?? "").trim(),
+    cidade: (empresa.MunicipioNome ?? "").trim(),
+    uf: (empresa.UfNome ?? "").trim(),
+  };
+};
+
+const normalizeCodigoValue = (value: string | null | undefined) => (value ?? "").trim();
+const normalizeObsValue = (value: string | null | undefined) =>
+  (value ?? "").trim().toLocaleLowerCase("pt-BR");
+
 const excelSerialToISOString = (serial: number) => {
   if (!Number.isFinite(serial)) return null;
   const utcMs = Date.UTC(1899, 11, 30) + serial * 86400000;
@@ -310,6 +385,7 @@ const HEADER_MAP: Record<string, string> = {
   obs_comercial: "obs_comercial",
   "obs. comercial": "obs_comercial",
   "observacao comercial": "obs_comercial",
+  obs: "obs",
   situacao: "situacao",
   "perfil visita": "perfil_visita",
   perfil: "perfil_visita",
@@ -401,6 +477,7 @@ export default function Clientes() {
     contato: "",
     grupo: "",
     obs_comercial: "",
+    obs: "",
     situacao: "Ativo",
     endereco: "",
     complemento: "",
@@ -435,6 +512,7 @@ export default function Clientes() {
     contato: "",
     grupo: "",
     obs_comercial: "",
+    obs: "",
     situacao: "",
     endereco: "",
     complemento: "",
@@ -474,8 +552,12 @@ export default function Clientes() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [cepLoading, setCepLoading] = useState(false);
   const [cepError, setCepError] = useState<string | null>(null);
+  const [codigoLoading, setCodigoLoading] = useState(false);
+  const [codigoError, setCodigoError] = useState<string | null>(null);
   const [cepLoadingEdit, setCepLoadingEdit] = useState(false);
   const [cepErrorEdit, setCepErrorEdit] = useState<string | null>(null);
+  const [codigoLoadingEdit, setCodigoLoadingEdit] = useState(false);
+  const [codigoErrorEdit, setCodigoErrorEdit] = useState<string | null>(null);
   const [importProgress, setImportProgress] = useState(0);
   const [importTotal, setImportTotal] = useState(0);
   const [importInserted, setImportInserted] = useState(0);
@@ -493,6 +575,12 @@ export default function Clientes() {
   const [duplicateQueue, setDuplicateQueue] = useState<DuplicateEntry[]>([]);
   const [duplicateResolving, setDuplicateResolving] = useState(false);
   const [duplicateComplemento, setDuplicateComplemento] = useState("");
+  const [codigoDuplicadoModal, setCodigoDuplicadoModal] = useState<CodigoDuplicadoModalState | null>(null);
+  const [codigoDuplicadoAprovado, setCodigoDuplicadoAprovado] = useState<{
+    codigo: string;
+    obs: string;
+    origem: CodigoDuplicadoOrigem;
+  } | null>(null);
   const skipCepLookupRef = useRef(false);
   const skipCepLookupEditRef = useRef(false);
 
@@ -622,6 +710,7 @@ export default function Clientes() {
       contato: sanitizeContatoInput(selected.contato ?? ""),
       grupo: selected.grupo ?? "",
       obs_comercial: selected.obs_comercial ?? "",
+      obs: selected.obs ?? "",
       situacao: selected.situacao ?? "Ativo",
       endereco: selected.endereco ?? "",
       complemento: selected.complemento ?? "",
@@ -649,6 +738,26 @@ export default function Clientes() {
       }
     }
   }, [clientes, selected, selectedId]);
+
+  useEffect(() => {
+    if (!codigoDuplicadoAprovado || codigoDuplicadoAprovado.origem !== "create") return;
+    if (
+      normalizeCodigoValue(codigoDuplicadoAprovado.codigo) !== normalizeCodigoValue(form.codigo) ||
+      normalizeObsValue(codigoDuplicadoAprovado.obs) !== normalizeObsValue(form.obs)
+    ) {
+      setCodigoDuplicadoAprovado(null);
+    }
+  }, [codigoDuplicadoAprovado, form.codigo, form.obs]);
+
+  useEffect(() => {
+    if (!codigoDuplicadoAprovado || codigoDuplicadoAprovado.origem !== "edit") return;
+    if (
+      normalizeCodigoValue(codigoDuplicadoAprovado.codigo) !== normalizeCodigoValue(editForm.codigo) ||
+      normalizeObsValue(codigoDuplicadoAprovado.obs) !== normalizeObsValue(editForm.obs)
+    ) {
+      setCodigoDuplicadoAprovado(null);
+    }
+  }, [codigoDuplicadoAprovado, editForm.codigo, editForm.obs]);
 
   const filteredHistory = useMemo(() => {
     let next = history;
@@ -839,6 +948,7 @@ export default function Clientes() {
             cliente.contato,
             cliente.grupo,
             cliente.obs_comercial,
+            cliente.obs,
             cliente.situacao,
             cliente.cidade,
             cliente.uf,
@@ -880,9 +990,121 @@ export default function Clientes() {
     }
   }, [currentPage, totalPages]);
 
+  const findClientesByCodigo = (codigo: string, excludeId?: string | null) => {
+    const normalized = normalizeCodigoValue(codigo);
+    if (!normalized) return [] as ClienteRow[];
+    return clientes.filter((cliente) => {
+      if (excludeId && cliente.id === excludeId) return false;
+      return normalizeCodigoValue(cliente.codigo) === normalized;
+    });
+  };
+
+  const hasObsConflictForCodigo = (codigo: string, obs: string, excludeId?: string | null) => {
+    const normalizedObs = normalizeObsValue(obs);
+    if (!normalizedObs) return false;
+    return findClientesByCodigo(codigo, excludeId).some(
+      (cliente) => normalizeObsValue(cliente.obs) === normalizedObs,
+    );
+  };
+
+  const openCodigoDuplicadoModal = ({
+    codigo,
+    origem,
+    excludeId,
+    obsAtual,
+  }: {
+    codigo: string;
+    origem: CodigoDuplicadoOrigem;
+    excludeId?: string | null;
+    obsAtual: string;
+  }) => {
+    const matches = findClientesByCodigo(codigo, excludeId);
+    if (!matches.length) return;
+    const existingObs = Array.from(
+      new Set(
+        matches
+          .map((cliente) => (cliente.obs ?? "").trim())
+          .filter(Boolean),
+      ),
+    );
+    setCodigoDuplicadoModal({
+      codigo: codigo.trim(),
+      empresa: matches[0]?.empresa ?? "Sem nome",
+      obs: obsAtual,
+      origem,
+      existingObs,
+      error: null,
+    });
+  };
+
+  const handleSaveCodigoDuplicadoModal = () => {
+    if (!codigoDuplicadoModal) return;
+    const obsValue = codigoDuplicadoModal.obs.trim();
+    if (!obsValue) {
+      setCodigoDuplicadoModal((prev) =>
+        prev
+          ? {
+              ...prev,
+              error: "Informe uma obs para este codigo.",
+            }
+          : prev,
+      );
+      return;
+    }
+
+    const excludeId = codigoDuplicadoModal.origem === "edit" ? selected?.id ?? null : null;
+    if (hasObsConflictForCodigo(codigoDuplicadoModal.codigo, obsValue, excludeId)) {
+      setCodigoDuplicadoModal((prev) =>
+        prev
+          ? {
+              ...prev,
+              error: "Esta obs ja existe para este codigo. Informe uma obs diferente.",
+            }
+          : prev,
+      );
+      return;
+    }
+
+    if (codigoDuplicadoModal.origem === "edit") {
+      setEditForm((prev) => ({ ...prev, obs: obsValue }));
+    } else {
+      setForm((prev) => ({ ...prev, obs: obsValue }));
+    }
+
+    setCodigoDuplicadoAprovado({
+      codigo: codigoDuplicadoModal.codigo,
+      obs: obsValue,
+      origem: codigoDuplicadoModal.origem,
+    });
+    setCodigoDuplicadoModal(null);
+  };
+
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canCreate) return;
+    const codigoInformado = form.codigo.trim();
+    if (codigoInformado) {
+      const matchesByCode = findClientesByCodigo(codigoInformado);
+      if (matchesByCode.length > 0) {
+        const obsInformada = form.obs.trim();
+        const alreadyApproved =
+          codigoDuplicadoAprovado?.origem === "create" &&
+          normalizeCodigoValue(codigoDuplicadoAprovado.codigo) === normalizeCodigoValue(codigoInformado) &&
+          normalizeObsValue(codigoDuplicadoAprovado.obs) === normalizeObsValue(obsInformada);
+        const hasConflict = hasObsConflictForCodigo(codigoInformado, obsInformada);
+        if (!alreadyApproved || !obsInformada || hasConflict) {
+          openCodigoDuplicadoModal({
+            codigo: codigoInformado,
+            origem: "create",
+            obsAtual: obsInformada,
+          });
+          return;
+        }
+      }
+    }
+    if (codigoDuplicadoAprovado?.origem === "create" && !form.codigo.trim()) {
+      setCodigoDuplicadoAprovado(null);
+    }
     if (!form.empresa.trim()) {
       setError("Informe o nome da empresa.");
       return;
@@ -923,6 +1145,7 @@ export default function Clientes() {
         contato: normalizeContato(form.contato),
         grupo: form.grupo.trim() || null,
         obs_comercial: form.obs_comercial.trim() || null,
+        obs: form.obs.trim() || null,
         perfil_visita: perfilCreate.perfil || null,
         situacao: form.situacao.trim() || "Ativo",
         endereco: form.endereco.trim() || null,
@@ -949,6 +1172,7 @@ export default function Clientes() {
         contato: "",
         grupo: "",
         obs_comercial: "",
+        obs: "",
         situacao: "Ativo",
         endereco: "",
         complemento: "",
@@ -956,6 +1180,7 @@ export default function Clientes() {
         cidade: "",
         uf: "",
       });
+      setCodigoDuplicadoAprovado(null);
       setPerfilCreate(buildPerfilState(null));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao criar cliente.");
@@ -1087,6 +1312,38 @@ export default function Clientes() {
     }
   };
 
+  const handleCodigoLookup = async () => {
+    const empresaId = form.codigo.trim();
+    if (!empresaId) {
+      setCodigoError("Informe o codigo da empresa.");
+      return;
+    }
+    if (findClientesByCodigo(empresaId).length > 0) {
+      openCodigoDuplicadoModal({
+        codigo: empresaId,
+        origem: "create",
+        obsAtual: form.obs,
+      });
+      return;
+    }
+    setCodigoLoading(true);
+    setCodigoError(null);
+    try {
+      const empresaApi = await fetchEmpresaByEmpresaId(empresaId);
+      if (!empresaApi) {
+        throw new Error("Empresa nao encontrada na API.");
+      }
+      setForm(mapEmpresaApiToClienteForm(empresaApi, empresaId));
+      setPerfilCreate(buildPerfilState(null));
+      setCepError(null);
+      setAddressLookupError(null);
+    } catch (err) {
+      setCodigoError(err instanceof Error ? err.message : "Erro ao buscar codigo na API.");
+    } finally {
+      setCodigoLoading(false);
+    }
+  };
+
   const handleCepLookup = async () => {
     const digits = sanitizeCep(form.cep);
     if (digits.length !== 8) {
@@ -1116,6 +1373,30 @@ export default function Clientes() {
 
   const handleSaveEdit = async () => {
     if (!selected || !canEdit) return;
+    const codigoInformado = editForm.codigo.trim();
+    if (codigoInformado) {
+      const matchesByCode = findClientesByCodigo(codigoInformado, selected.id);
+      if (matchesByCode.length > 0) {
+        const obsInformada = editForm.obs.trim();
+        const alreadyApproved =
+          codigoDuplicadoAprovado?.origem === "edit" &&
+          normalizeCodigoValue(codigoDuplicadoAprovado.codigo) === normalizeCodigoValue(codigoInformado) &&
+          normalizeObsValue(codigoDuplicadoAprovado.obs) === normalizeObsValue(obsInformada);
+        const hasConflict = hasObsConflictForCodigo(codigoInformado, obsInformada, selected.id);
+        if (!alreadyApproved || !obsInformada || hasConflict) {
+          openCodigoDuplicadoModal({
+            codigo: codigoInformado,
+            origem: "edit",
+            excludeId: selected.id,
+            obsAtual: obsInformada,
+          });
+          return;
+        }
+      }
+    }
+    if (codigoDuplicadoAprovado?.origem === "edit" && !editForm.codigo.trim()) {
+      setCodigoDuplicadoAprovado(null);
+    }
     if (!editForm.empresa.trim()) {
       setError("Informe o nome da empresa.");
       return;
@@ -1140,6 +1421,7 @@ export default function Clientes() {
         contato: normalizeContato(editForm.contato),
         grupo: editForm.grupo.trim() || null,
         obs_comercial: editForm.obs_comercial.trim() || null,
+        obs: editForm.obs.trim() || null,
         perfil_visita: perfilEdit.perfil || null,
         situacao: editForm.situacao.trim() || "Ativo",
         endereco: editForm.endereco.trim() || null,
@@ -1152,6 +1434,7 @@ export default function Clientes() {
       await syncVisitsForCliente(updated);
       setClientes((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       setSelected(updated);
+      setCodigoDuplicadoAprovado(null);
       setIsEditing(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao atualizar cliente.");
@@ -1224,6 +1507,40 @@ export default function Clientes() {
       setCepLoadingEdit(false);
     }
   };
+
+  const handleCodigoLookupEdit = async () => {
+    const empresaId = editForm.codigo.trim();
+    if (!empresaId) {
+      setCodigoErrorEdit("Informe o codigo da empresa.");
+      return;
+    }
+    if (findClientesByCodigo(empresaId, selected?.id ?? null).length > 0) {
+      openCodigoDuplicadoModal({
+        codigo: empresaId,
+        origem: "edit",
+        excludeId: selected?.id ?? null,
+        obsAtual: editForm.obs,
+      });
+      return;
+    }
+    setCodigoLoadingEdit(true);
+    setCodigoErrorEdit(null);
+    try {
+      const empresaApi = await fetchEmpresaByEmpresaId(empresaId);
+      if (!empresaApi) {
+        throw new Error("Empresa nao encontrada na API.");
+      }
+      setEditForm(mapEmpresaApiToClienteForm(empresaApi, empresaId));
+      setPerfilEdit(buildPerfilState(null));
+      setCepErrorEdit(null);
+      setAddressLookupErrorEdit(null);
+    } catch (err) {
+      setCodigoErrorEdit(err instanceof Error ? err.message : "Erro ao buscar codigo na API.");
+    } finally {
+      setCodigoLoadingEdit(false);
+    }
+  };
+
   const handleAddressLookupEdit = async () => {
     const road = editForm.endereco.trim();
     const city = editForm.cidade.trim();
@@ -1262,6 +1579,7 @@ export default function Clientes() {
       "contato",
       "grupo",
       "obs_comercial",
+      "obs",
       "corte",
       "vencimento",
       "valor",
@@ -1275,6 +1593,7 @@ export default function Clientes() {
       "cep",
     ];
     const sampleRow = [
+      "",
       "",
       "",
       "",
@@ -1383,6 +1702,7 @@ export default function Clientes() {
             contato: normalizeContato(record.contato ?? ""),
             grupo: record.grupo ?? null,
             obs_comercial: record.obs_comercial ?? null,
+            obs: record.obs ?? null,
             situacao: "Ativo",
             perfil_visita: record.perfil_visita ?? null,
             endereco: record.endereco ?? null,
@@ -1417,6 +1737,7 @@ export default function Clientes() {
               contato: payload.contato ?? null,
               grupo: payload.grupo ?? null,
               obs_comercial: payload.obs_comercial ?? null,
+              obs: payload.obs ?? null,
               nome_fantasia: null,
               complemento: payload.complemento ?? null,
               perfil_visita: payload.perfil_visita ?? null,
@@ -1520,6 +1841,7 @@ export default function Clientes() {
           contato: string | null;
           grupo: string | null;
           obs_comercial: string | null;
+          obs: string | null;
           situacao: string;
           perfil_visita: string | null;
           endereco: string | null;
@@ -1646,13 +1968,30 @@ export default function Clientes() {
           onSubmit={handleCreate}
           className="grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-4 md:grid-cols-6"
         >
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+          <label className="min-w-0 flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
             Codigo
-            <input
-              value={form.codigo}
-              onChange={(event) => setForm((prev) => ({ ...prev, codigo: event.target.value }))}
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
+            <div className="min-w-0 flex items-end gap-2">
+              <input
+                value={form.codigo}
+                onChange={(event) => {
+                  setCodigoError(null);
+                  setForm((prev) => ({ ...prev, codigo: event.target.value }));
+                }}
+                className="min-w-0 w-full flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+              />
+              <button
+                type="button"
+                onClick={handleCodigoLookup}
+                disabled={codigoLoading || !form.codigo.trim()}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                title={codigoLoading ? "Buscando codigo..." : "Buscar por codigo"}
+                aria-label={codigoLoading ? "Buscando codigo..." : "Buscar por codigo"}
+              >
+                <Search size={15} className={codigoLoading ? "animate-pulse" : ""} />
+              </button>
+            </div>
+            {codigoLoading && <span className="text-[11px] text-ink/60">Consultando codigo...</span>}
+            {codigoError && <span className="text-[11px] text-red-600">{codigoError}</span>}
           </label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             Empresa
@@ -1662,7 +2001,7 @@ export default function Clientes() {
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
             Pessoa
             <input
               value={form.pessoa}
@@ -1670,7 +2009,7 @@ export default function Clientes() {
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             Contato
             <input
               value={form.contato}
@@ -1689,12 +2028,22 @@ export default function Clientes() {
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
             Obs comercial
             <input
               value={form.obs_comercial}
               onChange={(event) =>
                 setForm((prev) => ({ ...prev, obs_comercial: event.target.value }))
+              }
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+            Obs
+            <input
+              value={form.obs}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, obs: event.target.value }))
               }
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
@@ -2076,6 +2425,11 @@ export default function Clientes() {
                         Obs comercial: {cliente.obs_comercial}
                       </div>
                     ) : null}
+                    {cliente.obs ? (
+                      <div className="text-[11px] text-ink/50">
+                        Obs: {cliente.obs}
+                      </div>
+                    ) : null}
                     {cliente.situacao ? (
                       <div className="mt-1 text-[11px] text-ink/50">
                         Situacao: {cliente.situacao}
@@ -2176,15 +2530,34 @@ export default function Clientes() {
 
             {isEditing ? (
               <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-12">
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                <label className="flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2 md:max-w-[240px]">
                   Codigo
-                  <input
-                    value={editForm.codigo}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, codigo: event.target.value }))
-                    }
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
+                  <div className="flex items-end gap-2">
+                    <input
+                      value={editForm.codigo}
+                      onChange={(event) => {
+                        setCodigoErrorEdit(null);
+                        setEditForm((prev) => ({ ...prev, codigo: event.target.value }));
+                      }}
+                      className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCodigoLookupEdit}
+                      disabled={codigoLoadingEdit || !editForm.codigo.trim()}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                      title={codigoLoadingEdit ? "Buscando codigo..." : "Buscar por codigo"}
+                      aria-label={codigoLoadingEdit ? "Buscando codigo..." : "Buscar por codigo"}
+                    >
+                      <Search size={15} className={codigoLoadingEdit ? "animate-pulse" : ""} />
+                    </button>
+                  </div>
+                  {codigoLoadingEdit && (
+                    <span className="text-[11px] font-normal text-ink/60">Consultando codigo...</span>
+                  )}
+                  {codigoErrorEdit && (
+                    <span className="text-[11px] font-normal text-red-600">{codigoErrorEdit}</span>
+                  )}
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
                   Empresa
@@ -2230,12 +2603,22 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-9">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-6">
                   Obs comercial
                   <input
                     value={editForm.obs_comercial}
                     onChange={(event) =>
                       setEditForm((prev) => ({ ...prev, obs_comercial: event.target.value }))
+                    }
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-6">
+                  Obs
+                  <input
+                    value={editForm.obs}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, obs: event.target.value }))
                     }
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
@@ -2544,6 +2927,7 @@ export default function Clientes() {
                   ["Contato", selected.contato],
                   ["Grupo", selected.grupo],
                   ["Obs comercial", selected.obs_comercial],
+                  ["Obs", selected.obs],
                   ["Situacao", selected.situacao ?? "Ativo"],
                   ["Perfil visita", formatPerfilDisplay(selected.perfil_visita)],
                   ["Endereco", selected.endereco],
@@ -2687,6 +3071,79 @@ export default function Clientes() {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {codigoDuplicadoModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setCodigoDuplicadoModal(null)}
+          />
+          <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Codigo ja cadastrado</h3>
+            <p className="mt-2 text-sm text-ink/70">
+              Ja existe empresa cadastrada com este codigo. Informe uma obs unica para diferenciar a filial.
+            </p>
+            <div className="mt-4 grid gap-2 rounded-xl border border-sea/15 bg-sand/30 p-3 text-sm text-ink/80">
+              <p>
+                <span className="font-semibold">Codigo:</span> {codigoDuplicadoModal.codigo}
+              </p>
+              <p>
+                <span className="font-semibold">Empresa:</span> {codigoDuplicadoModal.empresa}
+              </p>
+            </div>
+            {codigoDuplicadoModal.existingObs.length > 0 && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <p className="font-semibold">Obs ja utilizadas para este codigo:</p>
+                <p className="mt-1 break-words">
+                  {codigoDuplicadoModal.existingObs.join(" | ")}
+                </p>
+              </div>
+            )}
+            <label className="mt-4 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              Obs
+              <textarea
+                value={codigoDuplicadoModal.obs}
+                onChange={(event) =>
+                  setCodigoDuplicadoModal((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          obs: event.target.value,
+                          error: null,
+                        }
+                      : prev,
+                  )
+                }
+                rows={4}
+                className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+              />
+            </label>
+            {codigoDuplicadoModal.error && (
+              <p className="mt-2 text-xs font-semibold text-red-600">{codigoDuplicadoModal.error}</p>
+            )}
+            <p className="mt-2 text-[11px] text-ink/60">
+              Apos salvar a obs, clique em "Adicionar cliente" para concluir.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCodigoDuplicadoModal(null)}
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Fechar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveCodigoDuplicadoModal}
+                className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight"
+              >
+                Salvar
+              </button>
             </div>
           </div>
         </div>

@@ -116,6 +116,9 @@ const FIELDS = [
   { key: "data_da_ultima_visita", label: "Data da ultima visita", type: "date" },
   { key: "cod_1", label: "Cod.", type: "text" },
   { key: "empresa", label: "Empresa", type: "text" },
+  { key: "pessoa", label: "Pessoa", type: "text" },
+  { key: "contato", label: "Contato", type: "text" },
+  { key: "instructions", label: "Instrucoes", type: "text", wide: true },
   { key: "perfil_visita", label: "Perfil Visita", type: "text" },
   { key: "corte", label: "Corte", type: "number" },
   { key: "venc", label: "Venc", type: "number" },
@@ -139,6 +142,7 @@ type AgendaDrawerProps = {
   row: AgendaRow | null;
   onClose: () => void;
   canEdit?: boolean;
+  canManageInstruction?: boolean;
   userEmail?: string | null;
   vendorOptions?: { value: string; label: string }[];
   supervisorOptions?: string[];
@@ -150,6 +154,9 @@ const buildFormState = (row: AgendaRow): AgendaFormState => ({
   data_da_ultima_visita: toDateInput(row.data_da_ultima_visita),
   cod_1: row.cod_1 ?? "",
   empresa: row.empresa ?? "",
+  pessoa: row.pessoa ?? "",
+  contato: row.contato ?? "",
+  instructions: row.instructions ?? "",
   perfil_visita: row.perfil_visita ?? "",
   corte: row.corte?.toString() ?? "",
   venc: row.venc?.toString() ?? "",
@@ -170,6 +177,7 @@ export default function AgendaDrawer({
   row,
   onClose,
   canEdit = false,
+  canManageInstruction = false,
   userEmail,
   vendorOptions,
   supervisorOptions,
@@ -309,6 +317,8 @@ export default function AgendaDrawer({
         : null,
       cod_1: formState.cod_1.trim() || null,
       empresa: formState.empresa.trim() || null,
+      pessoa: formState.pessoa.trim() || null,
+      contato: formState.contato.trim() || null,
       perfil_visita: formState.perfil_visita.trim() || null,
       corte: formState.corte ? parseNumber(formState.corte) : null,
       venc: formState.venc ? parseNumber(formState.venc) : null,
@@ -323,6 +333,7 @@ export default function AgendaDrawer({
       grupo: formState.grupo.trim() || null,
       situacao: formState.situacao.trim() || null,
       obs_contrato_1: formState.obs_contrato_1.trim() || null,
+      instructions: canManageInstruction ? formState.instructions.trim() || null : row.instructions ?? null,
     };
 
     const { data, error } = await supabase
@@ -339,6 +350,19 @@ export default function AgendaDrawer({
     }
 
     const updatedRow = data as AgendaRow;
+    if (canManageInstruction && (updatedRow.instructions ?? null) !== (row.instructions ?? null)) {
+      const { error: visitInstructionsError } = await supabase
+        .from("visits")
+        .update({ instructions: updatedRow.instructions ?? null })
+        .eq("agenda_id", row.id)
+        .is("completed_at", null);
+      if (visitInstructionsError) {
+        setStatus(visitInstructionsError.message);
+        setSaving(false);
+        return;
+      }
+    }
+
     await syncAgendaRowAcrossModules({
       id: updatedRow.id,
       codigo: updatedRow.cod_1,
@@ -447,6 +471,8 @@ export default function AgendaDrawer({
           <div className="mt-6 grid gap-3 md:grid-cols-2">
             {FIELDS.map((field) => {
               const isWide = "wide" in field && field.wide;
+              const isInstructionField = field.key === "instructions";
+              const instructionDisabled = isInstructionField && !canManageInstruction;
               return (
                 <label
                   key={field.key}
@@ -638,6 +664,31 @@ export default function AgendaDrawer({
                       </div>
                     )}
                   </div>
+                ) : field.key === "instructions" ? (
+                  <>
+                    <textarea
+                      value={formState[field.key]}
+                      onChange={(event) => {
+                        if (instructionDisabled) return;
+                        setFormState((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                [field.key]: event.target.value,
+                              }
+                            : prev,
+                        );
+                      }}
+                      disabled={instructionDisabled}
+                      rows={3}
+                      className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea disabled:opacity-70"
+                    />
+                    {instructionDisabled && (
+                      <span className="text-[10px] font-normal text-ink/50">
+                        Somente supervisor pode alterar instrucoes.
+                      </span>
+                    )}
+                  </>
                 ) : field.key === "bairro" ? (
                   <>
                     <input
@@ -684,6 +735,7 @@ export default function AgendaDrawer({
                     }
                     value={formState[field.key]}
                     onChange={(event) => {
+                      if (instructionDisabled) return;
                       const raw = event.target.value;
                       const nextValue = NUMERIC_ONLY_FIELDS.has(field.key)
                         ? sanitizeDigits(raw)
@@ -701,6 +753,7 @@ export default function AgendaDrawer({
                           : prev,
                       );
                     }}
+                    disabled={instructionDisabled}
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 )}

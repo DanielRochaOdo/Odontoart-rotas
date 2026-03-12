@@ -1,12 +1,13 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { addDays, endOfMonth, endOfWeek, format, isAfter, isSameDay, isSameMonth, startOfMonth, startOfWeek } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, MapPin, Pencil } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Eye, MapPin, Pencil } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { fetchVendedores } from "../lib/agendaApi";
 import { onProfilesUpdated } from "../lib/profileEvents";
 import { hydrateAgendaRowsFromClientes } from "../lib/clientesCanonical";
+import { fetchObservacaoComercialByEmpresaId } from "../lib/odontoartEmpresaApi";
 import {
   PERFIL_VISITA_PRESETS,
   extractCustomTimes,
@@ -33,9 +34,16 @@ type VisitRow = {
     id: string;
     empresa: string | null;
     nome_fantasia: string | null;
+    cod_1?: string | null;
+    corte?: number | null;
+    venc?: number | null;
+    valor?: number | null;
+    obs_contrato_1?: string | null;
     pessoa: string | null;
     contato: string | null;
+    instructions?: string | null;
     endereco: string | null;
+    complemento?: string | null;
     bairro: string | null;
     cidade: string | null;
     uf: string | null;
@@ -95,12 +103,10 @@ const toDateInput = (value: string | null) => {
 };
 
 const normalize = (value: string | null) => (value ?? "").trim().toLowerCase();
-const formatVisitDate = (value: string | null) => {
-  if (!value) return "-";
-  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
-  const date = new Date(isDateOnly ? `${value}T12:00:00` : value);
-  if (Number.isNaN(date.getTime())) return value;
-  return format(date, "dd/MM/yyyy");
+
+const formatCurrency = (value?: number | null) => {
+  if (value === null || value === undefined) return "-";
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 };
 
 const NO_VISIT_REASONS = [
@@ -300,6 +306,10 @@ export default function Visitas() {
     customEditEnabled: boolean;
     instructions: string;
   } | null>(null);
+  const [detailsVisit, setDetailsVisit] = useState<VisitRow | null>(null);
+  const [detailsObsExpanded, setDetailsObsExpanded] = useState(false);
+  const [detailsObsText, setDetailsObsText] = useState("");
+  const detailsObsRequestRef = useRef(0);
 
   useEffect(() => {
     if (!canManage) return;
@@ -441,7 +451,7 @@ export default function Visitas() {
       let visitsQuery = supabase
         .from("visits")
         .select(
-          "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, agenda:agenda_id (id, empresa, nome_fantasia, pessoa, contato, endereco, bairro, cidade, uf, situacao, perfil_visita, supervisor)",
+          "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, agenda:agenda_id (id, empresa, nome_fantasia, cod_1, corte, venc, valor, obs_contrato_1, pessoa, contato, instructions, endereco, complemento, bairro, cidade, uf, situacao, perfil_visita, supervisor)",
         )
         .gte("visit_date", startDate)
         .lte("visit_date", effectiveEnd)
@@ -785,7 +795,7 @@ export default function Visitas() {
                 assigned_to_name: vendorName,
                 visit_date: state.date,
                 perfil_visita: visit.perfil_visita ?? null,
-                instructions: visit.instructions ?? null,
+                instructions: visit.instructions ?? visit.agenda?.instructions ?? null,
                 route_id: routeId,
                 created_by: session?.user.id ?? null,
               },
@@ -910,12 +920,95 @@ export default function Visitas() {
       singleTimeValue,
       customOptions: hasCustomOptions ? customOptions : [],
       customEditEnabled: false,
-      instructions: item.instructions ?? "",
+      instructions: item.instructions ?? item.agenda?.instructions ?? "",
     });
   };
 
   const handleStartRegister = (item: VisitRow) => {
     setConfirmVisit(item);
+  };
+
+  const fetchObsComercialFromClientes = async (agenda?: VisitRow["agenda"] | null) => {
+    if (!agenda) return null;
+
+    const codigo = agenda.cod_1?.trim();
+    if (codigo) {
+      try {
+        const fromEndpoint = await fetchObservacaoComercialByEmpresaId(codigo);
+        if (fromEndpoint?.trim()) return fromEndpoint.trim();
+      } catch (error) {
+        console.error(error);
+      }
+
+      const { data, error } = await supabase
+        .from("clientes")
+        .select("obs_comercial")
+        .eq("codigo", codigo)
+        .limit(1);
+      if (!error && data && data.length > 0) {
+        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
+      }
+    }
+
+    const empresa = agenda.empresa?.trim();
+    const nomeFantasia = agenda.nome_fantasia?.trim();
+    if (empresa && nomeFantasia) {
+      const { data, error } = await supabase
+        .from("clientes")
+        .select("obs_comercial")
+        .eq("empresa", empresa)
+        .eq("nome_fantasia", nomeFantasia)
+        .limit(1);
+      if (!error && data && data.length > 0) {
+        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
+      }
+    }
+    if (empresa) {
+      const { data, error } = await supabase
+        .from("clientes")
+        .select("obs_comercial")
+        .eq("empresa", empresa)
+        .limit(1);
+      if (!error && data && data.length > 0) {
+        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
+      }
+    }
+    if (nomeFantasia) {
+      const { data, error } = await supabase
+        .from("clientes")
+        .select("obs_comercial")
+        .eq("nome_fantasia", nomeFantasia)
+        .limit(1);
+      if (!error && data && data.length > 0) {
+        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
+      }
+    }
+
+    return null;
+  };
+
+  const openDetailsModal = (item: VisitRow) => {
+    setDetailsObsExpanded(false);
+    setDetailsVisit(item);
+    const fallbackObs = item.agenda?.obs_contrato_1?.trim() ?? "";
+    setDetailsObsText(fallbackObs);
+    const requestId = detailsObsRequestRef.current + 1;
+    detailsObsRequestRef.current = requestId;
+    fetchObsComercialFromClientes(item.agenda)
+      .then((obsComercial) => {
+        if (detailsObsRequestRef.current !== requestId) return;
+        setDetailsObsText((obsComercial ?? fallbackObs ?? "").trim());
+      })
+      .catch((err) => {
+        console.error(err);
+      });
+  };
+
+  const closeDetailsModal = () => {
+    detailsObsRequestRef.current += 1;
+    setDetailsVisit(null);
+    setDetailsObsExpanded(false);
+    setDetailsObsText("");
   };
 
   const handleConfirmNoVisit = async () => {
@@ -1174,43 +1267,42 @@ export default function Visitas() {
                               date: toDateInput(item.visit_date),
                             };
                             const isEditing = editingVisits[item.id] ?? false;
-                            const displayVendor =
-                              item.assigned_to_name ??
-                              (item.assigned_to_user_id
-                                ? vendorById.get(item.assigned_to_user_id)?.display_name
-                                : null) ??
-                              "Sem vendedor";
                             const isCompleted = Boolean(item.completed_at);
                             const mapAddress = buildMapAddress(item.agenda);
+                            const instructionText =
+                              item.instructions?.trim() || item.agenda?.instructions?.trim() || "";
                             return (
                               <div key={item.id} className="rounded-xl border border-sea/10 bg-white/90 p-3">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <div>
-                                    <p className="text-sm font-semibold text-ink">
-                                      {item.agenda?.empresa ?? "Sem nome"}
-                                    </p>
-                                    <p className="text-xs text-ink/60">
-                                      {item.agenda?.bairro
-                                        ? `${item.agenda.bairro} - ${item.agenda.cidade ?? ""} / ${item.agenda?.uf ?? ""}`
-                                        : item.agenda?.cidade
-                                          ? `${item.agenda.cidade} / ${item.agenda?.uf ?? ""}`
-                                          : ""}
-                                    </p>
-                                    {item.agenda?.endereco ? (
-                                      <p className="text-[11px] text-ink/50">{item.agenda.endereco}</p>
-                                    ) : null}
-                                    {item.agenda?.pessoa ? (
-                                      <p className="text-[11px] text-ink/50">
-                                        Pessoa: {item.agenda.pessoa}
+                                    <div className="flex items-center gap-2">
+                                      <p className="text-sm font-semibold text-ink">
+                                        {item.agenda?.empresa ?? "Sem nome"}
                                       </p>
-                                    ) : null}
-                                    {item.agenda?.contato ? (
-                                      <p className="text-[11px] text-ink/50">
-                                        Contato: {item.agenda.contato}
-                                      </p>
-                                    ) : null}
+                                      <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
+                                        COD {item.agenda?.cod_1 ?? "-"}
+                                      </span>
+                                    </div>
+                                    <p className="text-[11px] text-ink/50">
+                                      Pessoa: {item.agenda?.pessoa ?? "-"}
+                                    </p>
+                                    <p className="text-[11px] text-ink/50">
+                                      Contato: {item.agenda?.contato ?? "-"}
+                                    </p>
                                   </div>
                                   <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openDetailsModal(item);
+                                      }}
+                                      className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
+                                      aria-label="Visualizar detalhes da empresa"
+                                      title="Visualizar detalhes da empresa"
+                                    >
+                                      <Eye size={12} />
+                                    </button>
                                     {item.agenda?.situacao ? (
                                       <span className="inline-flex rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
                                         {item.agenda.situacao}
@@ -1308,13 +1400,11 @@ export default function Visitas() {
                                   </div>
                                 ) : canManage ? (
                                   <div className="mt-3 grid gap-1 text-[11px] text-ink/60">
-                                    <span>Vendedor: {displayVendor}</span>
                                     <span>
                                       Perfil visita: {item.perfil_visita ?? item.perfil_visita_opcoes ?? item.agenda?.perfil_visita ?? "-"}
                                     </span>
-                                    <span>Data: {formatVisitDate(item.visit_date)}</span>
-                                    {item.instructions ? (
-                                      <span>Instrucoes: {item.instructions}</span>
+                                    {instructionText ? (
+                                      <span>Instrucoes: {instructionText}</span>
                                     ) : null}
                                     {isCompleted ? (
                                       <span className="rounded-lg border border-amber-300 bg-amber-100 px-2 py-1 text-[11px] font-semibold text-red-600">
@@ -1331,9 +1421,8 @@ export default function Visitas() {
                                       <span>
                                         Perfil visita: {item.perfil_visita ?? item.perfil_visita_opcoes ?? item.agenda?.perfil_visita ?? "-"}
                                       </span>
-                                      <span>Data: {formatVisitDate(item.visit_date)}</span>
-                                      {item.instructions ? (
-                                        <span>Instrucoes: {item.instructions}</span>
+                                      {instructionText ? (
+                                        <span>Instrucoes: {instructionText}</span>
                                       ) : null}
                                       {item.no_visit_reason ? (
                                         <span>Motivo: {item.no_visit_reason}</span>
@@ -1370,6 +1459,78 @@ export default function Visitas() {
               </p>
             )}
           </section>
+        </div>
+      )}
+
+      {detailsVisit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button type="button" className="absolute inset-0 bg-ink/30" onClick={closeDetailsModal} />
+          <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="font-display text-lg text-ink">Detalhes da empresa</h3>
+              <button
+                type="button"
+                onClick={closeDetailsModal}
+                className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Fechar
+              </button>
+            </div>
+            <div className="mt-4 space-y-3 text-sm text-ink/80">
+              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                <p className="text-[11px] font-semibold text-ink/60">Nome da empresa</p>
+                <p className="mt-1 font-semibold text-ink">
+                  {detailsVisit.agenda?.empresa ?? "-"}{" "}
+                  <span className="text-sea/80">{"{"}COD {detailsVisit.agenda?.cod_1 ?? "-"}{"}"}</span>
+                </p>
+              </div>
+              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                <p className="text-[11px] font-semibold text-ink/60">Endereco e numero</p>
+                <p className="mt-1">
+                  {[detailsVisit.agenda?.endereco, detailsVisit.agenda?.complemento].filter(Boolean).join(", ") || "-"}
+                </p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-ink/60">Corte</p>
+                  <p className="mt-1">{detailsVisit.agenda?.corte ?? "-"}</p>
+                </div>
+                <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-ink/60">Vencimento</p>
+                  <p className="mt-1">{detailsVisit.agenda?.venc ?? "-"}</p>
+                </div>
+                <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-ink/60">Valor</p>
+                  <p className="mt-1">{formatCurrency(detailsVisit.agenda?.valor)}</p>
+                </div>
+              </div>
+              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <p className="text-[11px] font-semibold text-ink/60">Obs</p>
+                  {detailsObsText.trim() ? (
+                    <button
+                      type="button"
+                      onClick={() => setDetailsObsExpanded((prev) => !prev)}
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300 bg-emerald-100 text-emerald-700"
+                      title={detailsObsExpanded ? "Ocultar observacao" : "Ver observacao"}
+                      aria-label={detailsObsExpanded ? "Ocultar observacao" : "Ver observacao"}
+                    >
+                      <CheckCircle2 size={14} />
+                    </button>
+                  ) : null}
+                </div>
+                {detailsObsText.trim() ? (
+                  detailsObsExpanded ? (
+                    <p className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-all text-sm">
+                      {detailsObsText}
+                    </p>
+                  ) : null
+                ) : (
+                  <p className="mt-1">-</p>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

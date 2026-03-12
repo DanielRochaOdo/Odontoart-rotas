@@ -3,6 +3,9 @@
   data_da_ultima_visita: string | null;
   cod_1: string | null;
   empresa: string | null;
+  pessoa: string | null;
+  contato: string | null;
+  instructions: string | null;
   perfil_visita: string | null;
   corte: number | null;
   venc: number | null;

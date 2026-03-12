@@ -233,7 +233,6 @@ export default function RoutesMap() {
   const [vendorQuery, setVendorQuery] = useState("");
 
   const [visitDate, setVisitDate] = useState("");
-  const [visitInstructions, setVisitInstructions] = useState("");
   const [showGenerateModal, setShowGenerateModal] = useState(false);
 
   const [message, setMessage] = useState<string | null>(null);
@@ -694,7 +693,7 @@ export default function RoutesMap() {
           assigned_to_name: v.display_name ?? v.user_id,
           visit_date: visitDate,
           perfil_visita: r.perfil_visita ?? null,
-          instructions: visitInstructions.trim() || null,
+          instructions: r.instructions?.trim() || null,
           route_id: route.id,
           created_by: session?.user.id ?? null,
         }));
@@ -735,7 +734,6 @@ export default function RoutesMap() {
       setSelectedVendorIds([]);
       setVendorQuery("");
       setVisitDate("");
-      setVisitInstructions("");
       setShowGenerateModal(false);
 
       setRadiusResultIds([]);
@@ -1088,7 +1086,6 @@ export default function RoutesMap() {
                 type="button"
                 onClick={() => {
                   setMessage(null);
-                  setVisitInstructions("");
                   setShowGenerateModal(true);
                 }}
                 disabled={rowsMatchingFilters.length === 0}
@@ -1283,7 +1280,7 @@ export default function RoutesMap() {
           <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Gerar visitas</h3>
             <p className="mt-1 text-xs text-ink/60">
-              Selecione os vendedores, a data, as instrucoes e as empresas marcadas no mapa para gerar as visitas.
+              Selecione os vendedores, a data e as empresas marcadas no mapa para gerar as visitas.
             </p>
             <p className="mt-2 text-xs text-ink/60">Empresas selecionadas: {selectedAgendaIds.length}</p>
 
@@ -1349,17 +1346,6 @@ export default function RoutesMap() {
                 />
               </label>
             </div>
-
-            <label className="mt-3 flex flex-col gap-1 text-xs font-semibold text-ink/70">
-              Instrucoes
-              <textarea
-                value={visitInstructions}
-                onChange={(e) => setVisitInstructions(e.target.value)}
-                rows={3}
-                placeholder="Ex.: visitar recepcao primeiro e validar documentos pendentes."
-                className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-              />
-            </label>
 
             {message && <p className="mt-3 text-xs text-ink/70">{message}</p>}
 

@@ -1,5 +1,13 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Map as MapIcon, MapPin, SquareCenterlineDashedHorizontal } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  Map as MapIcon,
+  MapPin,
+  SquareCenterlineDashedHorizontal,
+} from "lucide-react";
 import {
   flexRender,
   type ColumnDef,
@@ -23,6 +31,7 @@ import { useAgendaFilters } from "../hooks/useAgendaFilters";
 import MultiSelectFilter from "../components/agenda/MultiSelectFilter";
 import AgendaDrawer from "../components/agenda/AgendaDrawer";
 import { supabase } from "../lib/supabase";
+import { fetchObservacaoComercialByEmpresaId } from "../lib/odontoartEmpresaApi";
 import { useAuth } from "../context/AuthContext";
 import { onProfilesUpdated } from "../lib/profileEvents";
 import {
@@ -112,6 +121,11 @@ const formatVisitBadge = (value: string | null) => {
   return formatted.replace(".", "").toUpperCase();
 };
 
+const formatCurrency = (value: number | null) => {
+  if (value === null || value === undefined) return "-";
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+};
+
 const normalizeNumberInput = (value: string) => value.replace(/\D/g, "");
 
 const MONTH_OPTIONS = [
@@ -136,7 +150,6 @@ type ScheduleDraft = {
   date: string;
   perfil: string;
   customTimes?: string[];
-  instructions: string;
   perfilCustom?: boolean;
   perfilSingleTimeBase?: string;
   perfilSingleTimeValue?: string;
@@ -189,11 +202,16 @@ export default function Agenda() {
   const [selectedVendorIds, setSelectedVendorIds] = useState<string[]>([]);
   const [vendorQuery, setVendorQuery] = useState("");
   const [visitDate, setVisitDate] = useState("");
-  const [visitInstructions, setVisitInstructions] = useState("");
   const [generating, setGenerating] = useState(false);
   const [generateMessage, setGenerateMessage] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const [detailsModalRow, setDetailsModalRow] = useState<AgendaRow | null>(null);
+  const [detailsObsExpanded, setDetailsObsExpanded] = useState(false);
+  const [detailsInstructionDraft, setDetailsInstructionDraft] = useState("");
+  const [detailsInstructionSaving, setDetailsInstructionSaving] = useState(false);
+  const [detailsInstructionMessage, setDetailsInstructionMessage] = useState<string | null>(null);
+  const detailsObsRequestRef = useRef(0);
   const restoredViewRef = useRef(false);
   const restoredModalRef = useRef(false);
   const pendingModalRestoreRef = useRef<PendingAgendaModalState | null>(null);
@@ -252,7 +270,6 @@ export default function Agenda() {
           selectedVendorIds: string[];
           vendorQuery: string;
           visitDate: string;
-          visitInstructions: string;
         };
         schedule: {
           open: boolean;
@@ -266,7 +283,6 @@ export default function Agenda() {
         setSelectedVendorIds(parsed.generate.selectedVendorIds ?? []);
         setVendorQuery(parsed.generate.vendorQuery ?? "");
         setVisitDate(parsed.generate.visitDate ?? "");
-        setVisitInstructions(parsed.generate.visitInstructions ?? "");
       }
 
       pendingModalRestoreRef.current = {
@@ -315,7 +331,6 @@ export default function Agenda() {
                 return times.length ? times : [""];
               })()
             : [],
-          instructions: visit.instructions ?? "",
           perfilCustom: isCustom,
           perfilSingleTimeBase: singleTimeBase ?? "",
           perfilSingleTimeValue: getSingleTimePerfilValue(basePerfil),
@@ -337,7 +352,6 @@ export default function Agenda() {
         selectedVendorIds,
         vendorQuery,
         visitDate,
-        visitInstructions,
       },
       schedule: {
         open: Boolean(scheduleModalRow),
@@ -357,11 +371,11 @@ export default function Agenda() {
     showGenerateModal,
     vendorQuery,
     visitDate,
-    visitInstructions,
   ]);
 
   const canGenerate = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canEdit = role === "SUPERVISOR" || role === "ASSISTENTE";
+  const canManageInstruction = role === "SUPERVISOR";
 
   const vendorOptions = useMemo(
     () =>
@@ -718,7 +732,7 @@ export default function Agenda() {
           assigned_to_name: vendor.display_name ?? vendor.user_id,
           visit_date: routeDate,
           perfil_visita: row.perfil_visita ?? null,
-          instructions: visitInstructions.trim() || null,
+          instructions: row.instructions?.trim() || null,
           route_id: route.id,
           created_by: session?.user.id ?? null,
         }));
@@ -767,7 +781,6 @@ export default function Agenda() {
       setSelectedVendorIds([]);
       setVendorQuery("");
       setVisitDate("");
-      setVisitInstructions("");
       setShowGenerateModal(false);
       setRefreshKey((value) => value + 1);
     } catch (err) {
@@ -800,7 +813,6 @@ export default function Agenda() {
         vendorName: visit.assigned_to_name ?? "",
         date: visit.visit_date,
         perfil: basePerfil,
-        instructions: visit.instructions ?? "",
         perfilCustom: Boolean(basePerfil && !isPresetPerfilVisita(basePerfil) && !singleTimeBase),
         perfilSingleTimeBase: singleTimeBase ?? "",
         perfilSingleTimeValue: getSingleTimePerfilValue(basePerfil),
@@ -818,6 +830,140 @@ export default function Agenda() {
     setScheduleDrafts([]);
     setScheduleOriginal([]);
     setScheduleError(null);
+  };
+
+  const fetchObsComercialFromClientes = async (row: AgendaRow) => {
+    const codigo = row.cod_1?.trim();
+    if (codigo) {
+      try {
+        const fromEndpoint = await fetchObservacaoComercialByEmpresaId(codigo);
+        if (fromEndpoint?.trim()) return fromEndpoint.trim();
+      } catch (error) {
+        console.error(error);
+      }
+
+      const { data, error } = await supabase
+        .from("clientes")
+        .select("obs_comercial")
+        .eq("codigo", codigo)
+        .limit(1);
+      if (!error && data && data.length > 0) {
+        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
+      }
+    }
+
+    const empresa = row.empresa?.trim();
+    const nomeFantasia = row.nome_fantasia?.trim();
+    if (empresa && nomeFantasia) {
+      const { data, error } = await supabase
+        .from("clientes")
+        .select("obs_comercial")
+        .eq("empresa", empresa)
+        .eq("nome_fantasia", nomeFantasia)
+        .limit(1);
+      if (!error && data && data.length > 0) {
+        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
+      }
+    }
+    if (empresa) {
+      const { data, error } = await supabase
+        .from("clientes")
+        .select("obs_comercial")
+        .eq("empresa", empresa)
+        .limit(1);
+      if (!error && data && data.length > 0) {
+        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
+      }
+    }
+    if (nomeFantasia) {
+      const { data, error } = await supabase
+        .from("clientes")
+        .select("obs_comercial")
+        .eq("nome_fantasia", nomeFantasia)
+        .limit(1);
+      if (!error && data && data.length > 0) {
+        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
+      }
+    }
+
+    return null;
+  };
+
+  const openDetailsModal = (row: AgendaRow) => {
+    setDetailsModalRow(row);
+    setDetailsObsExpanded(false);
+    setDetailsInstructionDraft(row.instructions ?? "");
+    setDetailsInstructionMessage(null);
+    const requestId = detailsObsRequestRef.current + 1;
+    detailsObsRequestRef.current = requestId;
+    fetchObsComercialFromClientes(row)
+      .then((obsComercial) => {
+        if (detailsObsRequestRef.current !== requestId) return;
+        if (obsComercial === null) return;
+        setData((prev) =>
+          prev.map((item) =>
+            item.id === row.id ? { ...item, obs_contrato_1: obsComercial } : item,
+          ),
+        );
+        setSelectedRow((prev) =>
+          prev?.id === row.id ? { ...prev, obs_contrato_1: obsComercial } : prev,
+        );
+        setDetailsModalRow((prev) =>
+          prev?.id === row.id
+            ? { ...prev, obs_contrato_1: obsComercial }
+            : prev,
+        );
+      })
+      .catch((err) => {
+        console.error(err);
+      });
+  };
+
+  const closeDetailsModal = () => {
+    detailsObsRequestRef.current += 1;
+    setDetailsModalRow(null);
+    setDetailsObsExpanded(false);
+    setDetailsInstructionDraft("");
+    setDetailsInstructionMessage(null);
+    setDetailsInstructionSaving(false);
+  };
+
+  const handleSaveDetailsInstruction = async () => {
+    if (!detailsModalRow || !canManageInstruction) return;
+    setDetailsInstructionSaving(true);
+    setDetailsInstructionMessage(null);
+    const nextInstructions = detailsInstructionDraft.trim() || null;
+    try {
+      const { error: updateAgendaError } = await supabase
+        .from("agenda")
+        .update({ instructions: nextInstructions })
+        .eq("id", detailsModalRow.id);
+      if (updateAgendaError) throw new Error(updateAgendaError.message);
+
+      const { error: updateVisitsError } = await supabase
+        .from("visits")
+        .update({ instructions: nextInstructions })
+        .eq("agenda_id", detailsModalRow.id)
+        .is("completed_at", null);
+      if (updateVisitsError) throw new Error(updateVisitsError.message);
+
+      setData((prev) =>
+        prev.map((row) =>
+          row.id === detailsModalRow.id ? { ...row, instructions: nextInstructions } : row,
+        ),
+      );
+      setSelectedRow((prev) =>
+        prev?.id === detailsModalRow.id ? { ...prev, instructions: nextInstructions } : prev,
+      );
+      setDetailsModalRow((prev) =>
+        prev ? { ...prev, instructions: nextInstructions } : prev,
+      );
+      setDetailsInstructionMessage("Instrucoes atualizadas.");
+    } catch (err) {
+      setDetailsInstructionMessage(err instanceof Error ? err.message : "Erro ao salvar instrucoes.");
+    } finally {
+      setDetailsInstructionSaving(false);
+    }
   };
 
   const handleAddScheduleDraft = () => {
@@ -840,7 +986,6 @@ export default function Agenda() {
               return times.length ? times : [""];
             })()
           : [],
-        instructions: "",
         perfilCustom: isCustom,
         perfilSingleTimeBase: singleTimeBase ?? "",
         perfilSingleTimeValue: getSingleTimePerfilValue(fallbackPerfil),
@@ -1005,7 +1150,7 @@ export default function Agenda() {
               visit_date: draft.date,
               perfil_visita: perfilPayload.perfil_visita,
               perfil_visita_opcoes: perfilPayload.perfil_visita_opcoes,
-              instructions: draft.instructions.trim() || null,
+              instructions: scheduleModalRow.instructions?.trim() || null,
               route_id: routeId,
               created_by: session?.user.id ?? null,
             })
@@ -1022,7 +1167,6 @@ export default function Agenda() {
         const vendorChanged = (original.assigned_to_user_id ?? "") !== draft.vendorId;
         const dateChanged = original.visit_date !== draft.date;
         const perfilChanged = (original.perfil_visita ?? "") !== draft.perfil;
-        const instructionsChanged = (original.instructions ?? "") !== (draft.instructions ?? "");
 
         if (vendorChanged || dateChanged) {
           const routeId = await ensureRoute(draft.vendorId, vendorName, draft.date);
@@ -1040,19 +1184,18 @@ export default function Agenda() {
               visit_date: draft.date,
               perfil_visita: perfilPayload.perfil_visita,
               perfil_visita_opcoes: perfilPayload.perfil_visita_opcoes,
-              instructions: draft.instructions.trim() || null,
+              instructions: scheduleModalRow.instructions?.trim() || null,
               route_id: routeId,
             })
             .eq("id", draft.id);
           if (error) throw new Error(error.message);
-        } else if (perfilChanged || instructionsChanged) {
+        } else if (perfilChanged) {
           const perfilPayload = buildVisitPerfilPayload(draft.perfil);
           const { error } = await supabase
             .from("visits")
             .update({
               perfil_visita: perfilPayload.perfil_visita,
               perfil_visita_opcoes: perfilPayload.perfil_visita_opcoes,
-              instructions: draft.instructions.trim() || null,
             })
             .eq("id", draft.id);
           if (error) throw new Error(error.message);
@@ -1258,10 +1401,11 @@ export default function Agenda() {
         ),
         cell: (info) => {
           const rowId = info.row.original.id;
+          const row = info.row.original;
           const visits = scheduledVisitsByAgenda[rowId] ?? [];
           if (visits.length === 0) return null;
           const visitDate = visits[0]?.visit_date ?? null;
-          const firstInstructions = visits[0]?.instructions?.trim();
+          const firstInstructions = row.instructions?.trim() || visits[0]?.instructions?.trim();
           const badgeText = formatVisitBadge(visitDate);
           const titleText = visitDate
             ? `Visita agendada: ${formatDate(visitDate)}${
@@ -1306,30 +1450,6 @@ export default function Agenda() {
         },
       },
       {
-        accessorKey: "cod_1",
-        header: ({ column }) => (
-          <div className="flex items-center justify-between gap-2">
-            {renderSortLabel(column, "Codigo")}
-            <MultiSelectFilter
-              label={
-                (filters.columns.cod_1 ?? []).length
-                  ? `Filtro (${filters.columns.cod_1.length})`
-                  : "Filtro"
-              }
-              options={filterOptions.cod_1 ?? []}
-              value={filters.columns.cod_1}
-              onApply={(next) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  columns: { ...prev.columns, cod_1: next },
-                }))
-              }
-            />
-          </div>
-        ),
-        cell: (info) => info.getValue<string | null>() ?? "-",
-      },
-      {
         accessorKey: "empresa",
         header: ({ column }) => (
           <div className="flex items-center justify-between gap-2">
@@ -1354,9 +1474,30 @@ export default function Agenda() {
         cell: (info) => {
           const row = info.row.original;
           const name = row.empresa ?? "-";
+          const codigo = row.cod_1 ?? "-";
           return (
-            <div>
-              <p className="text-sm font-semibold text-ink">{name}</p>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openDetailsModal(row);
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-sea/20 bg-white text-ink/60 hover:border-sea hover:text-sea"
+                  title="Visualizar detalhes"
+                  aria-label="Visualizar detalhes"
+                >
+                  <Eye size={14} />
+                </button>
+                <p className="text-sm font-semibold text-ink">{name}</p>
+                <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
+                  COD {codigo}
+                </span>
+              </div>
+              <p className="text-xs text-ink/60">Pessoa: {row.pessoa ?? "-"}</p>
+              <p className="text-xs text-ink/60">Contato: {row.contato ?? "-"}</p>
             </div>
           );
         },
@@ -1874,7 +2015,6 @@ export default function Agenda() {
                     type="button"
                     onClick={() => {
                       setGenerateMessage(null);
-                      setVisitInstructions("");
                       setShowGenerateModal(true);
                     }}
                     disabled={totalCount === 0}
@@ -1913,7 +2053,7 @@ export default function Agenda() {
           <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Gerar visitas</h3>
             <p className="mt-1 text-xs text-ink/60">
-              Selecione os vendedores, a data, as instrucoes e as empresas marcadas na lista para gerar as visitas.
+              Selecione os vendedores, a data e as empresas marcadas na lista para gerar as visitas.
             </p>
             <p className="mt-2 text-xs text-ink/60">
               Empresas selecionadas: {selectedAgendaIds.length}
@@ -1984,19 +2124,6 @@ export default function Agenda() {
                 />
               </label>
             </div>
-            <label className="mt-3 flex flex-col gap-1 text-xs font-semibold text-ink/70">
-              Instrucoes
-              <textarea
-                value={visitInstructions}
-                onChange={(event) => setVisitInstructions(event.target.value)}
-                id="agenda-generate-visit-instructions"
-                name="agendaGenerateVisitInstructions"
-                rows={3}
-                placeholder="Ex.: visitar recepcao primeiro e validar documentos pendentes."
-                className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-              />
-            </label>
-
             {generateMessage && (
               <p className="mt-3 text-xs text-ink/70">{generateMessage}</p>
             )}
@@ -2237,19 +2364,6 @@ export default function Agenda() {
                         Remover
                       </button>
                     </div>
-                    <label className="mt-3 flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
-                      Instrucoes
-                      <textarea
-                        value={draft.instructions}
-                        onChange={(event) =>
-                          updateScheduleDraft(index, { instructions: event.target.value })
-                        }
-                        disabled={scheduleSaving}
-                        rows={2}
-                        placeholder="Instrucoes especificas para esta visita"
-                        className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea disabled:opacity-60"
-                      />
-                    </label>
                   </div>
                 ))
               )}
@@ -2291,6 +2405,107 @@ export default function Agenda() {
         </div>
       )}
 
+      {detailsModalRow && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => {
+              closeDetailsModal();
+            }}
+          />
+          <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="font-display text-lg text-ink">Detalhes da empresa</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  closeDetailsModal();
+                }}
+                className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Fechar
+              </button>
+            </div>
+            <div className="mt-4 space-y-3 text-sm text-ink/80">
+              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                <p className="text-[11px] font-semibold text-ink/60">Nome da empresa</p>
+                <p className="mt-1 font-semibold text-ink">
+                  {detailsModalRow.empresa ?? "-"}{" "}
+                  <span className="text-sea/80">{"{"}COD {detailsModalRow.cod_1 ?? "-"}{"}"}</span>
+                </p>
+              </div>
+              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                <p className="text-[11px] font-semibold text-ink/60">Endereco e numero</p>
+                <p className="mt-1">
+                  {[detailsModalRow.endereco, detailsModalRow.complemento].filter(Boolean).join(", ") || "-"}
+                </p>
+              </div>
+              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                <p className="text-[11px] font-semibold text-ink/60">Corte | Vencimento | Valor</p>
+                <p className="mt-1">
+                  {(detailsModalRow.corte ?? "-")} | {(detailsModalRow.venc ?? "-")} |{" "}
+                  {formatCurrency(detailsModalRow.valor)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                <p className="text-[11px] font-semibold text-ink/60">Instrucoes</p>
+                {canManageInstruction ? (
+                  <div className="mt-2 space-y-2">
+                    <textarea
+                      value={detailsInstructionDraft}
+                      onChange={(event) => setDetailsInstructionDraft(event.target.value)}
+                      rows={3}
+                      placeholder="Digite a instrucao desta empresa"
+                      disabled={detailsInstructionSaving}
+                      className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea disabled:opacity-70"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveDetailsInstruction}
+                      disabled={detailsInstructionSaving}
+                      className="rounded-lg bg-sea px-3 py-1.5 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                    >
+                      {detailsInstructionSaving ? "Salvando..." : "Salvar instrucao"}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-1 whitespace-pre-wrap">{detailsModalRow.instructions?.trim() || "-"}</p>
+                )}
+                {detailsInstructionMessage ? (
+                  <p className="mt-2 text-xs text-ink/70">{detailsInstructionMessage}</p>
+                ) : null}
+              </div>
+              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <p className="text-[11px] font-semibold text-ink/60">Obs</p>
+                  {detailsModalRow.obs_contrato_1?.trim() ? (
+                    <button
+                      type="button"
+                      onClick={() => setDetailsObsExpanded((prev) => !prev)}
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300 bg-emerald-100 text-emerald-700"
+                      title={detailsObsExpanded ? "Ocultar observacao" : "Ver observacao"}
+                      aria-label={detailsObsExpanded ? "Ocultar observacao" : "Ver observacao"}
+                    >
+                      <CheckCircle2 size={14} />
+                    </button>
+                  ) : null}
+                </div>
+                {detailsModalRow.obs_contrato_1?.trim() ? (
+                  detailsObsExpanded ? (
+                    <p className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-all text-sm">
+                      {detailsModalRow.obs_contrato_1}
+                    </p>
+                  ) : null
+                ) : (
+                  <p className="mt-1">-</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {activeChips.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -2319,9 +2534,6 @@ export default function Agenda() {
             <div className="space-y-3 px-3 py-3">
               {data.map((row) => {
                 const empresaLabel = row.empresa ?? "Sem empresa";
-                const locationLine = `${row.bairro ? `${row.bairro} · ` : ""}${row.cidade ?? ""}${
-                  row.uf ? ` / ${row.uf}` : ""
-                }`;
                 return (
                   <button
                     key={row.id}
@@ -2330,33 +2542,48 @@ export default function Agenda() {
                     className="w-full rounded-2xl border border-sea/15 bg-white/95 p-4 text-left shadow-sm transition hover:shadow-card"
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-ink">{empresaLabel}</p>
-                        {row.endereco && (
-                          <p className="mt-1 text-xs text-ink/60">{row.endereco}</p>
-                        )}
-                        <p className="text-xs text-ink/50">{locationLine || "-"}</p>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-ink">{empresaLabel}</p>
+                          <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
+                            COD {row.cod_1 ?? "-"}
+                          </span>
+                        </div>
+                        <p className="text-xs text-ink/60">Pessoa: {row.pessoa ?? "-"}</p>
+                        <p className="text-xs text-ink/60">Contato: {row.contato ?? "-"}</p>
                       </div>
                       <div className="flex flex-col items-end gap-2">
-                        <label
-                          className="flex items-center gap-1 text-[10px] text-ink/60"
+                        <div
+                          className="flex items-center gap-2"
                           onClick={(event) => event.stopPropagation()}
                           onPointerDown={(event) => event.stopPropagation()}
                         >
-                          <input
-                            type="checkbox"
-                            checked={selectedAgendaSet.has(row.id)}
-                            onChange={() => toggleAgendaSelection(row.id)}
-                            className="h-3.5 w-3.5 accent-sea"
-                            aria-label="Selecionar empresa"
-                          />
-                          Selecionar
-                        </label>
+                          <button
+                            type="button"
+                            onClick={() => openDetailsModal(row)}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-sea/20 bg-white text-ink/60 hover:border-sea hover:text-sea"
+                            title="Visualizar detalhes"
+                            aria-label="Visualizar detalhes"
+                          >
+                            <Eye size={14} />
+                          </button>
+                          <label className="flex items-center gap-1 text-[10px] text-ink/60">
+                            <input
+                              type="checkbox"
+                              checked={selectedAgendaSet.has(row.id)}
+                              onChange={() => toggleAgendaSelection(row.id)}
+                              className="h-3.5 w-3.5 accent-sea"
+                              aria-label="Selecionar empresa"
+                            />
+                            Selecionar
+                          </label>
+                        </div>
                         {(() => {
                           const scheduled = scheduledVisitsByAgenda[row.id] ?? [];
                           if (scheduled.length === 0) return null;
                           const visitDate = scheduled[0]?.visit_date ?? null;
-                          const firstInstructions = scheduled[0]?.instructions?.trim();
+                          const firstInstructions =
+                            row.instructions?.trim() || scheduled[0]?.instructions?.trim();
                           const badgeText = formatVisitBadge(visitDate);
                           const titleText = visitDate
                             ? `Visita agendada: ${formatDate(visitDate)}${
@@ -2381,37 +2608,6 @@ export default function Agenda() {
                             </button>
                           );
                         })()}
-                        <span className="rounded-full bg-sea/10 px-2 py-1 text-[10px] font-semibold text-sea">
-                          COD {row.cod_1 ?? "-"}
-                        </span>
-                        {row.perfil_visita && (
-                          <span className="rounded-full bg-sand px-2 py-1 text-[10px] font-semibold text-ink/70">
-                            {formatPerfilVisitaDisplay(row.perfil_visita)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-ink/60">
-                      <div className="rounded-xl bg-sand/60 px-2 py-2">
-                        <p className="text-[10px] uppercase tracking-wide text-ink/40">Supervisor</p>
-                        <p className="text-[11px] font-semibold text-ink/70">{row.supervisor ?? "-"}</p>
-                      </div>
-                      <div className="rounded-xl bg-sand/60 px-2 py-2">
-                        <p className="text-[10px] uppercase tracking-wide text-ink/40">Vendedor</p>
-                        <p className="text-[11px] font-semibold text-ink/70">
-                          {resolveVendorsForAgenda(row.id, row.vendedor)}
-                        </p>
-                      </div>
-                      <div className="rounded-xl bg-sand/60 px-2 py-2">
-                        <p className="text-[10px] uppercase tracking-wide text-ink/40">Ultima visita</p>
-                        <p className="text-[11px] font-semibold text-ink/70">
-                          {formatDate(row.data_da_ultima_visita)}
-                        </p>
-                      </div>
-                      <div className="rounded-xl bg-sand/60 px-2 py-2">
-                        <p className="text-[10px] uppercase tracking-wide text-ink/40">Grupo</p>
-                        <p className="text-[11px] font-semibold text-ink/70">{row.grupo ?? "-"}</p>
                       </div>
                     </div>
                   </button>
@@ -2590,6 +2786,7 @@ export default function Agenda() {
           setSelectedRowId(null);
         }}
         canEdit={canEdit}
+        canManageInstruction={canManageInstruction}
         userEmail={session?.user.email ?? null}
         vendorOptions={vendorOptions}
         supervisorOptions={supervisores

@@ -11,6 +11,7 @@ export type ClienteRow = {
   contato: string | null;
   grupo: string | null;
   obs_comercial: string | null;
+  obs: string | null;
   nome_fantasia: string | null;
   complemento: string | null;
   perfil_visita: string | null;

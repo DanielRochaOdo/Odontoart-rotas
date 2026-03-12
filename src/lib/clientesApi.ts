@@ -12,7 +12,7 @@ const normalizeAgendaKeyPart = (value?: string | null) =>
 const buildAgendaDedupeKey = (empresa?: string | null, nomeFantasia?: string | null) =>
   `${normalizeAgendaKeyPart(empresa)}|${normalizeAgendaKeyPart(nomeFantasia)}||`;
 const CLIENTES_SELECT_COLUMNS =
-  "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, grupo, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at";
+  "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, grupo, obs_comercial, obs, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at";
 
 const normalizePerfilTimes = (value: string | null) => {
   if (!value) return { perfil: null as string | null, opcoes: null as string | null };
@@ -22,6 +22,52 @@ const normalizePerfilTimes = (value: string | null) => {
     perfil: cleanedPerfil,
     opcoes: hasTimes ? cleanedPerfil : null,
   };
+};
+
+const collectAgendaIdsForCliente = async (
+  cliente: Pick<ClienteRow, "codigo" | "empresa" | "nome_fantasia">,
+) => {
+  const codigo = cliente.codigo?.trim();
+  const empresa = cliente.empresa?.trim();
+  const nomeFantasia = cliente.nome_fantasia?.trim();
+  const agendaIds = new Set<string>();
+
+  const appendAgendaIds = (
+    data: Array<{ id?: string | null }> | null,
+    error: { message: string } | null,
+  ) => {
+    if (error) throw new Error(error.message);
+    (data ?? []).forEach((row) => {
+      const id = row.id;
+      if (id) agendaIds.add(id);
+    });
+  };
+
+  if (codigo) {
+    const { data, error } = await supabase.from("agenda").select("id").eq("cod_1", codigo);
+    appendAgendaIds(data as Array<{ id?: string | null }> | null, error);
+  }
+  if (empresa && nomeFantasia) {
+    const { data, error } = await supabase
+      .from("agenda")
+      .select("id")
+      .eq("empresa", empresa)
+      .eq("nome_fantasia", nomeFantasia);
+    appendAgendaIds(data as Array<{ id?: string | null }> | null, error);
+  }
+  if (empresa) {
+    const { data, error } = await supabase.from("agenda").select("id").eq("empresa", empresa);
+    appendAgendaIds(data as Array<{ id?: string | null }> | null, error);
+  }
+  if (nomeFantasia) {
+    const { data, error } = await supabase
+      .from("agenda")
+      .select("id")
+      .eq("nome_fantasia", nomeFantasia);
+    appendAgendaIds(data as Array<{ id?: string | null }> | null, error);
+  }
+
+  return Array.from(agendaIds);
 };
 
 const upsertAgendaFromClientesPayloads = async (
@@ -156,6 +202,7 @@ export const createCliente = async (payload: {
   contato?: string | null;
   grupo?: string | null;
   obs_comercial?: string | null;
+  obs?: string | null;
   nome_fantasia?: string | null;
   complemento?: string | null;
   perfil_visita?: string | null;
@@ -179,6 +226,7 @@ export const createCliente = async (payload: {
       contato: payload.contato ?? null,
       grupo: payload.grupo ?? null,
       obs_comercial: payload.obs_comercial ?? null,
+      obs: payload.obs ?? null,
       nome_fantasia: payload.nome_fantasia ?? null,
       complemento: payload.complemento ?? null,
       perfil_visita: payload.perfil_visita ?? null,
@@ -216,6 +264,7 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
   setIfDefined("contato");
   setIfDefined("grupo");
   setIfDefined("obs_comercial");
+  setIfDefined("obs");
   setIfDefined("nome_fantasia");
   setIfDefined("complemento");
   setIfDefined("perfil_visita");
@@ -243,24 +292,13 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
 };
 
 export const syncVisitsForCliente = async (cliente: ClienteRow) => {
-  const empresa = cliente.empresa?.trim();
-  const nomeFantasia = cliente.nome_fantasia?.trim();
+  const agendaIds = await collectAgendaIdsForCliente(cliente);
+  if (agendaIds.length === 0) return;
 
-  let agendaQuery = supabase.from("agenda").select("id, perfil_visita");
-
-  if (empresa && nomeFantasia) {
-    agendaQuery = agendaQuery.or(
-      `empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
-    );
-  } else if (empresa) {
-    agendaQuery = agendaQuery.eq("empresa", empresa);
-  } else if (nomeFantasia) {
-    agendaQuery = agendaQuery.eq("nome_fantasia", nomeFantasia);
-  } else {
-    return;
-  }
-
-  const { data: agendaRows, error: agendaError } = await agendaQuery;
+  const { data: agendaRows, error: agendaError } = await supabase
+    .from("agenda")
+    .select("id, perfil_visita")
+    .in("id", agendaIds);
   if (agendaError) throw new Error(agendaError.message);
 
   const rows = (agendaRows ?? []).filter((row) => row.id);
@@ -295,6 +333,7 @@ export const upsertClientes = async (
     contato?: string | null;
     grupo?: string | null;
     obs_comercial?: string | null;
+    obs?: string | null;
     nome_fantasia?: string | null;
     complemento?: string | null;
     perfil_visita?: string | null;
@@ -321,6 +360,7 @@ export const upsertClientes = async (
     contato: payload.contato ?? null,
     grupo: payload.grupo ?? null,
     obs_comercial: payload.obs_comercial ?? null,
+    obs: payload.obs ?? null,
     nome_fantasia: payload.nome_fantasia ?? null,
     complemento: payload.complemento ?? null,
     perfil_visita: payload.perfil_visita ?? null,
@@ -344,10 +384,10 @@ export const upsertClientes = async (
 
 export const syncAgendaForCliente = async (cliente: ClienteRow) => {
   const situacao = cliente.situacao ?? DEFAULT_SITUACAO;
-  const empresa = cliente.empresa?.trim();
-  const nomeFantasia = cliente.nome_fantasia?.trim();
+  const agendaIds = await collectAgendaIdsForCliente(cliente);
+  if (agendaIds.length === 0) return;
 
-  let query = supabase.from("agenda").update({
+  const { error } = await supabase.from("agenda").update({
     situacao,
     cod_1: cliente.codigo ?? null,
     corte: cliente.corte ?? null,
@@ -367,21 +407,7 @@ export const syncAgendaForCliente = async (cliente: ClienteRow) => {
     bairro: cliente.bairro ?? null,
     cidade: cliente.cidade ?? null,
     uf: cliente.uf ?? null,
-  });
-
-  if (empresa && nomeFantasia) {
-    query = query.or(
-      `empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
-    );
-  } else if (empresa) {
-    query = query.eq("empresa", empresa);
-  } else if (nomeFantasia) {
-    query = query.eq("nome_fantasia", nomeFantasia);
-  } else {
-    return;
-  }
-
-  const { error } = await query;
+  }).in("id", agendaIds);
   if (error) throw new Error(error.message);
 
   const road = [cliente.endereco?.trim(), cliente.bairro?.trim()].filter(Boolean).join(", ");
@@ -398,23 +424,10 @@ export const syncAgendaForCliente = async (cliente: ClienteRow) => {
   }
   if (!geocoded) return;
 
-  let missingCoordsQuery = supabase
+  const { data: matchingRows, error: missingError } = await supabase
     .from("agenda")
-    .select("id, latitude, longitude");
-
-  if (empresa && nomeFantasia) {
-    missingCoordsQuery = missingCoordsQuery.or(
-      `empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
-    );
-  } else if (empresa) {
-    missingCoordsQuery = missingCoordsQuery.eq("empresa", empresa);
-  } else if (nomeFantasia) {
-    missingCoordsQuery = missingCoordsQuery.eq("nome_fantasia", nomeFantasia);
-  } else {
-    return;
-  }
-
-  const { data: matchingRows, error: missingError } = await missingCoordsQuery;
+    .select("id, latitude, longitude")
+    .in("id", agendaIds);
   if (missingError) throw new Error(missingError.message);
   const missingIds = (matchingRows ?? [])
     .filter((row) => row.latitude === null || row.longitude === null)
@@ -435,25 +448,7 @@ export const syncAgendaForCliente = async (cliente: ClienteRow) => {
 };
 
 export const fetchClienteHistory = async (cliente: ClienteRow) => {
-  const empresa = cliente.empresa?.trim();
-  const nomeFantasia = cliente.nome_fantasia?.trim();
-
-  let agendaQuery = supabase.from("agenda").select("id, situacao, empresa, nome_fantasia");
-
-  if (empresa && nomeFantasia) {
-    agendaQuery = agendaQuery.or(
-      `empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
-    );
-  } else if (empresa) {
-    agendaQuery = agendaQuery.eq("empresa", empresa);
-  } else if (nomeFantasia) {
-    agendaQuery = agendaQuery.eq("nome_fantasia", nomeFantasia);
-  }
-
-  const { data: agendaRows, error: agendaError } = await agendaQuery;
-  if (agendaError) throw new Error(agendaError.message);
-
-  const agendaIds = (agendaRows ?? []).map((row) => row.id).filter(Boolean);
+  const agendaIds = await collectAgendaIdsForCliente(cliente);
   if (agendaIds.length === 0) return [];
 
   const { data, error } = await supabase
