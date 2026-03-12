@@ -6,6 +6,7 @@ import { useAuth } from "../context/AuthContext";
 import {
   createCliente,
   deleteCliente,
+  fetchClientesByCodigoExact,
   fetchClienteHistory,
   fetchClientes,
   updateCliente,
@@ -26,7 +27,11 @@ import {
 } from "../lib/perfilVisita";
 import { formatCep, sanitizeCep } from "../lib/cep";
 import { fetchNominatimByAddress, fetchNominatimByCep } from "../lib/nominatim";
-import { fetchEmpresaByEmpresaId, type OdontoartEmpresaResponseRow } from "../lib/odontoartEmpresaApi";
+import {
+  fetchEmpresaByEmpresaId,
+  fetchObservacaoComercialByEmpresaId,
+  type OdontoartEmpresaResponseRow,
+} from "../lib/odontoartEmpresaApi";
 
 const formatDate = (value: string | null) => {
   if (!value) return "-";
@@ -100,6 +105,7 @@ type DuplicateEntry = {
 };
 
 type CodigoDuplicadoOrigem = "create" | "edit";
+type ClienteSearchMode = "codigo" | "empresa" | "geral";
 
 type CodigoDuplicadoModalState = {
   codigo: string;
@@ -213,6 +219,7 @@ const IMPORT_NUMERIC_FIELDS = new Set(["corte", "venc"]);
 const IMPORT_BATCH_SIZE = 80;
 const BAIRRO_LOOKUP_DELAY_MS = 450;
 const CLIENTES_PER_PAGE = 50;
+const OBS_COMERCIAL_AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const sanitizeDigits = (value: string) => value.replace(/\D/g, "");
 const sanitizeContatoInput = (value: string) =>
   value
@@ -462,6 +469,7 @@ export default function Clientes() {
   const [error, setError] = useState<string | null>(null);
   const [clientes, setClientes] = useState<ClienteRow[]>([]);
   const [search, setSearch] = useState("");
+  const [searchMode, setSearchMode] = useState<ClienteSearchMode>("codigo");
   const [situacaoFilter, setSituacaoFilter] = useState<"" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado">("");
 
   const [creating, setCreating] = useState(false);
@@ -565,8 +573,6 @@ export default function Clientes() {
   const [importStartedAt, setImportStartedAt] = useState<number | null>(null);
   const [importTick, setImportTick] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const [bairroLoading, setBairroLoading] = useState(false);
-  const [bairroLoadingEdit, setBairroLoadingEdit] = useState(false);
   const [addressLookupLoading, setAddressLookupLoading] = useState(false);
   const [addressLookupError, setAddressLookupError] = useState<string | null>(null);
   const [addressLookupLoadingEdit, setAddressLookupLoadingEdit] = useState(false);
@@ -581,8 +587,65 @@ export default function Clientes() {
     obs: string;
     origem: CodigoDuplicadoOrigem;
   } | null>(null);
-  const skipCepLookupRef = useRef(false);
-  const skipCepLookupEditRef = useRef(false);
+  const [codigoSearchResults, setCodigoSearchResults] = useState<ClienteRow[] | null>(null);
+  const clientesRef = useRef<ClienteRow[]>([]);
+  const obsComercialSyncInFlightRef = useRef(false);
+  const searchRefreshKeyRef = useRef("");
+
+  const syncObsComercialFromApi = async (baseClientes: ClienteRow[] = clientesRef.current) => {
+    if (!canEdit || obsComercialSyncInFlightRef.current) return;
+
+    const candidates = baseClientes.filter((cliente) => Boolean(normalizeCodigoValue(cliente.codigo)));
+    if (candidates.length === 0) return;
+
+    const codigos = Array.from(
+      new Set(
+        candidates
+          .map((cliente) => normalizeCodigoValue(cliente.codigo))
+          .filter(Boolean),
+      ),
+    );
+    if (codigos.length === 0) return;
+
+    obsComercialSyncInFlightRef.current = true;
+    try {
+      const updatesById = new Map<string, ClienteRow>();
+
+      for (const codigo of codigos) {
+        let obsComercialApi: string | null = null;
+        try {
+          const fromApi = await fetchObservacaoComercialByEmpresaId(codigo);
+          obsComercialApi = fromApi?.trim() ? fromApi.trim() : null;
+        } catch (err) {
+          console.error(`Erro ao sincronizar OBS comercial da API para o codigo ${codigo}.`, err);
+          continue;
+        }
+
+        const matches = candidates.filter(
+          (cliente) => normalizeCodigoValue(cliente.codigo) === codigo,
+        );
+        const changed = matches.filter(
+          (cliente) => normalizeObsValue(cliente.obs_comercial) !== normalizeObsValue(obsComercialApi),
+        );
+        for (const cliente of changed) {
+          try {
+            const updated = await updateCliente(cliente.id, { obs_comercial: obsComercialApi });
+            await syncAgendaForCliente(updated);
+            updatesById.set(updated.id, updated);
+          } catch (err) {
+            console.error(`Erro ao atualizar OBS comercial do cliente ${cliente.id}.`, err);
+          }
+        }
+      }
+
+      if (updatesById.size > 0) {
+        setClientes((prev) => prev.map((cliente) => updatesById.get(cliente.id) ?? cliente));
+        setSelected((prev) => (prev ? updatesById.get(prev.id) ?? prev : prev));
+      }
+    } finally {
+      obsComercialSyncInFlightRef.current = false;
+    }
+  };
 
   const loadClientes = async () => {
     setLoading(true);
@@ -590,6 +653,9 @@ export default function Clientes() {
     try {
       const data = await fetchClientes();
       setClientes(data);
+      if (canEdit) {
+        void syncObsComercialFromApi(data);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar empresas.");
     } finally {
@@ -597,10 +663,71 @@ export default function Clientes() {
     }
   };
 
+  const refreshClientesSilently = async () => {
+    try {
+      const data = await fetchClientes();
+      setClientes(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     if (!canView) return;
     loadClientes();
   }, [canView]);
+
+  useEffect(() => {
+    if (!canView) return;
+    const handleFocus = () => {
+      void refreshClientesSilently();
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [canView]);
+
+  useEffect(() => {
+    const mode: ClienteSearchMode =
+      searchMode === "empresa" || searchMode === "geral" ? searchMode : "codigo";
+    const term = normalizeCodigoValue(search);
+    if (!canView || mode !== "codigo" || !term) {
+      setCodigoSearchResults(null);
+      return;
+    }
+
+    let active = true;
+    setCodigoSearchResults([]);
+    fetchClientesByCodigoExact(term)
+      .then((data) => {
+        if (!active) return;
+        setCodigoSearchResults(data);
+      })
+      .catch((err) => {
+        console.error(err);
+        if (!active) return;
+        setCodigoSearchResults([]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [canView, search, searchMode]);
+
+  useEffect(() => {
+    clientesRef.current = clientes;
+  }, [clientes]);
+
+  useEffect(() => {
+    if (!canEdit) return;
+    const intervalId = window.setInterval(() => {
+      void syncObsComercialFromApi();
+    }, OBS_COMERCIAL_AUTO_SYNC_INTERVAL_MS);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [canEdit]);
 
   useEffect(() => {
     if (restoredViewRef.current) return;
@@ -612,6 +739,7 @@ export default function Clientes() {
       }
       const parsed = JSON.parse(raw) as Partial<{
         search: string;
+        searchMode: ClienteSearchMode;
         situacaoFilter: "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado";
         selectedId: string | null;
         isEditing: boolean;
@@ -620,6 +748,9 @@ export default function Clientes() {
         historyDateTo: string;
       }>;
       if (typeof parsed.search === "string") setSearch(parsed.search);
+      if (parsed.searchMode === "codigo" || parsed.searchMode === "empresa" || parsed.searchMode === "geral") {
+        setSearchMode(parsed.searchMode);
+      }
       if (parsed.situacaoFilter) setSituacaoFilter(parsed.situacaoFilter);
       if (typeof parsed.selectedId === "string") setSelectedId(parsed.selectedId);
       if (typeof parsed.historySupervisorId === "string") {
@@ -662,6 +793,7 @@ export default function Clientes() {
     if (!restoredViewRef.current) return;
     const payload = {
       search,
+      searchMode,
       situacaoFilter,
       selectedId,
       isEditing,
@@ -674,7 +806,7 @@ export default function Clientes() {
     } catch {
       // ignore
     }
-  }, [historyDateFrom, historyDateTo, historySupervisorId, isEditing, search, selectedId, situacaoFilter]);
+  }, [historyDateFrom, historyDateTo, historySupervisorId, isEditing, search, searchMode, selectedId, situacaoFilter]);
 
   useEffect(() => {
     if (!canView) return;
@@ -785,165 +917,30 @@ export default function Clientes() {
     });
   }, [history, historyDateFrom, historyDateTo, historySupervisorId, historySupervisores]);
 
-  useEffect(() => {
-    if (skipCepLookupRef.current) {
-      skipCepLookupRef.current = false;
-      return;
-    }
-    const digits = sanitizeCep(form.cep);
-    if (digits.length !== 8) {
-      setCepError(null);
-      return;
-    }
-    const controller = new AbortController();
-    const handler = window.setTimeout(async () => {
-      setCepLoading(true);
-      setCepError(null);
-      try {
-        const mapped = await fetchNominatimByCep(digits, controller.signal);
-        if (!mapped) {
-          throw new Error("CEP nao encontrado.");
-        }
-        setForm((prev) => ({
-          ...prev,
-          endereco: mapped.endereco ?? prev.endereco,
-          complemento: mapped.complemento ?? prev.complemento,
-          bairro: mapped.bairro ?? prev.bairro,
-          cidade: mapped.cidade ?? prev.cidade,
-          uf: mapped.uf ?? prev.uf,
-        }));
-      } catch (err) {
-        if ((err as Error).name !== "AbortError") {
-          setCepError("CEP nao encontrado ou API indisponivel.");
-        }
-      } finally {
-        setCepLoading(false);
-      }
-    }, 400);
-    return () => {
-      window.clearTimeout(handler);
-      controller.abort();
-    };
-  }, [form.cep]);
-
-  useEffect(() => {
-    if (skipCepLookupEditRef.current) {
-      skipCepLookupEditRef.current = false;
-      return;
-    }
-    const digits = sanitizeCep(editForm.cep);
-    if (digits.length !== 8) {
-      setCepErrorEdit(null);
-      return;
-    }
-    const controller = new AbortController();
-    const handler = window.setTimeout(async () => {
-      setCepLoadingEdit(true);
-      setCepErrorEdit(null);
-      try {
-        const mapped = await fetchNominatimByCep(digits, controller.signal);
-        if (!mapped) {
-          throw new Error("CEP nao encontrado.");
-        }
-        setEditForm((prev) => ({
-          ...prev,
-          endereco: mapped.endereco ?? prev.endereco,
-          bairro: mapped.bairro ?? prev.bairro,
-          cidade: mapped.cidade ?? prev.cidade,
-          uf: mapped.uf ?? prev.uf,
-        }));
-      } catch (err) {
-        if ((err as Error).name !== "AbortError") {
-          setCepErrorEdit("CEP nao encontrado ou API indisponivel.");
-        }
-      } finally {
-        setCepLoadingEdit(false);
-      }
-    }, 400);
-    return () => {
-      window.clearTimeout(handler);
-      controller.abort();
-    };
-  }, [editForm.cep]);
-
-  useEffect(() => {
-    const road = form.endereco.trim();
-    const city = form.cidade.trim();
-    const state = form.uf.trim();
-    const cepDigits = sanitizeCep(form.cep);
-    if (!road || !city || !state || cepDigits.length === 8) {
-      setBairroLoading(false);
-      return;
-    }
-    const controller = new AbortController();
-    const handler = window.setTimeout(async () => {
-      setBairroLoading(true);
-      try {
-        const mapped = await fetchNominatimByAddress(road, city, state, controller.signal);
-        if (mapped?.bairro) {
-          setForm((prev) => ({
-            ...prev,
-            bairro: mapped.bairro ?? prev.bairro,
-          }));
-        }
-      } catch (err) {
-        if ((err as Error).name !== "AbortError") {
-          console.error(err);
-        }
-      } finally {
-        setBairroLoading(false);
-      }
-    }, 600);
-    return () => {
-      window.clearTimeout(handler);
-      controller.abort();
-      setBairroLoading(false);
-    };
-  }, [form.endereco, form.cidade, form.uf, form.cep]);
-
-  useEffect(() => {
-    const road = editForm.endereco.trim();
-    const city = editForm.cidade.trim();
-    const state = editForm.uf.trim();
-    const cepDigits = sanitizeCep(editForm.cep);
-    if (!road || !city || !state || cepDigits.length === 8) {
-      setBairroLoadingEdit(false);
-      return;
-    }
-    const controller = new AbortController();
-    const handler = window.setTimeout(async () => {
-      setBairroLoadingEdit(true);
-      try {
-        const mapped = await fetchNominatimByAddress(road, city, state, controller.signal);
-        if (mapped?.bairro) {
-          setEditForm((prev) => ({
-            ...prev,
-            bairro: mapped.bairro ?? prev.bairro,
-          }));
-        }
-      } catch (err) {
-        if ((err as Error).name !== "AbortError") {
-          console.error(err);
-        }
-      } finally {
-        setBairroLoadingEdit(false);
-      }
-    }, 600);
-    return () => {
-      window.clearTimeout(handler);
-      controller.abort();
-      setBairroLoadingEdit(false);
-    };
-  }, [editForm.endereco, editForm.cidade, editForm.uf, editForm.cep]);
+  const effectiveSearchMode: ClienteSearchMode =
+    searchMode === "empresa" || searchMode === "geral" ? searchMode : "codigo";
+  const normalizedSearchTerm = normalizeCodigoValue(search);
+  const isSearching = Boolean(normalizedSearchTerm);
+  const sourceClientes =
+    effectiveSearchMode === "codigo" && isSearching && codigoSearchResults !== null
+      ? codigoSearchResults
+      : clientes;
 
   const filteredClientes = useMemo(() => {
-    const base = search.trim()
-      ? clientes.filter((cliente) => {
-          const term = search.trim().toLowerCase();
+    const base = isSearching
+      ? sourceClientes.filter((cliente) => {
+          if (effectiveSearchMode === "codigo") {
+            return normalizeCodigoValue(cliente.codigo) === normalizedSearchTerm;
+          }
+          const term = normalizedSearchTerm.toLowerCase();
+          if (effectiveSearchMode === "empresa") {
+            return (cliente.empresa ?? "").toLowerCase().includes(term);
+          }
           const fields = [
             cliente.codigo,
             cliente.cep,
             cliente.empresa,
+            cliente.nome_fantasia,
             cliente.pessoa,
             cliente.contato,
             cliente.grupo,
@@ -959,7 +956,7 @@ export default function Clientes() {
             .toLowerCase();
           return fields.includes(term);
         })
-      : clientes;
+      : sourceClientes;
 
     const filteredByStatus = situacaoFilter
       ? base.filter((cliente) => {
@@ -973,16 +970,47 @@ export default function Clientes() {
       const nameB = (b.empresa ?? "").toLocaleLowerCase("pt-BR");
       return nameA.localeCompare(nameB, "pt-BR");
     });
-  }, [clientes, search, situacaoFilter]);
+  }, [effectiveSearchMode, isSearching, normalizedSearchTerm, situacaoFilter, sourceClientes]);
+
+  useEffect(() => {
+    if (!canView || loading) return;
+    if (effectiveSearchMode === "codigo" && isSearching) return;
+    if (!normalizedSearchTerm) {
+      searchRefreshKeyRef.current = "";
+      return;
+    }
+    if (filteredClientes.length > 0) return;
+
+    const key = `${effectiveSearchMode}|${situacaoFilter}|${normalizedSearchTerm.toLowerCase()}`;
+    if (searchRefreshKeyRef.current === key) return;
+    searchRefreshKeyRef.current = key;
+
+    const timer = window.setTimeout(() => {
+      void refreshClientesSilently();
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [canView, effectiveSearchMode, filteredClientes.length, isSearching, loading, normalizedSearchTerm, situacaoFilter]);
   const totalPages = Math.max(1, Math.ceil(filteredClientes.length / CLIENTES_PER_PAGE));
   const paginatedClientes = useMemo(() => {
     const start = (currentPage - 1) * CLIENTES_PER_PAGE;
     return filteredClientes.slice(start, start + CLIENTES_PER_PAGE);
   }, [filteredClientes, currentPage]);
+  const displayClientes = useMemo(() => {
+    if (!isSearching) return paginatedClientes;
+    if (effectiveSearchMode === "codigo") {
+      return filteredClientes.filter(
+        (cliente) => normalizeCodigoValue(cliente.codigo) === normalizedSearchTerm,
+      );
+    }
+    return filteredClientes;
+  }, [effectiveSearchMode, filteredClientes, isSearching, normalizedSearchTerm, paginatedClientes]);
+  const resultCount = isSearching ? displayClientes.length : filteredClientes.length;
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, situacaoFilter]);
+  }, [search, searchMode, situacaoFilter]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -1037,9 +1065,10 @@ export default function Clientes() {
     });
   };
 
-  const handleSaveCodigoDuplicadoModal = () => {
+  const handleSaveCodigoDuplicadoModal = async () => {
     if (!codigoDuplicadoModal) return;
-    const obsValue = codigoDuplicadoModal.obs.trim();
+    const modalState = codigoDuplicadoModal;
+    const obsValue = modalState.obs.trim();
     if (!obsValue) {
       setCodigoDuplicadoModal((prev) =>
         prev
@@ -1052,8 +1081,8 @@ export default function Clientes() {
       return;
     }
 
-    const excludeId = codigoDuplicadoModal.origem === "edit" ? selected?.id ?? null : null;
-    if (hasObsConflictForCodigo(codigoDuplicadoModal.codigo, obsValue, excludeId)) {
+    const excludeId = modalState.origem === "edit" ? selected?.id ?? null : null;
+    if (hasObsConflictForCodigo(modalState.codigo, obsValue, excludeId)) {
       setCodigoDuplicadoModal((prev) =>
         prev
           ? {
@@ -1065,16 +1094,45 @@ export default function Clientes() {
       return;
     }
 
-    if (codigoDuplicadoModal.origem === "edit") {
-      setEditForm((prev) => ({ ...prev, obs: obsValue }));
+    let obsComercialApi: string | null = null;
+    const codigoValue = modalState.codigo.trim();
+    if (codigoValue) {
+      try {
+        obsComercialApi = (await fetchObservacaoComercialByEmpresaId(codigoValue)) ?? null;
+      } catch (err) {
+        setCodigoDuplicadoModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                error: err instanceof Error ? err.message : "Erro ao consultar obs comercial na API.",
+              }
+            : prev,
+        );
+        return;
+      }
+      if (!obsComercialApi?.trim()) {
+        setCodigoDuplicadoModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                error: "Nao foi possivel obter obs comercial da API para este codigo.",
+              }
+            : prev,
+        );
+        return;
+      }
+    }
+
+    if (modalState.origem === "edit") {
+      setEditForm((prev) => ({ ...prev, obs: obsValue, obs_comercial: obsComercialApi ?? prev.obs_comercial }));
     } else {
-      setForm((prev) => ({ ...prev, obs: obsValue }));
+      setForm((prev) => ({ ...prev, obs: obsValue, obs_comercial: obsComercialApi ?? prev.obs_comercial }));
     }
 
     setCodigoDuplicadoAprovado({
-      codigo: codigoDuplicadoModal.codigo,
+      codigo: modalState.codigo,
       obs: obsValue,
-      origem: codigoDuplicadoModal.origem,
+      origem: modalState.origem,
     });
     setCodigoDuplicadoModal(null);
   };
@@ -1105,7 +1163,15 @@ export default function Clientes() {
     if (codigoDuplicadoAprovado?.origem === "create" && !form.codigo.trim()) {
       setCodigoDuplicadoAprovado(null);
     }
-    if (!form.empresa.trim()) {
+    const codigoCreate = form.codigo.trim();
+    const obsCreate = form.obs.trim();
+    const duplicateCodigoApprovedForCreate =
+      Boolean(codigoCreate) &&
+      Boolean(obsCreate) &&
+      codigoDuplicadoAprovado?.origem === "create" &&
+      normalizeCodigoValue(codigoDuplicadoAprovado.codigo) === normalizeCodigoValue(codigoCreate) &&
+      normalizeObsValue(codigoDuplicadoAprovado.obs) === normalizeObsValue(obsCreate);
+    if (!form.empresa.trim() && !duplicateCodigoApprovedForCreate) {
       setError("Informe o nome da empresa.");
       return;
     }
@@ -1157,8 +1223,6 @@ export default function Clientes() {
       setClientes((prev) => [created, ...prev]);
       if (existingMatches.length > 0) {
         setDuplicateModal({ newCliente: created, existing: existingMatches });
-      } else {
-        await syncAgendaForCliente(created);
       }
       setForm({
         codigo: "",
@@ -1296,9 +1360,6 @@ export default function Clientes() {
       const mapped = await fetchNominatimByAddress(road, city, state);
       if (!mapped) {
         throw new Error("Endereco nao encontrado.");
-      }
-      if (mapped.cep) {
-        skipCepLookupRef.current = true;
       }
       setForm((prev) => ({
         ...prev,
@@ -1555,9 +1616,6 @@ export default function Clientes() {
       const mapped = await fetchNominatimByAddress(road, city, state);
       if (!mapped) {
         throw new Error("Endereco nao encontrado.");
-      }
-      if (mapped.cep) {
-        skipCepLookupEditRef.current = true;
       }
       setEditForm((prev) => ({
         ...prev,
@@ -2292,11 +2350,6 @@ export default function Clientes() {
               onChange={(event) => setForm((prev) => ({ ...prev, bairro: event.target.value }))}
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
-            {bairroLoading && (
-              <span className="text-[10px] font-normal text-ink/50 animate-pulse">
-                Buscando bairro...
-              </span>
-            )}
           </label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             CEP
@@ -2341,7 +2394,9 @@ export default function Clientes() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="font-display text-lg text-ink">Empresas cadastradas</h3>
-          <p className="text-xs text-ink/60">{clientes.length} empresa(s).</p>
+          <p className="text-xs text-ink/60">
+            {resultCount} empresa(s){search.trim() ? ` de ${clientes.length}` : ""}.
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {canCreate && (
@@ -2372,10 +2427,25 @@ export default function Clientes() {
               </option>
             ))}
           </select>
+          <select
+            value={searchMode}
+            onChange={(event) => setSearchMode(event.target.value as ClienteSearchMode)}
+            className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+          >
+            <option value="codigo">Buscar por codigo</option>
+            <option value="empresa">Buscar por empresa</option>
+            <option value="geral">Busca geral</option>
+          </select>
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar empresa, cidade, bairro..."
+            placeholder={
+              searchMode === "codigo"
+                ? "Buscar codigo..."
+                : searchMode === "empresa"
+                  ? "Buscar empresa..."
+                  : "Busca geral (empresa, cidade, bairro...)"
+            }
             className="w-64 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
           />
         </div>
@@ -2388,10 +2458,10 @@ export default function Clientes() {
       ) : (
         <div className="rounded-2xl border border-sea/15 bg-white/95">
           <div className="divide-y divide-sea/10">
-            {filteredClientes.length === 0 ? (
+            {displayClientes.length === 0 ? (
               <div className="px-4 py-6 text-sm text-ink/60">Nenhum cliente encontrado.</div>
             ) : (
-              paginatedClientes.map((cliente) => (
+              displayClientes.map((cliente) => (
                 <button
                   key={cliente.id}
                   type="button"
@@ -2446,7 +2516,7 @@ export default function Clientes() {
               ))
             )}
           </div>
-          {filteredClientes.length > 0 && (
+          {!isSearching && filteredClientes.length > 0 && (
             <div className="flex items-center justify-between border-t border-sea/10 px-4 py-3 text-xs text-ink/60">
               <span>
                 Pagina {currentPage} de {totalPages}
@@ -2879,11 +2949,6 @@ export default function Clientes() {
                     }
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
-                  {bairroLoadingEdit && (
-                    <span className="text-[10px] font-normal text-ink/50 animate-pulse">
-                      Buscando bairro...
-                    </span>
-                  )}
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
                   CEP

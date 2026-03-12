@@ -2,7 +2,6 @@ import { supabase } from "./supabase";
 import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import { extractCustomTimes } from "./perfilVisita";
 import { fetchNominatimCoordinatesByAddress, fetchNominatimCoordinatesByQuery } from "./nominatim";
-const escapeOrValue = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
 const DEFAULT_SITUACAO = "Ativo";
 const normalizeAgendaKeyPart = (value?: string | null) =>
   (value ?? "")
@@ -30,6 +29,7 @@ const collectAgendaIdsForCliente = async (
   const codigo = cliente.codigo?.trim();
   const empresa = cliente.empresa?.trim();
   const nomeFantasia = cliente.nome_fantasia?.trim();
+  const hasEmpresaIdentity = Boolean(empresa || nomeFantasia);
   const agendaIds = new Set<string>();
 
   const appendAgendaIds = (
@@ -43,27 +43,25 @@ const collectAgendaIdsForCliente = async (
     });
   };
 
-  if (codigo) {
+  if (hasEmpresaIdentity) {
+    const agendaKey = buildAgendaDedupeKey(empresa, nomeFantasia);
+    const { data, error } = await supabase.from("agenda").select("id").eq("dedupe_key", agendaKey);
+    appendAgendaIds(data as Array<{ id?: string | null }> | null, error);
+
+    if (agendaIds.size === 0) {
+      let fallbackQuery = supabase.from("agenda").select("id");
+      if (empresa && nomeFantasia) {
+        fallbackQuery = fallbackQuery.eq("empresa", empresa).eq("nome_fantasia", nomeFantasia);
+      } else if (empresa) {
+        fallbackQuery = fallbackQuery.eq("empresa", empresa);
+      } else if (nomeFantasia) {
+        fallbackQuery = fallbackQuery.eq("nome_fantasia", nomeFantasia);
+      }
+      const { data: fallbackData, error: fallbackError } = await fallbackQuery;
+      appendAgendaIds(fallbackData as Array<{ id?: string | null }> | null, fallbackError);
+    }
+  } else if (codigo) {
     const { data, error } = await supabase.from("agenda").select("id").eq("cod_1", codigo);
-    appendAgendaIds(data as Array<{ id?: string | null }> | null, error);
-  }
-  if (empresa && nomeFantasia) {
-    const { data, error } = await supabase
-      .from("agenda")
-      .select("id")
-      .eq("empresa", empresa)
-      .eq("nome_fantasia", nomeFantasia);
-    appendAgendaIds(data as Array<{ id?: string | null }> | null, error);
-  }
-  if (empresa) {
-    const { data, error } = await supabase.from("agenda").select("id").eq("empresa", empresa);
-    appendAgendaIds(data as Array<{ id?: string | null }> | null, error);
-  }
-  if (nomeFantasia) {
-    const { data, error } = await supabase
-      .from("agenda")
-      .select("id")
-      .eq("nome_fantasia", nomeFantasia);
     appendAgendaIds(data as Array<{ id?: string | null }> | null, error);
   }
 
@@ -148,18 +146,10 @@ const upsertAgendaFromClientesPayloads = async (
     const empresa = payload.empresa?.trim() ?? null;
     const nomeFantasia = payload.nome_fantasia?.trim() ?? null;
     if (!empresa && !nomeFantasia) continue;
-    let query = supabase
+    const query = supabase
       .from("agenda")
-      .update({ data_da_ultima_visita: payload.data_da_ultima_visita });
-    if (empresa && nomeFantasia) {
-      query = query.or(
-        `empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
-      );
-    } else if (empresa) {
-      query = query.eq("empresa", empresa);
-    } else if (nomeFantasia) {
-      query = query.eq("nome_fantasia", nomeFantasia);
-    }
+      .update({ data_da_ultima_visita: payload.data_da_ultima_visita })
+      .eq("dedupe_key", buildAgendaDedupeKey(empresa, nomeFantasia));
     const { error: updateError } = await query;
     if (updateError) throw new Error(updateError.message);
   }
@@ -188,6 +178,20 @@ export const fetchClientes = async () => {
   }
 
   return rows;
+};
+
+export const fetchClientesByCodigoExact = async (codigo: string) => {
+  const normalized = codigo.trim();
+  if (!normalized) return [] as ClienteRow[];
+
+  const { data, error } = await supabase
+    .from("clientes")
+    .select(CLIENTES_SELECT_COLUMNS)
+    .eq("codigo", normalized)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ClienteRow[];
 };
 
 export const createCliente = async (payload: {
@@ -240,7 +244,6 @@ export const createCliente = async (payload: {
     .single();
 
   if (error) throw new Error(error.message);
-  await upsertAgendaFromClientesPayloads([data as ClienteRow]);
   return data as ClienteRow;
 };
 
@@ -376,9 +379,11 @@ export const upsertClientes = async (
     .upsert(clientesRows, { onConflict: "dedupe_key", ignoreDuplicates: true })
     .select(CLIENTES_SELECT_COLUMNS);
   if (error) throw new Error(error.message);
-  await upsertAgendaFromClientesPayloads(normalized, {
-    skipDataUltimaVisitaSync: options?.skipAgendaDataUltimaVisitaSync,
-  });
+  if (!options?.skipAgendaDataUltimaVisitaSync) {
+    await upsertAgendaFromClientesPayloads(normalized, {
+      skipDataUltimaVisitaSync: false,
+    });
+  }
   return (data ?? []) as ClienteRow[];
 };
 
