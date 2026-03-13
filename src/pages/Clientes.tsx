@@ -119,6 +119,7 @@ type CodigoDuplicadoModalState = {
 
 type ImportPayload = {
   codigo?: string | null;
+  cnpj?: string | null;
   valor?: number | null;
   cep?: string | null;
   empresa?: string | null;
@@ -158,6 +159,7 @@ const buildImportKey = (payload: {
 
 const buildClientePayloadFromImport = (payload: ImportPayload) => ({
   codigo: payload.codigo ?? null,
+  cnpj: normalizeCnpj(payload.cnpj),
   corte: payload.corte ?? null,
   venc: payload.venc ?? null,
   valor: payload.valor ?? null,
@@ -234,6 +236,11 @@ const formatCnpjInput = (value: string) => {
   }
   return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
 };
+const normalizeCnpj = (value: string | null | undefined) => {
+  const digits = sanitizeCnpjDigits(value ?? "");
+  if (digits.length !== 14) return null;
+  return formatCnpjInput(digits);
+};
 const sanitizeContatoInput = (value: string) =>
   value
     .replace(/\./g, ",")
@@ -299,18 +306,21 @@ const resolveValorTitular = (empresa: OdontoartEmpresaResponseRow) => {
 
 const resolveCnpjFromEmpresa = (empresa: OdontoartEmpresaResponseRow) => {
   const candidates: Array<string | number | null | undefined> = [
-    empresa.Cnpj,
     empresa.CNPJ,
+    empresa.Cnpj,
     empresa.cnpj,
     empresa.CnpjCpf,
   ];
   for (const candidate of candidates) {
     if (candidate === null || candidate === undefined) continue;
-    const formatted = formatCnpjInput(String(candidate));
+    const formatted = normalizeCnpj(String(candidate));
     if (formatted) return formatted;
   }
   return "";
 };
+
+const resolveEmpresaFromApi = (empresa: OdontoartEmpresaResponseRow) =>
+  (empresa.NomeFantazia ?? empresa.NomeFantasia ?? empresa.RazaoSocial ?? "").trim();
 
 const buildEnderecoWithNumero = (logradouro: string | null, numero: string | null) =>
   [logradouro?.trim(), numero?.trim()].filter(Boolean).join(", ");
@@ -344,7 +354,7 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
     valor: valorTitular !== null ? formatCurrency(valorTitular) : "",
     data_da_ultima_visita: "",
     cep: formatCep((empresa.Cep ?? "").trim()),
-    empresa: (empresa.RazaoSocial ?? "").trim(),
+    empresa: resolveEmpresaFromApi(empresa),
     pessoa: "",
     contato: "",
     grupo: "",
@@ -373,6 +383,7 @@ type ClienteApiSyncPayload = Partial<
   Pick<
     ClienteRow,
     | "codigo"
+    | "cnpj"
     | "corte"
     | "venc"
     | "valor"
@@ -416,11 +427,12 @@ const mapEmpresaApiToClienteSyncPayload = async (
 
   return {
     codigo: normalizeNullableText(codigoFromApi) ?? normalizeNullableText(codigoFallback),
+    cnpj: normalizeCnpj(resolveCnpjFromEmpresa(empresa)),
     corte: parseNumberFromUnknown(empresa.Corte),
     venc: parseNumberFromUnknown(empresa.Vencimento),
     valor: resolveValorTitular(empresa),
     cep: normalizeNullableText(formatCep((empresa.Cep ?? "").trim())),
-    empresa: normalizeNullableText(empresa.RazaoSocial ?? null),
+    empresa: normalizeNullableText(resolveEmpresaFromApi(empresa)),
     obs_comercial: obsComercial,
     situacao,
     endereco: normalizeNullableText(endereco),
@@ -435,6 +447,7 @@ const pickChangedApiFields = (cliente: ClienteRow, apiPayload: ClienteApiSyncPay
 
   const textFields = [
     "codigo",
+    "cnpj",
     "cep",
     "empresa",
     "obs_comercial",
@@ -509,6 +522,7 @@ const parseImportDate = (value: string) => {
 const HEADER_MAP: Record<string, string> = {
   codigo: "codigo",
   cod: "codigo",
+  cnpj: "cnpj",
   corte: "corte",
   venc: "venc",
   vencimento: "venc",
@@ -978,7 +992,7 @@ export default function Clientes() {
     setHistoryDateTo("");
     setEditForm({
       codigo: selected.codigo ?? "",
-      cnpj: "",
+      cnpj: selected.cnpj ?? "",
       corte: selected.corte !== null && selected.corte !== undefined ? String(selected.corte) : "",
       venc: selected.venc !== null && selected.venc !== undefined ? String(selected.venc) : "",
       valor: selected.valor !== null && selected.valor !== undefined ? formatCurrency(selected.valor) : "",
@@ -1396,6 +1410,7 @@ export default function Clientes() {
       const parsedDataUltimaVisita = toIsoDateInput(form.data_da_ultima_visita);
       const created = await createCliente({
         codigo: form.codigo.trim() || null,
+        cnpj: normalizeCnpj(form.cnpj),
         corte: parsedCorte,
         venc: parsedVenc,
         valor: form.valor ? parseImportCurrency(form.valor) : null,
@@ -1695,6 +1710,7 @@ export default function Clientes() {
       const parsedDataUltimaVisita = toIsoDateInput(editForm.data_da_ultima_visita);
       const updated = await updateCliente(selected.id, {
         codigo: editForm.codigo.trim() || null,
+        cnpj: normalizeCnpj(editForm.cnpj),
         corte: parsedCorte,
         venc: parsedVenc,
         valor: editForm.valor ? parseImportCurrency(editForm.valor) : null,
@@ -1999,8 +2015,9 @@ export default function Clientes() {
           const parsedValor = record.valor ? parseImportCurrency(record.valor) : null;
 
           return {
-            codigo: record.codigo ?? null,
-            corte: parsedCorte,
+	            codigo: record.codigo ?? null,
+	            cnpj: normalizeCnpj(record.cnpj),
+	            corte: parsedCorte,
             venc: parsedVenc,
             valor: parsedValor,
             data_da_ultima_visita: parsedDataUltimaVisita,
@@ -2034,8 +2051,9 @@ export default function Clientes() {
           duplicateCandidates.push({
             newCliente: {
               id: `import-${index}`,
-              codigo: payload.codigo ?? null,
-              corte: payload.corte ?? null,
+	              codigo: payload.codigo ?? null,
+	              cnpj: payload.cnpj ?? null,
+	              corte: payload.corte ?? null,
               venc: payload.venc ?? null,
               valor: payload.valor ?? null,
               data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
@@ -2879,17 +2897,17 @@ export default function Clientes() {
             </div>
 
             {isEditing ? (
-              <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-12">
-                <label className="flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2 md:max-w-[240px]">
+              <div className="mt-6 grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-4 md:grid-cols-6">
+                <label className="min-w-0 flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
                   Codigo
-                  <div className="flex items-end gap-1">
+                  <div className="min-w-0 flex items-end gap-1">
                     <input
                       value={editForm.codigo}
                       onChange={(event) => {
                         setCodigoErrorEdit(null);
                         setEditForm((prev) => ({ ...prev, codigo: event.target.value }));
                       }}
-                      className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                      className="min-w-0 w-full flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                     />
                     <button
                       type="button"
@@ -2909,7 +2927,7 @@ export default function Clientes() {
                     <span className="text-[11px] font-normal text-red-600">{codigoErrorEdit}</span>
                   )}
                 </label>
-                <label className="min-w-0 flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                <label className="min-w-0 flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
                   CNPJ
                   <div className="relative">
                     <input
@@ -2938,7 +2956,7 @@ export default function Clientes() {
                     <span className="text-[11px] font-normal text-red-600">{cnpjErrorEdit}</span>
                   )}
                 </label>
-                <label className="flex min-w-0 flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+                <label className="flex min-w-0 flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Empresa
                   <input
                     value={editForm.empresa}
@@ -2948,7 +2966,7 @@ export default function Clientes() {
                     className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
                   Pessoa
                   <input
                     value={editForm.pessoa}
@@ -2958,7 +2976,7 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
                   Contato
                   <input
                     value={editForm.contato}
@@ -2972,7 +2990,7 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Grupo
                   <input
                     value={editForm.grupo}
@@ -2982,7 +3000,7 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Obs comercial
                   <input
                     value={editForm.obs_comercial}
@@ -2992,7 +3010,7 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Obs
                   <input
                     value={editForm.obs}
@@ -3002,7 +3020,8 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                <div className="md:col-span-6 flex flex-wrap items-end gap-2">
+                  <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">
                     Corte
                     <input
                       value={editForm.corte}
@@ -3011,10 +3030,10 @@ export default function Clientes() {
                       }
                       inputMode="numeric"
                       maxLength={2}
-                      className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+                      className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
                     />
                   </label>
-                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                  <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">
                     Venc
                     <input
                       value={editForm.venc}
@@ -3023,10 +3042,10 @@ export default function Clientes() {
                       }
                       inputMode="numeric"
                       maxLength={2}
-                      className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+                      className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
                     />
                   </label>
-                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+                  <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">
                     Valor
                     <input
                       value={editForm.valor}
@@ -3034,10 +3053,10 @@ export default function Clientes() {
                         setEditForm((prev) => ({ ...prev, valor: formatCurrencyInput(event.target.value) }))
                       }
                       inputMode="decimal"
-                      className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                      className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                     />
                   </label>
-                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-5">
+                  <label className="w-40 flex flex-col gap-1 text-xs font-semibold text-ink/70">
                     Data da ultima visita
                     <input
                       type="date"
@@ -3048,10 +3067,10 @@ export default function Clientes() {
                           data_da_ultima_visita: event.target.value,
                         }))
                       }
-                      className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                      className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                     />
                   </label>
-                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+                  <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">
                     Perfil visita
                     <select
                       value={
@@ -3097,10 +3116,31 @@ export default function Clientes() {
                           {option}
                         </option>
                       ))}
-                        <option value="__custom__">Horario customizado</option>
-                      </select>
+                      <option value="__custom__">Horario customizado</option>
+                    </select>
                   </label>
-                <div className="min-w-0 md:col-span-6">
+                  <label className="w-36 shrink-0 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                    Situacao
+                    <select
+                      value={editForm.situacao}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({ ...prev, situacao: event.target.value }))
+                      }
+                      className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    >
+                      <option value="">Selecione</option>
+                      {editForm.situacao && !SITUACAO_OPTIONS.some((option) => option === editForm.situacao) && (
+                        <option value={editForm.situacao}>{editForm.situacao}</option>
+                      )}
+                      {SITUACAO_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="md:col-span-6">
                   {(perfilEdit.singleTimeBase === "ALMOCO" || perfilEdit.singleTimeBase === "JANTAR") && (
                     <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
                       HH:MM
@@ -3121,9 +3161,9 @@ export default function Clientes() {
                     </label>
                   )}
                   {perfilEdit.customEnabled && (
-                    <div className="flex min-w-0 flex-col gap-1 text-xs font-semibold text-ink/70">
+                    <div className="shrink-0 flex flex-col gap-1 text-xs font-semibold text-ink/70">
                       <span>Horarios customizados</span>
-                      <div className="flex min-w-0 items-end gap-2 overflow-x-auto pb-1 pr-1">
+                      <div className="flex w-fit max-w-[24rem] items-end gap-2 overflow-x-auto pb-1 pr-1">
                       {perfilEdit.customTimes.map((time, index) => (
                         <div key={`${time}-${index}`} className="shrink-0 flex items-center gap-2">
                           <input
@@ -3167,27 +3207,7 @@ export default function Clientes() {
                     </div>
                   )}
                 </div>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
-                    Situacao
-                    <select
-                      value={editForm.situacao}
-                      onChange={(event) =>
-                        setEditForm((prev) => ({ ...prev, situacao: event.target.value }))
-                      }
-                      className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                    >
-                      <option value="">Selecione</option>
-                      {editForm.situacao && !SITUACAO_OPTIONS.some((option) => option === editForm.situacao) && (
-                        <option value={editForm.situacao}>{editForm.situacao}</option>
-                      )}
-                      {SITUACAO_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Cidade
                   <input
                     value={editForm.cidade}
@@ -3197,52 +3217,54 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-                  UF
-                  <input
-                    value={editForm.uf}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({
-                        ...prev,
-                        uf: event.target.value.toUpperCase().slice(0, 3),
-                      }))
-                    }
-                    maxLength={3}
-                    className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm uppercase tracking-wide text-ink outline-none focus:border-sea"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-7">
-                  <span>
-                    Endereco
-                    {!canEditEnderecoEdit && (
-                      <span className="font-normal text-ink/50"> (Informe cidade e UF para editar o endereco.)</span>
-                    )}
-                  </span>
-                  <div className="flex items-end gap-1">
+                <div className="md:col-span-4 grid gap-3 md:grid-cols-[80px_minmax(0,1fr)] md:items-start">
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                    UF
                     <input
-                      value={editForm.endereco}
+                      value={editForm.uf}
                       onChange={(event) =>
-                        setEditForm((prev) => ({ ...prev, endereco: event.target.value }))
+                        setEditForm((prev) => ({
+                          ...prev,
+                          uf: event.target.value.toUpperCase().slice(0, 3),
+                        }))
                       }
-                      disabled={!canEditEnderecoEdit}
-                      className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                      maxLength={3}
+                      className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm uppercase tracking-wide text-ink outline-none focus:border-sea"
                     />
-                    <button
-                      type="button"
-                      onClick={handleAddressLookupEdit}
-                      disabled={!canSearchEnderecoEdit || addressLookupLoadingEdit}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
-                      title={addressLookupLoadingEdit ? "Buscando endereco..." : "Cadastrar via endereco"}
-                      aria-label={addressLookupLoadingEdit ? "Buscando endereco..." : "Cadastrar via endereco"}
-                    >
-                      <MapPin size={15} className={addressLookupLoadingEdit ? "animate-pulse" : ""} />
-                    </button>
-                  </div>
-                  {addressLookupErrorEdit && (
-                    <span className="text-[11px] font-normal text-red-600">{addressLookupErrorEdit}</span>
-                  )}
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                    <span>
+                      Endereco + Nº
+                      {!canEditEnderecoEdit && (
+                        <span className="font-normal text-ink/50"> (Informe cidade e UF para editar o endereco.)</span>
+                      )}
+                    </span>
+                    <div className="flex items-end gap-1">
+                      <input
+                        value={editForm.endereco}
+                        onChange={(event) =>
+                          setEditForm((prev) => ({ ...prev, endereco: event.target.value }))
+                        }
+                        disabled={!canEditEnderecoEdit}
+                        className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddressLookupEdit}
+                        disabled={!canSearchEnderecoEdit || addressLookupLoadingEdit}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                        title={addressLookupLoadingEdit ? "Buscando endereco..." : "Cadastrar via endereco"}
+                        aria-label={addressLookupLoadingEdit ? "Buscando endereco..." : "Cadastrar via endereco"}
+                      >
+                        <MapPin size={15} className={addressLookupLoadingEdit ? "animate-pulse" : ""} />
+                      </button>
+                    </div>
+                    {addressLookupErrorEdit && (
+                      <span className="text-[11px] font-normal text-red-600">{addressLookupErrorEdit}</span>
+                    )}
+                  </label>
+                </div>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Complemento
                   <input
                     value={editForm.complemento}
@@ -3252,7 +3274,7 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Bairro
                   <input
                     value={editForm.bairro}
@@ -3262,7 +3284,7 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   CEP
                   <div className="flex items-end gap-1">
                     <input
@@ -3299,6 +3321,7 @@ export default function Clientes() {
                   ["Valor", selected.valor !== null && selected.valor !== undefined ? formatCurrency(selected.valor) : null],
                   ["Data da ultima visita", formatDate(selected.data_da_ultima_visita)],
                   ["CEP", selected.cep],
+                  ["CNPJ", selected.cnpj],
                   ["Empresa", selected.empresa],
                   ["Pessoa", selected.pessoa],
                   ["Contato", selected.contato],

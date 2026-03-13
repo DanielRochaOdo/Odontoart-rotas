@@ -6,6 +6,7 @@ export type ClienteRow = {
   valor: number | null;
   data_da_ultima_visita: string | null;
   cep: string | null;
+  cnpj: string | null;
   empresa: string | null;
   pessoa: string | null;
   contato: string | null;

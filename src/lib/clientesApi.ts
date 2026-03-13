@@ -11,7 +11,7 @@ const normalizeAgendaKeyPart = (value?: string | null) =>
 const buildAgendaDedupeKey = (empresa?: string | null, nomeFantasia?: string | null) =>
   `${normalizeAgendaKeyPart(empresa)}|${normalizeAgendaKeyPart(nomeFantasia)}||`;
 const CLIENTES_SELECT_COLUMNS =
-  "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, empresa, pessoa, contato, grupo, obs_comercial, obs, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at";
+  "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at";
 
 const normalizePerfilTimes = (value: string | null) => {
   if (!value) return { perfil: null as string | null, opcoes: null as string | null };
@@ -201,6 +201,7 @@ export const createCliente = async (payload: {
   valor?: number | null;
   data_da_ultima_visita?: string | null;
   cep?: string | null;
+  cnpj?: string | null;
   empresa?: string | null;
   pessoa?: string | null;
   contato?: string | null;
@@ -225,6 +226,7 @@ export const createCliente = async (payload: {
       valor: payload.valor ?? null,
       data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
       cep: payload.cep ?? null,
+      cnpj: payload.cnpj ?? null,
       empresa: payload.empresa ?? null,
       pessoa: payload.pessoa ?? null,
       contato: payload.contato ?? null,
@@ -262,6 +264,7 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
   setIfDefined("valor");
   setIfDefined("data_da_ultima_visita");
   setIfDefined("cep");
+  setIfDefined("cnpj");
   setIfDefined("empresa");
   setIfDefined("pessoa");
   setIfDefined("contato");
@@ -331,6 +334,7 @@ export const upsertClientes = async (
     data_da_ultima_visita?: string | null;
     valor?: number | null;
     cep?: string | null;
+    cnpj?: string | null;
     empresa?: string | null;
     pessoa?: string | null;
     contato?: string | null;
@@ -358,6 +362,7 @@ export const upsertClientes = async (
     data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
     valor: payload.valor ?? null,
     cep: payload.cep ?? null,
+    cnpj: payload.cnpj ?? null,
     empresa: payload.empresa ?? null,
     pessoa: payload.pessoa ?? null,
     contato: payload.contato ?? null,

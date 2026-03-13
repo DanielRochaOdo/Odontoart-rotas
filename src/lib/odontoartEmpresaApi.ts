@@ -7,6 +7,8 @@ export type OdontoartEmpresaResponseRow = {
   CNPJ?: string | number | null;
   cnpj?: string | number | null;
   CnpjCpf?: string | number | null;
+  NomeFantasia?: string | null;
+  NomeFantazia?: string | null;
   RazaoSocial?: string | null;
   NomeSituacao?: string | null;
   nomeSituacao?: string | null;
