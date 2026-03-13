@@ -168,6 +168,7 @@ export default function Visitas() {
   const { role, session, profile } = useAuth();
   const isVendor = role === "VENDEDOR";
   const canManage = role === "SUPERVISOR" || role === "ASSISTENTE";
+  const canManageInstruction = role === "SUPERVISOR";
   const canAccess = canManage || isVendor;
   const canFilterBySupervisor = role === "ASSISTENTE" || role === "SUPERVISOR";
   const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(new Date()));
@@ -182,6 +183,7 @@ export default function Visitas() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [addingVendorId, setAddingVendorId] = useState<string | null>(null);
   const [maxVisibleDate, setMaxVisibleDate] = useState<string | null>(null);
   const [blockMessage, setBlockMessage] = useState<string | null>(null);
   const [supervisores, setSupervisores] = useState<
@@ -309,6 +311,9 @@ export default function Visitas() {
   const [detailsVisit, setDetailsVisit] = useState<VisitRow | null>(null);
   const [detailsObsExpanded, setDetailsObsExpanded] = useState(false);
   const [detailsObsText, setDetailsObsText] = useState("");
+  const [detailsInstructionDraft, setDetailsInstructionDraft] = useState("");
+  const [detailsInstructionSaving, setDetailsInstructionSaving] = useState(false);
+  const [detailsInstructionMessage, setDetailsInstructionMessage] = useState<string | null>(null);
   const detailsObsRequestRef = useRef(0);
 
   useEffect(() => {
@@ -753,6 +758,10 @@ export default function Visitas() {
     if (insertError) throw new Error(insertError.message);
   };
 
+  const isSameVisitVendor = (visit: VisitRow, vendorId: string, vendorName: string) =>
+    (visit.assigned_to_user_id && visit.assigned_to_user_id === vendorId) ||
+    (!visit.assigned_to_user_id && normalize(visit.assigned_to_name) === normalize(vendorName));
+
   const handleSaveVisit = async (visitId: string) => {
     const state = editState[visitId];
     if (!state) return;
@@ -779,46 +788,53 @@ export default function Visitas() {
     setError(null);
     try {
       const routeId = await ensureRoute(state.vendorId, vendorName, state.date);
-      const sameVendor =
-        (visit.assigned_to_user_id && visit.assigned_to_user_id === state.vendorId) ||
-        (!visit.assigned_to_user_id &&
-          normalize(visit.assigned_to_name) === normalize(vendorName));
+      const { data: targetVisit, error: targetVisitError } = await supabase
+        .from("visits")
+        .select("id, route_id, assigned_to_name")
+        .eq("agenda_id", visit.agenda_id)
+        .eq("assigned_to_user_id", state.vendorId)
+        .eq("visit_date", state.date)
+        .neq("id", visitId)
+        .maybeSingle();
+      if (targetVisitError) throw new Error(targetVisitError.message);
 
-      if (!sameVendor) {
-        const { error: insertError } = await supabase
-          .from("visits")
-          .upsert(
-            [
-              {
-                agenda_id: visit.agenda_id,
-                assigned_to_user_id: state.vendorId,
-                assigned_to_name: vendorName,
-                visit_date: state.date,
-                perfil_visita: visit.perfil_visita ?? null,
-                instructions: visit.instructions ?? visit.agenda?.instructions ?? null,
-                route_id: routeId,
-                created_by: session?.user.id ?? null,
-              },
-            ],
-            {
-              onConflict: "agenda_id,assigned_to_user_id,visit_date",
-              ignoreDuplicates: true,
-            },
-          );
+      if (targetVisit?.id) {
+        if (targetVisit.route_id !== routeId || normalize(targetVisit.assigned_to_name) !== normalize(vendorName)) {
+          const { error: updateTargetError } = await supabase
+            .from("visits")
+            .update({
+              assigned_to_name: vendorName,
+              route_id: routeId,
+            })
+            .eq("id", targetVisit.id);
+          if (updateTargetError) throw new Error(updateTargetError.message);
+        }
 
-        if (insertError) throw new Error(insertError.message);
+        if (visit.route_id && visit.route_id !== routeId) {
+          const { error: deleteStopError } = await supabase
+            .from("route_stops")
+            .delete()
+            .eq("route_id", visit.route_id)
+            .eq("agenda_id", visit.agenda_id);
+          if (deleteStopError) throw new Error(deleteStopError.message);
+        }
 
         await ensureRouteStop(routeId, visit.agenda_id);
+
+        const { error: deleteError } = await supabase.from("visits").delete().eq("id", visitId);
+        if (deleteError) throw new Error(deleteError.message);
+
         setRefreshKey((prev) => prev + 1);
         return;
       }
 
       if (visit.route_id && visit.route_id !== routeId) {
-        await supabase
+        const { error: deleteStopError } = await supabase
           .from("route_stops")
           .delete()
           .eq("route_id", visit.route_id)
           .eq("agenda_id", visit.agenda_id);
+        if (deleteStopError) throw new Error(deleteStopError.message);
       }
 
       await ensureRouteStop(routeId, visit.agenda_id);
@@ -840,6 +856,71 @@ export default function Visitas() {
       setError(err instanceof Error ? err.message : "Erro ao atualizar visita.");
     } finally {
       setSavingId(null);
+    }
+  };
+
+  const handleAddVendorToVisit = async (visitId: string) => {
+    const state = editState[visitId];
+    if (!state) return;
+    if (!state.date) {
+      setError("Selecione a data da visita.");
+      return;
+    }
+    if (!state.vendorId) {
+      setError("Selecione o vendedor.");
+      return;
+    }
+
+    const visit = visits.find((item) => item.id === visitId);
+    if (!visit) return;
+    if (visit.completed_at) {
+      setError("Visita registrada. Edicao bloqueada.");
+      return;
+    }
+
+    const vendor = vendorById.get(state.vendorId);
+    const vendorName = vendor?.display_name ?? vendor?.user_id ?? "Sem vendedor";
+    if (isSameVisitVendor(visit, state.vendorId, vendorName)) {
+      setError("Selecione um vendedor diferente para adicionar.");
+      return;
+    }
+
+    setAddingVendorId(visitId);
+    setError(null);
+    try {
+      const { data: existingVisit, error: existingVisitError } = await supabase
+        .from("visits")
+        .select("id")
+        .eq("agenda_id", visit.agenda_id)
+        .eq("assigned_to_user_id", state.vendorId)
+        .eq("visit_date", state.date)
+        .maybeSingle();
+      if (existingVisitError) throw new Error(existingVisitError.message);
+      if (existingVisit?.id) {
+        setError("Este vendedor ja esta vinculado a empresa nessa data.");
+        return;
+      }
+
+      const routeId = await ensureRoute(state.vendorId, vendorName, state.date);
+      const { error: insertError } = await supabase.from("visits").insert({
+        agenda_id: visit.agenda_id,
+        assigned_to_user_id: state.vendorId,
+        assigned_to_name: vendorName,
+        visit_date: state.date,
+        perfil_visita: visit.perfil_visita ?? null,
+        perfil_visita_opcoes: visit.perfil_visita_opcoes ?? null,
+        instructions: visit.instructions ?? null,
+        route_id: routeId,
+        created_by: session?.user.id ?? null,
+      });
+      if (insertError) throw new Error(insertError.message);
+
+      await ensureRouteStop(routeId, visit.agenda_id);
+      setRefreshKey((prev) => prev + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao adicionar vendedor na visita.");
+    } finally {
+      setAddingVendorId(null);
     }
   };
 
@@ -920,7 +1001,7 @@ export default function Visitas() {
       singleTimeValue,
       customOptions: hasCustomOptions ? customOptions : [],
       customEditEnabled: false,
-      instructions: item.instructions ?? item.agenda?.instructions ?? "",
+      instructions: item.instructions ?? "",
     });
   };
 
@@ -990,6 +1071,8 @@ export default function Visitas() {
   const openDetailsModal = (item: VisitRow) => {
     setDetailsObsExpanded(false);
     setDetailsVisit(item);
+    setDetailsInstructionDraft(item.instructions ?? "");
+    setDetailsInstructionMessage(null);
     const fallbackObs = item.agenda?.obs_contrato_1?.trim() ?? "";
     setDetailsObsText(fallbackObs);
     const requestId = detailsObsRequestRef.current + 1;
@@ -1009,6 +1092,53 @@ export default function Visitas() {
     setDetailsVisit(null);
     setDetailsObsExpanded(false);
     setDetailsObsText("");
+    setDetailsInstructionDraft("");
+    setDetailsInstructionSaving(false);
+    setDetailsInstructionMessage(null);
+  };
+
+  const handleSaveDetailsInstruction = async () => {
+    if (!detailsVisit || !canManageInstruction) return;
+
+    const nextInstructions = detailsInstructionDraft.trim() || null;
+    const visitId = detailsVisit.id;
+
+    setDetailsInstructionSaving(true);
+    setDetailsInstructionMessage(null);
+    try {
+      const { error: visitsError } = await supabase
+        .from("visits")
+        .update({ instructions: nextInstructions })
+        .eq("id", visitId);
+      if (visitsError) throw new Error(visitsError.message);
+
+      setVisits((prev) =>
+        prev.map((item) =>
+          item.id === visitId
+            ? {
+                ...item,
+                instructions: nextInstructions,
+              }
+            : item,
+        ),
+      );
+      setDetailsVisit((prev) =>
+        prev && prev.id === visitId
+          ? {
+              ...prev,
+              instructions: nextInstructions,
+            }
+          : prev,
+      );
+      setCompleteVisit((prev) =>
+        prev && prev.id === visitId ? { ...prev, instructions: nextInstructions ?? "" } : prev,
+      );
+      setDetailsInstructionMessage("Instrucoes salvas.");
+    } catch (err) {
+      setDetailsInstructionMessage(err instanceof Error ? err.message : "Erro ao salvar instrucoes.");
+    } finally {
+      setDetailsInstructionSaving(false);
+    }
   };
 
   const handleConfirmNoVisit = async () => {
@@ -1269,8 +1399,7 @@ export default function Visitas() {
                             const isEditing = editingVisits[item.id] ?? false;
                             const isCompleted = Boolean(item.completed_at);
                             const mapAddress = buildMapAddress(item.agenda);
-                            const instructionText =
-                              item.instructions?.trim() || item.agenda?.instructions?.trim() || "";
+                            const instructionText = item.instructions?.trim() || "";
                             return (
                               <div key={item.id} className="rounded-xl border border-sea/10 bg-white/90 p-3">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1383,15 +1512,23 @@ export default function Visitas() {
                                       <button
                                         type="button"
                                         onClick={() => handleSaveVisit(item.id)}
-                                        disabled={savingId === item.id}
+                                        disabled={savingId === item.id || addingVendorId === item.id}
                                         className="rounded-lg bg-sea px-3 py-2 text-[11px] font-semibold text-white hover:bg-seaLight disabled:opacity-60"
                                       >
                                         {savingId === item.id ? "Salvando..." : "Salvar"}
                                       </button>
                                       <button
                                         type="button"
+                                        onClick={() => handleAddVendorToVisit(item.id)}
+                                        disabled={addingVendorId === item.id || savingId === item.id}
+                                        className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-[11px] font-semibold text-sea hover:border-sea hover:bg-sea/5 disabled:opacity-60"
+                                      >
+                                        {addingVendorId === item.id ? "Adicionando..." : "Adicionar vendedor"}
+                                      </button>
+                                      <button
+                                        type="button"
                                         onClick={() => handleRemoveVisit(item.id)}
-                                        disabled={removingId === item.id}
+                                        disabled={removingId === item.id || addingVendorId === item.id}
                                         className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-600 hover:border-red-300 disabled:opacity-60"
                                       >
                                         {removingId === item.id ? "Removendo..." : "Remover"}
@@ -1503,6 +1640,36 @@ export default function Visitas() {
                   <p className="text-[11px] font-semibold text-ink/60">Valor</p>
                   <p className="mt-1">{formatCurrency(detailsVisit.agenda?.valor)}</p>
                 </div>
+              </div>
+              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                <p className="text-[11px] font-semibold text-ink/60">Instrucoes</p>
+                {canManageInstruction ? (
+                  <div className="mt-2 space-y-2">
+                    <textarea
+                      value={detailsInstructionDraft}
+                      onChange={(event) => setDetailsInstructionDraft(event.target.value)}
+                      rows={3}
+                      placeholder="Digite a instrucao desta empresa"
+                      disabled={detailsInstructionSaving}
+                      className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea disabled:opacity-70"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveDetailsInstruction}
+                      disabled={detailsInstructionSaving}
+                      className="rounded-lg bg-sea px-3 py-1.5 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                    >
+                      {detailsInstructionSaving ? "Salvando..." : "Salvar instrucao"}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-1 whitespace-pre-wrap">
+                    {detailsVisit.instructions?.trim() || "-"}
+                  </p>
+                )}
+                {detailsInstructionMessage ? (
+                  <p className="mt-2 text-xs text-ink/70">{detailsInstructionMessage}</p>
+                ) : null}
               </div>
               <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
                 <div className="flex items-center gap-2">

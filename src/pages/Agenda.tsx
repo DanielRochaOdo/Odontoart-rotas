@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  Eye,
   Map as MapIcon,
   MapPin,
   SquareCenterlineDashedHorizontal,
@@ -31,7 +30,6 @@ import { useAgendaFilters } from "../hooks/useAgendaFilters";
 import MultiSelectFilter from "../components/agenda/MultiSelectFilter";
 import AgendaDrawer from "../components/agenda/AgendaDrawer";
 import { supabase } from "../lib/supabase";
-import { fetchObservacaoComercialByEmpresaId } from "../lib/odontoartEmpresaApi";
 import { useAuth } from "../context/AuthContext";
 import { onProfilesUpdated } from "../lib/profileEvents";
 import {
@@ -832,93 +830,6 @@ export default function Agenda() {
     setScheduleError(null);
   };
 
-  const fetchObsComercialFromClientes = async (row: AgendaRow) => {
-    const codigo = row.cod_1?.trim();
-    if (codigo) {
-      try {
-        const fromEndpoint = await fetchObservacaoComercialByEmpresaId(codigo);
-        if (fromEndpoint?.trim()) return fromEndpoint.trim();
-      } catch (error) {
-        console.error(error);
-      }
-
-      const { data, error } = await supabase
-        .from("clientes")
-        .select("obs_comercial")
-        .eq("codigo", codigo)
-        .limit(1);
-      if (!error && data && data.length > 0) {
-        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
-      }
-    }
-
-    const empresa = row.empresa?.trim();
-    const nomeFantasia = row.nome_fantasia?.trim();
-    if (empresa && nomeFantasia) {
-      const { data, error } = await supabase
-        .from("clientes")
-        .select("obs_comercial")
-        .eq("empresa", empresa)
-        .eq("nome_fantasia", nomeFantasia)
-        .limit(1);
-      if (!error && data && data.length > 0) {
-        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
-      }
-    }
-    if (empresa) {
-      const { data, error } = await supabase
-        .from("clientes")
-        .select("obs_comercial")
-        .eq("empresa", empresa)
-        .limit(1);
-      if (!error && data && data.length > 0) {
-        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
-      }
-    }
-    if (nomeFantasia) {
-      const { data, error } = await supabase
-        .from("clientes")
-        .select("obs_comercial")
-        .eq("nome_fantasia", nomeFantasia)
-        .limit(1);
-      if (!error && data && data.length > 0) {
-        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
-      }
-    }
-
-    return null;
-  };
-
-  const openDetailsModal = (row: AgendaRow) => {
-    setDetailsModalRow(row);
-    setDetailsObsExpanded(false);
-    setDetailsInstructionDraft(row.instructions ?? "");
-    setDetailsInstructionMessage(null);
-    const requestId = detailsObsRequestRef.current + 1;
-    detailsObsRequestRef.current = requestId;
-    fetchObsComercialFromClientes(row)
-      .then((obsComercial) => {
-        if (detailsObsRequestRef.current !== requestId) return;
-        if (obsComercial === null) return;
-        setData((prev) =>
-          prev.map((item) =>
-            item.id === row.id ? { ...item, obs_contrato_1: obsComercial } : item,
-          ),
-        );
-        setSelectedRow((prev) =>
-          prev?.id === row.id ? { ...prev, obs_contrato_1: obsComercial } : prev,
-        );
-        setDetailsModalRow((prev) =>
-          prev?.id === row.id
-            ? { ...prev, obs_contrato_1: obsComercial }
-            : prev,
-        );
-      })
-      .catch((err) => {
-        console.error(err);
-      });
-  };
-
   const closeDetailsModal = () => {
     detailsObsRequestRef.current += 1;
     setDetailsModalRow(null);
@@ -1478,19 +1389,6 @@ export default function Agenda() {
           return (
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    openDetailsModal(row);
-                  }}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-sea/20 bg-white text-ink/60 hover:border-sea hover:text-sea"
-                  title="Visualizar detalhes"
-                  aria-label="Visualizar detalhes"
-                >
-                  <Eye size={14} />
-                </button>
                 <p className="text-sm font-semibold text-ink">{name}</p>
                 <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
                   COD {codigo}
@@ -2558,15 +2456,6 @@ export default function Agenda() {
                           onClick={(event) => event.stopPropagation()}
                           onPointerDown={(event) => event.stopPropagation()}
                         >
-                          <button
-                            type="button"
-                            onClick={() => openDetailsModal(row)}
-                            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-sea/20 bg-white text-ink/60 hover:border-sea hover:text-sea"
-                            title="Visualizar detalhes"
-                            aria-label="Visualizar detalhes"
-                          >
-                            <Eye size={14} />
-                          </button>
                           <label className="flex items-center gap-1 text-[10px] text-ink/60">
                             <input
                               type="checkbox"

@@ -155,3 +155,24 @@ export const updateAgendaCoordinates = async (payload: {
   if (error) throw new Error(error.message);
 };
 
+export const updateAgendaCoordinatesBatch = async (payload: {
+  ids: string[];
+  latitude: number;
+  longitude: number;
+  geocode_source?: string;
+}) => {
+  if (!payload.ids.length) return;
+
+  const { error } = await supabase
+    .from("agenda")
+    .update({
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      geocode_source: payload.geocode_source ?? "nominatim",
+      geocode_updated_at: new Date().toISOString(),
+    })
+    .in("id", payload.ids);
+
+  if (error) throw new Error(error.message);
+};
+

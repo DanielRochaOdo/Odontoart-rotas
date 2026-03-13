@@ -4,6 +4,8 @@ const ODONTOART_DEFAULT_TOKEN = "7DqKKmNcZDWY2Pie35tbKwY6hAKXzS5wWl7hNLAmPWBIljm
 export type OdontoartEmpresaResponseRow = {
   Id?: number | string | null;
   RazaoSocial?: string | null;
+  NomeSituacao?: string | null;
+  nomeSituacao?: string | null;
   ValorTitular?: number | string | null;
   Cep?: string | null;
   UfNome?: string | null;
@@ -27,12 +29,24 @@ const OBS_CANDIDATE_KEYS = [
   "obsComercial",
 ];
 
-const readObsFromUnknown = (value: unknown, depth = 0): string | null => {
+const SITUACAO_CANDIDATE_KEYS = [
+  "NomeSituacao",
+  "nomeSituacao",
+  "nome_situacao",
+  "NomeSituação",
+  "nomeSituação",
+  "SituacaoNome",
+  "situacaoNome",
+  "situacao",
+  "status",
+];
+
+const readStringByKeysFromUnknown = (value: unknown, keys: string[], depth = 0): string | null => {
   if (depth > 4 || value === null || value === undefined) return null;
   if (typeof value === "string") return null;
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = readObsFromUnknown(item, depth + 1);
+      const found = readStringByKeysFromUnknown(item, keys, depth + 1);
       if (found) return found;
     }
     return null;
@@ -40,7 +54,7 @@ const readObsFromUnknown = (value: unknown, depth = 0): string | null => {
   if (typeof value !== "object") return null;
 
   const record = value as Record<string, unknown>;
-  for (const key of OBS_CANDIDATE_KEYS) {
+  for (const key of keys) {
     const candidate = record[key];
     if (typeof candidate === "string" && candidate.trim()) {
       return candidate.trim();
@@ -48,24 +62,43 @@ const readObsFromUnknown = (value: unknown, depth = 0): string | null => {
   }
 
   for (const nested of Object.values(record)) {
-    const found = readObsFromUnknown(nested, depth + 1);
+    const found = readStringByKeysFromUnknown(nested, keys, depth + 1);
     if (found) return found;
   }
 
   return null;
 };
 
+const readObsFromUnknown = (value: unknown) =>
+  readStringByKeysFromUnknown(value, OBS_CANDIDATE_KEYS, 0);
+
+const readSituacaoFromUnknown = (value: unknown) =>
+  readStringByKeysFromUnknown(value, SITUACAO_CANDIDATE_KEYS, 0);
+
 const extractEmpresaFromPayload = (payload: unknown): OdontoartEmpresaResponseRow | null => {
-  if (!payload || typeof payload !== "object") return null;
-  const asRecord = payload as Record<string, unknown>;
-  const dados = asRecord.dados;
-  if (Array.isArray(dados) && dados.length > 0 && dados[0] && typeof dados[0] === "object") {
-    return dados[0] as OdontoartEmpresaResponseRow;
+  let empresa: OdontoartEmpresaResponseRow | null = null;
+  if (payload && typeof payload === "object") {
+    const asRecord = payload as Record<string, unknown>;
+    const dados = asRecord.dados;
+    if (Array.isArray(dados) && dados.length > 0 && dados[0] && typeof dados[0] === "object") {
+      empresa = dados[0] as OdontoartEmpresaResponseRow;
+    } else if (Array.isArray(payload) && payload.length > 0 && payload[0] && typeof payload[0] === "object") {
+      empresa = payload[0] as OdontoartEmpresaResponseRow;
+    }
   }
-  if (Array.isArray(payload) && payload.length > 0 && payload[0] && typeof payload[0] === "object") {
-    return payload[0] as OdontoartEmpresaResponseRow;
-  }
-  return null;
+  if (!empresa) return null;
+
+  const situacao =
+    empresa.NomeSituacao?.trim() ||
+    empresa.nomeSituacao?.trim() ||
+    readSituacaoFromUnknown(empresa) ||
+    readSituacaoFromUnknown(payload) ||
+    null;
+
+  return {
+    ...empresa,
+    NomeSituacao: situacao,
+  };
 };
 
 const fetchEmpresaPayloadById = async (empresaId: string) => {

@@ -36,11 +36,20 @@ export type NominatimCoordinates = {
   mapped: CepMapped | null;
 };
 
-const BASE_URL = "https://nominatim.openstreetmap.org/search";
-const REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
+const NOMINATIM_ROOT = import.meta.env.DEV
+  ? "/api/nominatim"
+  : "https://nominatim.openstreetmap.org";
+const BASE_URL = `${NOMINATIM_ROOT}/search`;
+const REVERSE_URL = `${NOMINATIM_ROOT}/reverse`;
+const REQUEST_INTERVAL_MS = 2200;
+const RETRYABLE_STATUS = new Set([429, 503, 504]);
+const MAX_ATTEMPTS = 3;
 
 let lastRequestAt = 0;
 let queue: Promise<void> = Promise.resolve();
+let cooldownUntil = 0;
+const coordinateCache = new Map<string, NominatimCoordinates | null>();
+const inflightCoordinates = new Map<string, Promise<NominatimCoordinates | null>>();
 
 const delay = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -62,7 +71,9 @@ const delay = (ms: number, signal?: AbortSignal) =>
 const enqueue = async <T,>(task: () => Promise<T>, signal?: AbortSignal) => {
   const run = async () => {
     const now = Date.now();
-    const wait = Math.max(0, 1000 - (now - lastRequestAt));
+    const rateWait = Math.max(0, REQUEST_INTERVAL_MS - (now - lastRequestAt));
+    const cooldownWait = Math.max(0, cooldownUntil - now);
+    const wait = Math.max(rateWait, cooldownWait);
     if (wait) {
       await delay(wait, signal);
     }
@@ -76,6 +87,85 @@ const enqueue = async <T,>(task: () => Promise<T>, signal?: AbortSignal) => {
     () => undefined,
   );
   return result;
+};
+
+const parseRetryAfterMs = (retryAfterHeader: string | null) => {
+  if (!retryAfterHeader) return null;
+  const seconds = Number.parseInt(retryAfterHeader, 10);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return seconds * 1000;
+  }
+  const dateMs = Date.parse(retryAfterHeader);
+  if (!Number.isNaN(dateMs)) {
+    const delta = dateMs - Date.now();
+    return delta > 0 ? delta : 0;
+  }
+  return null;
+};
+
+const fetchJsonWithRetry = async <T,>(
+  url: string,
+  signal?: AbortSignal,
+): Promise<T> => {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const response = await fetch(url, {
+      signal,
+      headers: {
+        "Accept-Language": "pt-BR",
+      },
+    });
+
+    if (response.ok) {
+      return (await response.json()) as T;
+    }
+
+    if (RETRYABLE_STATUS.has(response.status) && attempt < MAX_ATTEMPTS) {
+      const retryAfterMs = parseRetryAfterMs(response.headers.get("Retry-After"));
+      const backoffMs =
+        retryAfterMs ??
+        (response.status === 429 ? 8000 * attempt : 2000 * attempt);
+      cooldownUntil = Math.max(cooldownUntil, Date.now() + backoffMs);
+      await delay(backoffMs, signal);
+      continue;
+    }
+
+    lastError = new Error(
+      response.status === 429
+        ? "Limite de consultas do geocodificador excedido. Tente novamente em instantes."
+        : "Falha ao consultar endereco.",
+    );
+    break;
+  }
+
+  throw lastError ?? new Error("Falha ao consultar endereco.");
+};
+
+const normalizeCoordinateKeyPart = (value: string) =>
+  value.replace(/\s+/g, " ").trim().toUpperCase();
+
+const withCoordinateCache = (
+  cacheKey: string,
+  loader: () => Promise<NominatimCoordinates | null>,
+) => {
+  if (coordinateCache.has(cacheKey)) {
+    return Promise.resolve(coordinateCache.get(cacheKey) ?? null);
+  }
+  const running = inflightCoordinates.get(cacheKey);
+  if (running) return running;
+
+  const task = loader()
+    .then((result) => {
+      coordinateCache.set(cacheKey, result);
+      return result;
+    })
+    .finally(() => {
+      inflightCoordinates.delete(cacheKey);
+    });
+
+  inflightCoordinates.set(cacheKey, task);
+  return task;
 };
 
 const getCity = (address: NominatimAddress) =>
@@ -131,16 +221,7 @@ const fetchNominatim = async (
       limit: "1",
       ...params,
     });
-    const response = await fetch(`${BASE_URL}?${search.toString()}`, {
-      signal,
-      headers: {
-        "Accept-Language": "pt-BR",
-      },
-    });
-    if (!response.ok) {
-      throw new Error("Falha ao consultar endereco.");
-    }
-    const data = (await response.json()) as NominatimResult[];
+    const data = await fetchJsonWithRetry<NominatimResult[]>(`${BASE_URL}?${search.toString()}`, signal);
     return data ?? [];
   }, signal);
 
@@ -157,16 +238,7 @@ const fetchNominatimReverse = async (
       lat,
       lon,
     });
-    const response = await fetch(`${REVERSE_URL}?${search.toString()}`, {
-      signal,
-      headers: {
-        "Accept-Language": "pt-BR",
-      },
-    });
-    if (!response.ok) {
-      throw new Error("Falha ao consultar endereco.");
-    }
-    const data = (await response.json()) as NominatimResult | null;
+    const data = await fetchJsonWithRetry<NominatimResult | null>(`${REVERSE_URL}?${search.toString()}`, signal);
     return data ?? null;
   }, signal);
 
@@ -251,60 +323,66 @@ export const fetchNominatimCoordinatesByAddress = async (
   const normalizedRoad = road.replace(/\s*,\s*/g, ", ").replace(/\s+/g, " ").trim();
   const normalizedCity = city.replace(/\s+/g, " ").trim();
   const normalizedState = state.replace(/\s+/g, " ").trim();
-
-  const data = await fetchNominatim(
-    {
-      street: normalizedRoad,
-      city: normalizedCity,
-      state: normalizedState,
-      country: "Brazil",
-    },
-    signal,
-  );
-
-  let first = data[0] ?? null;
-  if (!first?.lat || !first?.lon) {
-    const queryData = await fetchNominatim(
+  const cacheKey = `ADDR:${normalizeCoordinateKeyPart(normalizedRoad)}|${normalizeCoordinateKeyPart(normalizedCity)}|${normalizeCoordinateKeyPart(normalizedState)}`;
+  return withCoordinateCache(cacheKey, async () => {
+    const data = await fetchNominatim(
       {
-        q: `${normalizedRoad}, ${normalizedCity}, ${normalizedState}, Brasil`,
+        street: normalizedRoad,
+        city: normalizedCity,
+        state: normalizedState,
+        country: "Brazil",
       },
       signal,
     );
-    first = queryData[0] ?? null;
-  }
-  if (!first?.lat || !first?.lon) return null;
 
-  const latitude = Number(first.lat);
-  const longitude = Number(first.lon);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    let first = data[0] ?? null;
+    if (!first?.lat || !first?.lon) {
+      const queryData = await fetchNominatim(
+        {
+          q: `${normalizedRoad}, ${normalizedCity}, ${normalizedState}, Brasil`,
+        },
+        signal,
+      );
+      first = queryData[0] ?? null;
+    }
+    if (!first?.lat || !first?.lon) return null;
 
-  return {
-    latitude,
-    longitude,
-    mapped: mapResult(first),
-  };
+    const latitude = Number(first.lat);
+    const longitude = Number(first.lon);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+    return {
+      latitude,
+      longitude,
+      mapped: mapResult(first),
+    };
+  });
 };
 
 export const fetchNominatimCoordinatesByQuery = async (
   query: string,
   signal?: AbortSignal,
 ): Promise<NominatimCoordinates | null> => {
-  const data = await fetchNominatim(
-    {
-      q: query,
-    },
-    signal,
-  );
-  const first = data[0] ?? null;
-  if (!first?.lat || !first?.lon) return null;
+  const normalizedQuery = query.replace(/\s+/g, " ").trim();
+  const cacheKey = `Q:${normalizeCoordinateKeyPart(normalizedQuery)}`;
+  return withCoordinateCache(cacheKey, async () => {
+    const data = await fetchNominatim(
+      {
+        q: normalizedQuery,
+      },
+      signal,
+    );
+    const first = data[0] ?? null;
+    if (!first?.lat || !first?.lon) return null;
 
-  const latitude = Number(first.lat);
-  const longitude = Number(first.lon);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    const latitude = Number(first.lat);
+    const longitude = Number(first.lon);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
 
-  return {
-    latitude,
-    longitude,
-    mapped: mapResult(first),
-  };
+    return {
+      latitude,
+      longitude,
+      mapped: mapResult(first),
+    };
+  });
 };

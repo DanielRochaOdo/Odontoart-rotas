@@ -25,7 +25,7 @@ import { useAuth } from "../context/AuthContext";
 import {
   fetchAgendaLookup,
   type AgendaLookupRow,
-  updateAgendaCoordinates,
+  updateAgendaCoordinatesBatch,
 } from "../lib/routesApi";
 import {
   fetchNominatimCoordinatesByAddress,
@@ -52,6 +52,7 @@ const CEARA_BOUNDS: [[number, number], [number, number]] = [
 const CEARA_CITIES_GEOJSON = JSON.parse(cearaCitiesRaw) as GeoJsonObject;
 const FORTALEZA_BAIRROS_GEOJSON = JSON.parse(fortalezaBairrosRaw) as GeoJsonObject;
 const LIGHT_MODE_POINT_LIMIT = 3000;
+const MAX_GEOCODE_UNIQUE_ADDRESSES_PER_RUN = 40;
 
 const MONTH_OPTIONS = [
   { value: "1", label: "Janeiro" },
@@ -99,6 +100,7 @@ const normalize = (v: string | null | undefined) =>
 
 const normalizeNumberInput = (v: string) => v.replace(/\D/g, "");
 const toDateKey = (v: string | null | undefined) => (v ?? "").slice(0, 10);
+const compact = (v: string | null | undefined) => (v ?? "").replace(/\s+/g, " ").trim();
 
 const fmtDate = (v: string | null) =>
   !v
@@ -583,52 +585,92 @@ export default function RoutesMap() {
     setMessage("Geocodificando empresas sem coordenadas...");
 
     const next = [...agendaRows];
+    const nextById = new Map(next.map((row, index) => [row.id, index] as const));
     let ok = 0,
       skip = 0,
       fail = 0;
     const failReasons: string[] = [];
+    const grouped = new Map<
+      string,
+      {
+        rows: AgendaLookupRow[];
+        city: string;
+        uf: string;
+        bairro: string;
+        roads: string[];
+      }
+    >();
 
     for (const r of missingAll) {
-      const roads = [
-        [r.endereco, r.bairro].filter(Boolean).join(", ").trim(),
-        (r.endereco ?? "").trim(),
-      ].filter(Boolean);
+      const city = compact(r.cidade);
+      const uf = compact(r.uf);
+      const bairro = compact(r.bairro);
+      const roadPrimary = compact([r.endereco, r.complemento].filter(Boolean).join(", "));
+      const roadSecondary = compact(r.endereco);
+      const roads = Array.from(new Set([roadPrimary, roadSecondary].filter(Boolean)));
 
-      if (roads.length === 0 || !r.cidade || !r.uf) {
+      if (!city || !uf || roads.length === 0) {
         skip += 1;
         continue;
       }
 
+      const key = `${normalize(roads[0])}|${normalize(city)}|${normalize(uf)}`;
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.rows.push(r);
+        roads.forEach((road) => {
+          if (!existing.roads.includes(road)) existing.roads.push(road);
+        });
+      } else {
+        grouped.set(key, { rows: [r], city, uf, bairro, roads });
+      }
+    }
+
+    const uniqueGroups = Array.from(grouped.values());
+    const processGroups = uniqueGroups.slice(0, MAX_GEOCODE_UNIQUE_ADDRESSES_PER_RUN);
+    const postponed = uniqueGroups.length - processGroups.length;
+
+    for (const group of processGroups) {
       try {
         let g = null as Awaited<ReturnType<typeof fetchNominatimCoordinatesByAddress>>;
-
-        for (const road of roads) {
-          g = await fetchNominatimCoordinatesByAddress(road, r.cidade, r.uf);
+        for (const road of group.roads) {
+          g = await fetchNominatimCoordinatesByAddress(road, group.city, group.uf);
           if (g) break;
         }
 
-        if (!g && r.bairro) g = await fetchNominatimCoordinatesByQuery(`${r.bairro}, ${r.cidade}, ${r.uf}, Brasil`);
-        if (!g) g = await fetchNominatimCoordinatesByQuery(`${r.cidade}, ${r.uf}, Brasil`);
+        if (!g && group.bairro) {
+          g = await fetchNominatimCoordinatesByQuery(`${group.bairro}, ${group.city}, ${group.uf}, Brasil`);
+        }
 
         if (!g) {
-          fail += 1;
+          fail += group.rows.length;
+          if (failReasons.length < 4) {
+            const sample = group.rows[0];
+            const label = (sample?.empresa ?? sample?.nome_fantasia ?? sample?.id ?? "endereco").slice(0, 45);
+            failReasons.push(`${label}: sem retorno do geocodificador`);
+          }
           continue;
         }
 
-        await updateAgendaCoordinates({
-          id: r.id,
+        const ids = group.rows.map((row) => row.id);
+        await updateAgendaCoordinatesBatch({
+          ids,
           latitude: g.latitude,
           longitude: g.longitude,
           geocode_source: "nominatim",
         });
 
-        const i = next.findIndex((x) => x.id === r.id);
-        if (i >= 0) next[i] = { ...next[i], latitude: g.latitude, longitude: g.longitude };
-        ok += 1;
+        ids.forEach((id) => {
+          const idx = nextById.get(id);
+          if (idx === undefined) return;
+          next[idx] = { ...next[idx], latitude: g.latitude, longitude: g.longitude };
+        });
+        ok += ids.length;
       } catch (e) {
-        fail += 1;
+        fail += group.rows.length;
         if (failReasons.length < 4) {
-          const label = (r.empresa ?? r.nome_fantasia ?? r.id).slice(0, 45);
+          const sample = group.rows[0];
+          const label = (sample?.empresa ?? sample?.nome_fantasia ?? sample?.id ?? "endereco").slice(0, 45);
           failReasons.push(`${label}: ${e instanceof Error ? e.message : "falha desconhecida"}`);
         }
       }
@@ -637,8 +679,14 @@ export default function RoutesMap() {
     setAgendaRows(next);
     setGeocoding(false);
 
+    const postponedText =
+      postponed > 0
+        ? ` Restam ${postponed} endereco(s) unico(s) para o proximo lote.`
+        : "";
     const reasonText = failReasons.length ? ` Erros: ${failReasons.join(" | ")}` : "";
-    setMessage(`Geocodificacao concluida. Atualizadas: ${ok}, sem endereco: ${skip}, falhas: ${fail}.${reasonText}`);
+    setMessage(
+      `Geocodificacao concluida. Atualizadas: ${ok}, sem endereco: ${skip}, falhas: ${fail}.${postponedText}${reasonText}`,
+    );
   };
 
   const handleGenerate = async () => {

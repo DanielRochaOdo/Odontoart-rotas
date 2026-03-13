@@ -296,6 +296,8 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
       : "";
   const endereco = [logradouro, numero].filter(Boolean).join(", ");
   const valorTitular = resolveValorTitular(empresa);
+  const situacaoRaw = (empresa.NomeSituacao ?? empresa.nomeSituacao ?? "").trim();
+  const situacao = normalizeStatus(situacaoRaw) ?? situacaoRaw;
 
   return {
     codigo,
@@ -316,7 +318,7 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
     grupo: "",
     obs_comercial: (empresa.ObservacaoComercial ?? "").trim(),
     obs: "",
-    situacao: "",
+    situacao,
     endereco,
     complemento: "",
     bairro: (empresa.BairroNome ?? "").trim(),
@@ -393,6 +395,9 @@ const HEADER_MAP: Record<string, string> = {
   "obs. comercial": "obs_comercial",
   "observacao comercial": "obs_comercial",
   obs: "obs",
+  observacao: "obs",
+  "obs filial": "obs",
+  "observacao filial": "obs",
   situacao: "situacao",
   "perfil visita": "perfil_visita",
   perfil: "perfil_visita",
@@ -1095,10 +1100,29 @@ export default function Clientes() {
     }
 
     let obsComercialApi: string | null = null;
+    let situacaoApi: string | null = null;
     const codigoValue = modalState.codigo.trim();
     if (codigoValue) {
       try {
-        obsComercialApi = (await fetchObservacaoComercialByEmpresaId(codigoValue)) ?? null;
+        const empresaApi = await fetchEmpresaByEmpresaId(codigoValue);
+        if (!empresaApi) {
+          setCodigoDuplicadoModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  error: "Empresa nao encontrada na API.",
+                }
+              : prev,
+          );
+          return;
+        }
+        const situacaoRaw = (empresaApi.NomeSituacao ?? empresaApi.nomeSituacao ?? "").trim();
+        situacaoApi = normalizeStatus(situacaoRaw) ?? situacaoRaw;
+
+        const fromEmpresa = (empresaApi.ObservacaoComercial ?? "").trim();
+        obsComercialApi = fromEmpresa
+          ? fromEmpresa
+          : ((await fetchObservacaoComercialByEmpresaId(codigoValue)) ?? null);
       } catch (err) {
         setCodigoDuplicadoModal((prev) =>
           prev
@@ -1124,9 +1148,19 @@ export default function Clientes() {
     }
 
     if (modalState.origem === "edit") {
-      setEditForm((prev) => ({ ...prev, obs: obsValue, obs_comercial: obsComercialApi ?? prev.obs_comercial }));
+      setEditForm((prev) => ({
+        ...prev,
+        obs: obsValue,
+        obs_comercial: obsComercialApi ?? prev.obs_comercial,
+        situacao: situacaoApi ?? prev.situacao,
+      }));
     } else {
-      setForm((prev) => ({ ...prev, obs: obsValue, obs_comercial: obsComercialApi ?? prev.obs_comercial }));
+      setForm((prev) => ({
+        ...prev,
+        obs: obsValue,
+        obs_comercial: obsComercialApi ?? prev.obs_comercial,
+        situacao: situacaoApi ?? prev.situacao,
+      }));
     }
 
     setCodigoDuplicadoAprovado({
@@ -1632,12 +1666,12 @@ export default function Clientes() {
   const handleDownloadTemplate = () => {
     const headers = [
       "codigo",
+      "obs",
       "empresa",
       "pessoa",
       "contato",
       "grupo",
       "obs_comercial",
-      "obs",
       "corte",
       "vencimento",
       "valor",
@@ -2277,6 +2311,9 @@ export default function Clientes() {
                 className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
               >
                 <option value="">Selecione</option>
+                {form.situacao && !SITUACAO_OPTIONS.some((option) => option === form.situacao) && (
+                  <option value={form.situacao}>{form.situacao}</option>
+                )}
                 {SITUACAO_OPTIONS.map((option) => (
                   <option key={option} value={option}>
                     {option}
@@ -2868,6 +2905,9 @@ export default function Clientes() {
                       className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                     >
                       <option value="">Selecione</option>
+                      {editForm.situacao && !SITUACAO_OPTIONS.some((option) => option === editForm.situacao) && (
+                        <option value={editForm.situacao}>{editForm.situacao}</option>
+                      )}
                       {SITUACAO_OPTIONS.map((option) => (
                         <option key={option} value={option}>
                           {option}
@@ -3305,6 +3345,9 @@ export default function Clientes() {
             <h3 className="font-display text-lg text-ink">Importar empresas (XLSX)</h3>
             <p className="mt-1 text-xs text-ink/60">
               Baixe o modelo, preencha as empresas e envie para importar.
+            </p>
+            <p className="mt-1 text-xs text-ink/60">
+              Para codigos repetidos, preencha a coluna <strong>obs</strong> para diferenciar as filiais.
             </p>
 
             {importMessage && (
