@@ -1,6 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { MapPin, Plus, Search } from "lucide-react";
+import { Building2, MapPin, Plus, Search } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -32,6 +32,7 @@ import {
   fetchObservacaoComercialByEmpresaId,
   type OdontoartEmpresaResponseRow,
 } from "../lib/odontoartEmpresaApi";
+import { fetchEmpresaByCnpjWs } from "../lib/cnpjWsApi";
 
 const formatDate = (value: string | null) => {
   if (!value) return "-";
@@ -219,8 +220,20 @@ const IMPORT_NUMERIC_FIELDS = new Set(["corte", "venc"]);
 const IMPORT_BATCH_SIZE = 80;
 const BAIRRO_LOOKUP_DELAY_MS = 450;
 const CLIENTES_PER_PAGE = 50;
-const OBS_COMERCIAL_AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const CLIENTE_API_AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const sanitizeDigits = (value: string) => value.replace(/\D/g, "");
+const sanitizeCnpjDigits = (value: string) => sanitizeDigits(value).slice(0, 14);
+const formatCnpjInput = (value: string) => {
+  const digits = sanitizeCnpjDigits(value);
+  if (!digits) return "";
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 5) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+  if (digits.length <= 8) return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5)}`;
+  if (digits.length <= 12) {
+    return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8)}`;
+  }
+  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+};
 const sanitizeContatoInput = (value: string) =>
   value
     .replace(/\./g, ",")
@@ -284,6 +297,24 @@ const resolveValorTitular = (empresa: OdontoartEmpresaResponseRow) => {
   return parseNumberFromUnknown(empresa.PrecoPlano?.[0]?.ValorTitular);
 };
 
+const resolveCnpjFromEmpresa = (empresa: OdontoartEmpresaResponseRow) => {
+  const candidates: Array<string | number | null | undefined> = [
+    empresa.Cnpj,
+    empresa.CNPJ,
+    empresa.cnpj,
+    empresa.CnpjCpf,
+  ];
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined) continue;
+    const formatted = formatCnpjInput(String(candidate));
+    if (formatted) return formatted;
+  }
+  return "";
+};
+
+const buildEnderecoWithNumero = (logradouro: string | null, numero: string | null) =>
+  [logradouro?.trim(), numero?.trim()].filter(Boolean).join(", ");
+
 const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigoFallback: string) => {
   const codigo =
     empresa.Id !== null && empresa.Id !== undefined
@@ -294,13 +325,14 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
     empresa.Numero !== null && empresa.Numero !== undefined
       ? String(empresa.Numero).trim()
       : "";
-  const endereco = [logradouro, numero].filter(Boolean).join(", ");
+  const endereco = buildEnderecoWithNumero(logradouro, numero);
   const valorTitular = resolveValorTitular(empresa);
   const situacaoRaw = (empresa.NomeSituacao ?? empresa.nomeSituacao ?? "").trim();
   const situacao = normalizeStatus(situacaoRaw) ?? situacaoRaw;
 
   return {
     codigo,
+    cnpj: resolveCnpjFromEmpresa(empresa),
     corte:
       empresa.Corte !== null && empresa.Corte !== undefined
         ? String(empresa.Corte).trim()
@@ -330,6 +362,107 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
 const normalizeCodigoValue = (value: string | null | undefined) => (value ?? "").trim();
 const normalizeObsValue = (value: string | null | undefined) =>
   (value ?? "").trim().toLocaleLowerCase("pt-BR");
+const normalizeNullableText = (value: string | null | undefined) => {
+  const cleaned = (value ?? "").trim();
+  return cleaned ? cleaned : null;
+};
+const normalizeNullableNumber = (value: number | null | undefined) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+type ClienteApiSyncPayload = Partial<
+  Pick<
+    ClienteRow,
+    | "codigo"
+    | "corte"
+    | "venc"
+    | "valor"
+    | "cep"
+    | "empresa"
+    | "obs_comercial"
+    | "situacao"
+    | "endereco"
+    | "bairro"
+    | "cidade"
+    | "uf"
+  >
+>;
+
+const mapEmpresaApiToClienteSyncPayload = async (
+  empresa: OdontoartEmpresaResponseRow,
+  codigoFallback: string,
+): Promise<ClienteApiSyncPayload> => {
+  const codigoFromApi =
+    empresa.Id !== null && empresa.Id !== undefined
+      ? String(empresa.Id).trim()
+      : codigoFallback.trim();
+  const logradouro = (empresa.Logradouro ?? "").trim();
+  const numero =
+    empresa.Numero !== null && empresa.Numero !== undefined
+      ? String(empresa.Numero).trim()
+      : "";
+  const endereco = [logradouro, numero].filter(Boolean).join(", ");
+  const situacaoRaw = normalizeNullableText(empresa.NomeSituacao ?? empresa.nomeSituacao ?? null);
+  const situacao = normalizeNullableText(situacaoRaw ? normalizeStatus(situacaoRaw) ?? situacaoRaw : null);
+  let obsComercial = normalizeNullableText(empresa.ObservacaoComercial ?? null);
+
+  if (!obsComercial && codigoFallback.trim()) {
+    try {
+      const fallbackObs = await fetchObservacaoComercialByEmpresaId(codigoFallback.trim());
+      obsComercial = normalizeNullableText(fallbackObs);
+    } catch {
+      // Ignore fallback errors; we still sync the remaining fields.
+    }
+  }
+
+  return {
+    codigo: normalizeNullableText(codigoFromApi) ?? normalizeNullableText(codigoFallback),
+    corte: parseNumberFromUnknown(empresa.Corte),
+    venc: parseNumberFromUnknown(empresa.Vencimento),
+    valor: resolveValorTitular(empresa),
+    cep: normalizeNullableText(formatCep((empresa.Cep ?? "").trim())),
+    empresa: normalizeNullableText(empresa.RazaoSocial ?? null),
+    obs_comercial: obsComercial,
+    situacao,
+    endereco: normalizeNullableText(endereco),
+    bairro: normalizeNullableText(empresa.BairroNome ?? null),
+    cidade: normalizeNullableText(empresa.MunicipioNome ?? null),
+    uf: normalizeNullableText(empresa.UfNome ?? null),
+  };
+};
+
+const pickChangedApiFields = (cliente: ClienteRow, apiPayload: ClienteApiSyncPayload): ClienteApiSyncPayload => {
+  const changes: ClienteApiSyncPayload = {};
+
+  const textFields = [
+    "codigo",
+    "cep",
+    "empresa",
+    "obs_comercial",
+    "situacao",
+    "endereco",
+    "bairro",
+    "cidade",
+    "uf",
+  ] as const;
+  textFields.forEach((field) => {
+    const current = normalizeNullableText(cliente[field]);
+    const incoming = normalizeNullableText(apiPayload[field] ?? null);
+    if (current !== incoming) {
+      changes[field] = incoming;
+    }
+  });
+
+  const numberFields = ["corte", "venc", "valor"] as const;
+  numberFields.forEach((field) => {
+    const current = normalizeNullableNumber(cliente[field]);
+    const incoming = normalizeNullableNumber(apiPayload[field] ?? null);
+    if (current !== incoming) {
+      changes[field] = incoming;
+    }
+  });
+
+  return changes;
+};
 
 const excelSerialToISOString = (serial: number) => {
   if (!Number.isFinite(serial)) return null;
@@ -480,6 +613,7 @@ export default function Clientes() {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
     codigo: "",
+    cnpj: "",
     corte: "",
     venc: "",
     valor: "",
@@ -515,6 +649,7 @@ export default function Clientes() {
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     codigo: "",
+    cnpj: "",
     corte: "",
     venc: "",
     valor: "",
@@ -567,10 +702,14 @@ export default function Clientes() {
   const [cepError, setCepError] = useState<string | null>(null);
   const [codigoLoading, setCodigoLoading] = useState(false);
   const [codigoError, setCodigoError] = useState<string | null>(null);
+  const [cnpjLoading, setCnpjLoading] = useState(false);
+  const [cnpjError, setCnpjError] = useState<string | null>(null);
   const [cepLoadingEdit, setCepLoadingEdit] = useState(false);
   const [cepErrorEdit, setCepErrorEdit] = useState<string | null>(null);
   const [codigoLoadingEdit, setCodigoLoadingEdit] = useState(false);
   const [codigoErrorEdit, setCodigoErrorEdit] = useState<string | null>(null);
+  const [cnpjLoadingEdit, setCnpjLoadingEdit] = useState(false);
+  const [cnpjErrorEdit, setCnpjErrorEdit] = useState<string | null>(null);
   const [importProgress, setImportProgress] = useState(0);
   const [importTotal, setImportTotal] = useState(0);
   const [importInserted, setImportInserted] = useState(0);
@@ -594,11 +733,11 @@ export default function Clientes() {
   } | null>(null);
   const [codigoSearchResults, setCodigoSearchResults] = useState<ClienteRow[] | null>(null);
   const clientesRef = useRef<ClienteRow[]>([]);
-  const obsComercialSyncInFlightRef = useRef(false);
+  const apiSyncInFlightRef = useRef(false);
   const searchRefreshKeyRef = useRef("");
 
-  const syncObsComercialFromApi = async (baseClientes: ClienteRow[] = clientesRef.current) => {
-    if (!canEdit || obsComercialSyncInFlightRef.current) return;
+  const syncClienteApiFields = async (baseClientes: ClienteRow[] = clientesRef.current) => {
+    if (!canEdit || apiSyncInFlightRef.current) return;
 
     const candidates = baseClientes.filter((cliente) => Boolean(normalizeCodigoValue(cliente.codigo)));
     if (candidates.length === 0) return;
@@ -612,33 +751,35 @@ export default function Clientes() {
     );
     if (codigos.length === 0) return;
 
-    obsComercialSyncInFlightRef.current = true;
+    apiSyncInFlightRef.current = true;
     try {
       const updatesById = new Map<string, ClienteRow>();
 
       for (const codigo of codigos) {
-        let obsComercialApi: string | null = null;
+        let empresaApi: OdontoartEmpresaResponseRow | null = null;
         try {
-          const fromApi = await fetchObservacaoComercialByEmpresaId(codigo);
-          obsComercialApi = fromApi?.trim() ? fromApi.trim() : null;
+          empresaApi = await fetchEmpresaByEmpresaId(codigo);
         } catch (err) {
-          console.error(`Erro ao sincronizar OBS comercial da API para o codigo ${codigo}.`, err);
+          console.error(`Erro ao sincronizar dados da API para o codigo ${codigo}.`, err);
           continue;
         }
+        if (!empresaApi) continue;
+
+        const apiPayload = await mapEmpresaApiToClienteSyncPayload(empresaApi, codigo);
 
         const matches = candidates.filter(
           (cliente) => normalizeCodigoValue(cliente.codigo) === codigo,
         );
-        const changed = matches.filter(
-          (cliente) => normalizeObsValue(cliente.obs_comercial) !== normalizeObsValue(obsComercialApi),
-        );
-        for (const cliente of changed) {
+        for (const cliente of matches) {
+          const updatePayload = pickChangedApiFields(cliente, apiPayload);
+          if (Object.keys(updatePayload).length === 0) continue;
+
           try {
-            const updated = await updateCliente(cliente.id, { obs_comercial: obsComercialApi });
+            const updated = await updateCliente(cliente.id, updatePayload);
             await syncAgendaForCliente(updated);
             updatesById.set(updated.id, updated);
           } catch (err) {
-            console.error(`Erro ao atualizar OBS comercial do cliente ${cliente.id}.`, err);
+            console.error(`Erro ao atualizar dados da API para o cliente ${cliente.id}.`, err);
           }
         }
       }
@@ -648,7 +789,7 @@ export default function Clientes() {
         setSelected((prev) => (prev ? updatesById.get(prev.id) ?? prev : prev));
       }
     } finally {
-      obsComercialSyncInFlightRef.current = false;
+      apiSyncInFlightRef.current = false;
     }
   };
 
@@ -659,7 +800,7 @@ export default function Clientes() {
       const data = await fetchClientes();
       setClientes(data);
       if (canEdit) {
-        void syncObsComercialFromApi(data);
+        void syncClienteApiFields(data);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar empresas.");
@@ -727,8 +868,8 @@ export default function Clientes() {
   useEffect(() => {
     if (!canEdit) return;
     const intervalId = window.setInterval(() => {
-      void syncObsComercialFromApi();
-    }, OBS_COMERCIAL_AUTO_SYNC_INTERVAL_MS);
+      void syncClienteApiFields();
+    }, CLIENTE_API_AUTO_SYNC_INTERVAL_MS);
     return () => {
       window.clearInterval(intervalId);
     };
@@ -837,6 +978,7 @@ export default function Clientes() {
     setHistoryDateTo("");
     setEditForm({
       codigo: selected.codigo ?? "",
+      cnpj: "",
       corte: selected.corte !== null && selected.corte !== undefined ? String(selected.corte) : "",
       venc: selected.venc !== null && selected.venc !== undefined ? String(selected.venc) : "",
       valor: selected.valor !== null && selected.valor !== undefined ? formatCurrency(selected.valor) : "",
@@ -1099,8 +1241,9 @@ export default function Clientes() {
       return;
     }
 
+    let apiFormData: ReturnType<typeof mapEmpresaApiToClienteForm> | null = null;
+    let apiSyncPayload: ClienteApiSyncPayload | null = null;
     let obsComercialApi: string | null = null;
-    let situacaoApi: string | null = null;
     const codigoValue = modalState.codigo.trim();
     if (codigoValue) {
       try {
@@ -1116,13 +1259,9 @@ export default function Clientes() {
           );
           return;
         }
-        const situacaoRaw = (empresaApi.NomeSituacao ?? empresaApi.nomeSituacao ?? "").trim();
-        situacaoApi = normalizeStatus(situacaoRaw) ?? situacaoRaw;
-
-        const fromEmpresa = (empresaApi.ObservacaoComercial ?? "").trim();
-        obsComercialApi = fromEmpresa
-          ? fromEmpresa
-          : ((await fetchObservacaoComercialByEmpresaId(codigoValue)) ?? null);
+        apiFormData = mapEmpresaApiToClienteForm(empresaApi, codigoValue);
+        apiSyncPayload = await mapEmpresaApiToClienteSyncPayload(empresaApi, codigoValue);
+        obsComercialApi = apiSyncPayload.obs_comercial ?? null;
       } catch (err) {
         setCodigoDuplicadoModal((prev) =>
           prev
@@ -1150,16 +1289,38 @@ export default function Clientes() {
     if (modalState.origem === "edit") {
       setEditForm((prev) => ({
         ...prev,
+        codigo: apiFormData?.codigo ?? prev.codigo,
+        cnpj: apiFormData?.cnpj ?? prev.cnpj,
+        corte: apiFormData?.corte ?? prev.corte,
+        venc: apiFormData?.venc ?? prev.venc,
+        valor: apiFormData?.valor ?? prev.valor,
+        cep: apiFormData?.cep ?? prev.cep,
+        empresa: apiFormData?.empresa ?? prev.empresa,
         obs: obsValue,
         obs_comercial: obsComercialApi ?? prev.obs_comercial,
-        situacao: situacaoApi ?? prev.situacao,
+        situacao: apiFormData?.situacao ?? prev.situacao,
+        endereco: apiFormData?.endereco ?? prev.endereco,
+        bairro: apiFormData?.bairro ?? prev.bairro,
+        cidade: apiFormData?.cidade ?? prev.cidade,
+        uf: apiFormData?.uf ?? prev.uf,
       }));
     } else {
       setForm((prev) => ({
         ...prev,
+        codigo: apiFormData?.codigo ?? prev.codigo,
+        cnpj: apiFormData?.cnpj ?? prev.cnpj,
+        corte: apiFormData?.corte ?? prev.corte,
+        venc: apiFormData?.venc ?? prev.venc,
+        valor: apiFormData?.valor ?? prev.valor,
+        cep: apiFormData?.cep ?? prev.cep,
+        empresa: apiFormData?.empresa ?? prev.empresa,
         obs: obsValue,
         obs_comercial: obsComercialApi ?? prev.obs_comercial,
-        situacao: situacaoApi ?? prev.situacao,
+        situacao: apiFormData?.situacao ?? prev.situacao,
+        endereco: apiFormData?.endereco ?? prev.endereco,
+        bairro: apiFormData?.bairro ?? prev.bairro,
+        cidade: apiFormData?.cidade ?? prev.cidade,
+        uf: apiFormData?.uf ?? prev.uf,
       }));
     }
 
@@ -1260,6 +1421,7 @@ export default function Clientes() {
       }
       setForm({
         codigo: "",
+        cnpj: "",
         corte: "",
         venc: "",
         valor: "",
@@ -1436,6 +1598,33 @@ export default function Clientes() {
       setCodigoError(err instanceof Error ? err.message : "Erro ao buscar codigo na API.");
     } finally {
       setCodigoLoading(false);
+    }
+  };
+
+  const handleCnpjLookup = async () => {
+    const cnpj = sanitizeCnpjDigits(form.cnpj);
+    if (cnpj.length !== 14) {
+      setCnpjError("Informe um CNPJ valido.");
+      return;
+    }
+
+    setCnpjLoading(true);
+    setCnpjError(null);
+    try {
+      const empresaApi = await fetchEmpresaByCnpjWs(cnpj);
+      const endereco = buildEnderecoWithNumero(empresaApi.logradouro, empresaApi.numero);
+      setForm((prev) => ({
+        ...prev,
+        empresa: empresaApi.razao_social ?? prev.empresa,
+        endereco: endereco || prev.endereco,
+        bairro: empresaApi.bairro ?? prev.bairro,
+        cidade: empresaApi.cidade ?? prev.cidade,
+        uf: empresaApi.estado ?? prev.uf,
+      }));
+    } catch (err) {
+      setCnpjError(err instanceof Error ? err.message : "Erro ao buscar CNPJ na API.");
+    } finally {
+      setCnpjLoading(false);
     }
   };
 
@@ -1633,6 +1822,33 @@ export default function Clientes() {
       setCodigoErrorEdit(err instanceof Error ? err.message : "Erro ao buscar codigo na API.");
     } finally {
       setCodigoLoadingEdit(false);
+    }
+  };
+
+  const handleCnpjLookupEdit = async () => {
+    const cnpj = sanitizeCnpjDigits(editForm.cnpj);
+    if (cnpj.length !== 14) {
+      setCnpjErrorEdit("Informe um CNPJ valido.");
+      return;
+    }
+
+    setCnpjLoadingEdit(true);
+    setCnpjErrorEdit(null);
+    try {
+      const empresaApi = await fetchEmpresaByCnpjWs(cnpj);
+      const endereco = buildEnderecoWithNumero(empresaApi.logradouro, empresaApi.numero);
+      setEditForm((prev) => ({
+        ...prev,
+        empresa: empresaApi.razao_social ?? prev.empresa,
+        endereco: endereco || prev.endereco,
+        bairro: empresaApi.bairro ?? prev.bairro,
+        cidade: empresaApi.cidade ?? prev.cidade,
+        uf: empresaApi.estado ?? prev.uf,
+      }));
+    } catch (err) {
+      setCnpjErrorEdit(err instanceof Error ? err.message : "Erro ao buscar CNPJ na API.");
+    } finally {
+      setCnpjLoadingEdit(false);
     }
   };
 
@@ -2062,7 +2278,7 @@ export default function Clientes() {
         >
           <label className="min-w-0 flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
             Codigo
-            <div className="min-w-0 flex items-end gap-2">
+            <div className="min-w-0 flex items-end gap-1">
               <input
                 value={form.codigo}
                 onChange={(event) => {
@@ -2085,12 +2301,39 @@ export default function Clientes() {
             {codigoLoading && <span className="text-[11px] text-ink/60">Consultando codigo...</span>}
             {codigoError && <span className="text-[11px] text-red-600">{codigoError}</span>}
           </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+          <label className="min-w-0 flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
+            CNPJ
+            <div className="relative">
+              <input
+                value={form.cnpj}
+                onChange={(event) => {
+                  setCnpjError(null);
+                  setForm((prev) => ({ ...prev, cnpj: formatCnpjInput(event.target.value) }));
+                }}
+                inputMode="numeric"
+                maxLength={18}
+                placeholder="00.000.000/0000-00"
+                className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 pr-11 text-sm text-ink outline-none focus:border-sea"
+              />
+              <button
+                type="button"
+                onClick={handleCnpjLookup}
+                disabled={cnpjLoading || sanitizeCnpjDigits(form.cnpj).length !== 14}
+                className="absolute right-0 top-0 inline-flex h-10 w-10 items-center justify-center rounded-r-lg border-l border-sea/30 bg-white text-sea hover:text-seaLight disabled:opacity-50"
+                title={cnpjLoading ? "Buscando CNPJ..." : "Buscar por CNPJ"}
+                aria-label={cnpjLoading ? "Buscando CNPJ..." : "Buscar por CNPJ"}
+              >
+                <Building2 size={15} className={cnpjLoading ? "animate-pulse" : ""} />
+              </button>
+            </div>
+            {cnpjError && <span className="text-[11px] text-red-600">{cnpjError}</span>}
+          </label>
+          <label className="flex min-w-0 flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             Empresa
             <input
               value={form.empresa}
               onChange={(event) => setForm((prev) => ({ ...prev, empresa: event.target.value }))}
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+              className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
           </label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
@@ -2101,7 +2344,7 @@ export default function Clientes() {
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
             Contato
             <input
               value={form.contato}
@@ -2120,7 +2363,7 @@ export default function Clientes() {
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             Obs comercial
             <input
               value={form.obs_comercial}
@@ -2130,7 +2373,7 @@ export default function Clientes() {
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             Obs
             <input
               value={form.obs}
@@ -2349,7 +2592,7 @@ export default function Clientes() {
                   <span className="font-normal text-ink/50"> (Informe cidade e UF para editar o endereco.)</span>
                 )}
               </span>
-              <div className="flex items-end gap-2">
+              <div className="flex items-end gap-1">
                 <input
                   value={form.endereco}
                   onChange={(event) => setForm((prev) => ({ ...prev, endereco: event.target.value }))}
@@ -2390,7 +2633,7 @@ export default function Clientes() {
           </label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             CEP
-            <div className="flex items-end gap-2">
+            <div className="flex items-end gap-1">
               <input
                 value={form.cep}
                 onChange={(event) =>
@@ -2639,7 +2882,7 @@ export default function Clientes() {
               <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-12">
                 <label className="flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2 md:max-w-[240px]">
                   Codigo
-                  <div className="flex items-end gap-2">
+                  <div className="flex items-end gap-1">
                     <input
                       value={editForm.codigo}
                       onChange={(event) => {
@@ -2666,17 +2909,46 @@ export default function Clientes() {
                     <span className="text-[11px] font-normal text-red-600">{codigoErrorEdit}</span>
                   )}
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
+                <label className="min-w-0 flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                  CNPJ
+                  <div className="relative">
+                    <input
+                      value={editForm.cnpj}
+                      onChange={(event) => {
+                        setCnpjErrorEdit(null);
+                        setEditForm((prev) => ({ ...prev, cnpj: formatCnpjInput(event.target.value) }));
+                      }}
+                      inputMode="numeric"
+                      maxLength={18}
+                      placeholder="00.000.000/0000-00"
+                      className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 pr-11 text-sm text-ink outline-none focus:border-sea"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCnpjLookupEdit}
+                      disabled={cnpjLoadingEdit || sanitizeCnpjDigits(editForm.cnpj).length !== 14}
+                      className="absolute right-0 top-0 inline-flex h-10 w-10 items-center justify-center rounded-r-lg border-l border-sea/30 bg-white text-sea hover:text-seaLight disabled:opacity-50"
+                      title={cnpjLoadingEdit ? "Buscando CNPJ..." : "Buscar por CNPJ"}
+                      aria-label={cnpjLoadingEdit ? "Buscando CNPJ..." : "Buscar por CNPJ"}
+                    >
+                      <Building2 size={15} className={cnpjLoadingEdit ? "animate-pulse" : ""} />
+                    </button>
+                  </div>
+                  {cnpjErrorEdit && (
+                    <span className="text-[11px] font-normal text-red-600">{cnpjErrorEdit}</span>
+                  )}
+                </label>
+                <label className="flex min-w-0 flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
                   Empresa
                   <input
                     value={editForm.empresa}
                     onChange={(event) =>
                       setEditForm((prev) => ({ ...prev, empresa: event.target.value }))
                     }
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Pessoa
                   <input
                     value={editForm.pessoa}
@@ -2700,7 +2972,7 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-3">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
                   Grupo
                   <input
                     value={editForm.grupo}
@@ -2710,7 +2982,7 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-6">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
                   Obs comercial
                   <input
                     value={editForm.obs_comercial}
@@ -2720,7 +2992,7 @@ export default function Clientes() {
                     className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-6">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
                   Obs
                   <input
                     value={editForm.obs}
@@ -2946,7 +3218,7 @@ export default function Clientes() {
                       <span className="font-normal text-ink/50"> (Informe cidade e UF para editar o endereco.)</span>
                     )}
                   </span>
-                  <div className="flex items-end gap-2">
+                  <div className="flex items-end gap-1">
                     <input
                       value={editForm.endereco}
                       onChange={(event) =>
@@ -2992,7 +3264,7 @@ export default function Clientes() {
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-4">
                   CEP
-                  <div className="flex items-end gap-2">
+                  <div className="flex items-end gap-1">
                     <input
                       value={editForm.cep}
                       onChange={(event) =>

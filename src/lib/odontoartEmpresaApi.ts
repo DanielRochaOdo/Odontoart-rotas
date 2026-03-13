@@ -3,6 +3,10 @@ const ODONTOART_DEFAULT_TOKEN = "7DqKKmNcZDWY2Pie35tbKwY6hAKXzS5wWl7hNLAmPWBIljm
 
 export type OdontoartEmpresaResponseRow = {
   Id?: number | string | null;
+  Cnpj?: string | number | null;
+  CNPJ?: string | number | null;
+  cnpj?: string | number | null;
+  CnpjCpf?: string | number | null;
   RazaoSocial?: string | null;
   NomeSituacao?: string | null;
   nomeSituacao?: string | null;
