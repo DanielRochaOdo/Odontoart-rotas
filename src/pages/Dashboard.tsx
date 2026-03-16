@@ -1,9 +1,9 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
+import { formatDateBr } from "../lib/dateFormat";
 
 const formatNumber = (value: number) => new Intl.NumberFormat("pt-BR").format(value);
-
 const startOfWeek = (date: Date) => {
   const day = date.getDay();
   const diff = (day === 0 ? -6 : 1) - day;
@@ -213,6 +213,7 @@ export default function Dashboard() {
   const weekStartKey = useMemo(() => toLocalDateInput(startOfWeek(new Date())), []);
   const globalFrom = vendorVidasFrom;
   const globalTo = vendorVidasTo;
+  const globalPeriodLabel = `${formatDateBr(globalFrom)} a ${formatDateBr(globalTo)}`;
 
   useEffect(() => {
     if (!canSelectSupervisor) return;
@@ -1318,7 +1319,7 @@ export default function Dashboard() {
                   </p>
                 </div>
                 <span className="text-[11px] font-semibold text-ink/60">
-                  Periodo global: {globalFrom || "-"} a {globalTo || "-"}
+                  Periodo global: {globalPeriodLabel}
                 </span>
               </div>
 
@@ -1467,7 +1468,7 @@ export default function Dashboard() {
                   </p>
                 </div>
                 <span className="text-[11px] font-semibold text-ink/60">
-                  Periodo global: {globalFrom || "-"} a {globalTo || "-"}
+                  Periodo global: {globalPeriodLabel}
                 </span>
               </div>
 
@@ -1511,7 +1512,7 @@ export default function Dashboard() {
                           <div
                             key={item.label}
                             className="flex min-w-[72px] flex-col items-center gap-2"
-                            title={`${item.label} • Total ${formatNumber(item.total)} (Visitas ${formatNumber(item.visitas)} + Aceite ${formatNumber(item.aceite)}) • ${percent}% • ${vendorVidasFrom} a ${vendorVidasTo}`}
+                            title={`${item.label} • Total ${formatNumber(item.total)} (Visitas ${formatNumber(item.visitas)} + Aceite ${formatNumber(item.aceite)}) • ${percent}% • ${formatDateBr(vendorVidasFrom)} a ${formatDateBr(vendorVidasTo)}`}
                           >
                             <span className="text-[11px] font-semibold text-ink">
                               {formatNumber(item.total)}
@@ -1589,7 +1590,7 @@ export default function Dashboard() {
                       { label: "Nao realizadas", value: visitStats.visitasNaoRealizadas, color: "#f97316" },
                       { label: "Pendentes", value: visitStats.visitasPendentes, color: "#94a3b8" },
                     ],
-                    `${globalFrom} a ${globalTo}`,
+                    globalPeriodLabel,
                   )}
                   {renderDonut(
                     "Impacto no periodo",
@@ -1602,13 +1603,13 @@ export default function Dashboard() {
                       },
                       { label: "Empresas visitadas", value: visitStats.empresasVisitadas, color: "#38bdf8" },
                     ],
-                    `${globalFrom} a ${globalTo}`,
+                    globalPeriodLabel,
                   )}
                   {renderDonut(
                     "Vidas por dia",
                     dailyVidasTotal,
                     visitDailyVidas,
-                    `${globalFrom} a ${globalTo}`,
+                    globalPeriodLabel,
                   )}
                 </>
               ) : (
@@ -1635,7 +1636,7 @@ export default function Dashboard() {
                       { label: "Nao realizadas", value: teamStats.visitasNaoRealizadas, color: "#f97316" },
                       { label: "Pendentes", value: teamStats.visitasPendentes, color: "#94a3b8" },
                     ],
-                    `${globalFrom} a ${globalTo} • ${teamVendorsCount} vendedor(es)`,
+                    `${globalPeriodLabel} • ${teamVendorsCount} vendedor(es)`,
                   )}
                   {renderDonut(
                     "Impacto no periodo (equipe)",
@@ -1648,13 +1649,13 @@ export default function Dashboard() {
                       },
                       { label: "Empresas visitadas", value: teamStats.empresasVisitadas, color: "#38bdf8" },
                     ],
-                    `${globalFrom} a ${globalTo}`,
+                    globalPeriodLabel,
                   )}
                   {renderDonut(
                     "Vidas por dia (equipe)",
                     teamDailyVidasTotal,
                     teamDailyVidas,
-                    `${globalFrom} a ${globalTo}`,
+                    globalPeriodLabel,
                   )}
                 </>
               ) : (

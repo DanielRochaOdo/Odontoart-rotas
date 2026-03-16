@@ -39,6 +39,7 @@ import {
   fetchVendedores,
 } from "../lib/agendaApi";
 import { supabase } from "../lib/supabase";
+import { formatDateBr } from "../lib/dateFormat";
 import MultiSelectFilter from "../components/agenda/MultiSelectFilter";
 import cearaCitiesRaw from "../data/ceara_municipios.geojson?raw";
 import fortalezaBairrosRaw from "../data/fortaleza_bairros.geojson?raw";
@@ -102,12 +103,7 @@ const normalizeNumberInput = (v: string) => v.replace(/\D/g, "");
 const toDateKey = (v: string | null | undefined) => (v ?? "").slice(0, 10);
 const compact = (v: string | null | undefined) => (v ?? "").replace(/\s+/g, " ").trim();
 
-const fmtDate = (v: string | null) =>
-  !v
-    ? "-"
-    : Number.isNaN(new Date(v).getTime())
-      ? v.slice(0, 10)
-      : new Intl.DateTimeFormat("pt-BR").format(new Date(v));
+const fmtDate = (v: string | null) => formatDateBr(v);
 
 const addr = (r: AgendaLookupRow) =>
   [r.endereco, r.complemento, r.bairro, r.cidade, r.uf].filter(Boolean).join(", ");

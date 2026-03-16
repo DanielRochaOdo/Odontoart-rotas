@@ -18,6 +18,7 @@ import {
 import { fetchNominatimCoordinatesByAddress } from "../lib/nominatim";
 import { onProfilesUpdated } from "../lib/profileEvents";
 import type { Route, RouteStop } from "../types/routes";
+import { formatDateBr } from "../lib/dateFormat";
 
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
@@ -375,7 +376,7 @@ export default function Routes() {
                   <Trash size={14} />
                 </button>
               </div>
-              <p className="text-xs text-ink/60">{route.date ?? "Sem data"}</p>
+              <p className="text-xs text-ink/60">{formatDateBr(route.date, "Sem data")}</p>
             </button>
           ))}
         </aside>
@@ -388,7 +389,7 @@ export default function Routes() {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-display text-xl text-ink">{selectedRoute.name}</h3>
-                  <p className="text-sm text-ink/60">{selectedRoute.date ?? "Sem data"}</p>
+                  <p className="text-sm text-ink/60">{formatDateBr(selectedRoute.date, "Sem data")}</p>
                 </div>
               </div>
 

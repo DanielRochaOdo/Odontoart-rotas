@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { format } from "date-fns";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
+import { formatDateBr } from "../lib/dateFormat";
 
 type DigitalAcceptance = {
   id: string;
@@ -18,10 +18,7 @@ type DigitalSummaryRow = {
 };
 
 const formatDate = (value: string | null) => {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return format(date, "dd/MM/yyyy");
+  return formatDateBr(value);
 };
 
 const getDateKey = (date: Date) => {
