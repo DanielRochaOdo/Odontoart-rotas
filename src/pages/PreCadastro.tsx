@@ -108,6 +108,24 @@ const resolveCnpjFromApi = (empresa: OdontoartEmpresaResponseRow) => {
   return "";
 };
 
+const resolveCepFromApi = (empresa: OdontoartEmpresaResponseRow) => {
+  const candidates: Array<string | number | null | undefined> = [
+    empresa.Cep,
+    empresa.CEP,
+    empresa.cep,
+    empresa.CobrancaCep,
+    empresa.cobrancaCep,
+    empresa.FaturaCep,
+    empresa.faturaCep,
+  ];
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined) continue;
+    const formatted = formatCep(String(candidate));
+    if (sanitizeCep(formatted).length === 8) return formatted;
+  }
+  return "";
+};
+
 const normalizeStatus = (value: string) => {
   const cleaned = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
   if (cleaned === "ativo") return "Ativo";
@@ -231,7 +249,7 @@ export default function PreCadastro() {
       corte: empresa.Corte !== null && empresa.Corte !== undefined ? String(empresa.Corte).trim() : prev.corte,
       venc: empresa.Vencimento !== null && empresa.Vencimento !== undefined ? String(empresa.Vencimento).trim() : prev.venc,
       valor: valor !== null ? new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(valor) : prev.valor,
-      cep: formatCep((empresa.Cep ?? "").trim()) || prev.cep,
+      cep: resolveCepFromApi(empresa) || prev.cep,
       empresa: resolveEmpresaFromApi(empresa) || prev.empresa,
       obs_comercial: (empresa.ObservacaoComercial ?? "").trim() || prev.obs_comercial,
       situacao: normalizeStatus(empresa.NomeSituacao ?? empresa.nomeSituacao ?? prev.situacao),
@@ -269,6 +287,7 @@ export default function PreCadastro() {
         ...prev,
         empresa: empresaApi.razao_social ?? prev.empresa,
         endereco: buildEndereco(empresaApi.logradouro, empresaApi.numero) || prev.endereco,
+        cep: empresaApi.cep ? formatCep(empresaApi.cep) : prev.cep,
         bairro: empresaApi.bairro ?? prev.bairro,
         cidade: empresaApi.cidade ?? prev.cidade,
         uf: empresaApi.estado ?? prev.uf,

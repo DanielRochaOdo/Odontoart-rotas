@@ -13,7 +13,13 @@ export type OdontoartEmpresaResponseRow = {
   NomeSituacao?: string | null;
   nomeSituacao?: string | null;
   ValorTitular?: number | string | null;
-  Cep?: string | null;
+  Cep?: string | number | null;
+  CEP?: string | number | null;
+  cep?: string | number | null;
+  CobrancaCep?: string | number | null;
+  cobrancaCep?: string | number | null;
+  FaturaCep?: string | number | null;
+  faturaCep?: string | number | null;
   UfNome?: string | null;
   MunicipioNome?: string | null;
   Logradouro?: string | null;

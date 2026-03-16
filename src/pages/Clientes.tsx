@@ -322,6 +322,24 @@ const resolveCnpjFromEmpresa = (empresa: OdontoartEmpresaResponseRow) => {
 const resolveEmpresaFromApi = (empresa: OdontoartEmpresaResponseRow) =>
   (empresa.NomeFantazia ?? empresa.NomeFantasia ?? empresa.RazaoSocial ?? "").trim();
 
+const resolveCepFromEmpresa = (empresa: OdontoartEmpresaResponseRow) => {
+  const candidates: Array<string | number | null | undefined> = [
+    empresa.Cep,
+    empresa.CEP,
+    empresa.cep,
+    empresa.CobrancaCep,
+    empresa.cobrancaCep,
+    empresa.FaturaCep,
+    empresa.faturaCep,
+  ];
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined) continue;
+    const formatted = formatCep(String(candidate));
+    if (sanitizeCep(formatted).length === 8) return formatted;
+  }
+  return "";
+};
+
 const buildEnderecoWithNumero = (logradouro: string | null, numero: string | null) =>
   [logradouro?.trim(), numero?.trim()].filter(Boolean).join(", ");
 
@@ -353,7 +371,7 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
         : "",
     valor: valorTitular !== null ? formatCurrency(valorTitular) : "",
     data_da_ultima_visita: "",
-    cep: formatCep((empresa.Cep ?? "").trim()),
+    cep: resolveCepFromEmpresa(empresa),
     empresa: resolveEmpresaFromApi(empresa),
     pessoa: "",
     contato: "",
@@ -431,7 +449,7 @@ const mapEmpresaApiToClienteSyncPayload = async (
     corte: parseNumberFromUnknown(empresa.Corte),
     venc: parseNumberFromUnknown(empresa.Vencimento),
     valor: resolveValorTitular(empresa),
-    cep: normalizeNullableText(formatCep((empresa.Cep ?? "").trim())),
+    cep: normalizeNullableText(resolveCepFromEmpresa(empresa)),
     empresa: normalizeNullableText(resolveEmpresaFromApi(empresa)),
     obs_comercial: obsComercial,
     situacao,
@@ -475,6 +493,30 @@ const pickChangedApiFields = (cliente: ClienteRow, apiPayload: ClienteApiSyncPay
   });
 
   return changes;
+};
+
+const enrichFormDataCepByAddress = async (
+  formData: ReturnType<typeof mapEmpresaApiToClienteForm>,
+) => {
+  if (sanitizeCep(formData.cep).length === 8) return formData;
+  const endereco = formData.endereco.trim();
+  const cidade = formData.cidade.trim();
+  const uf = formData.uf.trim();
+  if (!endereco || !cidade || !uf) return formData;
+
+  try {
+    const mapped = await fetchNominatimByAddress(endereco, cidade, uf);
+    if (mapped?.cep) {
+      return {
+        ...formData,
+        cep: formatCep(mapped.cep),
+      };
+    }
+  } catch {
+    // Ignore fallback errors; this enrichment is best-effort only.
+  }
+
+  return formData;
 };
 
 const excelSerialToISOString = (serial: number) => {
@@ -1126,7 +1168,14 @@ export default function Clientes() {
         })
       : base;
 
-    return [...filteredByStatus].sort((a, b) => {
+    const uniqueById = new Map<string, ClienteRow>();
+    filteredByStatus.forEach((cliente) => {
+      if (!uniqueById.has(cliente.id)) {
+        uniqueById.set(cliente.id, cliente);
+      }
+    });
+
+    return [...uniqueById.values()].sort((a, b) => {
       const nameA = (a.empresa ?? "").toLocaleLowerCase("pt-BR");
       const nameB = (b.empresa ?? "").toLocaleLowerCase("pt-BR");
       return nameA.localeCompare(nameB, "pt-BR");
@@ -1273,7 +1322,9 @@ export default function Clientes() {
           );
           return;
         }
-        apiFormData = mapEmpresaApiToClienteForm(empresaApi, codigoValue);
+        apiFormData = await enrichFormDataCepByAddress(
+          mapEmpresaApiToClienteForm(empresaApi, codigoValue),
+        );
         apiSyncPayload = await mapEmpresaApiToClienteSyncPayload(empresaApi, codigoValue);
         obsComercialApi = apiSyncPayload.obs_comercial ?? null;
       } catch (err) {
@@ -1605,7 +1656,10 @@ export default function Clientes() {
       if (!empresaApi) {
         throw new Error("Empresa nao encontrada na API.");
       }
-      setForm(mapEmpresaApiToClienteForm(empresaApi, empresaId));
+      const formData = await enrichFormDataCepByAddress(
+        mapEmpresaApiToClienteForm(empresaApi, empresaId),
+      );
+      setForm(formData);
       setPerfilCreate(buildPerfilState(null));
       setCepError(null);
       setAddressLookupError(null);
@@ -1632,6 +1686,7 @@ export default function Clientes() {
         ...prev,
         empresa: empresaApi.razao_social ?? prev.empresa,
         endereco: endereco || prev.endereco,
+        cep: empresaApi.cep ? formatCep(empresaApi.cep) : prev.cep,
         bairro: empresaApi.bairro ?? prev.bairro,
         cidade: empresaApi.cidade ?? prev.cidade,
         uf: empresaApi.estado ?? prev.uf,
@@ -1830,7 +1885,10 @@ export default function Clientes() {
       if (!empresaApi) {
         throw new Error("Empresa nao encontrada na API.");
       }
-      setEditForm(mapEmpresaApiToClienteForm(empresaApi, empresaId));
+      const formData = await enrichFormDataCepByAddress(
+        mapEmpresaApiToClienteForm(empresaApi, empresaId),
+      );
+      setEditForm(formData);
       setPerfilEdit(buildPerfilState(null));
       setCepErrorEdit(null);
       setAddressLookupErrorEdit(null);
@@ -1857,6 +1915,7 @@ export default function Clientes() {
         ...prev,
         empresa: empresaApi.razao_social ?? prev.empresa,
         endereco: endereco || prev.endereco,
+        cep: empresaApi.cep ? formatCep(empresaApi.cep) : prev.cep,
         bairro: empresaApi.bairro ?? prev.bairro,
         cidade: empresaApi.cidade ?? prev.cidade,
         uf: empresaApi.estado ?? prev.uf,
