@@ -2403,6 +2403,7 @@ export default function Clientes() {
                 <Building2 size={15} className={cnpjLoading ? "animate-pulse" : ""} />
               </button>
             </div>
+            {cnpjLoading && <span className="text-[11px] text-ink/60">Consultando CNPJ...</span>}
             {cnpjError && <span className="text-[11px] text-red-600">{cnpjError}</span>}
           </label>
           <label className="flex min-w-0 flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
@@ -2683,13 +2684,16 @@ export default function Clientes() {
                   className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
                   title={addressLookupLoading ? "Buscando endereco..." : "Cadastrar via endereco"}
                   aria-label={addressLookupLoading ? "Buscando endereco..." : "Cadastrar via endereco"}
-                >
-                  <MapPin size={15} className={addressLookupLoading ? "animate-pulse" : ""} />
-                </button>
-              </div>
-              {addressLookupError && (
-                <span className="text-[11px] font-normal text-red-600">{addressLookupError}</span>
-              )}
+              >
+                <MapPin size={15} className={addressLookupLoading ? "animate-pulse" : ""} />
+              </button>
+            </div>
+            {addressLookupLoading && (
+              <span className="text-[11px] font-normal text-ink/60">Consultando endereco...</span>
+            )}
+            {addressLookupError && (
+              <span className="text-[11px] font-normal text-red-600">{addressLookupError}</span>
+            )}
             </label>
           </div>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
@@ -3011,6 +3015,9 @@ export default function Clientes() {
                       <Building2 size={15} className={cnpjLoadingEdit ? "animate-pulse" : ""} />
                     </button>
                   </div>
+                  {cnpjLoadingEdit && (
+                    <span className="text-[11px] font-normal text-ink/60">Consultando CNPJ...</span>
+                  )}
                   {cnpjErrorEdit && (
                     <span className="text-[11px] font-normal text-red-600">{cnpjErrorEdit}</span>
                   )}
@@ -3318,6 +3325,9 @@ export default function Clientes() {
                         <MapPin size={15} className={addressLookupLoadingEdit ? "animate-pulse" : ""} />
                       </button>
                     </div>
+                    {addressLookupLoadingEdit && (
+                      <span className="text-[11px] font-normal text-ink/60">Consultando endereco...</span>
+                    )}
                     {addressLookupErrorEdit && (
                       <span className="text-[11px] font-normal text-red-600">{addressLookupErrorEdit}</span>
                     )}
