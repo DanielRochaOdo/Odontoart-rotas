@@ -158,7 +158,7 @@ export default function AppLayout() {
                     <MapPin size={16} />
                   </div>
                   <p className={["truncate font-display text-[1.02rem] font-semibold tracking-tight", isDarkTheme ? "text-slate-100" : "text-ink"].join(" ")}>
-                    Odontoart Hub
+                    Odontoart Rotas
                   </p>
                 </div>
                 <button
