@@ -178,10 +178,13 @@ const formatDate = (value: string | null) => {
 export default function PreCadastro() {
   const { role, session, profile } = useAuth();
   const isVendor = role === "VENDEDOR";
+  const vendorHasPreCadastroAccess = isVendor && Boolean(profile?.can_access_pre_cadastro);
   const canReview = role === "ASSISTENTE" || role === "SUPERVISOR";
-  const canAccess = isVendor || canReview;
+  const canAccess = vendorHasPreCadastroAccess || canReview;
 
-  const [activeTab, setActiveTab] = useState<"cadastro" | "status" | "aprovacoes">(isVendor ? "cadastro" : "aprovacoes");
+  const [activeTab, setActiveTab] = useState<"cadastro" | "status" | "aprovacoes">(
+    vendorHasPreCadastroAccess ? "cadastro" : "aprovacoes",
+  );
   const [form, setForm] = useState(buildInitialForm);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -200,8 +203,8 @@ export default function PreCadastro() {
   const [actingId, setActingId] = useState<string | null>(null);
 
   useEffect(() => {
-    setActiveTab(isVendor ? "cadastro" : "aprovacoes");
-  }, [isVendor]);
+    setActiveTab(vendorHasPreCadastroAccess ? "cadastro" : "aprovacoes");
+  }, [vendorHasPreCadastroAccess]);
 
   const loadVendorStatus = useCallback(async () => {
     if (!session?.user.id) return;
@@ -230,8 +233,8 @@ export default function PreCadastro() {
   }, [canReview]);
 
   useEffect(() => {
-    if (isVendor) void loadVendorStatus();
-  }, [isVendor, loadVendorStatus]);
+    if (vendorHasPreCadastroAccess) void loadVendorStatus();
+  }, [loadVendorStatus, vendorHasPreCadastroAccess]);
 
   useEffect(() => {
     if (canReview) void loadApprovals();
@@ -430,12 +433,12 @@ export default function PreCadastro() {
       </header>
 
       <div className="flex flex-wrap gap-2">
-        {isVendor && (
+        {vendorHasPreCadastroAccess && (
           <button type="button" onClick={() => setActiveTab("cadastro")} className={`rounded-lg px-3 py-2 text-xs font-semibold ${activeTab === "cadastro" ? "bg-sea text-white" : "border border-sea/30 bg-white text-ink/70 hover:border-sea hover:text-sea"}`}>
             Cadastro
           </button>
         )}
-        {isVendor && (
+        {vendorHasPreCadastroAccess && (
           <button type="button" onClick={() => setActiveTab("status")} className={`rounded-lg px-3 py-2 text-xs font-semibold ${activeTab === "status" ? "bg-sea text-white" : "border border-sea/30 bg-white text-ink/70 hover:border-sea hover:text-sea"}`}>
             Status
           </button>
@@ -447,7 +450,7 @@ export default function PreCadastro() {
         )}
       </div>
 
-      {activeTab === "cadastro" && isVendor && (
+      {activeTab === "cadastro" && vendorHasPreCadastroAccess && (
         <form onSubmit={handleSubmit} className="grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-4 md:grid-cols-6">
           <label className="min-w-0 flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
             Codigo
@@ -521,7 +524,7 @@ export default function PreCadastro() {
         </form>
       )}
 
-      {activeTab === "status" && isVendor && (
+      {activeTab === "status" && vendorHasPreCadastroAccess && (
         <div className="rounded-2xl border border-sea/15 bg-white/95 p-4">
           {statusLoading ? <p className="text-sm text-ink/60">Carregando status...</p> : statusError ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{statusError}</div> : sortedStatusRows.length === 0 ? <p className="text-sm text-ink/60">Nenhum pre-cadastro enviado.</p> : <div className="space-y-3">{sortedStatusRows.map((row) => (
             <div key={row.id} className="rounded-xl border border-sea/15 bg-white p-3">

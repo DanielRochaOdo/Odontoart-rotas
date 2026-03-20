@@ -27,6 +27,7 @@ type FormState = {
 
 type VendorFormState = FormState & {
   supervisor_id: string;
+  can_access_pre_cadastro: boolean;
 };
 
 type AssistantFormState = FormState;
@@ -37,6 +38,9 @@ const filterByRole = (profiles: ManagedProfile[], role: ManagedProfile["role"]) 
 const sortByName = (items: ManagedProfile[]) =>
   [...items].sort((a, b) => (a.nome ?? a.display_name ?? "").localeCompare(b.nome ?? b.display_name ?? ""));
 
+const normalizeSearch = (value: string) =>
+  value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
 export default function Settings() {
   const { role } = useAuth();
   const isSupervisor = role === "SUPERVISOR";
@@ -44,6 +48,7 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState<TabKey>("SUPERVISORES");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
   const [profiles, setProfiles] = useState<ManagedProfile[]>([]);
   const [userEmailsByUserId, setUserEmailsByUserId] = useState<Record<string, string>>({});
   const [cep, setCep] = useState("");
@@ -65,6 +70,7 @@ export default function Settings() {
     email: "",
     password: "",
     supervisor_id: "",
+    can_access_pre_cadastro: false,
   });
   const [assistantForm, setAssistantForm] = useState<AssistantFormState>({
     display_name: "",
@@ -86,6 +92,7 @@ export default function Settings() {
     email: "",
     password: "",
     supervisor_id: "",
+    can_access_pre_cadastro: false,
   });
   const [assistantEdit, setAssistantEdit] = useState<AssistantFormState>({
     display_name: "",
@@ -96,6 +103,33 @@ export default function Settings() {
   const supervisors = useMemo(() => sortByName(filterByRole(profiles, "SUPERVISOR")), [profiles]);
   const vendors = useMemo(() => sortByName(filterByRole(profiles, "VENDEDOR")), [profiles]);
   const assistants = useMemo(() => sortByName(filterByRole(profiles, "ASSISTENTE")), [profiles]);
+  const filteredSupervisors = useMemo(() => {
+    const query = normalizeSearch(searchTerm);
+    if (!query) return supervisors;
+    return supervisors.filter((profile) =>
+      normalizeSearch(
+        `${profile.nome ?? profile.display_name ?? ""} ${profile.user_id ? userEmailsByUserId[profile.user_id] ?? "" : ""}`,
+      ).includes(query),
+    );
+  }, [searchTerm, supervisors, userEmailsByUserId]);
+  const filteredVendors = useMemo(() => {
+    const query = normalizeSearch(searchTerm);
+    if (!query) return vendors;
+    return vendors.filter((profile) =>
+      normalizeSearch(
+        `${profile.nome ?? profile.display_name ?? ""} ${profile.user_id ? userEmailsByUserId[profile.user_id] ?? "" : ""} ${profile.supervisor?.display_name ?? ""}`,
+      ).includes(query),
+    );
+  }, [searchTerm, vendors, userEmailsByUserId]);
+  const filteredAssistants = useMemo(() => {
+    const query = normalizeSearch(searchTerm);
+    if (!query) return assistants;
+    return assistants.filter((profile) =>
+      normalizeSearch(
+        `${profile.nome ?? profile.display_name ?? ""} ${profile.user_id ? userEmailsByUserId[profile.user_id] ?? "" : ""}`,
+      ).includes(query),
+    );
+  }, [searchTerm, assistants, userEmailsByUserId]);
 
   const loadProfiles = async () => {
     setLoading(true);
@@ -162,7 +196,13 @@ export default function Settings() {
     setEditingVendorId(null);
     setEditingAssistantId(null);
     setSupervisorEdit({ display_name: "", email: "", password: "" });
-    setVendorEdit({ display_name: "", email: "", password: "", supervisor_id: "" });
+    setVendorEdit({
+      display_name: "",
+      email: "",
+      password: "",
+      supervisor_id: "",
+      can_access_pre_cadastro: false,
+    });
     setAssistantEdit({ display_name: "", email: "", password: "" });
   };
 
@@ -208,10 +248,17 @@ export default function Settings() {
         password: vendorForm.password,
         role: "VENDEDOR",
         supervisor_id: vendorForm.supervisor_id,
+        can_access_pre_cadastro: vendorForm.can_access_pre_cadastro,
       });
       setProfiles((prev) => [created, ...prev]);
       emitProfilesUpdated();
-      setVendorForm({ display_name: "", email: "", password: "", supervisor_id: "" });
+      setVendorForm({
+        display_name: "",
+        email: "",
+        password: "",
+        supervisor_id: "",
+        can_access_pre_cadastro: false,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao criar vendedor.");
     } finally {
@@ -263,6 +310,7 @@ export default function Settings() {
       email: "",
       password: "",
       supervisor_id: profile.supervisor_id ?? "",
+      can_access_pre_cadastro: profile.can_access_pre_cadastro ?? false,
     });
   };
 
@@ -333,6 +381,7 @@ export default function Settings() {
         id: editingVendorId,
         display_name: vendorEdit.display_name,
         nome: vendorEdit.display_name,
+        can_access_pre_cadastro: vendorEdit.can_access_pre_cadastro,
         supervisor_id: vendorEdit.supervisor_id,
         vendedor_id: null,
       });
@@ -348,7 +397,13 @@ export default function Settings() {
       }
 
       setEditingVendorId(null);
-      setVendorEdit({ display_name: "", email: "", password: "", supervisor_id: "" });
+      setVendorEdit({
+        display_name: "",
+        email: "",
+        password: "",
+        supervisor_id: "",
+        can_access_pre_cadastro: false,
+      });
       emitProfilesUpdated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao atualizar vendedor.");
@@ -520,13 +575,28 @@ export default function Settings() {
           </button>
         ))}
         </div>
-        <button
-          type="button"
-          onClick={loadProfiles}
-          className="rounded-full border border-sea/30 bg-white px-4 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
-        >
-          Atualizar lista
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="search"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder={`Pesquisar ${
+              activeTab === "SUPERVISORES"
+                ? "supervisores"
+                : activeTab === "VENDEDORES"
+                  ? "vendedores"
+                  : "assistentes"
+            }`}
+            className="rounded-full border border-sea/20 bg-white px-4 py-2 text-xs text-ink outline-none focus:border-sea"
+          />
+          <button
+            type="button"
+            onClick={loadProfiles}
+            className="rounded-full border border-sea/30 bg-white px-4 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+          >
+            Atualizar lista
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -588,10 +658,12 @@ export default function Settings() {
               </form>
 
               <div className="mt-4 space-y-2">
-                {supervisors.length === 0 ? (
-                  <p className="text-xs text-ink/60">Nenhum supervisor cadastrado.</p>
+                {filteredSupervisors.length === 0 ? (
+                  <p className="text-xs text-ink/60">
+                    {searchTerm ? "Nenhum supervisor encontrado." : "Nenhum supervisor cadastrado."}
+                  </p>
                 ) : (
-                  supervisors.map((supervisor) => (
+                  filteredSupervisors.map((supervisor) => (
                     <div
                       key={supervisor.id}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2"
@@ -686,7 +758,7 @@ export default function Settings() {
           {activeTab === "VENDEDORES" && (
             <section className="rounded-2xl border border-sea/20 bg-sand/20 p-4">
               <h3 className="font-display text-lg text-ink">Vendedores</h3>
-              <form onSubmit={handleCreateVendor} className="mt-4 grid gap-3 md:grid-cols-4">
+              <form onSubmit={handleCreateVendor} className="mt-4 grid gap-3 md:grid-cols-5">
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
                   Nome
                   <input
@@ -730,6 +802,17 @@ export default function Settings() {
                     ))}
                   </select>
                 </label>
+                <label className="flex items-center gap-2 rounded-lg border border-sea/20 bg-white px-3 py-2 text-xs font-semibold text-ink/70 md:self-end">
+                  <input
+                    type="checkbox"
+                    checked={vendorForm.can_access_pre_cadastro}
+                    onChange={(event) =>
+                      setVendorForm((prev) => ({ ...prev, can_access_pre_cadastro: event.target.checked }))
+                    }
+                    className="h-4 w-4 rounded border-sea/30 text-sea focus:ring-sea"
+                  />
+                  Permitir acesso ao modulo pre-cadastro
+                </label>
                 <div className="flex items-end">
                   <button
                     type="submit"
@@ -743,10 +826,12 @@ export default function Settings() {
               </form>
 
               <div className="mt-4 space-y-2">
-                {vendors.length === 0 ? (
-                  <p className="text-xs text-ink/60">Nenhum vendedor cadastrado.</p>
+                {filteredVendors.length === 0 ? (
+                  <p className="text-xs text-ink/60">
+                    {searchTerm ? "Nenhum vendedor encontrado." : "Nenhum vendedor cadastrado."}
+                  </p>
                 ) : (
-                  vendors.map((vendor) => (
+                  filteredVendors.map((vendor) => (
                     <div
                       key={vendor.id}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2"
@@ -779,6 +864,20 @@ export default function Settings() {
                               </option>
                             ))}
                           </select>
+                          <label className="flex items-center gap-2 rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs font-semibold text-ink/70">
+                            <input
+                              type="checkbox"
+                              checked={vendorEdit.can_access_pre_cadastro}
+                              onChange={(event) =>
+                                setVendorEdit((prev) => ({
+                                  ...prev,
+                                  can_access_pre_cadastro: event.target.checked,
+                                }))
+                              }
+                              className="h-4 w-4 rounded border-sea/30 text-sea focus:ring-sea"
+                            />
+                            Pre-cadastro
+                          </label>
                           <input
                             type="email"
                             autoComplete="email"
@@ -816,6 +915,9 @@ export default function Settings() {
                           </p>
                           <p className="text-xs text-ink/60">
                             Supervisor: {vendor.supervisor?.display_name ?? "Nao informado"}
+                          </p>
+                          <p className="text-xs text-ink/60">
+                            Pre-cadastro: {vendor.can_access_pre_cadastro ? "Liberado" : "Bloqueado"}
                           </p>
                           <p className="text-xs text-ink/60">
                             Email: {getCurrentEmail(vendor)}
@@ -892,10 +994,12 @@ export default function Settings() {
               </form>
 
               <div className="mt-4 space-y-2">
-                {assistants.length === 0 ? (
-                  <p className="text-xs text-ink/60">Nenhum assistente cadastrado.</p>
+                {filteredAssistants.length === 0 ? (
+                  <p className="text-xs text-ink/60">
+                    {searchTerm ? "Nenhum assistente encontrado." : "Nenhum assistente cadastrado."}
+                  </p>
                 ) : (
-                  assistants.map((assistant) => (
+                  filteredAssistants.map((assistant) => (
                     <div
                       key={assistant.id}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2"

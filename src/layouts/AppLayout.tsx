@@ -24,6 +24,7 @@ type NavItem = {
   to: string;
   icon: typeof LayoutDashboard;
   roles?: Array<"SUPERVISOR" | "ASSISTENTE" | "VENDEDOR">;
+  requiresVendorPreCadastroAccess?: boolean;
 };
 
 const navItems: NavItem[] = [
@@ -31,7 +32,13 @@ const navItems: NavItem[] = [
   { label: "Rotas", to: "/agenda", icon: MapPin, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Agenda", to: "/visitas", icon: CalendarCheck, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
   { label: "Aceite digital", to: "/aceite-digital", icon: CheckSquare, roles: ["VENDEDOR"] },
-  { label: "Pre-cadastro", to: "/pre-cadastro", icon: MapPinPlus, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
+  {
+    label: "Pre-cadastro",
+    to: "/pre-cadastro",
+    icon: MapPinPlus,
+    roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"],
+    requiresVendorPreCadastroAccess: true,
+  },
   { label: "Empresas", to: "/clientes", icon: Building2, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Logs", to: "/logs", icon: History, roles: ["SUPERVISOR"] },
   { label: "Configuracoes", to: "/configuracoes", icon: Settings, roles: ["SUPERVISOR"] },
@@ -88,6 +95,17 @@ export default function AppLayout() {
       .map((part) => part[0]?.toUpperCase())
       .join("");
   }, [profile?.display_name, profile?.nome]);
+  const visibleNavItems = useMemo(
+    () =>
+      navItems.filter((item) => {
+        if (item.roles && (!role || !item.roles.includes(role))) return false;
+        if (item.requiresVendorPreCadastroAccess && role === "VENDEDOR" && !profile?.can_access_pre_cadastro) {
+          return false;
+        }
+        return true;
+      }),
+    [profile?.can_access_pre_cadastro, role],
+  );
   const isDarkTheme = theme === "dark";
 
   return (
@@ -179,9 +197,7 @@ export default function AppLayout() {
 
             <nav className={["flex-1 py-4", collapsed ? "px-2" : "px-3"].join(" ")}>
               <div className={["flex flex-col", collapsed ? "items-center gap-2" : "gap-1.5"].join(" ")}>
-                {navItems
-                  .filter((item) => !item.roles || (role ? item.roles.includes(role) : false))
-                  .map((item) => {
+                {visibleNavItems.map((item) => {
                     const Icon = item.icon;
                     return (
                       <NavLink
@@ -359,9 +375,7 @@ export default function AppLayout() {
             </div>
 
             <nav className="mt-6 flex flex-col gap-2">
-              {navItems
-                .filter((item) => !item.roles || (role ? item.roles.includes(role) : false))
-                .map((item) => {
+              {visibleNavItems.map((item) => {
                   const Icon = item.icon;
                   return (
                     <NavLink
@@ -411,4 +425,3 @@ export default function AppLayout() {
     </div>
   );
 }
-

@@ -10,6 +10,7 @@ export type Profile = {
   role: UserRole;
   display_name: string | null;
   nome?: string | null;
+  can_access_pre_cadastro: boolean;
   created_at: string;
 };
 
@@ -38,7 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const { data, error } = await supabase
       .from("profiles")
-      .select("id, user_id, role, display_name, nome, created_at")
+      .select("id, user_id, role, display_name, nome, can_access_pre_cadastro, created_at")
       .eq("user_id", activeSession.user.id)
       .single();
 

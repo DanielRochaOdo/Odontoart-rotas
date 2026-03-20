@@ -9,6 +9,7 @@ export type ManagedProfile = {
   role: UserRole;
   display_name: string | null;
   nome?: string | null;
+  can_access_pre_cadastro: boolean;
   supervisor_id: string | null;
   vendedor_id: string | null;
   supervisor?: { id: string; display_name: string | null } | null;
@@ -19,7 +20,7 @@ export const fetchManagedProfiles = async () => {
   const { data, error } = await supabase
     .from("profiles")
     .select(
-      "id, user_id, role, display_name, nome, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
+      "id, user_id, role, display_name, nome, can_access_pre_cadastro, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
     )
     .order("display_name", { ascending: true });
 
@@ -31,20 +32,33 @@ export const updateManagedProfile = async (payload: {
   id: string;
   display_name?: string | null;
   nome?: string | null;
+  can_access_pre_cadastro?: boolean;
   supervisor_id?: string | null;
   vendedor_id?: string | null;
 }) => {
+  const updates: {
+    display_name: string | null;
+    nome: string | null;
+    supervisor_id: string | null;
+    vendedor_id: string | null;
+    can_access_pre_cadastro?: boolean;
+  } = {
+    display_name: payload.display_name ?? null,
+    nome: payload.nome ?? payload.display_name ?? null,
+    supervisor_id: payload.supervisor_id ?? null,
+    vendedor_id: payload.vendedor_id ?? null,
+  };
+
+  if (payload.can_access_pre_cadastro !== undefined) {
+    updates.can_access_pre_cadastro = payload.can_access_pre_cadastro;
+  }
+
   const { data, error } = await supabase
     .from("profiles")
-    .update({
-      display_name: payload.display_name ?? null,
-      nome: payload.nome ?? payload.display_name ?? null,
-      supervisor_id: payload.supervisor_id ?? null,
-      vendedor_id: payload.vendedor_id ?? null,
-    })
+    .update(updates)
     .eq("id", payload.id)
     .select(
-      "id, user_id, role, display_name, nome, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
+      "id, user_id, role, display_name, nome, can_access_pre_cadastro, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
     )
     .single();
 
@@ -58,6 +72,7 @@ export const createManagedUser = async (payload: {
   display_name: string;
   nome?: string | null;
   role: UserRole;
+  can_access_pre_cadastro?: boolean;
   supervisor_id?: string | null;
   vendedor_id?: string | null;
 }) => {

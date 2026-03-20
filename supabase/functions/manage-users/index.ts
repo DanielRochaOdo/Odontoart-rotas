@@ -12,6 +12,7 @@ type CreatePayload = {
   display_name: string;
   nome?: string | null;
   role: "VENDEDOR" | "ASSISTENTE" | "SUPERVISOR";
+  can_access_pre_cadastro?: boolean;
   supervisor_id?: string | null;
   vendedor_id?: string | null;
 };
@@ -100,6 +101,9 @@ serve(async (req) => {
     const resolvedSupervisorId = payload.role === "VENDEDOR" ? payload.supervisor_id ?? null : null;
     const resolvedVendedorId = payload.role === "ASSISTENTE" ? null : payload.vendedor_id ?? null;
     const resolvedName = payload.nome ?? payload.display_name;
+    const resolvedCanAccessPreCadastro = payload.role === "VENDEDOR"
+      ? Boolean(payload.can_access_pre_cadastro)
+      : false;
 
     const { data: createdUser, error: createError } = await supabase.auth.admin.createUser({
       email: payload.email,
@@ -111,6 +115,7 @@ serve(async (req) => {
         role: payload.role,
         supervisor_id: resolvedSupervisorId,
         vendedor_id: resolvedVendedorId,
+        can_access_pre_cadastro: resolvedCanAccessPreCadastro,
       },
     });
 
@@ -124,12 +129,13 @@ serve(async (req) => {
         role: payload.role,
         display_name: resolvedName,
         nome: resolvedName,
+        can_access_pre_cadastro: resolvedCanAccessPreCadastro,
         supervisor_id: resolvedSupervisorId,
         vendedor_id: resolvedVendedorId,
       })
       .eq("user_id", createdUser.user.id)
       .select(
-        "id, user_id, role, display_name, nome, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
+        "id, user_id, role, display_name, nome, can_access_pre_cadastro, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
       )
       .single();
 
