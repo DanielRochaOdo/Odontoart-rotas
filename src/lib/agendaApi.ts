@@ -457,20 +457,28 @@ export const fetchAgenda = async (
 
 export const fetchAgendaScheduledVisits = async (agendaIds: string[]) => {
   if (!agendaIds.length) return [] as AgendaScheduledVisit[];
-  const { data, error } = await supabase
-    .from("visits")
-    .select(
-      "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, instructions, completed_at, route_id",
-    )
-    .in("agenda_id", agendaIds)
-    .is("completed_at", null)
-    .order("visit_date", { ascending: true });
+  const chunkSize = 500;
+  const results: AgendaScheduledVisit[] = [];
 
-  if (error) {
-    throw new Error(error.message);
+  for (let index = 0; index < agendaIds.length; index += chunkSize) {
+    const chunk = agendaIds.slice(index, index + chunkSize);
+    const { data, error } = await supabase
+      .from("visits")
+      .select(
+        "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, instructions, completed_at, route_id",
+      )
+      .in("agenda_id", chunk)
+      .is("completed_at", null)
+      .order("visit_date", { ascending: true });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    results.push(...((data ?? []) as AgendaScheduledVisit[]));
   }
 
-  return (data ?? []) as AgendaScheduledVisit[];
+  return results;
 };
 
 export const fetchAgendaVisitVendors = async (agendaIds: string[]) => {

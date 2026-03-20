@@ -7,6 +7,7 @@ import {
   Plus,
   RefreshCw,
   SquareCenterlineDashedHorizontal,
+  X,
 } from "lucide-react";
 import L from "leaflet";
 import {
@@ -34,9 +35,11 @@ import {
 import { onProfilesUpdated } from "../lib/profileEvents";
 import { useAgendaFilters } from "../hooks/useAgendaFilters";
 import {
+  fetchAgendaScheduledVisits,
   fetchAgendaForGeneration,
   fetchSupervisores,
   fetchVendedores,
+  type AgendaScheduledVisit,
 } from "../lib/agendaApi";
 import { supabase } from "../lib/supabase";
 import { formatDateBr } from "../lib/dateFormat";
@@ -111,6 +114,24 @@ const toDateKey = (v: string | null | undefined) => (v ?? "").slice(0, 10);
 const compact = (v: string | null | undefined) => (v ?? "").replace(/\s+/g, " ").trim();
 
 const fmtDate = (v: string | null) => formatDateBr(v);
+
+const parseDateValue = (value: string) => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return new Date(`${value}T12:00:00`);
+  }
+  return new Date(value);
+};
+
+const formatVisitBadge = (value: string | null) => {
+  if (!value) return "-";
+  const date = parseDateValue(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const formatted = new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "short",
+  }).format(date);
+  return formatted.replace(".", "").toUpperCase();
+};
 
 const addr = (r: AgendaLookupRow) =>
   [r.endereco, r.complemento, r.bairro, r.cidade, r.uf].filter(Boolean).join(", ");
@@ -249,6 +270,9 @@ export default function RoutesMap() {
   const restoredDraftRef = useRef(false);
 
   const [agendaRows, setAgendaRows] = useState<AgendaLookupRow[]>([]);
+  const [scheduledVisitsByAgenda, setScheduledVisitsByAgenda] = useState<
+    Record<string, AgendaScheduledVisit[]>
+  >({});
   const [vendedores, setVendedores] = useState<
     { user_id: string; display_name: string | null; role: string; supervisor_id?: string | null }[]
   >([]);
@@ -344,6 +368,37 @@ export default function RoutesMap() {
   }, [vendorQuery, vendedores]);
 
   const dedupedAgendaRows = useMemo(() => dedupeAgendaLookupRows(agendaRows), [agendaRows]);
+
+  useEffect(() => {
+    let active = true;
+    const agendaIds = dedupedAgendaRows.map((row) => row.id);
+
+    if (agendaIds.length === 0) {
+      setScheduledVisitsByAgenda({});
+      return () => {
+        active = false;
+      };
+    }
+
+    fetchAgendaScheduledVisits(agendaIds)
+      .then((visits) => {
+        if (!active) return;
+        const grouped: Record<string, AgendaScheduledVisit[]> = {};
+        visits.forEach((visit) => {
+          if (!grouped[visit.agenda_id]) grouped[visit.agenda_id] = [];
+          grouped[visit.agenda_id].push(visit);
+        });
+        setScheduledVisitsByAgenda(grouped);
+      })
+      .catch((error) => {
+        console.error(error);
+        if (active) setScheduledVisitsByAgenda({});
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [dedupedAgendaRows]);
 
   const filterOptions = useMemo<Record<string, string[]>>(() => {
     const options = Object.fromEntries(
@@ -447,6 +502,22 @@ export default function RoutesMap() {
       return true;
     });
   }, [companyCodeQuery, companyNameQuery, dedupedAgendaRows, filters]);
+
+  const resolveMapObs = useCallback((agendaId: string) => {
+    const visits = scheduledVisitsByAgenda[agendaId] ?? [];
+    if (visits.length === 0) return "-";
+
+    const latestVisit = visits.reduce<AgendaScheduledVisit | null>((latest, visit) => {
+      if (!latest) return visit;
+      const latestTime = parseDateValue(latest.visit_date).getTime();
+      const visitTime = parseDateValue(visit.visit_date).getTime();
+      if (Number.isNaN(visitTime)) return latest;
+      if (Number.isNaN(latestTime) || visitTime > latestTime) return visit;
+      return latest;
+    }, null);
+
+    return formatVisitBadge(latestVisit?.visit_date ?? null);
+  }, [scheduledVisitsByAgenda]);
 
   const mapRows = useMemo<RenderableMapRow[]>(() => {
     return rowsMatchingFilters.map((row) => {
@@ -742,6 +813,13 @@ export default function RoutesMap() {
 
   const toggleVendor = (id: string) =>
     setSelectedVendorIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+
+  const clearAllSelectedCompanies = useCallback(() => {
+    setSelectedAgendaIds([]);
+    setSelectedBairroKeys([]);
+    setExcludedBairroAgendaIds([]);
+    setRadiusResultIds([]);
+  }, []);
 
   const resetCompanyListHeight = useCallback(() => {
     setCompanyListHeight(256);
@@ -1368,7 +1446,19 @@ export default function RoutesMap() {
               <div className="ml-auto text-right text-xs text-ink/60">
                 <div>Empresas: {rowsMatchingFilters.length}</div>
                 {missingFromFiltersCount > 0 && <div>Sem coordenada real: {missingFromFiltersCount}</div>}
-                <div>Selecionadas: {effectiveSelectedAgendaIds.length}</div>
+                <div className="flex items-center justify-end gap-1">
+                  <span>Selecionadas: {effectiveSelectedAgendaIds.length}</span>
+                  <button
+                    type="button"
+                    onClick={clearAllSelectedCompanies}
+                    disabled={effectiveSelectedAgendaIds.length === 0}
+                    title="Limpar empresas selecionadas"
+                    aria-label="Limpar empresas selecionadas"
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-full text-ink/50 transition hover:bg-sea/10 hover:text-sea disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1470,16 +1560,16 @@ export default function RoutesMap() {
                           <p className="text-ink/70">
                             {r.bairro ?? "-"} • {r.cidade ?? "-"}
                           </p>
-                          <p className="text-ink/60">ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}</p>
+                          <p className="text-ink/60">
+                            ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}
+                            {` | OBS: ${resolveMapObs(r.id)}`}
+                          </p>
                           <p className="text-ink/60">VIDAS ULTIMA VISITA: {r.visit_completed_vidas ?? "-"}</p>
                           {r.isApproximatePoint && <p className="text-amber-700">PONTO APROXIMADO</p>}
                         </div>
                       ) : (
                         <div className="w-[320px] max-w-[320px] space-y-1 text-xs [overflow-wrap:anywhere]">
-                          <p className="font-semibold text-ink">
-                            OBS:{" "}
-                            {r.data_da_ultima_visita ? fmtDate(r.data_da_ultima_visita) : r.obs_contrato_1 ?? "-"}
-                          </p>
+                          <p className="font-semibold text-ink">OBS: {resolveMapObs(r.id)}</p>
                           <p className="text-ink/70">ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}</p>
                           <p className="text-ink/70">VIDAS ULTIMA VISITA: {r.visit_completed_vidas ?? "-"}</p>
                           <p className="text-ink/70">CODIGO: {r.cod_1 ?? "-"}</p>
@@ -1585,6 +1675,7 @@ export default function RoutesMap() {
                         </p>
                         <p className="truncate text-[11px] text-ink/60">
                           ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}
+                          {` | OBS: ${resolveMapObs(r.id)}`}
                         </p>
                         <p className="truncate text-[11px] text-ink/60">
                           VIDAS ULTIMA VISITA: {r.visit_completed_vidas ?? "-"}
@@ -1643,6 +1734,7 @@ export default function RoutesMap() {
                           </p>
                           <p className="truncate text-[11px] text-ink/60">
                             ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}
+                            {` | OBS: ${resolveMapObs(r.id)}`}
                           </p>
                           <p className="truncate text-[11px] text-ink/60">
                             VIDAS ULTIMA VISITA: {r.visit_completed_vidas ?? "-"}

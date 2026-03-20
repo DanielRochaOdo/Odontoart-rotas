@@ -6,6 +6,7 @@ import {
   Map as MapIcon,
   MapPin,
   SquareCenterlineDashedHorizontal,
+  X,
 } from "lucide-react";
 import {
   flexRender,
@@ -2040,7 +2041,19 @@ export default function Agenda() {
                   </button>
                   <div className="text-xs text-ink/60 text-right">
                     <div>Empresas: {totalCount}</div>
-                    <div>Selecionadas: {selectedAgendaIds.length}</div>
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Selecionadas: {selectedAgendaIds.length}</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedAgendaIds([])}
+                        disabled={selectedAgendaIds.length === 0}
+                        title="Limpar empresas selecionadas"
+                        aria-label="Limpar empresas selecionadas"
+                        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-ink/50 transition hover:bg-sea/10 hover:text-sea disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
