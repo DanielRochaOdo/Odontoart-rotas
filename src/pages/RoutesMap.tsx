@@ -1031,8 +1031,7 @@ export default function RoutesMap() {
         const { error: e1 } = await supabase
           .from("agenda")
           .update({ visit_generated_at: base.toISOString() })
-          .in("id", ids)
-          .is("visit_generated_at", null);
+          .in("id", ids);
         if (e1) throw new Error(e1.message);
 
         const { error: e2 } = await supabase
