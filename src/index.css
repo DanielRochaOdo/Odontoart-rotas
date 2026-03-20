@@ -88,8 +88,16 @@
     background-color: rgba(19, 35, 46, 0.9) !important;
   }
 
+  .dark .bg-white\/92 {
+    background-color: rgba(19, 35, 46, 0.92) !important;
+  }
+
   .dark .bg-white\/80 {
     background-color: rgba(22, 40, 52, 0.82) !important;
+  }
+
+  .dark .bg-white\/75 {
+    background-color: rgba(22, 40, 52, 0.78) !important;
   }
 
   .dark .bg-white\/70 {
@@ -234,6 +242,54 @@
 
 .routes-map-tooltip {
   z-index: 2100 !important;
+}
+
+.routes-map {
+  position: relative;
+  isolation: isolate;
+  background: #f3f7fc;
+}
+
+.routes-map::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 250;
+  pointer-events: none;
+  background: #9ca9bf;
+  mix-blend-mode: screen;
+}
+
+.routes-map .leaflet-tile-pane {
+  filter: grayscale(1) contrast(0.94) brightness(1.01);
+}
+
+.routes-map .routes-map-toner-base {
+  filter: none;
+}
+
+.routes-map .routes-map-toner-lines {
+  filter: none;
+}
+
+.routes-map-bairro-label {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  color: #111827 !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  padding: 0 !important;
+  text-align: center;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.routes-map-bairro-label::before {
+  display: none;
 }
 
 .routes-map .leaflet-overlay-pane path {

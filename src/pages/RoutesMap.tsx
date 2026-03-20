@@ -20,7 +20,7 @@ import {
   Tooltip,
   useMapEvents,
 } from "react-leaflet";
-import type { GeoJsonObject } from "geojson";
+import type { Feature, GeoJsonObject } from "geojson";
 import { useAuth } from "../context/AuthContext";
 import {
   fetchAgendaLookup,
@@ -54,6 +54,8 @@ const CEARA_CITIES_GEOJSON = JSON.parse(cearaCitiesRaw) as GeoJsonObject;
 const FORTALEZA_BAIRROS_GEOJSON = JSON.parse(fortalezaBairrosRaw) as GeoJsonObject;
 const LIGHT_MODE_POINT_LIMIT = 3000;
 const MAX_GEOCODE_UNIQUE_ADDRESSES_PER_RUN = 40;
+const COMPANY_LIST_MIN_HEIGHT = 200;
+const COMPANY_LIST_MAX_HEIGHT = 680;
 
 const MONTH_OPTIONS = [
   { value: "1", label: "Janeiro" },
@@ -118,6 +120,11 @@ type MapViewport = {
   bounds: L.LatLngBounds;
   zoom: number;
 };
+
+type SelectionMode = "RAIO" | "BAIRRO";
+
+const clampCompanyListHeight = (height: number) =>
+  Math.max(COMPANY_LIST_MIN_HEIGHT, Math.min(height, COMPANY_LIST_MAX_HEIGHT));
 
 const hasRealCoordinates = (row: Pick<AgendaLookupRow, "latitude" | "longitude">) =>
   Number.isFinite(row.latitude) && Number.isFinite(row.longitude);
@@ -187,6 +194,23 @@ const buildCentroidMap = (geojson: GeoJsonObject, nameKeys: string[]) => {
   return map;
 };
 
+const getFeatureName = (feature: Feature | undefined, key: string) => {
+  const rawName = feature?.properties?.[key];
+  return typeof rawName === "string" && rawName.trim() ? rawName.trim() : null;
+};
+
+const bindBairroLabel = (feature: Feature | undefined, layer: L.Layer) => {
+  const bairroName = getFeatureName(feature, "Nome");
+  if (!bairroName || !("bindTooltip" in layer)) return;
+
+  layer.bindTooltip(bairroName, {
+    permanent: true,
+    direction: "center",
+    className: "routes-map-bairro-label",
+    opacity: 0.96,
+  });
+};
+
 const CITY_CENTER_MAP = buildCentroidMap(CEARA_CITIES_GEOJSON, ["name", "description"]);
 const BAIRRO_CENTER_MAP = buildCentroidMap(FORTALEZA_BAIRROS_GEOJSON, ["Nome"]);
 
@@ -226,7 +250,10 @@ export default function RoutesMap() {
     { id?: string; user_id: string; display_name: string | null; role: string }[]
   >([]);
 
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>("RAIO");
   const [selectedAgendaIds, setSelectedAgendaIds] = useState<string[]>([]);
+  const [selectedBairroKeys, setSelectedBairroKeys] = useState<string[]>([]);
+  const [excludedBairroAgendaIds, setExcludedBairroAgendaIds] = useState<string[]>([]);
   const [selectedVendorIds, setSelectedVendorIds] = useState<string[]>([]);
   const [vendorQuery, setVendorQuery] = useState("");
 
@@ -247,6 +274,7 @@ export default function RoutesMap() {
   const [isLightMapMode] = useState(true);
   const [showBaseMap] = useState(true);
   const [mapViewport, setMapViewport] = useState<MapViewport | null>(null);
+  const [companyListHeight, setCompanyListHeight] = useState(256);
   // ==============================================
 
   useEffect(() => {
@@ -463,8 +491,51 @@ export default function RoutesMap() {
     () => rowsMatchingFilters.filter((r) => !hasRealCoordinates(r)).length,
     [rowsMatchingFilters],
   );
+  const bairroRowsByKey = useMemo(() => {
+    const grouped = new Map<string, { name: string; rows: AgendaLookupRow[] }>();
 
-  const selSet = useMemo(() => new Set(selectedAgendaIds), [selectedAgendaIds]);
+    rowsMatchingFilters.forEach((row) => {
+      if (normalize(row.cidade) !== "FORTALEZA") return;
+      const bairroName = compact(row.bairro);
+      if (!bairroName) return;
+
+      const bairroKey = normalize(bairroName);
+      const existing = grouped.get(bairroKey);
+      if (existing) {
+        existing.rows.push(row);
+        return;
+      }
+
+      grouped.set(bairroKey, { name: bairroName, rows: [row] });
+    });
+
+    return grouped;
+  }, [rowsMatchingFilters]);
+  const selectedBairroRows = useMemo(
+    () => selectedBairroKeys.flatMap((bairroKey) => bairroRowsByKey.get(bairroKey)?.rows ?? []),
+    [bairroRowsByKey, selectedBairroKeys],
+  );
+  const selectedBairroCompanyRows = useMemo(
+    () => dedupeAgendaLookupRows(selectedBairroRows),
+    [selectedBairroRows],
+  );
+  const selectedBairroAgendaIds = useMemo(
+    () => Array.from(new Set(selectedBairroCompanyRows.map((row) => row.id))),
+    [selectedBairroCompanyRows],
+  );
+  const excludedBairroAgendaSet = useMemo(() => new Set(excludedBairroAgendaIds), [excludedBairroAgendaIds]);
+  const effectiveSelectedAgendaIds = useMemo(
+    () =>
+      selectionMode === "BAIRRO"
+        ? selectedBairroAgendaIds.filter((id) => !excludedBairroAgendaSet.has(id))
+        : selectedAgendaIds,
+    [excludedBairroAgendaSet, selectedAgendaIds, selectedBairroAgendaIds, selectionMode],
+  );
+  const effectiveSelSet = useMemo(() => new Set(effectiveSelectedAgendaIds), [effectiveSelectedAgendaIds]);
+
+  useEffect(() => {
+    setExcludedBairroAgendaIds((prev) => prev.filter((id) => selectedBairroAgendaIds.includes(id)));
+  }, [selectedBairroAgendaIds]);
 
   const computeIdsWithinRadius = (rows: AgendaLookupRow[], center: L.LatLng, km: number) => {
     const radiusMeters = km * 1000;
@@ -481,6 +552,7 @@ export default function RoutesMap() {
     const set = new Set(radiusResultIds);
     return mapRows.filter((r) => set.has(r.id));
   }, [mapRows, radiusResultIds]);
+  const showBairroLabels = (mapViewport?.zoom ?? 10) >= 13;
 
   const updateMapViewport = useCallback((bounds: L.LatLngBounds, zoom: number) => {
     setMapViewport((prev) => {
@@ -490,6 +562,7 @@ export default function RoutesMap() {
   }, []);
 
   const rowsToRender = useMemo(() => {
+    if (selectionMode === "BAIRRO") return [] as RenderableMapRow[];
     if (!isLightMapMode) return mapRows;
     if (mapRows.length <= LIGHT_MODE_POINT_LIMIT) return mapRows;
 
@@ -519,12 +592,98 @@ export default function RoutesMap() {
     }
 
     return [...selectedOrRadiusRows, ...regularRows];
-  }, [isLightMapMode, mapRows, mapViewport, radiusResultIds, selectedAgendaIds]);
+  }, [isLightMapMode, mapRows, mapViewport, radiusResultIds, selectedAgendaIds, selectionMode]);
+
+  const toggleBairroSelection = useCallback(
+    (bairroKey: string) => {
+      if (!bairroRowsByKey.has(bairroKey)) return;
+      setSelectedBairroKeys((prev) =>
+        prev.includes(bairroKey) ? prev.filter((item) => item !== bairroKey) : [...prev, bairroKey],
+      );
+    },
+    [bairroRowsByKey],
+  );
+
+  const bairroGeoJsonStyle = useCallback(
+    (feature?: Feature) => {
+      const bairroKey = normalize(getFeatureName(feature, "Nome"));
+      const group = bairroRowsByKey.get(bairroKey);
+      const hasCompanies = Boolean(group?.rows.length);
+      const isSelected = selectedBairroKeys.includes(bairroKey);
+
+      if (selectionMode === "RAIO") {
+        return {
+          color: hasCompanies ? "#dc2626" : "#ef4444",
+          weight: hasCompanies ? 1.2 : 1.05,
+          opacity: hasCompanies ? 0.82 : 0.62,
+          fillOpacity: 0,
+        };
+      }
+
+      if (isSelected) {
+        return {
+          color: "#b91c1c",
+          weight: 1.8,
+          opacity: 0.95,
+          fillColor: "#0f766e",
+          fillOpacity: 0.62,
+        };
+      }
+
+      if (hasCompanies) {
+        return {
+          color: "#dc2626",
+          weight: 1.2,
+          opacity: 0.82,
+          fillColor: "#99f6e4",
+          fillOpacity: 0.52,
+        };
+      }
+
+      return {
+        color: "#ef4444",
+        weight: 1.05,
+        opacity: 0.62,
+        fillColor: "#ffffff",
+        fillOpacity: 0.02,
+      };
+    },
+    [bairroRowsByKey, selectedBairroKeys, selectionMode],
+  );
+
+  const cityGeoJsonStyle = useMemo(
+    () => ({
+      color: "#dc2626",
+      weight: 1.15,
+      opacity: 0.78,
+      fillOpacity: 0,
+    }),
+    [],
+  );
+
+  const handleBairroFeature = useCallback(
+    (feature: Feature | undefined, layer: L.Layer) => {
+      if (showBairroLabels) {
+        bindBairroLabel(feature, layer);
+      }
+
+      const bairroKey = normalize(getFeatureName(feature, "Nome"));
+      if (!bairroRowsByKey.has(bairroKey) || !("on" in layer)) return;
+
+      layer.on({
+        click: () => {
+          if (selectionMode !== "BAIRRO") return;
+          toggleBairroSelection(bairroKey);
+        },
+      });
+    },
+    [bairroRowsByKey, selectionMode, showBairroLabels, toggleBairroSelection],
+  );
 
   function RadiusClickHandler() {
     useMapEvents({
       click(e) {
-        if (!radiusMode) return;
+        if (selectionMode !== "RAIO" || !radiusMode) return;
         const center = e.latlng;
         setRadiusCenter(center);
 
@@ -568,11 +727,43 @@ export default function RoutesMap() {
     );
   }
 
-  const toggleAgenda = (id: string) =>
-    setSelectedAgendaIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const toggleAgenda = (id: string) => {
+    if (selectionMode === "BAIRRO") {
+      if (!selectedBairroAgendaIds.includes(id)) return;
+      setExcludedBairroAgendaIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+      return;
+    }
+
+    setSelectedAgendaIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
 
   const toggleVendor = (id: string) =>
     setSelectedVendorIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+
+  const resetCompanyListHeight = useCallback(() => {
+    setCompanyListHeight(256);
+  }, []);
+
+  const startCompanyListResize = useCallback((startClientY: number) => {
+    const startHeight = companyListHeight;
+
+    const handlePointerMove = (event: MouseEvent) => {
+      const deltaY = event.clientY - startClientY;
+      setCompanyListHeight(clampCompanyListHeight(startHeight + deltaY));
+    };
+
+    const stopResize = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", handlePointerMove);
+      window.removeEventListener("mouseup", stopResize);
+    };
+
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", handlePointerMove);
+    window.addEventListener("mouseup", stopResize);
+  }, [companyListHeight]);
 
   const handleGeocode = async () => {
     if (geocoding || missingAll.length === 0) return;
@@ -688,14 +879,14 @@ export default function RoutesMap() {
   const handleGenerate = async () => {
     const selVendors = vendedores.filter((v) => selectedVendorIds.includes(v.user_id));
     if (selVendors.length === 0) return setMessage("Selecione pelo menos um vendedor para gerar visitas.");
-    if (selectedAgendaIds.length === 0) return setMessage("Selecione pelo menos uma empresa para gerar visitas.");
+    if (effectiveSelectedAgendaIds.length === 0) return setMessage("Selecione pelo menos uma empresa para gerar visitas.");
     if (!visitDate) return setMessage("Selecione a data da visita.");
 
     setGenerating(true);
     setMessage(null);
 
     try {
-      const rows = await fetchAgendaForGeneration(filters, selectedAgendaIds);
+      const rows = await fetchAgendaForGeneration(filters, effectiveSelectedAgendaIds);
       if (rows.length === 0) return setMessage("Nenhum registro encontrado para gerar visitas.");
 
       const chunkSize = 500;
@@ -775,6 +966,7 @@ export default function RoutesMap() {
       );
 
       setSelectedAgendaIds([]);
+      setSelectedBairroKeys([]);
       setSelectedVendorIds([]);
       setVendorQuery("");
       setVisitDate("");
@@ -1000,8 +1192,36 @@ export default function RoutesMap() {
 
             {/* Seleção por raio */}
             <div className="rounded-xl border border-sea/20 bg-white/75 p-3">
-              <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-ink/55">Seleção por raio</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-ink/70">Selecao espacial</h3>
 
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectionMode("RAIO")}
+                  className={[
+                    "rounded-lg border px-3 py-2 text-xs font-semibold transition",
+                    selectionMode === "RAIO"
+                      ? "border-sea bg-sea/10 text-sea"
+                      : "border-sea/30 bg-white/80 text-ink/70 hover:border-sea hover:text-sea",
+                  ].join(" ")}
+                >
+                  Selecao por raio
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectionMode("BAIRRO")}
+                  className={[
+                    "rounded-lg border px-3 py-2 text-xs font-semibold transition",
+                    selectionMode === "BAIRRO"
+                      ? "border-sea bg-sea/10 text-sea"
+                      : "border-sea/30 bg-white/80 text-ink/70 hover:border-sea hover:text-sea",
+                  ].join(" ")}
+                >
+                  Selecao por bairro
+                </button>
+              </div>
+
+              {selectionMode === "RAIO" && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <select
                   value={radiusKm}
@@ -1039,68 +1259,39 @@ export default function RoutesMap() {
                   Substituir seleção
                 </label>
               </div>
+              )}
 
-              <p className="mt-2 text-[11px] text-ink/60">
+              {selectionMode === "RAIO" && <p className="mt-2 text-[11px] text-ink/60">
                 {radiusMode ? "Clique no mapa para selecionar." : "Ative o modo raio para clicar no mapa."}
-              </p>
+              </p>}
 
-              {radiusCenter && (
+              {selectionMode === "RAIO" && radiusCenter && (
                 <p className="mt-2 text-[11px] text-ink/60">
                   Centro: {radiusCenter.lat.toFixed(5)}, {radiusCenter.lng.toFixed(5)} • Encontrados:{" "}
                   {radiusRows.length}
                 </p>
               )}
 
-              {radiusRows.length > 0 && (
-                <div className="mt-3 max-h-56 space-y-1 overflow-auto rounded-lg border border-sea/15 bg-white/90 p-2">
-                  {radiusRows.map((r) => {
-                    const checked = selSet.has(r.id);
-                    return (
-                      <label
-                        key={r.id}
-                        className="flex cursor-pointer items-start justify-between gap-2 rounded-md px-2 py-2 hover:bg-sea/10"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-semibold text-ink">
-                            {r.empresa ?? r.nome_fantasia ?? "Empresa"}
-                          </p>
-                          <p className="truncate text-[11px] text-ink/60">{addr(r) || "-"}</p>
-                          <p className="truncate text-[11px] text-ink/60">
-                            COD: {r.cod_1 ?? "-"} • Bairro: {r.bairro ?? "-"}
-                          </p>
-                        </div>
 
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleAgenda(r.id)}
-                          className="mt-1 h-4 w-4 shrink-0 accent-sea"
-                        />
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-
-              {radiusCenter && (
-                <div className="mt-3 flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRadiusCenter(null);
-                      setRadiusResultIds([]);
-                    }}
-                    className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
-                  >
-                    Limpar raio
-                  </button>
-                </div>
+              {selectionMode === "BAIRRO" && (
+                <>
+                  <p className="mt-3 text-[11px] text-ink/60">
+                    Clique nos bairros do mapa. Onde houver empresa o bairro fica pintado; ao selecionar, todas as
+                    empresas daquele bairro entram na geracao.
+                  </p>
+                  <div className="mt-3 flex items-center justify-between rounded-lg border border-sea/15 bg-white/90 px-3 py-2 text-[11px] text-ink/60">
+                    <span>Bairros com empresas: {bairroRowsByKey.size}</span>
+                    <span>
+                      Bairros selecionados: {selectedBairroKeys.length} • Empresas: {effectiveSelectedAgendaIds.length}
+                    </span>
+                  </div>
+                </>
               )}
             </div>
 
             {/* Filtros de colunas */}
             <div className="rounded-xl border border-sea/20 bg-white/75 p-3">
-              <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-ink/55">Filtros de colunas</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-ink/70">Filtros de colunas</h3>
               <div className="mt-3 grid gap-2">
                 {Object.keys(FILTER_SOURCES).map((key) => (
                   <div
@@ -1161,7 +1352,7 @@ export default function RoutesMap() {
               <div className="ml-auto text-right text-xs text-ink/60">
                 <div>Empresas: {rowsMatchingFilters.length}</div>
                 {missingFromFiltersCount > 0 && <div>Sem coordenada real: {missingFromFiltersCount}</div>}
-                <div>Selecionadas: {selectedAgendaIds.length}</div>
+                <div>Selecionadas: {effectiveSelectedAgendaIds.length}</div>
               </div>
             </div>
           </div>
@@ -1189,16 +1380,25 @@ export default function RoutesMap() {
               className="routes-map h-[58vh] min-h-[380px] w-full lg:h-[72vh]"
             >
               {showBaseMap && (
-                <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                />
+                <>
+                  <TileLayer
+                    attribution='&copy; <a href="https://stadiamaps.com/" target="_blank" rel="noreferrer">Stadia Maps</a> &copy; <a href="https://stamen.com/" target="_blank" rel="noreferrer">Stamen Design</a> &copy; <a href="https://openmaptiles.org/" target="_blank" rel="noreferrer">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>'
+                    className="routes-map-toner-base"
+                    url="https://tiles.stadiamaps.com/tiles/stamen_toner_background/{z}/{x}/{y}{r}.png"
+                  />
+                  <TileLayer
+                    attribution=""
+                    className="routes-map-toner-lines"
+                    url="https://tiles.stadiamaps.com/tiles/stamen_toner_lines/{z}/{x}/{y}{r}.png"
+                    opacity={0.9}
+                  />
+                </>
               )}
 
               <RadiusClickHandler />
               <MapViewportHandler />
 
-              {radiusCenter && (
+              {selectionMode === "RAIO" && radiusCenter && (
                 <Circle
                   center={radiusCenter}
                   radius={radiusKm * 1000}
@@ -1207,37 +1407,31 @@ export default function RoutesMap() {
               )}
 
               {!isLightMapMode && (
-                <Pane name="admin-boundaries" style={{ zIndex: 480 }}>
+                <Pane name="admin-boundaries" style={{ zIndex: 470 }}>
                   {CEARA_CITIES_GEOJSON && (
                     <GeoJSON
                       data={CEARA_CITIES_GEOJSON}
-                      style={{
-                        color: "#7f1d1d",
-                        weight: 2.6,
-                        opacity: 1,
-                        fillOpacity: 0.02,
-                        dashArray: "4,3",
-                      }}
-                      interactive={false}
-                    />
-                  )}
-                  {FORTALEZA_BAIRROS_GEOJSON && (
-                    <GeoJSON
-                      data={FORTALEZA_BAIRROS_GEOJSON}
-                      style={{
-                        color: "#ef4444",
-                        weight: 2,
-                        opacity: 1,
-                        fillOpacity: 0.05,
-                      }}
+                      style={cityGeoJsonStyle}
                       interactive={false}
                     />
                   )}
                 </Pane>
               )}
 
+              <Pane name="bairro-boundaries" style={{ zIndex: 475 }}>
+                {FORTALEZA_BAIRROS_GEOJSON && (
+                  <GeoJSON
+                    key={`bairro-layer-${selectionMode}-${showBairroLabels ? "labels" : "nolabels"}`}
+                    data={FORTALEZA_BAIRROS_GEOJSON}
+                    onEachFeature={handleBairroFeature}
+                    style={bairroGeoJsonStyle}
+                    interactive
+                  />
+                )}
+              </Pane>
+
               {rowsToRender.map((r) => {
-                const sel = selSet.has(r.id);
+                const sel = effectiveSelSet.has(r.id);
                 const markerColor = r.isApproximatePoint ? "#f59e0b" : "#0f766e";
                 const markerBorderColor = r.isApproximatePoint ? "#b45309" : "#0b5b4f";
                 return (
@@ -1310,6 +1504,155 @@ export default function RoutesMap() {
               })}
             </MapContainer>
           </div>
+
+          <div className="mt-4 rounded-xl border border-sea/15 bg-white/90 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-ink/70">
+                  {selectionMode === "RAIO" ? "Empresas no raio" : "Empresas por bairro"}
+                </h3>
+                <p className="mt-1 text-[11px] text-ink/60">
+                  {selectionMode === "RAIO"
+                    ? radiusCenter
+                      ? "Revise as empresas encontradas no raio selecionado."
+                      : "A lista aparece aqui depois que voce clicar no mapa."
+                    : selectedBairroKeys.length > 0
+                      ? "Revise as empresas dos bairros selecionados."
+                      : "A lista aparece aqui depois que voce selecionar um ou mais bairros."}
+                </p>
+              </div>
+
+              {selectionMode === "RAIO" && radiusCenter && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRadiusCenter(null);
+                    setRadiusResultIds([]);
+                  }}
+                  className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+                >
+                  Limpar raio
+                </button>
+              )}
+
+              {selectionMode === "BAIRRO" && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedBairroKeys([])}
+                  disabled={selectedBairroKeys.length === 0}
+                  className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
+                >
+                  Limpar bairros
+                </button>
+              )}
+            </div>
+
+            {selectionMode === "RAIO" && radiusRows.length > 0 && (
+              <div
+                className="mt-3 grid grid-cols-1 gap-2 overflow-auto rounded-lg border border-sea/15 bg-white/90 p-2 lg:grid-cols-2"
+                style={{ height: `${companyListHeight}px` }}
+              >
+                {radiusRows.map((r) => {
+                  const checked = effectiveSelSet.has(r.id);
+                  return (
+                    <label
+                      key={r.id}
+                      className="flex h-full cursor-pointer items-start justify-between gap-2 rounded-md border border-sea/10 bg-white px-2 py-2 hover:bg-sea/10"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-semibold text-ink">
+                          {r.empresa ?? r.nome_fantasia ?? "Empresa"}
+                        </p>
+                        <p className="truncate text-[11px] text-ink/60">{addr(r) || "-"}</p>
+                        <p className="truncate text-[11px] text-ink/60">
+                          COD: {r.cod_1 ?? "-"} • Bairro: {r.bairro ?? "-"}
+                        </p>
+                      </div>
+
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleAgenda(r.id)}
+                        className="mt-1 h-4 w-4 shrink-0 accent-sea"
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            {selectionMode === "BAIRRO" && selectedBairroKeys.length > 0 && (
+              <>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {selectedBairroKeys.map((bairroKey) => {
+                    const group = bairroRowsByKey.get(bairroKey);
+                    if (!group) return null;
+                    return (
+                      <button
+                        key={bairroKey}
+                        type="button"
+                        onClick={() => toggleBairroSelection(bairroKey)}
+                        className="rounded-full border border-sea/25 bg-sea/10 px-3 py-1 text-[11px] font-semibold text-sea hover:border-sea"
+                      >
+                        {group.name} ({group.rows.length})
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div
+                  className="mt-3 grid grid-cols-1 gap-2 overflow-auto rounded-lg border border-sea/15 bg-white/90 p-2 lg:grid-cols-2"
+                  style={{ height: `${companyListHeight}px` }}
+                >
+                  {selectedBairroCompanyRows.map((r) => {
+                    const checked = effectiveSelSet.has(r.id);
+                    return (
+                      <label
+                        key={r.id}
+                        className="flex h-full cursor-pointer items-start justify-between gap-2 rounded-md border border-sea/10 bg-white px-2 py-2 hover:bg-sea/10"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-ink">
+                            {r.empresa ?? r.nome_fantasia ?? "Empresa"}
+                          </p>
+                          <p className="truncate text-[11px] text-ink/60">{addr(r) || "-"}</p>
+                          <p className="truncate text-[11px] text-ink/60">
+                            COD: {r.cod_1 ?? "-"} • Bairro: {r.bairro ?? "-"}
+                          </p>
+                        </div>
+
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleAgenda(r.id)}
+                          className="mt-1 h-4 w-4 shrink-0 accent-sea"
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            {((selectionMode === "RAIO" && radiusRows.length > 0) ||
+              (selectionMode === "BAIRRO" && selectedBairroKeys.length > 0)) && (
+              <div className="mt-3 flex justify-center">
+                <button
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    startCompanyListResize(event.clientY);
+                  }}
+                  onDoubleClick={resetCompanyListHeight}
+                  className="hidden cursor-row-resize rounded-full px-6 py-2 lg:flex"
+                  aria-label="Redimensionar lista de empresas"
+                  title="Clique e arraste para aumentar ou diminuir a lista"
+                >
+                  <span className="h-1.5 w-24 rounded-full bg-sea/25 transition hover:bg-sea" />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
@@ -1326,7 +1669,7 @@ export default function RoutesMap() {
             <p className="mt-1 text-xs text-ink/60">
               Selecione os vendedores, a data e as empresas marcadas no mapa para gerar as visitas.
             </p>
-            <p className="mt-2 text-xs text-ink/60">Empresas selecionadas: {selectedAgendaIds.length}</p>
+            <p className="mt-2 text-xs text-ink/60">Empresas selecionadas: {effectiveSelectedAgendaIds.length}</p>
 
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70">
@@ -1408,14 +1751,14 @@ export default function RoutesMap() {
                 onClick={handleGenerate}
                 disabled={
                   selectedVendorIds.length === 0 ||
-                  selectedAgendaIds.length === 0 ||
+                  effectiveSelectedAgendaIds.length === 0 ||
                   !visitDate ||
                   generating ||
                   rowsMatchingFilters.length === 0
                 }
                 className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
-                {generating ? "Gerando..." : `Confirmar (${selectedAgendaIds.length})`}
+                {generating ? "Gerando..." : `Confirmar (${effectiveSelectedAgendaIds.length})`}
               </button>
             </div>
           </div>
