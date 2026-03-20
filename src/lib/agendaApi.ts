@@ -101,6 +101,8 @@ const dedupeAgendaRows = <T extends Partial<AgendaRow>>(rows: T[]) => {
 };
 
 const AGENDA_SORTABLE_COLUMNS = new Set<string>([
+  "obs",
+  "visit_generated_at",
   "data_da_ultima_visita",
   "visit_completed_vidas",
   "cod_1",
@@ -116,12 +118,18 @@ const applyAgendaSorting = <T,>(query: T, sorting: SortingState): T => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let next: any = query;
   if (!sorting.length) {
+    next = next.order("visit_generated_at", { ascending: false, nullsFirst: false });
     next = next.order("data_da_ultima_visita", { ascending: false, nullsFirst: false });
     return next as T;
   }
 
   const { id, desc } = sorting[0];
-  const sortColumn = AGENDA_SORTABLE_COLUMNS.has(id) ? id : "data_da_ultima_visita";
+  const sortColumn =
+    id === "obs"
+      ? "visit_generated_at"
+      : AGENDA_SORTABLE_COLUMNS.has(id)
+        ? id
+        : "visit_generated_at";
   next = next.order(sortColumn, { ascending: !desc, nullsFirst: false });
   return next as T;
 };
@@ -360,6 +368,11 @@ export type AgendaFetchResult = {
   count: number;
 };
 
+export type AgendaSearchFilters = {
+  companyName?: string;
+  companyCode?: string;
+};
+
 export type AgendaScheduledVisit = {
   id: string;
   agenda_id: string;
@@ -386,6 +399,7 @@ export const fetchAgenda = async (
   pageSize: number,
   sorting: SortingState,
   filters: AgendaFilters,
+  search?: AgendaSearchFilters,
 ): Promise<AgendaFetchResult> => {
   const vidasRange = getVidasRange(filters);
   let agendaIdsByVidas: string[] | null = null;
@@ -410,6 +424,16 @@ export const fetchAgenda = async (
     .ilike("situacao", "ativo%");
 
   let query = applyFilters(baseQuery(), effectiveFilters);
+  const companyName = search?.companyName?.replace(/%/g, "").trim();
+  if (companyName) {
+    query = query.or(`empresa.ilike.%${companyName}%,nome_fantasia.ilike.%${companyName}%`);
+  }
+
+  const companyCode = search?.companyCode?.replace(/%/g, "").trim();
+  if (companyCode) {
+    query = query.ilike("cod_1", `%${companyCode}%`);
+  }
+
   if (agendaIdsByVidas) {
     if (agendaIdsByVidas.length === 0) {
       return { data: [], count: 0 };
