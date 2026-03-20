@@ -93,6 +93,11 @@ const formatDateKey = (value: string) => {
   return format(new Date(value), "yyyy-MM-dd");
 };
 
+const getDateKey = (date: Date) => {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+};
+
 const toDateInput = (value: string | null) => {
   if (!value) return "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
@@ -363,81 +368,128 @@ export default function Visitas() {
       const end = endOfMonth(currentMonth);
       const startDate = format(start, "yyyy-MM-dd");
       const endDate = format(end, "yyyy-MM-dd");
-      const todayKey = format(new Date(), "yyyy-MM-dd");
-      const yesterdayKey = format(addDays(new Date(), -1), "yyyy-MM-dd");
+      const baseDate = new Date();
+      const todayKey = getDateKey(baseDate);
+      const yesterdayKey = getDateKey(addDays(baseDate, -1));
       let effectiveEnd = endDate;
       let maxDate = endDate;
 
       if (isVendor) {
-        let blocked = false;
         let blockReason: string | null = null;
-        let hadVisitsYesterday = false;
-        if (session?.user.id || profile?.display_name) {
-          let baseQuery = supabase
-            .from("visits")
-            .select("id", { count: "exact", head: true })
-            .eq("visit_date", yesterdayKey)
-            .is("completed_at", null);
-
+        const applyVendorVisitFilter = <TQuery,>(query: TQuery) => {
           if (session?.user.id && profile?.display_name) {
-            baseQuery = baseQuery.or(
+            return (query as TQuery & { or: (filters: string) => TQuery }).or(
               `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
             );
-          } else if (session?.user.id) {
-            baseQuery = baseQuery.eq("assigned_to_user_id", session.user.id);
-          } else if (profile?.display_name) {
-            baseQuery = baseQuery.eq("assigned_to_name", profile.display_name);
           }
-
-          const { count, error: countError } = await baseQuery;
-          if (!countError && (count ?? 0) > 0) {
-            blocked = true;
-            blockReason = "Conclua todas as visitas de ontem para ver as visitas de hoje.";
+          if (session?.user.id) {
+            return (query as TQuery & { eq: (column: string, value: string) => TQuery }).eq(
+              "assigned_to_user_id",
+              session.user.id,
+            );
           }
+          if (profile?.display_name) {
+            return (query as TQuery & { eq: (column: string, value: string) => TQuery }).eq(
+              "assigned_to_name",
+              profile.display_name,
+            );
+          }
+          return query;
+        };
 
-          let allVisitsQuery = supabase
+        const fetchPendingVisitCount = async (dateKey: string) => {
+          let query = supabase
             .from("visits")
             .select("id", { count: "exact", head: true })
-            .eq("visit_date", yesterdayKey)
+            .eq("visit_date", dateKey)
+            .is("completed_at", null);
+          query = applyVendorVisitFilter(query);
+          const { count, error: countError } = await query;
+          if (countError) throw new Error(countError.message);
+          return count ?? 0;
+        };
+
+        const fetchCompletedVisitCount = async (dateKey: string) => {
+          let query = supabase
+            .from("visits")
+            .select("id", { count: "exact", head: true })
+            .eq("visit_date", dateKey)
             .not("completed_at", "is", null)
             .is("no_visit_reason", null);
+          query = applyVendorVisitFilter(query);
+          const { count, error: countError } = await query;
+          if (countError) throw new Error(countError.message);
+          return count ?? 0;
+        };
 
-          if (session?.user.id && profile?.display_name) {
-            allVisitsQuery = allVisitsQuery.or(
-              `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
-            );
-          } else if (session?.user.id) {
-            allVisitsQuery = allVisitsQuery.eq("assigned_to_user_id", session.user.id);
-          } else if (profile?.display_name) {
-            allVisitsQuery = allVisitsQuery.eq("assigned_to_name", profile.display_name);
-          }
-
-          const { count: allCount, error: allCountError } = await allVisitsQuery;
-          if (!allCountError && (allCount ?? 0) > 0) {
-            hadVisitsYesterday = true;
-          }
-        }
-
-        if (!blocked && session?.user.id && hadVisitsYesterday) {
+        const hasAceiteDigital = async (dateKey: string) => {
+          if (!session?.user.id) return false;
           const { count, error: aceiteError } = await supabase
             .from("aceite_digital")
             .select("id", { count: "exact", head: true })
             .eq("vendor_user_id", session.user.id)
-            .eq("entry_date", yesterdayKey);
+            .eq("entry_date", dateKey);
+          if (aceiteError) throw new Error(aceiteError.message);
+          return (count ?? 0) > 0;
+        };
 
-          if (aceiteError) {
-            console.error(aceiteError);
-          } else if ((count ?? 0) === 0) {
-            blocked = true;
-            blockReason = "Registre o aceite digital de ontem para ver as visitas de hoje.";
+        const resolveDayGate = async (
+          dateKey: string,
+          pendingReason: string,
+          acceptanceReason: string,
+        ) => {
+          const [pendingCount, completedCount] = await Promise.all([
+            fetchPendingVisitCount(dateKey),
+            fetchCompletedVisitCount(dateKey),
+          ]);
+
+          if (pendingCount > 0) {
+            return { blocked: true, reason: pendingReason };
           }
+
+          if (completedCount > 0) {
+            const accepted = await hasAceiteDigital(dateKey);
+            if (!accepted) {
+              return { blocked: true, reason: acceptanceReason };
+            }
+          }
+
+          return { blocked: false, reason: null };
+        };
+
+        try {
+          const yesterdayGate = await resolveDayGate(
+            yesterdayKey,
+            "Conclua todas as visitas de ontem para ver as visitas de hoje.",
+            "Registre o aceite digital de ontem para ver as visitas de hoje.",
+          );
+
+          if (yesterdayGate.blocked) {
+            maxDate = yesterdayKey;
+            blockReason = yesterdayGate.reason;
+          } else {
+            const todayGate = await resolveDayGate(
+              todayKey,
+              "Conclua todas as visitas de hoje.",
+              "Registre o aceite digital de hoje.",
+            );
+
+            if (todayGate.blocked) {
+              maxDate = todayKey;
+              blockReason = todayGate.reason;
+            } else {
+              maxDate = todayKey;
+            }
+          }
+        } catch (gateError) {
+          console.error(gateError);
+          maxDate = todayKey;
+          blockReason = "Nao foi possivel validar as pendencias do vendedor.";
         }
 
-        if (blocked) {
-          maxDate = yesterdayKey;
-          setBlockMessage(blockReason ?? "Conclua todas as visitas de ontem para ver as visitas de hoje.");
+        if (blockReason) {
+          setBlockMessage(blockReason);
         } else {
-          maxDate = todayKey;
           setBlockMessage(null);
         }
 
