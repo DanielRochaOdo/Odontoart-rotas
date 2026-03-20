@@ -851,8 +851,7 @@ export default function Agenda() {
         const { error: updateError } = await supabase
           .from("agenda")
           .update({ visit_generated_at: visitBase.toISOString() })
-          .in("id", chunkIds)
-          .is("visit_generated_at", null);
+          .in("id", chunkIds);
 
         if (updateError) {
           throw new Error(updateError.message);

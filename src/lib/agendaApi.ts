@@ -598,7 +598,6 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
     supabase
       .from("agenda")
       .select("id, perfil_visita, instructions, cod_1, empresa, nome_fantasia")
-      .is("visit_generated_at", null)
       .ilike("situacao", "ativo%")
       .order("id", { ascending: true });
 
