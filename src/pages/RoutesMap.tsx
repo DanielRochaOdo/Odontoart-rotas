@@ -7,6 +7,7 @@ import {
   Plus,
   RefreshCw,
   SquareCenterlineDashedHorizontal,
+  X,
 } from "lucide-react";
 import L from "leaflet";
 import {
@@ -34,12 +35,19 @@ import {
 import { onProfilesUpdated } from "../lib/profileEvents";
 import { useAgendaFilters } from "../hooks/useAgendaFilters";
 import {
+  fetchAgendaScheduledVisits,
   fetchAgendaForGeneration,
   fetchSupervisores,
   fetchVendedores,
+  type AgendaScheduledVisit,
 } from "../lib/agendaApi";
 import { supabase } from "../lib/supabase";
 import { formatDateBr } from "../lib/dateFormat";
+import {
+  clearRoutesModuleDraft,
+  readRoutesModuleDraft,
+  writeRoutesModuleDraft,
+} from "../lib/routesModuleDraft";
 import MultiSelectFilter from "../components/agenda/MultiSelectFilter";
 import cearaCitiesRaw from "../data/ceara_municipios.geojson?raw";
 import fortalezaBairrosRaw from "../data/fortaleza_bairros.geojson?raw";
@@ -106,6 +114,24 @@ const toDateKey = (v: string | null | undefined) => (v ?? "").slice(0, 10);
 const compact = (v: string | null | undefined) => (v ?? "").replace(/\s+/g, " ").trim();
 
 const fmtDate = (v: string | null) => formatDateBr(v);
+
+const parseDateValue = (value: string) => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return new Date(`${value}T12:00:00`);
+  }
+  return new Date(value);
+};
+
+const formatVisitBadge = (value: string | null) => {
+  if (!value) return "-";
+  const date = parseDateValue(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const formatted = new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "short",
+  }).format(date);
+  return formatted.replace(".", "").toUpperCase();
+};
 
 const addr = (r: AgendaLookupRow) =>
   [r.endereco, r.complemento, r.bairro, r.cidade, r.uf].filter(Boolean).join(", ");
@@ -239,10 +265,14 @@ export default function RoutesMap() {
   const canGenerate = role === "SUPERVISOR" || role === "ASSISTENTE";
 
   const { filters, setFilters, clearFilters } = useAgendaFilters();
-  const [globalQuery, setGlobalQuery] = useState(filters.global);
-  const typingGlobalRef = useRef(false);
+  const [companyNameQuery, setCompanyNameQuery] = useState("");
+  const [companyCodeQuery, setCompanyCodeQuery] = useState("");
+  const restoredDraftRef = useRef(false);
 
   const [agendaRows, setAgendaRows] = useState<AgendaLookupRow[]>([]);
+  const [scheduledVisitsByAgenda, setScheduledVisitsByAgenda] = useState<
+    Record<string, AgendaScheduledVisit[]>
+  >({});
   const [vendedores, setVendedores] = useState<
     { user_id: string; display_name: string | null; role: string; supervisor_id?: string | null }[]
   >([]);
@@ -278,20 +308,15 @@ export default function RoutesMap() {
   // ==============================================
 
   useEffect(() => {
-    if (typingGlobalRef.current) {
-      if (filters.global === globalQuery) typingGlobalRef.current = false;
-      return;
+    if (restoredDraftRef.current) return;
+    restoredDraftRef.current = true;
+    const parsed = readRoutesModuleDraft();
+    if (typeof parsed.companyNameQuery === "string") setCompanyNameQuery(parsed.companyNameQuery);
+    if (typeof parsed.companyCodeQuery === "string") setCompanyCodeQuery(parsed.companyCodeQuery);
+    if (Array.isArray(parsed.selectedAgendaIds)) {
+      setSelectedAgendaIds(Array.from(new Set(parsed.selectedAgendaIds.filter(Boolean))));
     }
-    if (filters.global !== globalQuery) setGlobalQuery(filters.global);
-  }, [filters.global, globalQuery]);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => {
-      setFilters((p) => (p.global === globalQuery ? p : { ...p, global: globalQuery }));
-      typingGlobalRef.current = false;
-    }, 250);
-    return () => window.clearTimeout(t);
-  }, [globalQuery, setFilters]);
+  }, []);
 
   useEffect(() => {
     if (!canGenerate) return;
@@ -344,6 +369,37 @@ export default function RoutesMap() {
 
   const dedupedAgendaRows = useMemo(() => dedupeAgendaLookupRows(agendaRows), [agendaRows]);
 
+  useEffect(() => {
+    let active = true;
+    const agendaIds = dedupedAgendaRows.map((row) => row.id);
+
+    if (agendaIds.length === 0) {
+      setScheduledVisitsByAgenda({});
+      return () => {
+        active = false;
+      };
+    }
+
+    fetchAgendaScheduledVisits(agendaIds)
+      .then((visits) => {
+        if (!active) return;
+        const grouped: Record<string, AgendaScheduledVisit[]> = {};
+        visits.forEach((visit) => {
+          if (!grouped[visit.agenda_id]) grouped[visit.agenda_id] = [];
+          grouped[visit.agenda_id].push(visit);
+        });
+        setScheduledVisitsByAgenda(grouped);
+      })
+      .catch((error) => {
+        console.error(error);
+        if (active) setScheduledVisitsByAgenda({});
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [dedupedAgendaRows]);
+
   const filterOptions = useMemo<Record<string, string[]>>(() => {
     const options = Object.fromEntries(
       Object.keys(FILTER_SOURCES).map((key) => [key, new Set<string>()]),
@@ -374,30 +430,20 @@ export default function RoutesMap() {
   }, [dedupedAgendaRows]);
 
   const rowsMatchingFilters = useMemo(() => {
-    const term = normalize(filters.global);
+    const companyNameTerm = normalize(companyNameQuery);
+    const companyCodeTerm = normalize(companyCodeQuery);
     const d = filters.dateRanges.data_da_ultima_visita;
     const vr = filters.ranges.vidas_ultima_visita;
 
     return dedupedAgendaRows.filter((r) => {
-      if (term) {
-        const hay = normalize(
-          [
-            r.empresa,
-            r.nome_fantasia,
-            r.cidade,
-            r.uf,
-            r.vendedor,
-            r.supervisor,
-            r.situacao,
-            r.grupo,
-            r.perfil_visita,
-            r.endereco,
-            r.bairro,
-          ]
-            .filter(Boolean)
-            .join(" "),
-        );
-        if (!hay.includes(term)) return false;
+      if (companyNameTerm) {
+        const companyNameHaystack = normalize([r.empresa, r.nome_fantasia].filter(Boolean).join(" "));
+        if (!companyNameHaystack.includes(companyNameTerm)) return false;
+      }
+
+      if (companyCodeTerm) {
+        const code = normalize(r.cod_1);
+        if (!code.includes(companyCodeTerm)) return false;
       }
 
       const ck: Record<string, string> = {
@@ -455,7 +501,23 @@ export default function RoutesMap() {
 
       return true;
     });
-  }, [dedupedAgendaRows, filters]);
+  }, [companyCodeQuery, companyNameQuery, dedupedAgendaRows, filters]);
+
+  const resolveMapObs = useCallback((agendaId: string) => {
+    const visits = scheduledVisitsByAgenda[agendaId] ?? [];
+    if (visits.length === 0) return "-";
+
+    const latestVisit = visits.reduce<AgendaScheduledVisit | null>((latest, visit) => {
+      if (!latest) return visit;
+      const latestTime = parseDateValue(latest.visit_date).getTime();
+      const visitTime = parseDateValue(visit.visit_date).getTime();
+      if (Number.isNaN(visitTime)) return latest;
+      if (Number.isNaN(latestTime) || visitTime > latestTime) return visit;
+      return latest;
+    }, null);
+
+    return formatVisitBadge(latestVisit?.visit_date ?? null);
+  }, [scheduledVisitsByAgenda]);
 
   const mapRows = useMemo<RenderableMapRow[]>(() => {
     return rowsMatchingFilters.map((row) => {
@@ -526,12 +588,24 @@ export default function RoutesMap() {
   const excludedBairroAgendaSet = useMemo(() => new Set(excludedBairroAgendaIds), [excludedBairroAgendaIds]);
   const effectiveSelectedAgendaIds = useMemo(
     () =>
-      selectionMode === "BAIRRO"
-        ? selectedBairroAgendaIds.filter((id) => !excludedBairroAgendaSet.has(id))
-        : selectedAgendaIds,
-    [excludedBairroAgendaSet, selectedAgendaIds, selectedBairroAgendaIds, selectionMode],
+      Array.from(
+        new Set([
+          ...selectedAgendaIds,
+          ...selectedBairroAgendaIds.filter((id) => !excludedBairroAgendaSet.has(id)),
+        ]),
+      ),
+    [excludedBairroAgendaSet, selectedAgendaIds, selectedBairroAgendaIds],
   );
   const effectiveSelSet = useMemo(() => new Set(effectiveSelectedAgendaIds), [effectiveSelectedAgendaIds]);
+
+  useEffect(() => {
+    if (!restoredDraftRef.current) return;
+    writeRoutesModuleDraft({
+      companyNameQuery,
+      companyCodeQuery,
+      selectedAgendaIds: effectiveSelectedAgendaIds,
+    });
+  }, [companyCodeQuery, companyNameQuery, effectiveSelectedAgendaIds]);
 
   useEffect(() => {
     setExcludedBairroAgendaIds((prev) => prev.filter((id) => selectedBairroAgendaIds.includes(id)));
@@ -739,6 +813,13 @@ export default function RoutesMap() {
 
   const toggleVendor = (id: string) =>
     setSelectedVendorIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+
+  const clearAllSelectedCompanies = useCallback(() => {
+    setSelectedAgendaIds([]);
+    setSelectedBairroKeys([]);
+    setExcludedBairroAgendaIds([]);
+    setRadiusResultIds([]);
+  }, []);
 
   const resetCompanyListHeight = useCallback(() => {
     setCompanyListHeight(256);
@@ -971,6 +1052,7 @@ export default function RoutesMap() {
       setVendorQuery("");
       setVisitDate("");
       setShowGenerateModal(false);
+      clearRoutesModuleDraft();
 
       setRadiusResultIds([]);
       setRadiusCenter(null);
@@ -1003,18 +1085,26 @@ export default function RoutesMap() {
       <section className="grid gap-4 lg:grid-cols-[30%_70%] lg:items-stretch">
         <div className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
           <div className="flex flex-col gap-4">
-            {/* Busca global */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-ink/70">Busca global</label>
-              <input
-                value={globalQuery}
-                onChange={(e) => {
-                  typingGlobalRef.current = true;
-                  setGlobalQuery(e.target.value);
-                }}
-                placeholder="Empresa, cidade, vendedor..."
-                className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
-              />
+            {/* Busca por nome e codigo */}
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] font-semibold text-ink/70">Pesquisar por nome</span>
+                <input
+                  value={companyNameQuery}
+                  onChange={(e) => setCompanyNameQuery(e.target.value)}
+                  placeholder="Empresa ou nome fantasia"
+                  className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] font-semibold text-ink/70">Pesquisar por codigo</span>
+                <input
+                  value={companyCodeQuery}
+                  onChange={(e) => setCompanyCodeQuery(e.target.value)}
+                  placeholder="Codigo da empresa"
+                  className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
+                />
+              </label>
             </div>
 
             {/* Ultima visita */}
@@ -1323,7 +1413,7 @@ export default function RoutesMap() {
                   setMessage(null);
                   setShowGenerateModal(true);
                 }}
-                disabled={rowsMatchingFilters.length === 0}
+                disabled={effectiveSelectedAgendaIds.length === 0}
                 className="inline-flex items-center gap-1 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
                 <MapPin size={14} />
@@ -1343,7 +1433,11 @@ export default function RoutesMap() {
 
               <button
                 type="button"
-                onClick={clearFilters}
+                onClick={() => {
+                  clearFilters();
+                  setCompanyNameQuery("");
+                  setCompanyCodeQuery("");
+                }}
                 className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
               >
                 Limpar filtros
@@ -1352,7 +1446,19 @@ export default function RoutesMap() {
               <div className="ml-auto text-right text-xs text-ink/60">
                 <div>Empresas: {rowsMatchingFilters.length}</div>
                 {missingFromFiltersCount > 0 && <div>Sem coordenada real: {missingFromFiltersCount}</div>}
-                <div>Selecionadas: {effectiveSelectedAgendaIds.length}</div>
+                <div className="flex items-center justify-end gap-1">
+                  <span>Selecionadas: {effectiveSelectedAgendaIds.length}</span>
+                  <button
+                    type="button"
+                    onClick={clearAllSelectedCompanies}
+                    disabled={effectiveSelectedAgendaIds.length === 0}
+                    title="Limpar empresas selecionadas"
+                    aria-label="Limpar empresas selecionadas"
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-full text-ink/50 transition hover:bg-sea/10 hover:text-sea disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1440,7 +1546,11 @@ export default function RoutesMap() {
                       fillOpacity: sel ? 0.6 : 0.45,
                       weight: sel ? 2.2 : 1.4,
                     }}
-                    eventHandlers={{ click: () => toggleAgenda(r.id) }}
+                    eventHandlers={{
+                      click: () => toggleAgenda(r.id),
+                      mouseover: (event) => event.target.openTooltip(),
+                      mouseout: (event) => event.target.closeTooltip(),
+                    }}
                   >
                     <Tooltip direction="right" offset={[12, -4]} opacity={0.98} sticky className="routes-map-tooltip">
                       {isLightMapMode ? (
@@ -1450,15 +1560,16 @@ export default function RoutesMap() {
                           <p className="text-ink/70">
                             {r.bairro ?? "-"} • {r.cidade ?? "-"}
                           </p>
-                          <p className="text-ink/60">ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}</p>
+                          <p className="text-ink/60">
+                            ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}
+                            {` | OBS: ${resolveMapObs(r.id)}`}
+                          </p>
+                          <p className="text-ink/60">VIDAS ULTIMA VISITA: {r.visit_completed_vidas ?? "-"}</p>
                           {r.isApproximatePoint && <p className="text-amber-700">PONTO APROXIMADO</p>}
                         </div>
                       ) : (
                         <div className="w-[320px] max-w-[320px] space-y-1 text-xs [overflow-wrap:anywhere]">
-                          <p className="font-semibold text-ink">
-                            OBS:{" "}
-                            {r.data_da_ultima_visita ? fmtDate(r.data_da_ultima_visita) : r.obs_contrato_1 ?? "-"}
-                          </p>
+                          <p className="font-semibold text-ink">OBS: {resolveMapObs(r.id)}</p>
                           <p className="text-ink/70">ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}</p>
                           <p className="text-ink/70">VIDAS ULTIMA VISITA: {r.visit_completed_vidas ?? "-"}</p>
                           <p className="text-ink/70">CODIGO: {r.cod_1 ?? "-"}</p>
@@ -1562,6 +1673,13 @@ export default function RoutesMap() {
                         <p className="truncate text-[11px] text-ink/60">
                           COD: {r.cod_1 ?? "-"} • Bairro: {r.bairro ?? "-"}
                         </p>
+                        <p className="truncate text-[11px] text-ink/60">
+                          ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}
+                          {` | OBS: ${resolveMapObs(r.id)}`}
+                        </p>
+                        <p className="truncate text-[11px] text-ink/60">
+                          VIDAS ULTIMA VISITA: {r.visit_completed_vidas ?? "-"}
+                        </p>
                       </div>
 
                       <input
@@ -1613,6 +1731,13 @@ export default function RoutesMap() {
                           <p className="truncate text-[11px] text-ink/60">{addr(r) || "-"}</p>
                           <p className="truncate text-[11px] text-ink/60">
                             COD: {r.cod_1 ?? "-"} • Bairro: {r.bairro ?? "-"}
+                          </p>
+                          <p className="truncate text-[11px] text-ink/60">
+                            ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}
+                            {` | OBS: ${resolveMapObs(r.id)}`}
+                          </p>
+                          <p className="truncate text-[11px] text-ink/60">
+                            VIDAS ULTIMA VISITA: {r.visit_completed_vidas ?? "-"}
                           </p>
                         </div>
 
@@ -1748,8 +1873,7 @@ export default function RoutesMap() {
                   selectedVendorIds.length === 0 ||
                   effectiveSelectedAgendaIds.length === 0 ||
                   !visitDate ||
-                  generating ||
-                  rowsMatchingFilters.length === 0
+                  generating
                 }
                 className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >

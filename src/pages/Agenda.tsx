@@ -6,6 +6,7 @@ import {
   Map as MapIcon,
   MapPin,
   SquareCenterlineDashedHorizontal,
+  X,
 } from "lucide-react";
 import {
   flexRender,
@@ -32,6 +33,11 @@ import AgendaDrawer from "../components/agenda/AgendaDrawer";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { onProfilesUpdated } from "../lib/profileEvents";
+import {
+  clearRoutesModuleDraft,
+  readRoutesModuleDraft,
+  writeRoutesModuleDraft,
+} from "../lib/routesModuleDraft";
 import {
   PERFIL_VISITA_PRESETS,
   extractCustomTimes,
@@ -126,6 +132,24 @@ const formatCurrency = (value: number | null) => {
 
 const normalizeNumberInput = (value: string) => value.replace(/\D/g, "");
 
+const toSortableTimestamp = (value: string | null | undefined) => {
+  if (!value) return null;
+  const parsed = parseDateValue(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.getTime();
+};
+
+const compareNullableTimestamps = (
+  left: number | null,
+  right: number | null,
+  descending: boolean,
+) => {
+  if (left === right) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  return descending ? right - left : left - right;
+};
+
 const MONTH_OPTIONS = [
   { value: "1", label: "Janeiro" },
   { value: "2", label: "Fevereiro" },
@@ -166,8 +190,8 @@ export default function Agenda() {
   const { role, session } = useAuth();
   const canAccess = role === "SUPERVISOR" || role === "ASSISTENTE";
   const { filters, setFilters, clearFilters } = useAgendaFilters();
-  const [globalQuery, setGlobalQuery] = useState(filters.global);
-  const typingGlobalRef = useRef(false);
+  const [companyNameQuery, setCompanyNameQuery] = useState("");
+  const [companyCodeQuery, setCompanyCodeQuery] = useState("");
   const [data, setData] = useState<AgendaRow[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -212,6 +236,7 @@ export default function Agenda() {
   const detailsObsRequestRef = useRef(0);
   const restoredViewRef = useRef(false);
   const restoredModalRef = useRef(false);
+  const restoredRoutesDraftRef = useRef(false);
   const pendingModalRestoreRef = useRef<PendingAgendaModalState | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
 
@@ -375,6 +400,22 @@ export default function Agenda() {
   const canEdit = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canManageInstruction = role === "SUPERVISOR";
 
+  useEffect(() => {
+    if (restoredRoutesDraftRef.current) return;
+    restoredRoutesDraftRef.current = true;
+    const draft = readRoutesModuleDraft();
+    setCompanyNameQuery(draft.companyNameQuery ?? "");
+    setCompanyCodeQuery(draft.companyCodeQuery ?? "");
+    if (Array.isArray(draft.selectedAgendaIds)) {
+      setSelectedAgendaIds(Array.from(new Set(draft.selectedAgendaIds.filter(Boolean))));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!filters.global) return;
+    setFilters((prev) => (prev.global ? { ...prev, global: "" } : prev));
+  }, [filters.global, setFilters]);
+
   const vendorOptions = useMemo(
     () =>
       vendedores
@@ -454,35 +495,56 @@ export default function Agenda() {
     return "-";
   };
 
+  const resolveLastCompletedVisitDate = (agendaId: string, fallback?: string | null) => {
+    const visits = visitVendorsByAgenda[agendaId] ?? [];
+    const completed = visits.find(
+      (visit) =>
+        Boolean(visit.completed_at) &&
+        visit.completed_vidas !== null &&
+        visit.completed_vidas !== undefined &&
+        Boolean(visit.visit_date),
+    );
+    if (completed?.visit_date) return formatDate(completed.visit_date);
+    return formatDate(fallback ?? null);
+  };
+
+  const resolveScheduledObsVisit = (agendaId: string, rowInstructions?: string | null) => {
+    const visits = scheduledVisitsByAgenda[agendaId] ?? [];
+    if (visits.length === 0) return null;
+
+    const latestVisit = visits.reduce<AgendaScheduledVisit | null>((latest, visit) => {
+      if (!latest) return visit;
+      const latestTimestamp = toSortableTimestamp(latest.visit_date);
+      const visitTimestamp = toSortableTimestamp(visit.visit_date);
+      if (visitTimestamp === null) return latest;
+      if (latestTimestamp === null || visitTimestamp > latestTimestamp) return visit;
+      return latest;
+    }, null);
+
+    const instructions =
+      rowInstructions?.trim() ||
+      latestVisit?.instructions?.trim() ||
+      visits.find((visit) => visit.instructions?.trim())?.instructions?.trim() ||
+      "";
+
+    return {
+      visitDate: latestVisit?.visit_date ?? null,
+      instructions,
+    };
+  };
+
   useEffect(() => {
     setPageIndex(0);
-  }, [filters, sorting]);
+  }, [companyCodeQuery, companyNameQuery, filters, sorting]);
 
   useEffect(() => {
-    setSelectedAgendaIds([]);
-  }, [filters, sorting]);
-
-  useEffect(() => {
-    if (typingGlobalRef.current) {
-      if (filters.global === globalQuery) {
-        typingGlobalRef.current = false;
-      }
-      return;
-    }
-    if (filters.global !== globalQuery) {
-      setGlobalQuery(filters.global);
-    }
-  }, [filters.global, globalQuery]);
-
-  useEffect(() => {
-    const handler = window.setTimeout(() => {
-      setFilters((prev) =>
-        prev.global === globalQuery ? prev : { ...prev, global: globalQuery },
-      );
-      typingGlobalRef.current = false;
-    }, 250);
-    return () => window.clearTimeout(handler);
-  }, [globalQuery, setFilters]);
+    if (!restoredRoutesDraftRef.current) return;
+    writeRoutesModuleDraft({
+      companyNameQuery,
+      companyCodeQuery,
+      selectedAgendaIds,
+    });
+  }, [companyCodeQuery, companyNameQuery, selectedAgendaIds]);
 
   useEffect(() => {
     const loadOptions = async () => {
@@ -538,7 +600,10 @@ export default function Agenda() {
       setLoading(true);
       setError(null);
       try {
-        const result = await fetchAgenda(pageIndex, pageSize, sorting, filters);
+        const result = await fetchAgenda(pageIndex, pageSize, sorting, filters, {
+          companyName: companyNameQuery,
+          companyCode: companyCodeQuery,
+        });
         setData(result.data);
         setTotalCount(result.count);
       } catch (err) {
@@ -549,7 +614,7 @@ export default function Agenda() {
     };
 
     load();
-  }, [filters, pageIndex, pageSize, sorting, refreshKey]);
+  }, [companyCodeQuery, companyNameQuery, filters, pageIndex, pageSize, refreshKey, sorting]);
 
   useEffect(() => {
     let active = true;
@@ -608,8 +673,39 @@ export default function Agenda() {
     );
   }, [vendorQuery, vendedores]);
 
+  const displayData = useMemo(() => {
+    if (data.length <= 1) return data;
+
+    const primarySort = sorting[0];
+    if (primarySort && primarySort.id !== "obs") {
+      return data;
+    }
+
+    const descending = primarySort?.desc ?? true;
+    return [...data].sort((left, right) => {
+      const leftObsTimestamp = toSortableTimestamp(
+        resolveScheduledObsVisit(left.id, left.instructions)?.visitDate,
+      );
+      const rightObsTimestamp = toSortableTimestamp(
+        resolveScheduledObsVisit(right.id, right.instructions)?.visitDate,
+      );
+      const obsComparison = compareNullableTimestamps(leftObsTimestamp, rightObsTimestamp, descending);
+      if (obsComparison !== 0) return obsComparison;
+
+      const leftLastVisit = toSortableTimestamp(left.data_da_ultima_visita);
+      const rightLastVisit = toSortableTimestamp(right.data_da_ultima_visita);
+      const lastVisitComparison = compareNullableTimestamps(leftLastVisit, rightLastVisit, true);
+      if (lastVisitComparison !== 0) return lastVisitComparison;
+
+      return (left.empresa ?? left.nome_fantasia ?? "").localeCompare(
+        right.empresa ?? right.nome_fantasia ?? "",
+        "pt-BR",
+      );
+    });
+  }, [data, scheduledVisitsByAgenda, sorting]);
+
   const selectedAgendaSet = useMemo(() => new Set(selectedAgendaIds), [selectedAgendaIds]);
-  const visibleAgendaIds = useMemo(() => data.map((row) => row.id), [data]);
+  const visibleAgendaIds = useMemo(() => displayData.map((row) => row.id), [displayData]);
   const allVisibleSelected =
     visibleAgendaIds.length > 0 && visibleAgendaIds.every((id) => selectedAgendaSet.has(id));
   const someVisibleSelected =
@@ -780,6 +876,7 @@ export default function Agenda() {
       setVendorQuery("");
       setVisitDate("");
       setShowGenerateModal(false);
+      clearRoutesModuleDraft();
       setRefreshKey((value) => value + 1);
     } catch (err) {
       setGenerateMessage(err instanceof Error ? err.message : "Erro ao gerar visitas.");
@@ -1305,18 +1402,14 @@ export default function Agenda() {
       },
       {
         id: "obs",
-        header: () => (
-          <div className="flex items-center justify-center text-[11px] font-semibold text-ink/60">
-            Obs
-          </div>
-        ),
+        header: ({ column }) => renderSortLabel(column, "Obs"),
         cell: (info) => {
           const rowId = info.row.original.id;
           const row = info.row.original;
-          const visits = scheduledVisitsByAgenda[rowId] ?? [];
-          if (visits.length === 0) return null;
-          const visitDate = visits[0]?.visit_date ?? null;
-          const firstInstructions = row.instructions?.trim() || visits[0]?.instructions?.trim();
+          const scheduledObs = resolveScheduledObsVisit(rowId, row.instructions);
+          if (!scheduledObs) return null;
+          const visitDate = scheduledObs.visitDate;
+          const firstInstructions = scheduledObs.instructions;
           const badgeText = formatVisitBadge(visitDate);
           const titleText = visitDate
             ? `Visita agendada: ${formatDate(visitDate)}${
@@ -1343,13 +1436,15 @@ export default function Agenda() {
             </div>
           );
         },
-        enableSorting: false,
         size: 70,
       },
       {
         accessorKey: "data_da_ultima_visita",
         header: ({ column }) => renderSortLabel(column, "Ultima visita"),
-        cell: (info) => formatDate(info.getValue() as string | null),
+        cell: (info) => {
+          const row = info.row.original;
+          return resolveLastCompletedVisitDate(row.id, info.getValue() as string | null);
+        },
       },
       {
         accessorKey: "visit_completed_vidas",
@@ -1532,8 +1627,10 @@ export default function Agenda() {
       openScheduleModal,
       selectedAgendaSet,
       scheduledVisitsByAgenda,
+      resolveScheduledObsVisit,
       resolveVendorsForAgenda,
       resolveLastCompletedVidas,
+      resolveLastCompletedVisitDate,
       setFilters,
       setVisibleSelection,
       toggleAgendaSelection,
@@ -1541,7 +1638,7 @@ export default function Agenda() {
   );
 
   const table = useReactTable({
-    data,
+    data: displayData,
     columns,
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
@@ -1554,10 +1651,17 @@ export default function Agenda() {
   const activeChips = useMemo(() => {
     const chips: { label: string; onRemove: () => void }[] = [];
 
-    if (filters.global) {
+    if (companyNameQuery) {
       chips.push({
-        label: `Busca: ${filters.global}`,
-        onRemove: () => setFilters((prev) => ({ ...prev, global: "" })),
+        label: `Nome: ${companyNameQuery}`,
+        onRemove: () => setCompanyNameQuery(""),
+      });
+    }
+
+    if (companyCodeQuery) {
+      chips.push({
+        label: `Codigo: ${companyCodeQuery}`,
+        onRemove: () => setCompanyCodeQuery(""),
       });
     }
 
@@ -1647,7 +1751,7 @@ export default function Agenda() {
     }
 
     return chips;
-  }, [filters, setFilters]);
+  }, [companyCodeQuery, companyNameQuery, filters, setFilters]);
 
   if (!canAccess) {
     return (
@@ -1674,19 +1778,29 @@ export default function Agenda() {
 
       <section className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1">
-            <label className="text-[11px] font-semibold text-ink/70">Busca global</label>
-            <input
-              value={globalQuery}
-              onChange={(event) => {
-                typingGlobalRef.current = true;
-                setGlobalQuery(event.target.value);
-              }}
-              placeholder="Empresa, cidade, vendedor..."
-              id="agenda-global-search"
-              name="agendaGlobalSearch"
-              className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
-            />
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold text-ink/70">Buscar por nome</span>
+              <input
+                value={companyNameQuery}
+                onChange={(event) => setCompanyNameQuery(event.target.value)}
+                placeholder="Empresa ou nome fantasia"
+                id="agenda-company-name-search"
+                name="agendaCompanyNameSearch"
+                className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold text-ink/70">Buscar por codigo</span>
+              <input
+                value={companyCodeQuery}
+                onChange={(event) => setCompanyCodeQuery(event.target.value)}
+                placeholder="Codigo da empresa"
+                id="agenda-company-code-search"
+                name="agendaCompanyCodeSearch"
+                className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
+              />
+            </label>
           </div>
 
           <div className="grid gap-4">
@@ -1900,7 +2014,11 @@ export default function Agenda() {
                 <div className="ml-auto flex items-center gap-3 self-end">
                   <button
                     type="button"
-                    onClick={clearFilters}
+                    onClick={() => {
+                      clearFilters();
+                      setCompanyNameQuery("");
+                      setCompanyCodeQuery("");
+                    }}
                     className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
                   >
                     Limpar filtros
@@ -1915,7 +2033,7 @@ export default function Agenda() {
                       setGenerateMessage(null);
                       setShowGenerateModal(true);
                     }}
-                    disabled={totalCount === 0}
+                    disabled={selectedAgendaIds.length === 0}
                     className="inline-flex items-center gap-1 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
                   >
                     <MapPin size={14} />
@@ -1923,7 +2041,19 @@ export default function Agenda() {
                   </button>
                   <div className="text-xs text-ink/60 text-right">
                     <div>Empresas: {totalCount}</div>
-                    <div>Selecionadas: {selectedAgendaIds.length}</div>
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Selecionadas: {selectedAgendaIds.length}</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedAgendaIds([])}
+                        disabled={selectedAgendaIds.length === 0}
+                        title="Limpar empresas selecionadas"
+                        aria-label="Limpar empresas selecionadas"
+                        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-ink/50 transition hover:bg-sea/10 hover:text-sea disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -2042,8 +2172,7 @@ export default function Agenda() {
                   selectedVendorIds.length === 0 ||
                   selectedAgendaIds.length === 0 ||
                   !visitDate ||
-                  generating ||
-                  totalCount === 0
+                  generating
                 }
                 className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
@@ -2468,11 +2597,10 @@ export default function Agenda() {
                           </label>
                         </div>
                         {(() => {
-                          const scheduled = scheduledVisitsByAgenda[row.id] ?? [];
-                          if (scheduled.length === 0) return null;
-                          const visitDate = scheduled[0]?.visit_date ?? null;
-                          const firstInstructions =
-                            row.instructions?.trim() || scheduled[0]?.instructions?.trim();
+                          const scheduledObs = resolveScheduledObsVisit(row.id, row.instructions);
+                          if (!scheduledObs) return null;
+                          const visitDate = scheduledObs.visitDate;
+                          const firstInstructions = scheduledObs.instructions;
                           const badgeText = formatVisitBadge(visitDate);
                           const titleText = visitDate
                             ? `Visita agendada: ${formatDate(visitDate)}${

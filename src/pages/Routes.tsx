@@ -19,6 +19,7 @@ import { fetchNominatimCoordinatesByAddress } from "../lib/nominatim";
 import { onProfilesUpdated } from "../lib/profileEvents";
 import type { Route, RouteStop } from "../types/routes";
 import { formatDateBr } from "../lib/dateFormat";
+import { clearRoutesModuleDraft, readRoutesModuleDraft } from "../lib/routesModuleDraft";
 
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
@@ -78,6 +79,7 @@ export default function Routes() {
   const [mapAddingAgendaId, setMapAddingAgendaId] = useState<string | null>(null);
   const [geocoding, setGeocoding] = useState(false);
   const [geocodeMessage, setGeocodeMessage] = useState<string | null>(null);
+  const [draftSummary, setDraftSummary] = useState(() => readRoutesModuleDraft());
 
   const canEdit = role === "SUPERVISOR" || role === "ASSISTENTE";
 
@@ -122,6 +124,17 @@ export default function Routes() {
       unsubscribe();
     };
   }, [canEdit]);
+
+  useEffect(() => {
+    const refreshDraft = () => setDraftSummary(readRoutesModuleDraft());
+    refreshDraft();
+    window.addEventListener("focus", refreshDraft);
+    window.addEventListener("storage", refreshDraft);
+    return () => {
+      window.removeEventListener("focus", refreshDraft);
+      window.removeEventListener("storage", refreshDraft);
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedRouteId || !canEdit) {
@@ -298,6 +311,45 @@ export default function Routes() {
           Abrir mapa dedicado
         </a>
       </header>
+
+      {(draftSummary.selectedAgendaIds?.length ?? 0) > 0 && (
+        <section className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold text-ink">Rascunho do modulo de rotas</h3>
+              <p className="text-xs text-ink/60">
+                Empresas selecionadas no mapa: {draftSummary.selectedAgendaIds?.length ?? 0}
+              </p>
+              {draftSummary.companyNameQuery ? (
+                <p className="text-xs text-ink/60">Busca por nome: {draftSummary.companyNameQuery}</p>
+              ) : null}
+              {draftSummary.companyCodeQuery ? (
+                <p className="text-xs text-ink/60">Busca por codigo: {draftSummary.companyCodeQuery}</p>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <a
+                href="/rotas/mapa"
+                className="inline-flex items-center gap-2 rounded-lg border border-sea/30 bg-white/90 px-3 py-2 text-xs font-semibold text-ink hover:border-sea hover:text-sea"
+              >
+                <Map size={14} />
+                Continuar selecao
+              </a>
+              <button
+                type="button"
+                onClick={() => {
+                  clearRoutesModuleDraft();
+                  setDraftSummary(readRoutesModuleDraft());
+                }}
+                className="inline-flex items-center gap-2 rounded-lg border border-sea/30 bg-white/90 px-3 py-2 text-xs font-semibold text-ink hover:border-sea hover:text-sea"
+              >
+                <Trash size={14} />
+                Limpar rascunho
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
 
       <form
         onSubmit={handleCreateRoute}

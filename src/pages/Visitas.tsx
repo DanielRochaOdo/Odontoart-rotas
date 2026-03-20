@@ -1273,6 +1273,38 @@ export default function Visitas() {
         .eq("id", completeVisit.id);
 
       if (updateError) throw new Error(updateError.message);
+
+      if (visit.agenda_id) {
+        const visitDateKey = visit.visit_date ? formatDateKey(visit.visit_date) : formatDateKey(completedAt);
+        const visitDateIso = visit.visit_date
+          ? new Date(`${visitDateKey}T12:00:00`).toISOString()
+          : completedAt;
+
+        const { data: agendaSnapshot, error: agendaSnapshotError } = await supabase
+          .from("agenda")
+          .select("data_da_ultima_visita")
+          .eq("id", visit.agenda_id)
+          .maybeSingle<{ data_da_ultima_visita: string | null }>();
+
+        if (agendaSnapshotError) throw new Error(agendaSnapshotError.message);
+
+        const currentLastVisitKey = agendaSnapshot?.data_da_ultima_visita
+          ? formatDateKey(agendaSnapshot.data_da_ultima_visita)
+          : "";
+
+        if (!currentLastVisitKey || currentLastVisitKey <= visitDateKey) {
+          const { error: agendaUpdateError } = await supabase
+            .from("agenda")
+            .update({
+              data_da_ultima_visita: visitDateIso,
+              visit_completed_vidas: vidas,
+            })
+            .eq("id", visit.agenda_id);
+
+          if (agendaUpdateError) throw new Error(agendaUpdateError.message);
+        }
+      }
+
       setCompleteVisit(null);
       setRefreshKey((prev) => prev + 1);
     } catch (err) {
