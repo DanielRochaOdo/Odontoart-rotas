@@ -1,4 +1,5 @@
 ﻿import { supabase } from "./supabase";
+import { filterHydrateAgendaRowsFromClientes } from "./clientesCanonical";
 import type { Route, RouteStop } from "../types/routes";
 
 export type AgendaLookupRow = {
@@ -123,7 +124,8 @@ export const fetchAgendaLookup = async () => {
     from += pageSize;
   }
 
-  return allRows;
+  const canonicalRows = await filterHydrateAgendaRowsFromClientes(allRows);
+  return canonicalRows as AgendaLookupRow[];
 };
 
 export const fetchProfiles = async () => {

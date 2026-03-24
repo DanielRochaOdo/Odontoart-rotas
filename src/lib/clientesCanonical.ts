@@ -23,6 +23,7 @@ type ClienteCanonicalRow = {
 };
 
 type AgendaSharedLike = {
+  id?: string;
   cod_1?: string | null;
   corte?: number | null;
   venc?: number | null;
@@ -94,8 +95,8 @@ const fetchClientesCanonicalByIn = async (
   return rows;
 };
 
-export const hydrateAgendaRowsFromClientes = async <T extends AgendaSharedLike>(rows: T[]) => {
-  if (rows.length === 0) return rows;
+const buildCanonicalByKey = async <T extends AgendaSharedLike>(rows: T[]) => {
+  if (rows.length === 0) return new Map<string, ClienteCanonicalRow>();
 
   const codigos = Array.from(
     new Set(
@@ -148,34 +149,68 @@ export const hydrateAgendaRowsFromClientes = async <T extends AgendaSharedLike>(
     });
   }
 
-  return rows.map((row) => {
-    const byCodigo = canonicalByKey.get(makeCodigoKey(row.cod_1));
-    const byEmpresaFantasia = canonicalByKey.get(makeEmpresaFantasiaKey(row.empresa, row.nome_fantasia));
-    const canonical = byCodigo ?? byEmpresaFantasia;
-    if (!canonical) return row;
+  return canonicalByKey;
+};
 
-    return {
-      ...row,
-      cod_1: canonical.codigo,
-      corte: canonical.corte,
-      venc: canonical.venc,
-      valor: canonical.valor,
-      data_da_ultima_visita: canonical.data_da_ultima_visita,
-      cep: canonical.cep,
-      empresa: canonical.empresa,
-      pessoa: canonical.pessoa,
-      contato: canonical.contato,
-      grupo: canonical.grupo,
-      obs_contrato_1: canonical.obs_comercial,
-      nome_fantasia: canonical.nome_fantasia,
-      complemento: canonical.complemento,
-      perfil_visita: canonical.perfil_visita,
-      situacao: canonical.situacao,
-      endereco: canonical.endereco,
-      bairro: canonical.bairro,
-      cidade: canonical.cidade,
-      uf: canonical.uf,
-    } as T;
+const resolveCanonicalForRow = <T extends AgendaSharedLike>(
+  row: T,
+  canonicalByKey: Map<string, ClienteCanonicalRow>,
+) => {
+  const byCodigo = canonicalByKey.get(makeCodigoKey(row.cod_1));
+  const byEmpresaFantasia = canonicalByKey.get(makeEmpresaFantasiaKey(row.empresa, row.nome_fantasia));
+  return byCodigo ?? byEmpresaFantasia;
+};
+
+const hydrateAgendaRowFromCanonical = <T extends AgendaSharedLike>(
+  row: T,
+  canonical: ClienteCanonicalRow | undefined,
+) => {
+  if (!canonical) return row;
+
+  return {
+    ...row,
+    cod_1: canonical.codigo,
+    corte: canonical.corte,
+    venc: canonical.venc,
+    valor: canonical.valor,
+    data_da_ultima_visita: canonical.data_da_ultima_visita,
+    cep: canonical.cep,
+    empresa: canonical.empresa,
+    pessoa: canonical.pessoa,
+    contato: canonical.contato,
+    grupo: canonical.grupo,
+    obs_contrato_1: canonical.obs_comercial,
+    nome_fantasia: canonical.nome_fantasia,
+    complemento: canonical.complemento,
+    perfil_visita: canonical.perfil_visita,
+    situacao: canonical.situacao,
+    endereco: canonical.endereco,
+    bairro: canonical.bairro,
+    cidade: canonical.cidade,
+    uf: canonical.uf,
+  } as T;
+};
+
+export const hydrateAgendaRowsFromClientes = async <T extends AgendaSharedLike>(rows: T[]) => {
+  if (rows.length === 0) return rows;
+
+  const canonicalByKey = await buildCanonicalByKey(rows);
+
+  return rows.map((row) => {
+    const canonical = resolveCanonicalForRow(row, canonicalByKey);
+    return hydrateAgendaRowFromCanonical(row, canonical);
+  });
+};
+
+export const filterHydrateAgendaRowsFromClientes = async <T extends AgendaSharedLike>(rows: T[]) => {
+  if (rows.length === 0) return rows;
+
+  const canonicalByKey = await buildCanonicalByKey(rows);
+
+  return rows.flatMap((row) => {
+    const canonical = resolveCanonicalForRow(row, canonicalByKey);
+    if (!canonical) return [];
+    return [hydrateAgendaRowFromCanonical(row, canonical)];
   });
 };
 
