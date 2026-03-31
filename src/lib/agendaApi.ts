@@ -420,13 +420,12 @@ export const fetchAgenda = async (
     .select(
       "id, data_da_ultima_visita, visit_completed_vidas, cod_1, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1, visit_generated_at, created_at",
       { count: "exact" },
-    )
-    .ilike("situacao", "ativo%");
+    );
 
   let query = applyFilters(baseQuery(), effectiveFilters);
   const companyName = search?.companyName?.replace(/%/g, "").trim();
   if (companyName) {
-    query = query.or(`empresa.ilike.%${companyName}%,nome_fantasia.ilike.%${companyName}%`);
+    query = query.ilike("empresa", `%${companyName}%`);
   }
 
   const companyCode = search?.companyCode?.replace(/%/g, "").trim();
@@ -551,7 +550,6 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
       .from(sourceTable)
       .select(targetColumn)
       .not(targetColumn, "is", null)
-      .ilike("situacao", "ativo%")
       .limit(2000);
     const { data, error } = await query;
 
@@ -598,7 +596,6 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
     supabase
       .from("agenda")
       .select("id, perfil_visita, instructions, cod_1, empresa, nome_fantasia")
-      .ilike("situacao", "ativo%")
       .order("id", { ascending: true });
 
   if (ids && ids.length > 0) {

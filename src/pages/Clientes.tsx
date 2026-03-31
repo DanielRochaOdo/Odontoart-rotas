@@ -604,8 +604,8 @@ const normalizeStatus = (value: string) => {
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toLowerCase();
-  if (cleaned === "ativo") return "Ativo";
-  if (cleaned === "cancelado") return "Cancelado";
+  if (cleaned.startsWith("ativo")) return "Ativo";
+  if (cleaned.startsWith("cancelado")) return "Cancelado";
   if (cleaned.includes("suspenso") || cleaned.includes("inadimplente") || cleaned.includes("inadimlente")) {
     return "Suspenso/Inadimplente";
   }

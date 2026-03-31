@@ -157,7 +157,7 @@ const upsertAgendaFromClientesPayloads = async (
 
 export const fetchClientes = async () => {
   const PAGE_SIZE = 1000;
-  const rows: ClienteRow[] = [];
+  const rowsById = new Map<string, ClienteRow>();
   let from = 0;
 
   while (true) {
@@ -165,19 +165,23 @@ export const fetchClientes = async () => {
     const { data, error } = await supabase
       .from("clientes")
       .select(CLIENTES_SELECT_COLUMNS)
-      .order("created_at", { ascending: false })
+      // Stable ordering avoids duplicates/missing rows across paginated ranges.
+      .order("id", { ascending: true })
       .range(from, to);
 
     if (error) throw new Error(error.message);
 
     const batch = (data ?? []) as ClienteRow[];
-    rows.push(...batch);
+    batch.forEach((row) => {
+      if (!row.id) return;
+      rowsById.set(row.id, row);
+    });
 
     if (batch.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
   }
 
-  return rows;
+  return Array.from(rowsById.values());
 };
 
 export const fetchClientesByCodigoExact = async (codigo: string) => {
@@ -298,27 +302,29 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
 };
 
 export const syncVisitsForCliente = async (cliente: ClienteRow) => {
+  const { perfil, opcoes } = normalizePerfilTimes(cliente.perfil_visita ?? null);
+  const { error: updateByClienteError } = await supabase
+    .from("visits")
+    .update({
+      perfil_visita: perfil,
+      perfil_visita_opcoes: opcoes,
+    })
+    .eq("cliente_id", cliente.id);
+  if (updateByClienteError) throw new Error(updateByClienteError.message);
+
+  // Fallback for legacy rows not yet linked with cliente_id.
   const agendaIds = await collectAgendaIdsForCliente(cliente);
   if (agendaIds.length === 0) return;
 
-  const { data: agendaRows, error: agendaError } = await supabase
-    .from("agenda")
-    .select("id, perfil_visita")
-    .in("id", agendaIds);
-  if (agendaError) throw new Error(agendaError.message);
-
-  const rows = (agendaRows ?? []).filter((row) => row.id);
-  for (const row of rows) {
-    const { perfil, opcoes } = normalizePerfilTimes((row as { perfil_visita?: string | null }).perfil_visita ?? null);
-    const { error: updateError } = await supabase
-      .from("visits")
-      .update({
-        perfil_visita: perfil,
-        perfil_visita_opcoes: opcoes,
-      })
-      .eq("agenda_id", row.id);
-    if (updateError) throw new Error(updateError.message);
-  }
+  const { error: updateLegacyError } = await supabase
+    .from("visits")
+    .update({
+      perfil_visita: perfil,
+      perfil_visita_opcoes: opcoes,
+    })
+    .is("cliente_id", null)
+    .in("agenda_id", agendaIds);
+  if (updateLegacyError) throw new Error(updateLegacyError.message);
 };
 
 export const deleteCliente = async (id: string) => {
@@ -458,21 +464,18 @@ export const syncAgendaForCliente = async (cliente: ClienteRow) => {
 };
 
 export const fetchClienteHistory = async (cliente: ClienteRow) => {
-  const agendaIds = await collectAgendaIdsForCliente(cliente);
-  if (agendaIds.length === 0) return [];
-
   const { data, error } = await supabase
     .from("visits")
     .select(
-      "id, visit_date, assigned_to_name, assigned_to_user_id, perfil_visita, perfil_visita_opcoes, completed_at, completed_vidas, agenda:agenda_id (situacao, supervisor)",
+      "id, visit_date, assigned_to_name, assigned_to_user_id, perfil_visita, perfil_visita_opcoes, completed_at, completed_vidas, cliente:cliente_id (situacao, supervisor)",
     )
-    .in("agenda_id", agendaIds)
+    .eq("cliente_id", cliente.id)
     .order("visit_date", { ascending: false });
 
   if (error) throw new Error(error.message);
 
   return (data ?? []).map((row) => {
-    const agenda = Array.isArray(row.agenda) ? row.agenda[0] : row.agenda;
+    const clienteJoin = Array.isArray(row.cliente) ? row.cliente[0] : row.cliente;
     return {
       id: row.id,
       visit_date: row.visit_date ?? null,
@@ -482,8 +485,8 @@ export const fetchClienteHistory = async (cliente: ClienteRow) => {
       perfil_visita_opcoes: (row as { perfil_visita_opcoes?: string | null }).perfil_visita_opcoes ?? null,
       completed_at: row.completed_at ?? null,
       completed_vidas: row.completed_vidas ?? null,
-      situacao: agenda?.situacao ?? null,
-      supervisor: (agenda as { supervisor?: string | null } | null)?.supervisor ?? null,
+      situacao: clienteJoin?.situacao ?? null,
+      supervisor: (clienteJoin as { supervisor?: string | null } | null)?.supervisor ?? null,
     };
   }) as ClienteHistoryRow[];
 };

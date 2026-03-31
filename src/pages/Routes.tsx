@@ -8,12 +8,12 @@ import {
   createRouteStop,
   deleteRoute,
   deleteRouteStop,
-  fetchAgendaLookup,
+  fetchEmpresasLookup,
   fetchProfiles,
   fetchRouteStops,
   fetchRoutes,
-  type AgendaLookupRow,
-  updateAgendaCoordinates,
+  type EmpresaLookupRow,
+  updateEmpresaCoordinates,
 } from "../lib/routesApi";
 import { fetchNominatimCoordinatesByAddress } from "../lib/nominatim";
 import { onProfilesUpdated } from "../lib/profileEvents";
@@ -40,19 +40,19 @@ const normalize = (value: string | null | undefined) =>
     .trim()
     .toUpperCase();
 
-const isFortaleza = (row: AgendaLookupRow) => {
+const isFortaleza = (row: EmpresaLookupRow) => {
   const city = normalize(row.cidade);
   const uf = normalize(row.uf);
   return city === "FORTALEZA" && uf === "CE";
 };
 
-const buildAgendaAddress = (row: AgendaLookupRow) =>
+const buildEmpresaAddress = (row: EmpresaLookupRow) =>
   [row.endereco, row.complemento, row.bairro, row.cidade, row.uf].filter(Boolean).join(", ");
 
 const buildStopAddress = (stop: RouteStop) => {
-  const agenda = stop.agenda;
-  if (!agenda) return "";
-  return [agenda.endereco, agenda.complemento, agenda.bairro, agenda.cidade, agenda.uf]
+  const cliente = stop.cliente;
+  if (!cliente) return "";
+  return [cliente.endereco, cliente.complemento, cliente.bairro, cliente.cidade, cliente.uf]
     .filter(Boolean)
     .join(", ");
 };
@@ -71,12 +71,12 @@ export default function Routes() {
   const [profiles, setProfiles] = useState<
     { user_id: string; display_name: string | null; role: string }[]
   >([]);
-  const [agendaOptions, setAgendaOptions] = useState<AgendaLookupRow[]>([]);
+  const [empresaOptions, setEmpresaOptions] = useState<EmpresaLookupRow[]>([]);
   const [loadingStops, setLoadingStops] = useState(false);
   const [creatingRoute, setCreatingRoute] = useState(false);
   const [newRoute, setNewRoute] = useState({ name: "", date: "", assigned_to_user_id: "" });
-  const [newStop, setNewStop] = useState({ agenda_id: "", stop_order: "", notes: "" });
-  const [mapAddingAgendaId, setMapAddingAgendaId] = useState<string | null>(null);
+  const [newStop, setNewStop] = useState({ cliente_id: "", stop_order: "", notes: "" });
+  const [mapAddingEmpresaId, setMapAddingEmpresaId] = useState<string | null>(null);
   const [geocoding, setGeocoding] = useState(false);
   const [geocodeMessage, setGeocodeMessage] = useState<string | null>(null);
   const [draftSummary, setDraftSummary] = useState(() => readRoutesModuleDraft());
@@ -106,14 +106,14 @@ export default function Routes() {
     let active = true;
     const loadLookups = async () => {
       try {
-        const [profilesData, agendaData] = await Promise.all([fetchProfiles(), fetchAgendaLookup()]);
+        const [profilesData, empresaData] = await Promise.all([fetchProfiles(), fetchEmpresasLookup()]);
         if (!active) return;
         setProfiles(profilesData as { user_id: string; display_name: string | null; role: string }[]);
-        setAgendaOptions(agendaData);
+        setEmpresaOptions(empresaData);
       } catch {
         if (!active) return;
         setProfiles([]);
-        setAgendaOptions([]);
+        setEmpresaOptions([]);
       }
     };
 
@@ -153,7 +153,7 @@ export default function Routes() {
     [routes, selectedRouteId],
   );
 
-  const fortalezaRows = useMemo(() => agendaOptions.filter(isFortaleza), [agendaOptions]);
+  const fortalezaRows = useMemo(() => empresaOptions.filter(isFortaleza), [empresaOptions]);
   const mapRows = useMemo(
     () =>
       fortalezaRows.filter(
@@ -166,8 +166,8 @@ export default function Routes() {
     [fortalezaRows],
   );
 
-  const stopAgendaIds = useMemo(
-    () => new Set(stops.map((stop) => stop.agenda_id).filter((value): value is string => Boolean(value))),
+  const stopEmpresaIds = useMemo(
+    () => new Set(stops.map((stop) => stop.cliente_id).filter((value): value is string => Boolean(value))),
     [stops],
   );
 
@@ -212,29 +212,29 @@ export default function Routes() {
     const stopOrderValue = newStop.stop_order ? Number(newStop.stop_order) : stops.length + 1;
     const created = await createRouteStop({
       route_id: selectedRouteId,
-      agenda_id: newStop.agenda_id || undefined,
+      cliente_id: newStop.cliente_id || undefined,
       stop_order: stopOrderValue,
       notes: newStop.notes || undefined,
     });
     setStops((prev) => [...prev, created].sort((a, b) => (a.stop_order ?? 0) - (b.stop_order ?? 0)));
-    setNewStop({ agenda_id: "", stop_order: "", notes: "" });
+    setNewStop({ cliente_id: "", stop_order: "", notes: "" });
   };
 
-  const handleAddStopFromMap = async (row: AgendaLookupRow) => {
+  const handleAddStopFromMap = async (row: EmpresaLookupRow) => {
     if (!selectedRouteId) return;
-    if (stopAgendaIds.has(row.id)) return;
+    if (stopEmpresaIds.has(row.id)) return;
 
-    setMapAddingAgendaId(row.id);
+    setMapAddingEmpresaId(row.id);
     try {
       const maxOrder = stops.reduce((max, item) => Math.max(max, item.stop_order ?? 0), 0);
       const created = await createRouteStop({
         route_id: selectedRouteId,
-        agenda_id: row.id,
+        cliente_id: row.id,
         stop_order: maxOrder + 1,
       });
       setStops((prev) => [...prev, created].sort((a, b) => (a.stop_order ?? 0) - (b.stop_order ?? 0)));
     } finally {
-      setMapAddingAgendaId(null);
+      setMapAddingEmpresaId(null);
     }
   };
 
@@ -252,7 +252,7 @@ export default function Routes() {
     let skipped = 0;
     let failed = 0;
 
-    const nextOptions = [...agendaOptions];
+    const nextOptions = [...empresaOptions];
 
     for (const row of missingCoordinatesRows) {
       const road = [row.endereco, row.bairro].filter(Boolean).join(", ").trim();
@@ -268,7 +268,7 @@ export default function Routes() {
           continue;
         }
 
-        await updateAgendaCoordinates({
+        await updateEmpresaCoordinates({
           id: row.id,
           latitude: result.latitude,
           longitude: result.longitude,
@@ -289,7 +289,7 @@ export default function Routes() {
       }
     }
 
-    setAgendaOptions(nextOptions);
+    setEmpresaOptions(nextOptions);
     setGeocoding(false);
     setGeocodeMessage(`Geocodificacao concluida. Atualizadas: ${updated}, sem endereco: ${skipped}, falhas: ${failed}.`);
   };
@@ -312,13 +312,13 @@ export default function Routes() {
         </a>
       </header>
 
-      {(draftSummary.selectedAgendaIds?.length ?? 0) > 0 && (
+      {(draftSummary.selectedEmpresaIds?.length ?? 0) > 0 && (
         <section className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="space-y-1">
               <h3 className="text-sm font-semibold text-ink">Rascunho do modulo de rotas</h3>
               <p className="text-xs text-ink/60">
-                Empresas selecionadas no mapa: {draftSummary.selectedAgendaIds?.length ?? 0}
+                Empresas selecionadas no mapa: {draftSummary.selectedEmpresaIds?.length ?? 0}
               </p>
               {draftSummary.companyNameQuery ? (
                 <p className="text-xs text-ink/60">Busca por nome: {draftSummary.companyNameQuery}</p>
@@ -483,8 +483,8 @@ export default function Routes() {
                     />
                     {mapRows.map((row) => {
                       if (typeof row.latitude !== "number" || typeof row.longitude !== "number") return null;
-                      const address = buildAgendaAddress(row);
-                      const isAdded = stopAgendaIds.has(row.id);
+                      const address = buildEmpresaAddress(row);
+                      const isAdded = stopEmpresaIds.has(row.id);
 
                       return (
                         <Marker key={row.id} position={[row.latitude, row.longitude]}>
@@ -497,14 +497,14 @@ export default function Routes() {
                               </p>
                               <button
                                 type="button"
-                                disabled={isAdded || mapAddingAgendaId === row.id}
+                                disabled={isAdded || mapAddingEmpresaId === row.id}
                                 onClick={() => {
                                   handleAddStopFromMap(row).catch(() => undefined);
                                 }}
                                 className="inline-flex items-center gap-1 rounded border border-sea/30 px-2 py-1 text-[11px] font-semibold text-ink disabled:opacity-50"
                               >
                                 <Plus size={12} />
-                                {isAdded ? "Ja na rota" : mapAddingAgendaId === row.id ? "Adicionando..." : "Adicionar parada"}
+                                {isAdded ? "Ja na rota" : mapAddingEmpresaId === row.id ? "Adicionando..." : "Adicionar parada"}
                               </button>
                             </div>
                           </Popup>
@@ -520,14 +520,14 @@ export default function Routes() {
                 className="grid gap-3 rounded-2xl border border-sea/20 bg-sand/20 p-3 md:grid-cols-4"
               >
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-                  Agenda
+                  Empresa
                   <select
-                    value={newStop.agenda_id}
-                    onChange={(event) => setNewStop((prev) => ({ ...prev, agenda_id: event.target.value }))}
+                    value={newStop.cliente_id}
+                    onChange={(event) => setNewStop((prev) => ({ ...prev, cliente_id: event.target.value }))}
                     className="rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-sm text-ink outline-none focus:border-sea"
                   >
                     <option value="">Selecione</option>
-                    {agendaOptions.map((option) => (
+                    {empresaOptions.map((option) => (
                       <option key={option.id} value={option.id}>
                         {option.empresa ?? "Sem nome"} - {option.cidade ?? ""} {option.uf ?? ""}
                       </option>
@@ -574,7 +574,7 @@ export default function Routes() {
                       <div key={stop.id} className="rounded-2xl border border-sea/15 bg-white/90 p-3">
                         <div className="flex items-center justify-between">
                           <div>
-                            <p className="text-sm font-semibold text-ink">{stop.agenda?.empresa ?? "Parada"}</p>
+                            <p className="text-sm font-semibold text-ink">{stop.cliente?.empresa ?? "Parada"}</p>
                             <p className="text-xs text-ink/60">{address || "Endereco nao informado"}</p>
                           </div>
                           <button
