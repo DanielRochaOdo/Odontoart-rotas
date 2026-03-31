@@ -38,7 +38,25 @@ export type NominatimCoordinates = {
 
 const NOMINATIM_ROOT = import.meta.env.DEV
   ? "/api/nominatim"
-  : "https://nominatim.openstreetmap.org";
+  : (() => {
+      const explicitProxy = (import.meta.env.VITE_NOMINATIM_PROXY_URL as string | undefined)?.trim();
+      if (explicitProxy) return explicitProxy.replace(/\/+$/, "");
+
+      const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim();
+      if (supabaseUrl) {
+        try {
+          const host = new URL(supabaseUrl).host;
+          if (host.endsWith(".supabase.co")) {
+            const functionHost = host.replace(/\.supabase\.co$/, ".functions.supabase.co");
+            return `https://${functionHost}/nominatim-proxy`;
+          }
+        } catch {
+          // fallback below
+        }
+      }
+
+      return "/api/nominatim";
+    })();
 const BASE_URL = `${NOMINATIM_ROOT}/search`;
 const REVERSE_URL = `${NOMINATIM_ROOT}/reverse`;
 const REQUEST_INTERVAL_MS = 2200;
