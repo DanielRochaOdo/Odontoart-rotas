@@ -464,31 +464,110 @@ export const syncAgendaForCliente = async (cliente: ClienteRow) => {
 };
 
 export const fetchClienteHistory = async (cliente: ClienteRow) => {
+  const baseSelect =
+    "id, visit_date, assigned_to_name, assigned_to_user_id, perfil_visita, perfil_visita_opcoes, completed_at, completed_vidas";
+
+  const mapHistoryRows = (
+    rows: Array<{
+      id: string;
+      visit_date?: string | null;
+      assigned_to_name?: string | null;
+      assigned_to_user_id?: string | null;
+      perfil_visita?: string | null;
+      perfil_visita_opcoes?: string | null;
+      completed_at?: string | null;
+      completed_vidas?: number | null;
+      cliente?: { situacao?: string | null; supervisor?: string | null } | Array<{ situacao?: string | null; supervisor?: string | null }> | null;
+    }>,
+  ) =>
+    rows.map((row) => {
+      const clienteJoin = Array.isArray(row.cliente) ? row.cliente[0] : row.cliente;
+      return {
+        id: row.id,
+        visit_date: row.visit_date ?? null,
+        assigned_to_name: row.assigned_to_name ?? null,
+        assigned_to_user_id: row.assigned_to_user_id ?? null,
+        perfil_visita: row.perfil_visita ?? null,
+        perfil_visita_opcoes: row.perfil_visita_opcoes ?? null,
+        completed_at: row.completed_at ?? null,
+        completed_vidas: row.completed_vidas ?? null,
+        situacao: clienteJoin?.situacao ?? cliente.situacao ?? null,
+        supervisor: clienteJoin?.supervisor ?? null,
+      };
+    }) as ClienteHistoryRow[];
+
   const { data, error } = await supabase
     .from("visits")
     .select(
-      "id, visit_date, assigned_to_name, assigned_to_user_id, perfil_visita, perfil_visita_opcoes, completed_at, completed_vidas, cliente:cliente_id (situacao, supervisor)",
+      `${baseSelect}, cliente:cliente_id (situacao, supervisor)`,
     )
     .eq("cliente_id", cliente.id)
     .order("visit_date", { ascending: false });
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    console.warn("Fallback de historico de visitas sem join cliente_id:", error.message);
 
-  return (data ?? []).map((row) => {
-    const clienteJoin = Array.isArray(row.cliente) ? row.cliente[0] : row.cliente;
-    return {
-      id: row.id,
-      visit_date: row.visit_date ?? null,
-      assigned_to_name: row.assigned_to_name ?? null,
-      assigned_to_user_id: row.assigned_to_user_id ?? null,
-      perfil_visita: row.perfil_visita ?? null,
-      perfil_visita_opcoes: (row as { perfil_visita_opcoes?: string | null }).perfil_visita_opcoes ?? null,
-      completed_at: row.completed_at ?? null,
-      completed_vidas: row.completed_vidas ?? null,
-      situacao: clienteJoin?.situacao ?? null,
-      supervisor: (clienteJoin as { supervisor?: string | null } | null)?.supervisor ?? null,
-    };
-  }) as ClienteHistoryRow[];
+    const fallbackByClienteId = await supabase
+      .from("visits")
+      .select(baseSelect)
+      .eq("cliente_id", cliente.id)
+      .order("visit_date", { ascending: false });
+
+    if (!fallbackByClienteId.error) {
+      return mapHistoryRows((fallbackByClienteId.data ?? []) as Array<{
+        id: string;
+        visit_date?: string | null;
+        assigned_to_name?: string | null;
+        assigned_to_user_id?: string | null;
+        perfil_visita?: string | null;
+        perfil_visita_opcoes?: string | null;
+        completed_at?: string | null;
+        completed_vidas?: number | null;
+      }>);
+    }
+
+    const agendaIds = await collectAgendaIdsForCliente(cliente);
+    if (agendaIds.length > 0) {
+      const fallbackRows: Array<{
+        id: string;
+        visit_date?: string | null;
+        assigned_to_name?: string | null;
+        assigned_to_user_id?: string | null;
+        perfil_visita?: string | null;
+        perfil_visita_opcoes?: string | null;
+        completed_at?: string | null;
+        completed_vidas?: number | null;
+      }> = [];
+      const chunkSize = 500;
+      for (let i = 0; i < agendaIds.length; i += chunkSize) {
+        const ids = agendaIds.slice(i, i + chunkSize);
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from("visits")
+          .select(baseSelect)
+          .in("agenda_id", ids)
+          .order("visit_date", { ascending: false });
+        if (fallbackError) {
+          throw new Error(fallbackError.message);
+        }
+        fallbackRows.push(...((fallbackData ?? []) as typeof fallbackRows));
+      }
+      return mapHistoryRows(fallbackRows);
+    }
+
+    throw new Error(error.message);
+  }
+
+  return mapHistoryRows((data ?? []) as Array<{
+    id: string;
+    visit_date?: string | null;
+    assigned_to_name?: string | null;
+    assigned_to_user_id?: string | null;
+    perfil_visita?: string | null;
+    perfil_visita_opcoes?: string | null;
+    completed_at?: string | null;
+    completed_vidas?: number | null;
+    cliente?: { situacao?: string | null; supervisor?: string | null } | Array<{ situacao?: string | null; supervisor?: string | null }> | null;
+  }>);
 };
 
 
