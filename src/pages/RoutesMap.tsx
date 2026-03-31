@@ -24,9 +24,11 @@ import {
 import type { Feature, GeoJsonObject } from "geojson";
 import { useAuth } from "../context/AuthContext";
 import {
-  fetchAgendaLookup,
-  type AgendaLookupRow,
-  updateAgendaCoordinatesBatch,
+  fetchEmpresaScheduledVisits,
+  fetchEmpresasLookup,
+  type EmpresaScheduledVisit,
+  type EmpresaLookupRow,
+  updateEmpresaCoordinatesBatch,
 } from "../lib/routesApi";
 import {
   fetchNominatimCoordinatesByAddress,
@@ -35,11 +37,8 @@ import {
 import { onProfilesUpdated } from "../lib/profileEvents";
 import { useAgendaFilters } from "../hooks/useAgendaFilters";
 import {
-  fetchAgendaScheduledVisits,
-  fetchAgendaForGeneration,
   fetchSupervisores,
   fetchVendedores,
-  type AgendaScheduledVisit,
 } from "../lib/agendaApi";
 import { supabase } from "../lib/supabase";
 import { formatDateBr } from "../lib/dateFormat";
@@ -81,7 +80,7 @@ const MONTH_OPTIONS = [
 ];
 
 const FILTER_SOURCES: Record<string, string[]> = {
-  cod_1: ["cod_1"],
+  cod_1: ["codigo"],
   empresa_nome: ["empresa"],
   bairro: ["bairro"],
   cidade: ["cidade"],
@@ -133,10 +132,10 @@ const formatVisitBadge = (value: string | null) => {
   return formatted.replace(".", "").toUpperCase();
 };
 
-const addr = (r: AgendaLookupRow) =>
+const addr = (r: EmpresaLookupRow) =>
   [r.endereco, r.complemento, r.bairro, r.cidade, r.uf].filter(Boolean).join(", ");
 
-type RenderableMapRow = AgendaLookupRow & {
+type RenderableMapRow = EmpresaLookupRow & {
   latitude: number;
   longitude: number;
   isApproximatePoint: boolean;
@@ -152,7 +151,7 @@ type SelectionMode = "RAIO" | "BAIRRO";
 const clampCompanyListHeight = (height: number) =>
   Math.max(COMPANY_LIST_MIN_HEIGHT, Math.min(height, COMPANY_LIST_MAX_HEIGHT));
 
-const hasRealCoordinates = (row: Pick<AgendaLookupRow, "latitude" | "longitude">) =>
+const hasRealCoordinates = (row: Pick<EmpresaLookupRow, "latitude" | "longitude">) =>
   Number.isFinite(row.latitude) && Number.isFinite(row.longitude);
 
 const collectCoordinatePairs = (value: unknown, target: Array<[number, number]>) => {
@@ -250,8 +249,8 @@ const getIdFallbackPoint = (id: string): [number, number] => {
   return [RMF_CENTER[0] + latOffset, RMF_CENTER[1] + lngOffset];
 };
 
-const dedupeAgendaLookupRows = (rows: AgendaLookupRow[]) => {
-  const byId = new Map<string, AgendaLookupRow>();
+const dedupeEmpresaLookupRows = (rows: EmpresaLookupRow[]) => {
+  const byId = new Map<string, EmpresaLookupRow>();
   rows.forEach((row) => {
     if (!byId.has(row.id)) {
       byId.set(row.id, row);
@@ -269,9 +268,9 @@ export default function RoutesMap() {
   const [companyCodeQuery, setCompanyCodeQuery] = useState("");
   const restoredDraftRef = useRef(false);
 
-  const [agendaRows, setAgendaRows] = useState<AgendaLookupRow[]>([]);
-  const [scheduledVisitsByAgenda, setScheduledVisitsByAgenda] = useState<
-    Record<string, AgendaScheduledVisit[]>
+  const [empresaRows, setEmpresaRows] = useState<EmpresaLookupRow[]>([]);
+  const [scheduledVisitsByEmpresa, setScheduledVisitsByEmpresa] = useState<
+    Record<string, EmpresaScheduledVisit[]>
   >({});
   const [vendedores, setVendedores] = useState<
     { user_id: string; display_name: string | null; role: string; supervisor_id?: string | null }[]
@@ -281,9 +280,9 @@ export default function RoutesMap() {
   >([]);
 
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("RAIO");
-  const [selectedAgendaIds, setSelectedAgendaIds] = useState<string[]>([]);
+  const [selectedEmpresaIds, setSelectedEmpresaIds] = useState<string[]>([]);
   const [selectedBairroKeys, setSelectedBairroKeys] = useState<string[]>([]);
-  const [excludedBairroAgendaIds, setExcludedBairroAgendaIds] = useState<string[]>([]);
+  const [excludedBairroEmpresaIds, setExcludedBairroEmpresaIds] = useState<string[]>([]);
   const [selectedVendorIds, setSelectedVendorIds] = useState<string[]>([]);
   const [vendorQuery, setVendorQuery] = useState("");
 
@@ -295,7 +294,7 @@ export default function RoutesMap() {
   const [generating, setGenerating] = useState(false);
   const [showGeocodeConfirm, setShowGeocodeConfirm] = useState(false);
 
-  // ====== SELEÇÃO POR RAIO (AGORA COM 1KM) ======
+  // ====== SELECAO POR RAIO (AGORA COM 1KM) ======
   const [radiusKm, setRadiusKm] = useState<0.5 | 1 | 3 | 5 | 10>(1);
   const [radiusMode, setRadiusMode] = useState(true);
   const [radiusCenter, setRadiusCenter] = useState<L.LatLng | null>(null);
@@ -313,8 +312,8 @@ export default function RoutesMap() {
     const parsed = readRoutesModuleDraft();
     if (typeof parsed.companyNameQuery === "string") setCompanyNameQuery(parsed.companyNameQuery);
     if (typeof parsed.companyCodeQuery === "string") setCompanyCodeQuery(parsed.companyCodeQuery);
-    if (Array.isArray(parsed.selectedAgendaIds)) {
-      setSelectedAgendaIds(Array.from(new Set(parsed.selectedAgendaIds.filter(Boolean))));
+    if (Array.isArray(parsed.selectedEmpresaIds)) {
+      setSelectedEmpresaIds(Array.from(new Set(parsed.selectedEmpresaIds.filter(Boolean))));
     }
   }, []);
 
@@ -324,13 +323,13 @@ export default function RoutesMap() {
 
     const load = async () => {
       try {
-        const [agenda, vends, sups] = await Promise.all([
-          fetchAgendaLookup(),
+        const [empresas, vends, sups] = await Promise.all([
+          fetchEmpresasLookup(),
           fetchVendedores(),
           fetchSupervisores(),
         ]);
         if (!active) return;
-        setAgendaRows(agenda);
+        setEmpresaRows(empresas);
         setVendedores(vends);
         setSupervisores(sups);
       } catch (e) {
@@ -367,47 +366,49 @@ export default function RoutesMap() {
     return vendedores.filter((v) => (v.display_name ?? v.user_id).toLowerCase().includes(t));
   }, [vendorQuery, vendedores]);
 
-  const dedupedAgendaRows = useMemo(() => dedupeAgendaLookupRows(agendaRows), [agendaRows]);
+  const dedupedEmpresaRows = useMemo(() => dedupeEmpresaLookupRows(empresaRows), [empresaRows]);
 
   useEffect(() => {
     let active = true;
-    const agendaIds = dedupedAgendaRows.map((row) => row.id);
+    const empresaIds = dedupedEmpresaRows.map((row) => row.id);
 
-    if (agendaIds.length === 0) {
-      setScheduledVisitsByAgenda({});
+    if (empresaIds.length === 0) {
+      setScheduledVisitsByEmpresa({});
       return () => {
         active = false;
       };
     }
 
-    fetchAgendaScheduledVisits(agendaIds)
+    fetchEmpresaScheduledVisits(empresaIds)
       .then((visits) => {
         if (!active) return;
-        const grouped: Record<string, AgendaScheduledVisit[]> = {};
+        const grouped: Record<string, EmpresaScheduledVisit[]> = {};
         visits.forEach((visit) => {
-          if (!grouped[visit.agenda_id]) grouped[visit.agenda_id] = [];
-          grouped[visit.agenda_id].push(visit);
+          if (!visit.cliente_id) return;
+          if (!grouped[visit.cliente_id]) grouped[visit.cliente_id] = [];
+          grouped[visit.cliente_id].push(visit);
         });
-        setScheduledVisitsByAgenda(grouped);
+        setScheduledVisitsByEmpresa(grouped);
       })
       .catch((error) => {
         console.error(error);
-        if (active) setScheduledVisitsByAgenda({});
+        if (!active) return;
+        setScheduledVisitsByEmpresa({});
       });
 
     return () => {
       active = false;
     };
-  }, [dedupedAgendaRows]);
+  }, [dedupedEmpresaRows]);
 
   const filterOptions = useMemo<Record<string, string[]>>(() => {
     const options = Object.fromEntries(
       Object.keys(FILTER_SOURCES).map((key) => [key, new Set<string>()]),
     ) as Record<string, Set<string>>;
 
-    dedupedAgendaRows.forEach((row) => {
+    dedupedEmpresaRows.forEach((row) => {
       const valuesByKey: Record<string, string | null | undefined> = {
-        cod_1: row.cod_1,
+        cod_1: row.codigo,
         empresa_nome: row.empresa ?? row.nome_fantasia,
         bairro: row.bairro,
         cidade: row.cidade,
@@ -427,7 +428,7 @@ export default function RoutesMap() {
     return Object.fromEntries(
       Object.entries(options).map(([key, set]) => [key, Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"))]),
     );
-  }, [dedupedAgendaRows]);
+  }, [dedupedEmpresaRows]);
 
   const rowsMatchingFilters = useMemo(() => {
     const companyNameTerm = normalize(companyNameQuery);
@@ -435,21 +436,21 @@ export default function RoutesMap() {
     const d = filters.dateRanges.data_da_ultima_visita;
     const vr = filters.ranges.vidas_ultima_visita;
 
-    return dedupedAgendaRows.filter((r) => {
+    return dedupedEmpresaRows.filter((r) => {
       if (companyNameTerm) {
-        const companyNameHaystack = normalize([r.empresa, r.nome_fantasia].filter(Boolean).join(" "));
-        if (!companyNameHaystack.includes(companyNameTerm)) return false;
+        const companyName = normalize(r.empresa);
+        if (!companyName.includes(companyNameTerm)) return false;
       }
 
       if (companyCodeTerm) {
-        const code = normalize(r.cod_1);
+        const code = normalize(r.codigo);
         if (!code.includes(companyCodeTerm)) return false;
       }
 
       const ck: Record<string, string> = {
         supervisor: r.supervisor ?? "",
         vendedor: r.vendedor ?? "",
-        cod_1: r.cod_1 ?? "",
+        cod_1: r.codigo ?? "",
         bairro: r.bairro ?? "",
         cidade: r.cidade ?? "",
         uf: r.uf ?? "",
@@ -501,13 +502,13 @@ export default function RoutesMap() {
 
       return true;
     });
-  }, [companyCodeQuery, companyNameQuery, dedupedAgendaRows, filters]);
+  }, [companyCodeQuery, companyNameQuery, dedupedEmpresaRows, filters]);
 
-  const resolveMapObs = useCallback((agendaId: string) => {
-    const visits = scheduledVisitsByAgenda[agendaId] ?? [];
+  const resolveMapObs = useCallback((empresaId: string) => {
+    const visits = scheduledVisitsByEmpresa[empresaId] ?? [];
     if (visits.length === 0) return "-";
 
-    const latestVisit = visits.reduce<AgendaScheduledVisit | null>((latest, visit) => {
+    const latestVisit = visits.reduce<EmpresaScheduledVisit | null>((latest, visit) => {
       if (!latest) return visit;
       const latestTime = parseDateValue(latest.visit_date).getTime();
       const visitTime = parseDateValue(visit.visit_date).getTime();
@@ -517,7 +518,7 @@ export default function RoutesMap() {
     }, null);
 
     return formatVisitBadge(latestVisit?.visit_date ?? null);
-  }, [scheduledVisitsByAgenda]);
+  }, [scheduledVisitsByEmpresa]);
 
   const mapRows = useMemo<RenderableMapRow[]>(() => {
     return rowsMatchingFilters.map((row) => {
@@ -548,13 +549,13 @@ export default function RoutesMap() {
     });
   }, [rowsMatchingFilters]);
 
-  const missingAll = useMemo(() => dedupedAgendaRows.filter((r) => !hasRealCoordinates(r)), [dedupedAgendaRows]);
+  const missingAll = useMemo(() => dedupedEmpresaRows.filter((r) => !hasRealCoordinates(r)), [dedupedEmpresaRows]);
   const missingFromFiltersCount = useMemo(
     () => rowsMatchingFilters.filter((r) => !hasRealCoordinates(r)).length,
     [rowsMatchingFilters],
   );
   const bairroRowsByKey = useMemo(() => {
-    const grouped = new Map<string, { name: string; rows: AgendaLookupRow[] }>();
+    const grouped = new Map<string, { name: string; rows: EmpresaLookupRow[] }>();
 
     rowsMatchingFilters.forEach((row) => {
       if (normalize(row.cidade) !== "FORTALEZA") return;
@@ -578,40 +579,40 @@ export default function RoutesMap() {
     [bairroRowsByKey, selectedBairroKeys],
   );
   const selectedBairroCompanyRows = useMemo(
-    () => dedupeAgendaLookupRows(selectedBairroRows),
+    () => dedupeEmpresaLookupRows(selectedBairroRows),
     [selectedBairroRows],
   );
-  const selectedBairroAgendaIds = useMemo(
+  const selectedBairroEmpresaIds = useMemo(
     () => Array.from(new Set(selectedBairroCompanyRows.map((row) => row.id))),
     [selectedBairroCompanyRows],
   );
-  const excludedBairroAgendaSet = useMemo(() => new Set(excludedBairroAgendaIds), [excludedBairroAgendaIds]);
-  const effectiveSelectedAgendaIds = useMemo(
+  const excludedBairroEmpresaSet = useMemo(() => new Set(excludedBairroEmpresaIds), [excludedBairroEmpresaIds]);
+  const effectiveSelectedEmpresaIds = useMemo(
     () =>
       Array.from(
         new Set([
-          ...selectedAgendaIds,
-          ...selectedBairroAgendaIds.filter((id) => !excludedBairroAgendaSet.has(id)),
+          ...selectedEmpresaIds,
+          ...selectedBairroEmpresaIds.filter((id) => !excludedBairroEmpresaSet.has(id)),
         ]),
       ),
-    [excludedBairroAgendaSet, selectedAgendaIds, selectedBairroAgendaIds],
+    [excludedBairroEmpresaSet, selectedEmpresaIds, selectedBairroEmpresaIds],
   );
-  const effectiveSelSet = useMemo(() => new Set(effectiveSelectedAgendaIds), [effectiveSelectedAgendaIds]);
+  const effectiveSelSet = useMemo(() => new Set(effectiveSelectedEmpresaIds), [effectiveSelectedEmpresaIds]);
 
   useEffect(() => {
     if (!restoredDraftRef.current) return;
     writeRoutesModuleDraft({
       companyNameQuery,
       companyCodeQuery,
-      selectedAgendaIds: effectiveSelectedAgendaIds,
+      selectedEmpresaIds: effectiveSelectedEmpresaIds,
     });
-  }, [companyCodeQuery, companyNameQuery, effectiveSelectedAgendaIds]);
+  }, [companyCodeQuery, companyNameQuery, effectiveSelectedEmpresaIds]);
 
   useEffect(() => {
-    setExcludedBairroAgendaIds((prev) => prev.filter((id) => selectedBairroAgendaIds.includes(id)));
-  }, [selectedBairroAgendaIds]);
+    setExcludedBairroEmpresaIds((prev) => prev.filter((id) => selectedBairroEmpresaIds.includes(id)));
+  }, [selectedBairroEmpresaIds]);
 
-  const computeIdsWithinRadius = (rows: AgendaLookupRow[], center: L.LatLng, km: number) => {
+  const computeIdsWithinRadius = (rows: EmpresaLookupRow[], center: L.LatLng, km: number) => {
     const radiusMeters = km * 1000;
     const ids: string[] = [];
     for (const r of rows) {
@@ -640,7 +641,7 @@ export default function RoutesMap() {
     if (!isLightMapMode) return mapRows;
     if (mapRows.length <= LIGHT_MODE_POINT_LIMIT) return mapRows;
 
-    const selectedOrRadiusIds = new Set([...selectedAgendaIds, ...radiusResultIds]);
+    const selectedOrRadiusIds = new Set([...selectedEmpresaIds, ...radiusResultIds]);
     const selectedOrRadiusRows: RenderableMapRow[] = [];
     const regularRows: RenderableMapRow[] = [];
     const bounds = mapViewport?.bounds ?? null;
@@ -666,7 +667,7 @@ export default function RoutesMap() {
     }
 
     return [...selectedOrRadiusRows, ...regularRows];
-  }, [isLightMapMode, mapRows, mapViewport, radiusResultIds, selectedAgendaIds, selectionMode]);
+  }, [isLightMapMode, mapRows, mapViewport, radiusResultIds, selectedEmpresaIds, selectionMode]);
 
   const toggleBairroSelection = useCallback(
     (bairroKey: string) => {
@@ -764,7 +765,7 @@ export default function RoutesMap() {
         const ids = computeIdsWithinRadius(mapRows, center, radiusKm);
         setRadiusResultIds(ids);
 
-        setSelectedAgendaIds((prev) => {
+        setSelectedEmpresaIds((prev) => {
           if (radiusReplaceSelection) return ids;
           const s = new Set(prev);
           ids.forEach((id) => s.add(id));
@@ -788,7 +789,7 @@ export default function RoutesMap() {
 
     useEffect(() => {
       updateMapViewport(map.getBounds(), map.getZoom());
-    }, [map, updateMapViewport]);
+    }, [map]);
 
     return null;
   }
@@ -801,31 +802,31 @@ export default function RoutesMap() {
     );
   }
 
-  const toggleAgenda = (id: string) => {
+  const toggleEmpresaSelection = (id: string) => {
     if (selectionMode === "BAIRRO") {
-      if (!selectedBairroAgendaIds.includes(id)) return;
-      setExcludedBairroAgendaIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+      if (!selectedBairroEmpresaIds.includes(id)) return;
+      setExcludedBairroEmpresaIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
       return;
     }
 
-    setSelectedAgendaIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setSelectedEmpresaIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
   const toggleVendor = (id: string) =>
     setSelectedVendorIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
-  const clearAllSelectedCompanies = useCallback(() => {
-    setSelectedAgendaIds([]);
+  const clearAllSelectedCompanies = () => {
+    setSelectedEmpresaIds([]);
     setSelectedBairroKeys([]);
-    setExcludedBairroAgendaIds([]);
+    setExcludedBairroEmpresaIds([]);
     setRadiusResultIds([]);
-  }, []);
+  };
 
-  const resetCompanyListHeight = useCallback(() => {
+  const resetCompanyListHeight = () => {
     setCompanyListHeight(256);
-  }, []);
+  };
 
-  const startCompanyListResize = useCallback((startClientY: number) => {
+  const startCompanyListResize = (startClientY: number) => {
     const startHeight = companyListHeight;
 
     const handlePointerMove = (event: MouseEvent) => {
@@ -844,7 +845,7 @@ export default function RoutesMap() {
     document.body.style.userSelect = "none";
     window.addEventListener("mousemove", handlePointerMove);
     window.addEventListener("mouseup", stopResize);
-  }, [companyListHeight]);
+  };
 
   const handleGeocode = async () => {
     if (geocoding || missingAll.length === 0) return;
@@ -852,7 +853,7 @@ export default function RoutesMap() {
     setGeocoding(true);
     setMessage("Geocodificando empresas sem coordenadas...");
 
-    const next = [...agendaRows];
+    const next = [...empresaRows];
     const nextById = new Map(next.map((row, index) => [row.id, index] as const));
     let ok = 0,
       skip = 0,
@@ -861,7 +862,7 @@ export default function RoutesMap() {
     const grouped = new Map<
       string,
       {
-        rows: AgendaLookupRow[];
+        rows: EmpresaLookupRow[];
         city: string;
         uf: string;
         bairro: string;
@@ -921,7 +922,7 @@ export default function RoutesMap() {
         }
 
         const ids = group.rows.map((row) => row.id);
-        await updateAgendaCoordinatesBatch({
+        await updateEmpresaCoordinatesBatch({
           ids,
           latitude: g.latitude,
           longitude: g.longitude,
@@ -944,7 +945,7 @@ export default function RoutesMap() {
       }
     }
 
-    setAgendaRows(next);
+    setEmpresaRows(next);
     setGeocoding(false);
 
     const postponedText =
@@ -960,18 +961,24 @@ export default function RoutesMap() {
   const handleGenerate = async () => {
     const selVendors = vendedores.filter((v) => selectedVendorIds.includes(v.user_id));
     if (selVendors.length === 0) return setMessage("Selecione pelo menos um vendedor para gerar visitas.");
-    if (effectiveSelectedAgendaIds.length === 0) return setMessage("Selecione pelo menos uma empresa para gerar visitas.");
+    if (effectiveSelectedEmpresaIds.length === 0) return setMessage("Selecione pelo menos uma empresa para gerar visitas.");
     if (!visitDate) return setMessage("Selecione a data da visita.");
 
     setGenerating(true);
     setMessage(null);
 
     try {
-      const rows = await fetchAgendaForGeneration(filters, effectiveSelectedAgendaIds);
-      if (rows.length === 0) return setMessage("Nenhum registro encontrado para gerar visitas.");
+      const rowsById = new Map(dedupedEmpresaRows.map((row) => [row.id, row]));
+      const selectedEmpresas = effectiveSelectedEmpresaIds
+        .map((id) => rowsById.get(id))
+        .filter((row): row is EmpresaLookupRow => Boolean(row));
+
+      if (selectedEmpresas.length === 0) {
+        return setMessage("Nenhum registro encontrado para gerar visitas.");
+      }
 
       const chunkSize = 500;
-      const agendaIds = rows.map((r) => r.id);
+      const empresaIds = selectedEmpresas.map((row) => row.id);
       const base = new Date(`${visitDate}T12:00:00`);
       const display = new Intl.DateTimeFormat("pt-BR").format(base);
 
@@ -997,19 +1004,23 @@ export default function RoutesMap() {
 
         if (re || !route) throw new Error(re?.message ?? "Erro ao criar rota de visitas.");
 
-        const stops = rows.map((r, i) => ({ route_id: route.id, agenda_id: r.id, stop_order: i + 1 }));
+        const stops = selectedEmpresas.map((item, i) => ({
+          route_id: route.id,
+          cliente_id: item.id,
+          stop_order: i + 1,
+        }));
         for (let i = 0; i < stops.length; i += chunkSize) {
           const { error } = await supabase.from("route_stops").insert(stops.slice(i, i + chunkSize));
           if (error) throw new Error(error.message);
         }
 
-        const visits = rows.map((r) => ({
-          agenda_id: r.id,
+        const visits = selectedEmpresas.map((item) => ({
+          cliente_id: item.id,
           assigned_to_user_id: v.user_id,
           assigned_to_name: v.display_name ?? v.user_id,
           visit_date: visitDate,
-          perfil_visita: r.perfil_visita ?? null,
-          instructions: r.instructions?.trim() || null,
+          perfil_visita: item.perfil_visita ?? null,
+          instructions: item.instructions?.trim() || null,
           route_id: route.id,
           created_by: session?.user.id ?? null,
         }));
@@ -1018,34 +1029,33 @@ export default function RoutesMap() {
           const { error } = await supabase
             .from("visits")
             .upsert(visits.slice(i, i + chunkSize), {
-              onConflict: "agenda_id,assigned_to_user_id,visit_date",
+              onConflict: "cliente_id,assigned_to_user_id,visit_date",
               ignoreDuplicates: true,
             });
           if (error) throw new Error(error.message);
         }
       }
 
-      for (let i = 0; i < agendaIds.length; i += chunkSize) {
-        const ids = agendaIds.slice(i, i + chunkSize);
+      for (let i = 0; i < empresaIds.length; i += chunkSize) {
+        const ids = empresaIds.slice(i, i + chunkSize);
 
-        const { error: e1 } = await supabase
-          .from("agenda")
-          .update({ visit_generated_at: base.toISOString() })
+        const { error } = await supabase
+          .from("clientes")
+          .update({
+            visit_generated_at: base.toISOString(),
+            vendedor: vendorNames || null,
+            supervisor: supNames || null,
+          })
           .in("id", ids);
-        if (e1) throw new Error(e1.message);
 
-        const { error: e2 } = await supabase
-          .from("agenda")
-          .update({ vendedor: vendorNames || null, supervisor: supNames || null })
-          .in("id", ids);
-        if (e2) throw new Error(e2.message);
+        if (error) throw new Error(error.message);
       }
 
       setMessage(
-        `Geradas ${rows.length * selVendors.length} visitas (${rows.length} empresa(s)) para ${selVendors.length} vendedor(es).`,
+        `Geradas ${selectedEmpresas.length * selVendors.length} visitas (${selectedEmpresas.length} empresa(s)) para ${selVendors.length} vendedor(es).`,
       );
 
-      setSelectedAgendaIds([]);
+      setSelectedEmpresaIds([]);
       setSelectedBairroKeys([]);
       setSelectedVendorIds([]);
       setVendorQuery("");
@@ -1091,7 +1101,7 @@ export default function RoutesMap() {
                 <input
                   value={companyNameQuery}
                   onChange={(e) => setCompanyNameQuery(e.target.value)}
-                  placeholder="Empresa ou nome fantasia"
+                  placeholder="Nome da empresa"
                   className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
                 />
               </label>
@@ -1279,7 +1289,7 @@ export default function RoutesMap() {
               </div>
             </div>
 
-            {/* Seleção por raio */}
+            {/* Selecao por raio */}
             <div className="rounded-xl border border-sea/20 bg-white/75 p-3">
               <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-ink/70">Selecao espacial</h3>
 
@@ -1345,7 +1355,7 @@ export default function RoutesMap() {
                     onChange={(e) => setRadiusReplaceSelection(e.target.checked)}
                     className="h-4 w-4 accent-sea"
                   />
-                  Substituir seleção
+                  Substituir selecao
                 </label>
               </div>
               )}
@@ -1356,7 +1366,7 @@ export default function RoutesMap() {
 
               {selectionMode === "RAIO" && radiusCenter && (
                 <p className="mt-2 text-[11px] text-ink/60">
-                  Centro: {radiusCenter.lat.toFixed(5)}, {radiusCenter.lng.toFixed(5)} • Encontrados:{" "}
+                  Centro: {radiusCenter.lat.toFixed(5)}, {radiusCenter.lng.toFixed(5)} - Encontrados:{" "}
                   {radiusRows.length}
                 </p>
               )}
@@ -1371,7 +1381,7 @@ export default function RoutesMap() {
                   <div className="mt-3 flex items-center justify-between rounded-lg border border-sea/15 bg-white/90 px-3 py-2 text-[11px] text-ink/60">
                     <span>Bairros com empresas: {bairroRowsByKey.size}</span>
                     <span>
-                      Bairros selecionados: {selectedBairroKeys.length} • Empresas: {effectiveSelectedAgendaIds.length}
+                      Bairros selecionados: {selectedBairroKeys.length} - Empresas: {effectiveSelectedEmpresaIds.length}
                     </span>
                   </div>
                 </>
@@ -1404,7 +1414,7 @@ export default function RoutesMap() {
               </div>
             </div>
 
-            {/* Botões */}
+            {/* Botoes */}
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -1412,7 +1422,7 @@ export default function RoutesMap() {
                   setMessage(null);
                   setShowGenerateModal(true);
                 }}
-                disabled={effectiveSelectedAgendaIds.length === 0}
+                disabled={effectiveSelectedEmpresaIds.length === 0}
                 className="inline-flex items-center gap-1 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
                 <MapPin size={14} />
@@ -1446,11 +1456,11 @@ export default function RoutesMap() {
                 <div>Empresas: {rowsMatchingFilters.length}</div>
                 {missingFromFiltersCount > 0 && <div>Sem coordenada real: {missingFromFiltersCount}</div>}
                 <div className="flex items-center justify-end gap-1">
-                  <span>Selecionadas: {effectiveSelectedAgendaIds.length}</span>
+                  <span>Selecionadas: {effectiveSelectedEmpresaIds.length}</span>
                   <button
                     type="button"
                     onClick={clearAllSelectedCompanies}
-                    disabled={effectiveSelectedAgendaIds.length === 0}
+                    disabled={effectiveSelectedEmpresaIds.length === 0}
                     title="Limpar empresas selecionadas"
                     aria-label="Limpar empresas selecionadas"
                     className="inline-flex h-5 w-5 items-center justify-center rounded-full text-ink/50 transition hover:bg-sea/10 hover:text-sea disabled:cursor-not-allowed disabled:opacity-40"
@@ -1467,7 +1477,7 @@ export default function RoutesMap() {
         <div className="rounded-2xl border border-sea/15 bg-white/92 p-3 sm:p-4">
           <div className="mb-3">
             <h3 className="text-base font-semibold text-ink">Mapa de empresas</h3>
-            <p className="text-xs text-ink/60">Passe o mouse para ver informações da empresas.</p>
+            <p className="text-xs text-ink/60">Passe o mouse para ver informacoes das empresas.</p>
           </div>
 
           <div className="overflow-hidden rounded-xl border border-sea/15">
@@ -1546,7 +1556,7 @@ export default function RoutesMap() {
                       weight: sel ? 2.2 : 1.4,
                     }}
                     eventHandlers={{
-                      click: () => toggleAgenda(r.id),
+                      click: () => toggleEmpresaSelection(r.id),
                       mouseover: (event) => event.target.openTooltip(),
                       mouseout: (event) => event.target.closeTooltip(),
                     }}
@@ -1555,9 +1565,9 @@ export default function RoutesMap() {
                       {isLightMapMode ? (
                         <div className="w-[260px] max-w-[260px] space-y-1 text-xs [overflow-wrap:anywhere]">
                           <p className="font-semibold text-ink">{r.empresa ?? r.nome_fantasia ?? "-"}</p>
-                          <p className="text-ink/70">COD: {r.cod_1 ?? "-"}</p>
+                          <p className="text-ink/70">COD: {r.codigo ?? "-"}</p>
                           <p className="text-ink/70">
-                            {r.bairro ?? "-"} • {r.cidade ?? "-"}
+                            {r.bairro ?? "-"} - {r.cidade ?? "-"}
                           </p>
                           <p className="text-ink/60">
                             ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}
@@ -1571,7 +1581,7 @@ export default function RoutesMap() {
                           <p className="font-semibold text-ink">OBS: {resolveMapObs(r.id)}</p>
                           <p className="text-ink/70">ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}</p>
                           <p className="text-ink/70">VIDAS ULTIMA VISITA: {r.visit_completed_vidas ?? "-"}</p>
-                          <p className="text-ink/70">CODIGO: {r.cod_1 ?? "-"}</p>
+                          <p className="text-ink/70">CODIGO: {r.codigo ?? "-"}</p>
                           <p className="text-ink/70">EMPRESA: {r.empresa ?? r.nome_fantasia ?? "-"}</p>
                           <p className="text-ink/70">BAIRRO: {r.bairro ?? "-"}</p>
                           <p className="text-ink/70">CIDADE: {r.cidade ?? "-"}</p>
@@ -1595,7 +1605,7 @@ export default function RoutesMap() {
                           <p className="text-ink/70">{addr(r) || "Endereco nao informado"}</p>
                           <button
                             type="button"
-                            onClick={() => toggleAgenda(r.id)}
+                            onClick={() => toggleEmpresaSelection(r.id)}
                             className="inline-flex items-center gap-1 rounded border border-sea/30 px-2 py-1 text-[11px] font-semibold text-ink"
                           >
                             {sel ? <Check size={12} /> : <Plus size={12} />}
@@ -1670,7 +1680,7 @@ export default function RoutesMap() {
                         </p>
                         <p className="truncate text-[11px] text-ink/60">{addr(r) || "-"}</p>
                         <p className="truncate text-[11px] text-ink/60">
-                          COD: {r.cod_1 ?? "-"} • Bairro: {r.bairro ?? "-"}
+                          COD: {r.codigo ?? "-"} - Bairro: {r.bairro ?? "-"}
                         </p>
                         <p className="truncate text-[11px] text-ink/60">
                           ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}
@@ -1684,7 +1694,7 @@ export default function RoutesMap() {
                       <input
                         type="checkbox"
                         checked={checked}
-                        onChange={() => toggleAgenda(r.id)}
+                        onChange={() => toggleEmpresaSelection(r.id)}
                         className="mt-1 h-4 w-4 shrink-0 accent-sea"
                       />
                     </label>
@@ -1729,7 +1739,7 @@ export default function RoutesMap() {
                           </p>
                           <p className="truncate text-[11px] text-ink/60">{addr(r) || "-"}</p>
                           <p className="truncate text-[11px] text-ink/60">
-                            COD: {r.cod_1 ?? "-"} • Bairro: {r.bairro ?? "-"}
+                            COD: {r.codigo ?? "-"} - Bairro: {r.bairro ?? "-"}
                           </p>
                           <p className="truncate text-[11px] text-ink/60">
                             ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}
@@ -1743,7 +1753,7 @@ export default function RoutesMap() {
                         <input
                           type="checkbox"
                           checked={checked}
-                          onChange={() => toggleAgenda(r.id)}
+                          onChange={() => toggleEmpresaSelection(r.id)}
                           className="mt-1 h-4 w-4 shrink-0 accent-sea"
                         />
                       </label>
@@ -1788,7 +1798,7 @@ export default function RoutesMap() {
             <p className="mt-1 text-xs text-ink/60">
               Selecione os vendedores, a data e as empresas marcadas no mapa para gerar as visitas.
             </p>
-            <p className="mt-2 text-xs text-ink/60">Empresas selecionadas: {effectiveSelectedAgendaIds.length}</p>
+            <p className="mt-2 text-xs text-ink/60">Empresas selecionadas: {effectiveSelectedEmpresaIds.length}</p>
 
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70">
@@ -1870,13 +1880,13 @@ export default function RoutesMap() {
                 onClick={handleGenerate}
                 disabled={
                   selectedVendorIds.length === 0 ||
-                  effectiveSelectedAgendaIds.length === 0 ||
+                  effectiveSelectedEmpresaIds.length === 0 ||
                   !visitDate ||
                   generating
                 }
                 className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
-                {generating ? "Gerando..." : `Confirmar (${effectiveSelectedAgendaIds.length})`}
+                {generating ? "Gerando..." : `Confirmar (${effectiveSelectedEmpresaIds.length})`}
               </button>
             </div>
           </div>

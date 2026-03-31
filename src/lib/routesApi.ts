@@ -1,19 +1,20 @@
-﻿import { supabase } from "./supabase";
+import { supabase } from "./supabase";
 import type { Route, RouteStop } from "../types/routes";
 
-export type AgendaLookupRow = {
+export type EmpresaLookupRow = {
   id: string;
+  codigo: string | null;
   empresa: string | null;
   nome_fantasia: string | null;
-  cod_1: string | null;
   vendedor: string | null;
   supervisor: string | null;
   situacao: string | null;
   perfil_visita: string | null;
+  instructions: string | null;
   data_da_ultima_visita: string | null;
   visit_completed_vidas: number | null;
   grupo: string | null;
-  obs_contrato_1: string | null;
+  obs_comercial: string | null;
   endereco: string | null;
   complemento: string | null;
   bairro: string | null;
@@ -21,6 +22,18 @@ export type AgendaLookupRow = {
   uf: string | null;
   latitude: number | null;
   longitude: number | null;
+};
+
+export type EmpresaScheduledVisit = {
+  id: string;
+  cliente_id: string;
+  visit_date: string;
+  assigned_to_user_id: string | null;
+  assigned_to_name: string | null;
+  perfil_visita: string | null;
+  instructions: string | null;
+  completed_at: string | null;
+  route_id: string | null;
 };
 
 export const fetchRoutes = async () => {
@@ -63,7 +76,7 @@ export const fetchRouteStops = async (routeId: string) => {
   const { data, error } = await supabase
     .from("route_stops")
     .select(
-      "id, route_id, agenda_id, stop_order, notes, agenda:agenda_id (id, empresa, nome_fantasia, endereco, complemento, bairro, cidade, uf, latitude, longitude)",
+      "id, route_id, cliente_id, agenda_id, stop_order, notes, cliente:cliente_id (id, codigo, empresa, nome_fantasia, endereco, complemento, bairro, cidade, uf, latitude, longitude)",
     )
     .eq("route_id", routeId)
     .order("stop_order", { ascending: true });
@@ -74,6 +87,7 @@ export const fetchRouteStops = async (routeId: string) => {
 
 export const createRouteStop = async (payload: {
   route_id: string;
+  cliente_id?: string | null;
   agenda_id?: string | null;
   stop_order?: number | null;
   notes?: string | null;
@@ -82,12 +96,13 @@ export const createRouteStop = async (payload: {
     .from("route_stops")
     .insert({
       route_id: payload.route_id,
+      cliente_id: payload.cliente_id ?? null,
       agenda_id: payload.agenda_id ?? null,
       stop_order: payload.stop_order ?? null,
       notes: payload.notes ?? null,
     })
     .select(
-      "id, route_id, agenda_id, stop_order, notes, agenda:agenda_id (id, empresa, nome_fantasia, endereco, complemento, bairro, cidade, uf, latitude, longitude)",
+      "id, route_id, cliente_id, agenda_id, stop_order, notes, cliente:cliente_id (id, codigo, empresa, nome_fantasia, endereco, complemento, bairro, cidade, uf, latitude, longitude)",
     )
     .single();
 
@@ -100,23 +115,23 @@ export const deleteRouteStop = async (stopId: string) => {
   if (error) throw new Error(error.message);
 };
 
-export const fetchAgendaLookup = async () => {
+export const fetchEmpresasLookup = async () => {
   const selectColumns =
-    "id, cod_1, empresa, nome_fantasia, vendedor, supervisor, situacao, perfil_visita, data_da_ultima_visita, visit_completed_vidas, grupo, obs_contrato_1, endereco, complemento, bairro, cidade, uf, latitude, longitude";
+    "id, codigo, empresa, nome_fantasia, vendedor, supervisor, situacao, perfil_visita, instructions, data_da_ultima_visita, visit_completed_vidas, grupo, obs_comercial, endereco, complemento, bairro, cidade, uf, latitude, longitude";
 
   const pageSize = 1000;
   let from = 0;
-  const allRows: AgendaLookupRow[] = [];
+  const allRows: EmpresaLookupRow[] = [];
 
   while (true) {
     const { data, error } = await supabase
-      .from("agenda")
+      .from("clientes")
       .select(selectColumns)
       .range(from, from + pageSize - 1)
       .order("id", { ascending: true });
 
     if (error) throw new Error(error.message);
-    const batch = (data ?? []) as AgendaLookupRow[];
+    const batch = (data ?? []) as EmpresaLookupRow[];
     if (batch.length === 0) break;
     allRows.push(...batch);
     if (batch.length < pageSize) break;
@@ -124,6 +139,33 @@ export const fetchAgendaLookup = async () => {
   }
 
   return allRows;
+};
+
+export const fetchEmpresaScheduledVisits = async (empresaIds: string[]) => {
+  if (!empresaIds.length) return [] as EmpresaScheduledVisit[];
+
+  const uniqueIds = Array.from(new Set(empresaIds.filter(Boolean)));
+  if (!uniqueIds.length) return [] as EmpresaScheduledVisit[];
+
+  const chunkSize = 500;
+  const results: EmpresaScheduledVisit[] = [];
+
+  for (let index = 0; index < uniqueIds.length; index += chunkSize) {
+    const chunk = uniqueIds.slice(index, index + chunkSize);
+    const { data, error } = await supabase
+      .from("visits")
+      .select(
+        "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, instructions, completed_at, route_id",
+      )
+      .in("cliente_id", chunk)
+      .is("completed_at", null)
+      .order("visit_date", { ascending: true });
+
+    if (error) throw new Error(error.message);
+    results.push(...((data ?? []) as EmpresaScheduledVisit[]));
+  }
+
+  return results;
 };
 
 export const fetchProfiles = async () => {
@@ -136,14 +178,14 @@ export const fetchProfiles = async () => {
   return data ?? [];
 };
 
-export const updateAgendaCoordinates = async (payload: {
+export const updateEmpresaCoordinates = async (payload: {
   id: string;
   latitude: number;
   longitude: number;
   geocode_source?: string;
 }) => {
   const { error } = await supabase
-    .from("agenda")
+    .from("clientes")
     .update({
       latitude: payload.latitude,
       longitude: payload.longitude,
@@ -155,7 +197,7 @@ export const updateAgendaCoordinates = async (payload: {
   if (error) throw new Error(error.message);
 };
 
-export const updateAgendaCoordinatesBatch = async (payload: {
+export const updateEmpresaCoordinatesBatch = async (payload: {
   ids: string[];
   latitude: number;
   longitude: number;
@@ -164,7 +206,7 @@ export const updateAgendaCoordinatesBatch = async (payload: {
   if (!payload.ids.length) return;
 
   const { error } = await supabase
-    .from("agenda")
+    .from("clientes")
     .update({
       latitude: payload.latitude,
       longitude: payload.longitude,

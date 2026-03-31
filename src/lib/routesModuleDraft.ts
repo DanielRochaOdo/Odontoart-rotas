@@ -1,6 +1,7 @@
 export type RoutesModuleDraftState = {
   companyNameQuery?: string;
   companyCodeQuery?: string;
+  selectedEmpresaIds?: string[];
   selectedAgendaIds?: string[];
 };
 
@@ -9,7 +10,12 @@ const ROUTES_MODULE_DRAFT_STORAGE_KEY = "routesModuleDraft";
 const normalizeDraft = (value: RoutesModuleDraftState | null | undefined): RoutesModuleDraftState => ({
   companyNameQuery: value?.companyNameQuery ?? "",
   companyCodeQuery: value?.companyCodeQuery ?? "",
-  selectedAgendaIds: Array.from(new Set((value?.selectedAgendaIds ?? []).filter(Boolean))),
+  selectedEmpresaIds: Array.from(
+    new Set((value?.selectedEmpresaIds ?? value?.selectedAgendaIds ?? []).filter(Boolean)),
+  ),
+  selectedAgendaIds: Array.from(
+    new Set((value?.selectedEmpresaIds ?? value?.selectedAgendaIds ?? []).filter(Boolean)),
+  ),
 });
 
 export const readRoutesModuleDraft = (): RoutesModuleDraftState => {

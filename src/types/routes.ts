@@ -10,11 +10,13 @@
 export type RouteStop = {
   id: string;
   route_id: string;
-  agenda_id: string | null;
+  cliente_id: string | null;
+  agenda_id?: string | null;
   stop_order: number | null;
   notes: string | null;
-  agenda?: {
+  cliente?: {
     id: string;
+    codigo?: string | null;
     empresa: string | null;
     nome_fantasia: string | null;
     endereco: string | null;
