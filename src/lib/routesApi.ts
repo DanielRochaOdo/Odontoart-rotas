@@ -76,7 +76,7 @@ export const fetchRouteStops = async (routeId: string) => {
   const { data, error } = await supabase
     .from("route_stops")
     .select(
-      "id, route_id, cliente_id, agenda_id, stop_order, notes, cliente:cliente_id (id, codigo, empresa, nome_fantasia, endereco, complemento, bairro, cidade, uf, latitude, longitude)",
+      "id, route_id, cliente_id, stop_order, notes, cliente:cliente_id (id, codigo, empresa, nome_fantasia, endereco, complemento, bairro, cidade, uf, latitude, longitude)",
     )
     .eq("route_id", routeId)
     .order("stop_order", { ascending: true });
@@ -88,7 +88,6 @@ export const fetchRouteStops = async (routeId: string) => {
 export const createRouteStop = async (payload: {
   route_id: string;
   cliente_id?: string | null;
-  agenda_id?: string | null;
   stop_order?: number | null;
   notes?: string | null;
 }) => {
@@ -97,12 +96,11 @@ export const createRouteStop = async (payload: {
     .insert({
       route_id: payload.route_id,
       cliente_id: payload.cliente_id ?? null,
-      agenda_id: payload.agenda_id ?? null,
       stop_order: payload.stop_order ?? null,
       notes: payload.notes ?? null,
     })
     .select(
-      "id, route_id, cliente_id, agenda_id, stop_order, notes, cliente:cliente_id (id, codigo, empresa, nome_fantasia, endereco, complemento, bairro, cidade, uf, latitude, longitude)",
+      "id, route_id, cliente_id, stop_order, notes, cliente:cliente_id (id, codigo, empresa, nome_fantasia, endereco, complemento, bairro, cidade, uf, latitude, longitude)",
     )
     .single();
 

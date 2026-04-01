@@ -19,7 +19,6 @@ import {
 
 type VisitRow = {
   id: string;
-  agenda_id: string;
   cliente_id?: string | null;
   visit_date: string;
   assigned_to_user_id: string | null;
@@ -228,7 +227,6 @@ export default function Visitas() {
     completeVisit:
       | {
           id: string;
-          agendaId: string;
           vidas: string;
           perfil: string;
           customManual: boolean;
@@ -293,7 +291,6 @@ export default function Visitas() {
         noVisit?: { id: string; reason: string } | null;
         completeVisit?: {
           id: string;
-          agendaId: string;
           vidas: string;
           perfil: string;
           customManual: boolean;
@@ -328,7 +325,6 @@ export default function Visitas() {
   const [restoredModalState, setRestoredModalState] = useState(false);
   const [completeVisit, setCompleteVisit] = useState<{
     id: string;
-    agendaId: string;
     vidas: string;
     perfil: string;
     customManual: boolean;
@@ -542,7 +538,7 @@ export default function Visitas() {
       let visitsQuery = supabase
         .from("visits")
         .select(
-          "id, agenda_id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, agenda:agenda_id (id, empresa, nome_fantasia, cod_1, corte, venc, valor, obs_contrato_1, pessoa, contato, instructions, endereco, complemento, bairro, cidade, uf, situacao, perfil_visita, supervisor)",
+          "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, cliente:cliente_id (id, codigo, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf)",
         )
         .gte("visit_date", startDate)
         .lte("visit_date", effectiveEnd)
@@ -568,12 +564,33 @@ export default function Visitas() {
         setVisits([]);
       } else {
         type VisitRowJoin = VisitRow & {
-          agenda?: VisitRow["agenda"] | VisitRow["agenda"][] | null;
+          cliente?: VisitRow["cliente"] | VisitRow["cliente"][] | null;
         };
+        const agendaFromCliente = (cliente: ClienteCanonicalModalRow): NonNullable<VisitRow["agenda"]> => ({
+          id: cliente.id,
+          empresa: cliente.empresa,
+          nome_fantasia: cliente.nome_fantasia,
+          cod_1: cliente.codigo,
+          corte: cliente.corte,
+          venc: cliente.venc,
+          valor: cliente.valor,
+          obs_contrato_1: cliente.obs_comercial,
+          pessoa: cliente.pessoa,
+          contato: cliente.contato,
+          instructions: null,
+          endereco: cliente.endereco,
+          complemento: cliente.complemento,
+          bairro: cliente.bairro,
+          cidade: cliente.cidade,
+          uf: cliente.uf,
+          situacao: cliente.situacao,
+          perfil_visita: cliente.perfil_visita,
+          supervisor: null,
+        });
         const normalized = (data ?? []).map((row) => {
           const item = row as VisitRowJoin;
-          const agenda = Array.isArray(item.agenda) ? item.agenda[0] ?? null : item.agenda ?? null;
-          return { ...item, agenda, cliente: null };
+          const cliente = Array.isArray(item.cliente) ? item.cliente[0] ?? null : item.cliente ?? null;
+          return { ...item, agenda: cliente ? agendaFromCliente(cliente) : null, cliente };
         }) as VisitRow[];
         setVisits(normalized);
       }
@@ -835,12 +852,12 @@ export default function Visitas() {
     return (count ?? 0) + 1;
   };
 
-  const ensureRouteStop = async (routeId: string, agendaId: string) => {
+  const ensureRouteStop = async (routeId: string, empresaId: string) => {
     const { data: existing, error } = await supabase
       .from("route_stops")
       .select("id")
       .eq("route_id", routeId)
-      .eq("agenda_id", agendaId)
+      .eq("cliente_id", empresaId)
       .maybeSingle();
 
     if (error) throw new Error(error.message);
@@ -849,7 +866,7 @@ export default function Visitas() {
     const stopOrder = await getNextStopOrder(routeId);
     const { error: insertError } = await supabase.from("route_stops").insert({
       route_id: routeId,
-      agenda_id: agendaId,
+      cliente_id: empresaId,
       stop_order: stopOrder,
     });
     if (insertError) throw new Error(insertError.message);
@@ -873,6 +890,11 @@ export default function Visitas() {
 
     const visit = visits.find((item) => item.id === visitId);
     if (!visit) return;
+    const companyId = visit.cliente_id ?? null;
+    if (!companyId) {
+      setError("Empresa da visita nao encontrada.");
+      return;
+    }
     if (visit.completed_at) {
       setError("Visita registrada. Edicao bloqueada.");
       return;
@@ -888,7 +910,7 @@ export default function Visitas() {
       const { data: targetVisit, error: targetVisitError } = await supabase
         .from("visits")
         .select("id, route_id, assigned_to_name")
-        .eq("agenda_id", visit.agenda_id)
+        .eq("cliente_id", companyId)
         .eq("assigned_to_user_id", state.vendorId)
         .eq("visit_date", state.date)
         .neq("id", visitId)
@@ -912,11 +934,11 @@ export default function Visitas() {
             .from("route_stops")
             .delete()
             .eq("route_id", visit.route_id)
-            .eq("agenda_id", visit.agenda_id);
+            .eq("cliente_id", companyId);
           if (deleteStopError) throw new Error(deleteStopError.message);
         }
 
-        await ensureRouteStop(routeId, visit.agenda_id);
+        await ensureRouteStop(routeId, companyId);
 
         const { error: deleteError } = await supabase.from("visits").delete().eq("id", visitId);
         if (deleteError) throw new Error(deleteError.message);
@@ -930,11 +952,11 @@ export default function Visitas() {
           .from("route_stops")
           .delete()
           .eq("route_id", visit.route_id)
-          .eq("agenda_id", visit.agenda_id);
+          .eq("cliente_id", companyId);
         if (deleteStopError) throw new Error(deleteStopError.message);
       }
 
-      await ensureRouteStop(routeId, visit.agenda_id);
+      await ensureRouteStop(routeId, companyId);
 
       const { error: updateError } = await supabase
         .from("visits")
@@ -970,6 +992,11 @@ export default function Visitas() {
 
     const visit = visits.find((item) => item.id === visitId);
     if (!visit) return;
+    const companyId = visit.cliente_id ?? null;
+    if (!companyId) {
+      setError("Empresa da visita nao encontrada.");
+      return;
+    }
     if (visit.completed_at) {
       setError("Visita registrada. Edicao bloqueada.");
       return;
@@ -988,7 +1015,7 @@ export default function Visitas() {
       const { data: existingVisit, error: existingVisitError } = await supabase
         .from("visits")
         .select("id")
-        .eq("agenda_id", visit.agenda_id)
+        .eq("cliente_id", companyId)
         .eq("assigned_to_user_id", state.vendorId)
         .eq("visit_date", state.date)
         .maybeSingle();
@@ -1000,7 +1027,7 @@ export default function Visitas() {
 
       const routeId = await ensureRoute(state.vendorId, vendorName, state.date);
       const { error: insertError } = await supabase.from("visits").insert({
-        agenda_id: visit.agenda_id,
+        cliente_id: companyId,
         assigned_to_user_id: state.vendorId,
         assigned_to_name: vendorName,
         visit_date: state.date,
@@ -1012,7 +1039,7 @@ export default function Visitas() {
       });
       if (insertError) throw new Error(insertError.message);
 
-      await ensureRouteStop(routeId, visit.agenda_id);
+      await ensureRouteStop(routeId, companyId);
       setRefreshKey((prev) => prev + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao adicionar vendedor na visita.");
@@ -1033,31 +1060,33 @@ export default function Visitas() {
         return;
       }
 
-      if (visit.route_id) {
+      if (visit.route_id && visit.cliente_id) {
         const { error: deleteStopError } = await supabase
           .from("route_stops")
           .delete()
           .eq("route_id", visit.route_id)
-          .eq("agenda_id", visit.agenda_id);
+          .eq("cliente_id", visit.cliente_id);
         if (deleteStopError) throw new Error(deleteStopError.message);
       }
 
       const { error: deleteError } = await supabase.from("visits").delete().eq("id", visitId);
       if (deleteError) throw new Error(deleteError.message);
 
-      const { count, error: countError } = await supabase
-        .from("visits")
-        .select("id", { count: "exact", head: true })
-        .eq("agenda_id", visit.agenda_id);
+      if (visit.cliente_id) {
+        const { count, error: countError } = await supabase
+          .from("visits")
+          .select("id", { count: "exact", head: true })
+          .eq("cliente_id", visit.cliente_id);
 
-      if (countError) throw new Error(countError.message);
+        if (countError) throw new Error(countError.message);
 
-      if ((count ?? 0) === 0) {
-        const { error: updateError } = await supabase
-          .from("agenda")
-          .update({ visit_generated_at: null })
-          .eq("id", visit.agenda_id);
-        if (updateError) throw new Error(updateError.message);
+        if ((count ?? 0) === 0) {
+          const { error: updateError } = await supabase
+            .from("clientes")
+            .update({ visit_generated_at: null })
+            .eq("id", visit.cliente_id);
+          if (updateError) throw new Error(updateError.message);
+        }
       }
 
       setRefreshKey((prev) => prev + 1);
@@ -1089,7 +1118,6 @@ export default function Visitas() {
         : normalized;
     setCompleteVisit({
       id: item.id,
-      agendaId: item.agenda_id,
       vidas: item.completed_vidas?.toString() ?? "",
       perfil: selectedPerfil,
       customManual: false,
@@ -1564,34 +1592,34 @@ export default function Visitas() {
 
       if (updateError) throw new Error(updateError.message);
 
-      if (visit.agenda_id) {
+      if (visit.cliente_id) {
         const visitDateKey = visit.visit_date ? formatDateKey(visit.visit_date) : formatDateKey(completedAt);
         const visitDateIso = visit.visit_date
           ? new Date(`${visitDateKey}T12:00:00`).toISOString()
           : completedAt;
 
-        const { data: agendaSnapshot, error: agendaSnapshotError } = await supabase
-          .from("agenda")
+        const { data: clienteSnapshot, error: clienteSnapshotError } = await supabase
+          .from("clientes")
           .select("data_da_ultima_visita")
-          .eq("id", visit.agenda_id)
+          .eq("id", visit.cliente_id)
           .maybeSingle<{ data_da_ultima_visita: string | null }>();
 
-        if (agendaSnapshotError) throw new Error(agendaSnapshotError.message);
+        if (clienteSnapshotError) throw new Error(clienteSnapshotError.message);
 
-        const currentLastVisitKey = agendaSnapshot?.data_da_ultima_visita
-          ? formatDateKey(agendaSnapshot.data_da_ultima_visita)
+        const currentLastVisitKey = clienteSnapshot?.data_da_ultima_visita
+          ? formatDateKey(clienteSnapshot.data_da_ultima_visita)
           : "";
 
         if (!currentLastVisitKey || currentLastVisitKey <= visitDateKey) {
-          const { error: agendaUpdateError } = await supabase
-            .from("agenda")
+          const { error: clienteUpdateError } = await supabase
+            .from("clientes")
             .update({
               data_da_ultima_visita: visitDateIso,
               visit_completed_vidas: vidas,
             })
-            .eq("id", visit.agenda_id);
+            .eq("id", visit.cliente_id);
 
-          if (agendaUpdateError) throw new Error(agendaUpdateError.message);
+          if (clienteUpdateError) throw new Error(clienteUpdateError.message);
         }
       }
 

@@ -11,7 +11,6 @@ export type RouteStop = {
   id: string;
   route_id: string;
   cliente_id: string | null;
-  agenda_id?: string | null;
   stop_order: number | null;
   notes: string | null;
   cliente?: {

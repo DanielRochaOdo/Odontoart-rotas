@@ -94,7 +94,7 @@ export const syncAgendaRowAcrossModules = async (row: ClienteSyncPayload) => {
     const { error: visitsError } = await supabase
       .from("visits")
       .update(visitPerfilPayload)
-      .eq("agenda_id", row.id)
+      .eq("cliente_id", row.id)
       .is("completed_at", null);
 
     if (visitsError) throw new Error(visitsError.message);

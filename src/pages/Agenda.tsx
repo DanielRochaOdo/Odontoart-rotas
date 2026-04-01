@@ -58,7 +58,6 @@ const FILTER_SOURCES: Record<string, string[]> = {
   grupo: ["grupo"],
   perfil_visita: ["perfil_visita"],
   empresa_nome: ["empresa"],
-  situacao: ["situacao"],
 };
 
 const FILTER_LABELS: Record<string, string> = {
@@ -71,7 +70,6 @@ const FILTER_LABELS: Record<string, string> = {
   grupo: "Grupo",
   perfil_visita: "Perfil Visita",
   empresa_nome: "Empresa",
-  situacao: "Situacao",
 };
 
 const parseDateValue = (value: string) => {
@@ -80,8 +78,6 @@ const parseDateValue = (value: string) => {
   }
   return new Date(value);
 };
-
-const escapeOrValue = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
 
 const formatDate = (value: string | null) => {
   if (!value) return "-";
@@ -219,7 +215,6 @@ const getAgendaFilterValueFromRow = (row: AgendaRow, filterKey: string) => {
     grupo: row.grupo,
     perfil_visita: row.perfil_visita,
     empresa_nome: row.empresa ?? row.nome_fantasia,
-    situacao: row.situacao,
   };
   return map[filterKey] ?? "";
 };
@@ -230,7 +225,7 @@ const sameStringArray = (left: string[], right: string[]) =>
 export default function Agenda() {
   const { role, session } = useAuth();
   const canAccess = role === "SUPERVISOR" || role === "ASSISTENTE";
-  const { filters, setFilters, clearFilters } = useAgendaFilters();
+  const { filters, setFilters, clearFilters } = useAgendaFilters("routesTableFilters");
   const [companyNameQuery, setCompanyNameQuery] = useState("");
   const [companyCodeQuery, setCompanyCodeQuery] = useState("");
   const [data, setData] = useState<AgendaRow[]>([]);
@@ -280,6 +275,7 @@ export default function Agenda() {
   const restoredViewRef = useRef(false);
   const restoredModalRef = useRef(false);
   const restoredRoutesDraftRef = useRef(false);
+  const initializedFiltersRef = useRef(false);
   const pendingModalRestoreRef = useRef<PendingAgendaModalState | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
 
@@ -447,12 +443,19 @@ export default function Agenda() {
     if (restoredRoutesDraftRef.current) return;
     restoredRoutesDraftRef.current = true;
     const draft = readRoutesModuleDraft();
-    setCompanyNameQuery(draft.companyNameQuery ?? "");
-    setCompanyCodeQuery(draft.companyCodeQuery ?? "");
     if (Array.isArray(draft.selectedAgendaIds)) {
       setSelectedAgendaIds(Array.from(new Set(draft.selectedAgendaIds.filter(Boolean))));
     }
   }, []);
+
+  useEffect(() => {
+    if (initializedFiltersRef.current) return;
+    initializedFiltersRef.current = true;
+    setCompanyNameQuery("");
+    setCompanyCodeQuery("");
+    setExcludedAgendaIds([]);
+    clearFilters();
+  }, [clearFilters]);
 
   useEffect(() => {
     if (!filters.global) return;
@@ -601,11 +604,9 @@ export default function Agenda() {
   useEffect(() => {
     if (!restoredRoutesDraftRef.current) return;
     writeRoutesModuleDraft({
-      companyNameQuery,
-      companyCodeQuery,
       selectedAgendaIds,
     });
-  }, [companyCodeQuery, companyNameQuery, selectedAgendaIds]);
+  }, [selectedAgendaIds]);
 
   useEffect(() => {
     const loadOptions = async () => {
@@ -691,13 +692,15 @@ export default function Agenda() {
         if (!active) return;
         const groupedScheduled: Record<string, AgendaScheduledVisit[]> = {};
         scheduledVisits.forEach((visit) => {
-          if (!groupedScheduled[visit.agenda_id]) groupedScheduled[visit.agenda_id] = [];
-          groupedScheduled[visit.agenda_id].push(visit);
+          if (!visit.cliente_id) return;
+          if (!groupedScheduled[visit.cliente_id]) groupedScheduled[visit.cliente_id] = [];
+          groupedScheduled[visit.cliente_id].push(visit);
         });
         const groupedVendors: Record<string, AgendaVisitVendor[]> = {};
         vendorVisits.forEach((visit) => {
-          if (!groupedVendors[visit.agenda_id]) groupedVendors[visit.agenda_id] = [];
-          groupedVendors[visit.agenda_id].push(visit);
+          if (!visit.cliente_id) return;
+          if (!groupedVendors[visit.cliente_id]) groupedVendors[visit.cliente_id] = [];
+          groupedVendors[visit.cliente_id].push(visit);
         });
         setScheduledVisitsByAgenda(groupedScheduled);
         setVisitVendorsByAgenda(groupedVendors);
@@ -875,7 +878,7 @@ export default function Agenda() {
 
         const stopRows = rows.map((row, index) => ({
           route_id: route.id,
-          agenda_id: row.id,
+          cliente_id: row.id,
           stop_order: index + 1,
         }));
 
@@ -888,7 +891,7 @@ export default function Agenda() {
         }
 
         const visitRows = rows.map((row) => ({
-          agenda_id: row.id,
+          cliente_id: row.id,
           assigned_to_user_id: vendor.user_id,
           assigned_to_name: vendor.display_name ?? vendor.user_id,
           visit_date: routeDate,
@@ -903,7 +906,7 @@ export default function Agenda() {
           const { error: visitError } = await supabase
             .from("visits")
             .upsert(chunk, {
-              onConflict: "agenda_id,assigned_to_user_id,visit_date",
+              onConflict: "cliente_id,assigned_to_user_id,visit_date",
               ignoreDuplicates: true,
             });
 
@@ -916,7 +919,7 @@ export default function Agenda() {
       for (let i = 0; i < agendaIds.length; i += chunkSize) {
         const chunkIds = agendaIds.slice(i, i + chunkSize);
         const { error: updateError } = await supabase
-          .from("agenda")
+          .from("clientes")
           .update({ visit_generated_at: visitBase.toISOString() })
           .in("id", chunkIds);
 
@@ -925,7 +928,7 @@ export default function Agenda() {
         }
 
         const { error: vendorError } = await supabase
-          .from("agenda")
+          .from("clientes")
           .update({ vendedor: vendorNames || null, supervisor: supervisorNames || null })
           .in("id", chunkIds);
         if (vendorError) {
@@ -1042,7 +1045,7 @@ export default function Agenda() {
 
     try {
       const { error: updateAgendaError } = await supabase
-        .from("agenda")
+        .from("clientes")
         .update({ instructions: nextInstructions })
         .eq("id", rowId);
       if (updateAgendaError) throw new Error(updateAgendaError.message);
@@ -1052,7 +1055,7 @@ export default function Agenda() {
       void supabase
         .from("visits")
         .update({ instructions: nextInstructions })
-        .eq("agenda_id", rowId)
+        .eq("cliente_id", rowId)
         .is("completed_at", null)
         .then(({ error: updateVisitsError }) => {
           if (updateVisitsError) {
@@ -1171,12 +1174,12 @@ export default function Agenda() {
     return (count ?? 0) + 1;
   };
 
-  const ensureRouteStop = async (routeId: string, agendaId: string) => {
+  const ensureRouteStop = async (routeId: string, empresaId: string) => {
     const { data: existing, error } = await supabase
       .from("route_stops")
       .select("id")
       .eq("route_id", routeId)
-      .eq("agenda_id", agendaId)
+      .eq("cliente_id", empresaId)
       .maybeSingle();
 
     if (error) throw new Error(error.message);
@@ -1185,18 +1188,18 @@ export default function Agenda() {
     const stopOrder = await getNextStopOrder(routeId);
     const { error: insertError } = await supabase.from("route_stops").insert({
       route_id: routeId,
-      agenda_id: agendaId,
+      cliente_id: empresaId,
       stop_order: stopOrder,
     });
     if (insertError) throw new Error(insertError.message);
   };
 
-  const removeRouteStop = async (routeId: string, agendaId: string) => {
+  const removeRouteStop = async (routeId: string, empresaId: string) => {
     const { error } = await supabase
       .from("route_stops")
       .delete()
       .eq("route_id", routeId)
-      .eq("agenda_id", agendaId);
+      .eq("cliente_id", empresaId);
     if (error) throw new Error(error.message);
   };
 
@@ -1232,8 +1235,8 @@ export default function Agenda() {
       const removed = scheduleOriginal.filter((visit) => !draftIds.has(visit.id));
 
       for (const visit of removed) {
-        if (visit.route_id) {
-          await removeRouteStop(visit.route_id, visit.agenda_id);
+        if (visit.route_id && visit.cliente_id) {
+          await removeRouteStop(visit.route_id, visit.cliente_id);
         }
         const { error } = await supabase.from("visits").delete().eq("id", visit.id);
         if (error) throw new Error(error.message);
@@ -1248,7 +1251,7 @@ export default function Agenda() {
           const { data, error } = await supabase
             .from("visits")
             .insert({
-              agenda_id: scheduleModalRow.id,
+              cliente_id: scheduleModalRow.id,
               assigned_to_user_id: draft.vendorId,
               assigned_to_name: vendorName,
               visit_date: draft.date,
@@ -1275,8 +1278,8 @@ export default function Agenda() {
         if (vendorChanged || dateChanged) {
           const routeId = await ensureRoute(draft.vendorId, vendorName, draft.date);
           const perfilPayload = buildVisitPerfilPayload(draft.perfil);
-          if (original.route_id && original.route_id !== routeId) {
-            await removeRouteStop(original.route_id, original.agenda_id);
+          if (original.route_id && original.route_id !== routeId && original.cliente_id) {
+            await removeRouteStop(original.route_id, original.cliente_id);
           }
           await ensureRouteStop(routeId, scheduleModalRow.id);
 
@@ -1325,20 +1328,20 @@ export default function Agenda() {
 
       if (scheduleDrafts.length === 0) {
         const { error } = await supabase
-          .from("agenda")
+          .from("clientes")
           .update({ visit_generated_at: null, vendedor: null, supervisor: null })
           .eq("id", scheduleModalRow.id);
         if (error) throw new Error(error.message);
       } else {
         const { error } = await supabase
-          .from("agenda")
+          .from("clientes")
           .update({ visit_generated_at: new Date().toISOString() })
           .eq("id", scheduleModalRow.id)
           .is("visit_generated_at", null);
         if (error) throw new Error(error.message);
 
         const { error: vendorError } = await supabase
-          .from("agenda")
+          .from("clientes")
           .update({ vendedor: vendorNames || null, supervisor: supervisorNames || null })
           .eq("id", scheduleModalRow.id);
         if (vendorError) throw new Error(vendorError.message);
@@ -1357,36 +1360,10 @@ export default function Agenda() {
 
         if (resolvedPerfil !== currentPerfil) {
           const { error: agendaPerfilError } = await supabase
-            .from("agenda")
+            .from("clientes")
             .update({ perfil_visita: resolvedPerfil })
             .eq("id", scheduleModalRow.id);
           if (agendaPerfilError) throw new Error(agendaPerfilError.message);
-
-          const codigo = scheduleModalRow.cod_1?.trim() ?? "";
-          const empresa = scheduleModalRow.empresa?.trim() ?? "";
-          const nomeFantasia = scheduleModalRow.nome_fantasia?.trim() ?? "";
-          if (codigo || empresa || nomeFantasia) {
-            let clientesQuery = supabase
-              .from("clientes")
-              .update({ perfil_visita: resolvedPerfil });
-            if (codigo && empresa && nomeFantasia) {
-              clientesQuery = clientesQuery.or(
-                `codigo.eq.${escapeOrValue(codigo)},empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
-              );
-            } else if (codigo) {
-              clientesQuery = clientesQuery.eq("codigo", codigo);
-            } else if (empresa && nomeFantasia) {
-              clientesQuery = clientesQuery.or(
-                `empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
-              );
-            } else if (empresa) {
-              clientesQuery = clientesQuery.eq("empresa", empresa);
-            } else {
-              clientesQuery = clientesQuery.eq("nome_fantasia", nomeFantasia);
-            }
-            const { error: clientePerfilError } = await clientesQuery;
-            if (clientePerfilError) throw new Error(clientePerfilError.message);
-          }
 
           setData((prev) =>
             prev.map((row) =>
@@ -1781,7 +1758,8 @@ export default function Agenda() {
       });
     }
 
-    Object.entries(filters.columns).forEach(([key, values]) => {
+    Object.keys(FILTER_SOURCES).forEach((key) => {
+      const values = filters.columns[key] ?? [];
       values.forEach((value, index) => {
         const chipId = `chip-column-${key}-${index}-${value}`;
         chips.push({

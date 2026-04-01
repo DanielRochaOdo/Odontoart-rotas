@@ -312,11 +312,11 @@ export default function AgendaDrawer({
     setStatus(null);
 
     try {
-      const payload: Partial<AgendaRow> = {
+      const payload = {
         data_da_ultima_visita: formState.data_da_ultima_visita
           ? new Date(`${formState.data_da_ultima_visita}T12:00:00`).toISOString()
           : null,
-        cod_1: formState.cod_1.trim() || null,
+        codigo: formState.cod_1.trim() || null,
         empresa: formState.empresa.trim() || null,
         pessoa: formState.pessoa.trim() || null,
         contato: formState.contato.trim() || null,
@@ -333,15 +333,17 @@ export default function AgendaDrawer({
         vendedor: formState.vendedor.trim() || null,
         grupo: formState.grupo.trim() || null,
         situacao: formState.situacao.trim() || null,
-        obs_contrato_1: formState.obs_contrato_1.trim() || null,
+        obs_comercial: formState.obs_contrato_1.trim() || null,
         instructions: canManageInstruction ? formState.instructions.trim() || null : row.instructions ?? null,
       };
 
       const { data, error } = await supabase
-        .from("agenda")
+        .from("clientes")
         .update(payload)
         .eq("id", row.id)
-        .select("*")
+        .select(
+          "id, data_da_ultima_visita, cod_1:codigo, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1:obs_comercial, visit_generated_at, created_at",
+        )
         .single();
 
       if (error || !data) {
@@ -356,7 +358,7 @@ export default function AgendaDrawer({
         void supabase
           .from("visits")
           .update({ instructions: updatedRow.instructions ?? null })
-          .eq("agenda_id", row.id)
+          .eq("cliente_id", row.id)
           .is("completed_at", null)
           .then(({ error: visitInstructionsError }) => {
             if (visitInstructionsError) {
@@ -452,7 +454,7 @@ export default function AgendaDrawer({
       return;
     }
 
-    const { error: deleteError } = await supabase.from("agenda").delete().eq("id", row.id);
+    const { error: deleteError } = await supabase.from("clientes").delete().eq("id", row.id);
 
     if (deleteError) {
       setStatus(deleteError.message);

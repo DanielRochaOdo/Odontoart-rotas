@@ -88,7 +88,6 @@ const FILTER_SOURCES: Record<string, string[]> = {
   vendedor: ["vendedor"],
   grupo: ["grupo"],
   perfil_visita: ["perfil_visita"],
-  situacao: ["situacao"],
 };
 
 const FILTER_LABELS: Record<string, string> = {
@@ -99,7 +98,6 @@ const FILTER_LABELS: Record<string, string> = {
   vendedor: "Vendedor",
   grupo: "Grupo",
   perfil_visita: "Perfil visita",
-  situacao: "Situacao",
 };
 
 const normalize = (v: string | null | undefined) =>
@@ -271,10 +269,11 @@ export default function RoutesMap() {
   const { role, session } = useAuth();
   const canGenerate = role === "SUPERVISOR" || role === "ASSISTENTE";
 
-  const { filters, setFilters, clearFilters } = useAgendaFilters();
+  const { filters, setFilters, clearFilters } = useAgendaFilters("routesMapFilters");
   const [companyNameQuery, setCompanyNameQuery] = useState("");
   const [companyCodeQuery, setCompanyCodeQuery] = useState("");
   const restoredDraftRef = useRef(false);
+  const initializedFiltersRef = useRef(false);
 
   const [empresaRows, setEmpresaRows] = useState<EmpresaLookupRow[]>([]);
   const [scheduledVisitsByEmpresa, setScheduledVisitsByEmpresa] = useState<
@@ -318,12 +317,18 @@ export default function RoutesMap() {
     if (restoredDraftRef.current) return;
     restoredDraftRef.current = true;
     const parsed = readRoutesModuleDraft();
-    if (typeof parsed.companyNameQuery === "string") setCompanyNameQuery(parsed.companyNameQuery);
-    if (typeof parsed.companyCodeQuery === "string") setCompanyCodeQuery(parsed.companyCodeQuery);
     if (Array.isArray(parsed.selectedEmpresaIds)) {
       setSelectedEmpresaIds(Array.from(new Set(parsed.selectedEmpresaIds.filter(Boolean))));
     }
   }, []);
+
+  useEffect(() => {
+    if (initializedFiltersRef.current) return;
+    initializedFiltersRef.current = true;
+    setCompanyNameQuery("");
+    setCompanyCodeQuery("");
+    clearFilters();
+  }, [clearFilters]);
 
   useEffect(() => {
     if (!canGenerate) return;
@@ -423,7 +428,6 @@ export default function RoutesMap() {
         vendedor: row.vendedor,
         grupo: row.grupo,
         perfil_visita: row.perfil_visita,
-        situacao: row.situacao,
       };
 
       Object.entries(valuesByKey).forEach(([key, value]) => {
@@ -455,19 +459,17 @@ export default function RoutesMap() {
       }
 
       const ck: Record<string, string> = {
-        supervisor: r.supervisor ?? "",
-        vendedor: r.vendedor ?? "",
         cod_1: r.codigo ?? "",
+        empresa_nome: r.empresa ?? r.nome_fantasia ?? "",
         bairro: r.bairro ?? "",
         cidade: r.cidade ?? "",
-        uf: r.uf ?? "",
+        vendedor: r.vendedor ?? "",
         grupo: r.grupo ?? "",
         perfil_visita: r.perfil_visita ?? "",
-        empresa_nome: r.empresa ?? r.nome_fantasia ?? "",
-        situacao: r.situacao ?? "",
       };
 
-      for (const [k, vals] of Object.entries(filters.columns)) {
+      for (const k of Object.keys(FILTER_SOURCES)) {
+        const vals = filters.columns[k] ?? [];
         if (!vals?.length) continue;
         if (!vals.map((v) => normalize(v)).includes(normalize(ck[k]))) return false;
       }
@@ -513,7 +515,7 @@ export default function RoutesMap() {
 
   const hasActiveRowsFilter = useMemo(() => {
     if (normalizeSearchText(companyNameQuery) || normalizeSearchText(companyCodeQuery)) return true;
-    if (Object.values(filters.columns).some((values) => values.length > 0)) return true;
+    if (Object.keys(FILTER_SOURCES).some((key) => (filters.columns[key] ?? []).length > 0)) return true;
     const dateRange = filters.dateRanges.data_da_ultima_visita;
     if (dateRange.from || dateRange.to || dateRange.month || dateRange.year || dateRange.invert) return true;
     const vidasRange = filters.ranges.vidas_ultima_visita;
@@ -619,11 +621,9 @@ export default function RoutesMap() {
   useEffect(() => {
     if (!restoredDraftRef.current) return;
     writeRoutesModuleDraft({
-      companyNameQuery,
-      companyCodeQuery,
       selectedEmpresaIds: effectiveSelectedEmpresaIds,
     });
-  }, [companyCodeQuery, companyNameQuery, effectiveSelectedEmpresaIds]);
+  }, [effectiveSelectedEmpresaIds]);
 
   useEffect(() => {
     setExcludedBairroEmpresaIds((prev) => prev.filter((id) => selectedBairroEmpresaIds.includes(id)));
