@@ -9,6 +9,7 @@ export type EmpresaLookupRow = {
   vendedor: string | null;
   supervisor: string | null;
   situacao: string | null;
+  categoria: string | null;
   perfil_visita: string | null;
   instructions: string | null;
   data_da_ultima_visita: string | null;
@@ -115,7 +116,7 @@ export const deleteRouteStop = async (stopId: string) => {
 
 export const fetchEmpresasLookup = async () => {
   const selectColumns =
-    "id, codigo, empresa, nome_fantasia, vendedor, supervisor, situacao, perfil_visita, instructions, data_da_ultima_visita, visit_completed_vidas, grupo, obs_comercial, endereco, complemento, bairro, cidade, uf, latitude, longitude";
+    "id, codigo, empresa, nome_fantasia, vendedor, supervisor, situacao, categoria, perfil_visita, instructions, data_da_ultima_visita, visit_completed_vidas, grupo, obs_comercial, endereco, complemento, bairro, cidade, uf, latitude, longitude";
 
   const pageSize = 1000;
   let from = 0;

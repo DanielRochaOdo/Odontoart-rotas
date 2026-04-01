@@ -1,8 +1,6 @@
 import { supabase } from "./supabase";
 import type { UserRole } from "../types/roles";
 
-let supportsListManagedUserEmails = true;
-
 export type ManagedProfile = {
   id: string;
   user_id: string | null;
@@ -108,8 +106,6 @@ export const updateManagedUserCredentials = async (payload: {
 };
 
 export const fetchManagedUserEmails = async (userIds: string[]) => {
-  if (!supportsListManagedUserEmails) return {} as Record<string, string>;
-
   const uniqueIds = [...new Set(userIds.filter(Boolean))];
   if (uniqueIds.length === 0) return {} as Record<string, string>;
 
@@ -119,7 +115,7 @@ export const fetchManagedUserEmails = async (userIds: string[]) => {
 
   // Backward-compatible fallback: older deployed function may not support list-emails yet.
   if (error) {
-    supportsListManagedUserEmails = false;
+    console.warn("manage-users list-emails unavailable:", error.message);
     return {} as Record<string, string>;
   }
   return (data?.emails ?? {}) as Record<string, string>;

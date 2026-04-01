@@ -60,6 +60,74 @@ const googleMapsUrl = (address: string) =>
 const wazeUrl = (address: string) =>
   `https://waze.com/ul?q=${encodeURIComponent(address)}`;
 
+type RoutesPageLookupsCache = {
+  profiles: { user_id: string; display_name: string | null; role: string }[];
+  empresaOptions: EmpresaLookupRow[];
+  cachedAt: number;
+};
+
+const ROUTES_PAGE_ROUTES_CACHE_KEY = "routesPageRoutesCacheV1";
+const ROUTES_PAGE_LOOKUPS_CACHE_KEY = "routesPageLookupsCacheV1";
+const ROUTES_PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
+let routesPageRoutesMemoryCache: { routes: Route[]; cachedAt: number } | null = null;
+let routesPageLookupsMemoryCache: RoutesPageLookupsCache | null = null;
+
+const readRoutesPageRoutesCache = () => {
+  if (routesPageRoutesMemoryCache) return routesPageRoutesMemoryCache;
+  try {
+    const raw = sessionStorage.getItem(ROUTES_PAGE_ROUTES_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<{ routes: Route[]; cachedAt: number }>;
+    if (!Array.isArray(parsed.routes)) return null;
+    const entry = {
+      routes: parsed.routes as Route[],
+      cachedAt: typeof parsed.cachedAt === "number" ? parsed.cachedAt : Date.now(),
+    };
+    routesPageRoutesMemoryCache = entry;
+    return entry;
+  } catch {
+    return null;
+  }
+};
+
+const writeRoutesPageRoutesCache = (routes: Route[]) => {
+  const entry = { routes, cachedAt: Date.now() };
+  routesPageRoutesMemoryCache = entry;
+  try {
+    sessionStorage.setItem(ROUTES_PAGE_ROUTES_CACHE_KEY, JSON.stringify(entry));
+  } catch {
+    // ignore storage failures
+  }
+};
+
+const readRoutesPageLookupsCache = () => {
+  if (routesPageLookupsMemoryCache) return routesPageLookupsMemoryCache;
+  try {
+    const raw = sessionStorage.getItem(ROUTES_PAGE_LOOKUPS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<RoutesPageLookupsCache>;
+    if (!Array.isArray(parsed.profiles) || !Array.isArray(parsed.empresaOptions)) return null;
+    const entry: RoutesPageLookupsCache = {
+      profiles: parsed.profiles as RoutesPageLookupsCache["profiles"],
+      empresaOptions: parsed.empresaOptions as EmpresaLookupRow[],
+      cachedAt: typeof parsed.cachedAt === "number" ? parsed.cachedAt : Date.now(),
+    };
+    routesPageLookupsMemoryCache = entry;
+    return entry;
+  } catch {
+    return null;
+  }
+};
+
+const writeRoutesPageLookupsCache = (entry: RoutesPageLookupsCache) => {
+  routesPageLookupsMemoryCache = entry;
+  try {
+    sessionStorage.setItem(ROUTES_PAGE_LOOKUPS_CACHE_KEY, JSON.stringify(entry));
+  } catch {
+    // ignore storage failures
+  }
+};
+
 export default function Routes() {
   const { role, session } = useAuth();
   const [routes, setRoutes] = useState<Route[]>([]);
@@ -85,36 +153,67 @@ export default function Routes() {
       setRoutes([]);
       return;
     }
+    const cached = readRoutesPageRoutesCache();
+    if (cached?.routes.length) {
+      setRoutes(cached.routes);
+      setSelectedRouteId((prev) =>
+        prev && cached.routes.some((route) => route.id === prev)
+          ? prev
+          : cached.routes[0]?.id ?? null,
+      );
+    }
+
     const loadRoutes = async () => {
       const data = await fetchRoutes();
       setRoutes(data);
-      if (!selectedRouteId && data.length) {
-        setSelectedRouteId(data[0].id);
-      }
+      writeRoutesPageRoutesCache(data);
+      setSelectedRouteId((prev) =>
+        prev && data.some((route) => route.id === prev) ? prev : data[0]?.id ?? null,
+      );
     };
 
     loadRoutes().catch(() => {
-      setRoutes([]);
+      if (!cached?.routes.length) {
+        setRoutes([]);
+      }
     });
-  }, [canEdit, selectedRouteId]);
+  }, [canEdit]);
 
   useEffect(() => {
     if (!canEdit) return;
     let active = true;
+    const cached = readRoutesPageLookupsCache();
+    if (cached) {
+      setProfiles(cached.profiles);
+      setEmpresaOptions(cached.empresaOptions);
+    }
+
     const loadLookups = async () => {
       try {
         const [profilesData, empresaData] = await Promise.all([fetchProfiles(), fetchEmpresasLookup()]);
         if (!active) return;
-        setProfiles(profilesData as { user_id: string; display_name: string | null; role: string }[]);
-        setEmpresaOptions(empresaData);
+        const nextCache: RoutesPageLookupsCache = {
+          profiles: profilesData as { user_id: string; display_name: string | null; role: string }[],
+          empresaOptions: empresaData,
+          cachedAt: Date.now(),
+        };
+        writeRoutesPageLookupsCache(nextCache);
+        setProfiles(nextCache.profiles);
+        setEmpresaOptions(nextCache.empresaOptions);
       } catch {
         if (!active) return;
-        setProfiles([]);
-        setEmpresaOptions([]);
+        if (!cached) {
+          setProfiles([]);
+          setEmpresaOptions([]);
+        }
       }
     };
 
-    loadLookups();
+    const cacheIsFresh =
+      Boolean(cached) && Date.now() - (cached?.cachedAt ?? 0) <= ROUTES_PAGE_CACHE_TTL_MS;
+    if (!cacheIsFresh) {
+      loadLookups();
+    }
     const unsubscribe = onProfilesUpdated(loadLookups);
     return () => {
       active = false;

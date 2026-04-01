@@ -3,20 +3,74 @@ export type RoutesModuleDraftState = {
   companyCodeQuery?: string;
   selectedEmpresaIds?: string[];
   selectedAgendaIds?: string[];
+  selectedVendorIds?: string[];
+  vendorQuery?: string;
+  visitDate?: string;
+  selectionMode?: "RAIO" | "BAIRRO";
+  selectedBairroKeys?: string[];
+  excludedBairroEmpresaIds?: string[];
+  radiusKm?: 0.5 | 1 | 3 | 5 | 10;
+  radiusMode?: boolean;
+  radiusReplaceSelection?: boolean;
+  radiusCenter?: { lat: number; lng: number } | null;
+  radiusResultIds?: string[];
 };
 
 const ROUTES_MODULE_DRAFT_STORAGE_KEY = "routesModuleDraft";
 
-const normalizeDraft = (value: RoutesModuleDraftState | null | undefined): RoutesModuleDraftState => ({
-  companyNameQuery: value?.companyNameQuery ?? "",
-  companyCodeQuery: value?.companyCodeQuery ?? "",
-  selectedEmpresaIds: Array.from(
-    new Set((value?.selectedEmpresaIds ?? value?.selectedAgendaIds ?? []).filter(Boolean)),
-  ),
-  selectedAgendaIds: Array.from(
-    new Set((value?.selectedEmpresaIds ?? value?.selectedAgendaIds ?? []).filter(Boolean)),
-  ),
-});
+const normalizeString = (value: unknown) => (typeof value === "string" ? value : "");
+
+const normalizeStringArray = (value: unknown) =>
+  Array.from(
+    new Set(
+      Array.isArray(value)
+        ? value
+            .map((item) => (typeof item === "string" ? item.trim() : ""))
+            .filter(Boolean)
+        : [],
+    ),
+  );
+
+const normalizeSelectionMode = (value: unknown): "RAIO" | "BAIRRO" =>
+  value === "BAIRRO" ? "BAIRRO" : "RAIO";
+
+const normalizeRadiusKm = (value: unknown): 0.5 | 1 | 3 | 5 | 10 => {
+  const parsed = Number(value);
+  if (parsed === 0.5 || parsed === 1 || parsed === 3 || parsed === 5 || parsed === 10) return parsed;
+  return 1;
+};
+
+const normalizeRadiusCenter = (value: unknown): { lat: number; lng: number } | null => {
+  if (!value || typeof value !== "object") return null;
+  const maybe = value as { lat?: unknown; lng?: unknown };
+  const lat = Number(maybe.lat);
+  const lng = Number(maybe.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+};
+
+const normalizeDraft = (value: RoutesModuleDraftState | null | undefined): RoutesModuleDraftState => {
+  const selectedEmpresaIds = normalizeStringArray(value?.selectedEmpresaIds ?? value?.selectedAgendaIds);
+  const selectedAgendaIds = normalizeStringArray(value?.selectedAgendaIds ?? value?.selectedEmpresaIds);
+  return {
+    companyNameQuery: normalizeString(value?.companyNameQuery),
+    companyCodeQuery: normalizeString(value?.companyCodeQuery),
+    selectedEmpresaIds,
+    selectedAgendaIds,
+    selectedVendorIds: normalizeStringArray(value?.selectedVendorIds),
+    vendorQuery: normalizeString(value?.vendorQuery),
+    visitDate: normalizeString(value?.visitDate),
+    selectionMode: normalizeSelectionMode(value?.selectionMode),
+    selectedBairroKeys: normalizeStringArray(value?.selectedBairroKeys),
+    excludedBairroEmpresaIds: normalizeStringArray(value?.excludedBairroEmpresaIds),
+    radiusKm: normalizeRadiusKm(value?.radiusKm),
+    radiusMode: value?.radiusMode === undefined ? true : Boolean(value.radiusMode),
+    radiusReplaceSelection:
+      value?.radiusReplaceSelection === undefined ? true : Boolean(value.radiusReplaceSelection),
+    radiusCenter: normalizeRadiusCenter(value?.radiusCenter),
+    radiusResultIds: normalizeStringArray(value?.radiusResultIds),
+  };
+};
 
 export const readRoutesModuleDraft = (): RoutesModuleDraftState => {
   try {
@@ -30,9 +84,23 @@ export const readRoutesModuleDraft = (): RoutesModuleDraftState => {
 
 export const writeRoutesModuleDraft = (draft: RoutesModuleDraftState) => {
   try {
+    const current = readRoutesModuleDraft();
+    const merged: RoutesModuleDraftState = {
+      ...current,
+      ...draft,
+      selectedEmpresaIds:
+        draft.selectedEmpresaIds ?? draft.selectedAgendaIds ?? current.selectedEmpresaIds ?? [],
+      selectedAgendaIds:
+        draft.selectedAgendaIds ?? draft.selectedEmpresaIds ?? current.selectedAgendaIds ?? [],
+      selectedVendorIds: draft.selectedVendorIds ?? current.selectedVendorIds ?? [],
+      selectedBairroKeys: draft.selectedBairroKeys ?? current.selectedBairroKeys ?? [],
+      excludedBairroEmpresaIds:
+        draft.excludedBairroEmpresaIds ?? current.excludedBairroEmpresaIds ?? [],
+      radiusResultIds: draft.radiusResultIds ?? current.radiusResultIds ?? [],
+    };
     localStorage.setItem(
       ROUTES_MODULE_DRAFT_STORAGE_KEY,
-      JSON.stringify(normalizeDraft(draft)),
+      JSON.stringify(normalizeDraft(merged)),
     );
   } catch {
     // ignore storage failures
