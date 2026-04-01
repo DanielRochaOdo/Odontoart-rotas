@@ -47,6 +47,7 @@
     --dm-surface-soft: rgba(23, 42, 54, 0.74);
     --dm-surface-muted: rgba(26, 48, 61, 0.58);
     --dm-text: #e8f4ee;
+    --dm-text-80: rgba(232, 244, 238, 0.82);
     --dm-text-70: rgba(232, 244, 238, 0.74);
     --dm-text-60: rgba(232, 244, 238, 0.62);
     --dm-text-50: rgba(232, 244, 238, 0.5);
@@ -156,6 +157,10 @@
 
   .dark .text-ink\/70 {
     color: var(--dm-text-70) !important;
+  }
+
+  .dark .text-ink\/80 {
+    color: var(--dm-text-80) !important;
   }
 
   .dark .text-ink\/60 {

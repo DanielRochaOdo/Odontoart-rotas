@@ -1,6 +1,7 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, Filter } from "lucide-react";
+import { normalizeSearchText } from "../../lib/textNormalize";
 
 type MultiSelectFilterProps = {
   label: string;
@@ -60,8 +61,8 @@ export default function MultiSelectFilter({
 
   const filteredOptions = useMemo(() => {
     if (!query.trim()) return options;
-    const term = query.toLowerCase();
-    return options.filter((option) => option.toLowerCase().includes(term));
+    const term = normalizeSearchText(query);
+    return options.filter((option) => normalizeSearchText(option).includes(term));
   }, [options, query]);
 
   const toggleValue = (option: string) => {
@@ -160,6 +161,9 @@ export default function MultiSelectFilter({
                   className="text-xs text-sea"
                   onClick={() => {
                     setDraft([]);
+                    setQuery("");
+                    onApply([]);
+                    setOpen(false);
                   }}
                 >
                   Limpar
@@ -222,3 +226,4 @@ export default function MultiSelectFilter({
     </div>
   );
 }
+

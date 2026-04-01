@@ -20,6 +20,7 @@ import { onProfilesUpdated } from "../lib/profileEvents";
 import type { Route, RouteStop } from "../types/routes";
 import { formatDateBr } from "../lib/dateFormat";
 import { clearRoutesModuleDraft, readRoutesModuleDraft } from "../lib/routesModuleDraft";
+import { normalizeText } from "../lib/textNormalize";
 
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
@@ -34,11 +35,7 @@ L.Icon.Default.mergeOptions({
 const FORTALEZA_CENTER: [number, number] = [-3.7319, -38.5267];
 
 const normalize = (value: string | null | undefined) =>
-  (value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toUpperCase();
+  normalizeText(value, { letterCase: "upper" });
 
 const isFortaleza = (row: EmpresaLookupRow) => {
   const city = normalize(row.cidade);

@@ -16,6 +16,7 @@ import { emitProfilesUpdated } from "../lib/profileEvents";
 import type { CepMapped } from "../lib/cep";
 import { formatCep, sanitizeCep } from "../lib/cep";
 import { fetchNominatimByCep } from "../lib/nominatim";
+import { normalizeSearchText } from "../lib/textNormalize";
 
 type TabKey = "SUPERVISORES" | "VENDEDORES" | "ASSISTENTES";
 
@@ -38,8 +39,7 @@ const filterByRole = (profiles: ManagedProfile[], role: ManagedProfile["role"]) 
 const sortByName = (items: ManagedProfile[]) =>
   [...items].sort((a, b) => (a.nome ?? a.display_name ?? "").localeCompare(b.nome ?? b.display_name ?? ""));
 
-const normalizeSearch = (value: string) =>
-  value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+const normalizeSearch = (value: string) => normalizeSearchText(value);
 
 export default function Settings() {
   const { role } = useAuth();

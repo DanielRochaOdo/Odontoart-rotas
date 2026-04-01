@@ -1,5 +1,6 @@
-const stripAccents = (value: string) =>
-  value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+import { normalizeText } from "./textNormalize";
+
+const stripAccents = (value: string) => normalizeText(value);
 
 export const normalizePerfilVisita = (value: string | null) =>
   stripAccents((value ?? "").trim()).toUpperCase();

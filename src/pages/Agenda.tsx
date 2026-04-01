@@ -46,6 +46,7 @@ import {
   isPresetPerfilVisita,
   normalizePerfilVisita,
 } from "../lib/perfilVisita";
+import { normalizeSearchText, normalizeText } from "../lib/textNormalize";
 
 const FILTER_SOURCES: Record<string, string[]> = {
   supervisor: ["supervisor"],
@@ -186,6 +187,46 @@ type PendingAgendaModalState = {
   } | null;
 };
 
+type ImpactedCompanyPreview = {
+  id: string;
+  companyName: string;
+  code: string;
+  city: string;
+  neighborhood: string;
+  filterValue: string;
+};
+
+type ColumnChipRemovalModalState = {
+  filterKey: string;
+  filterLabel: string;
+  triggerValue: string;
+  options: string[];
+  selectedValues: string[];
+  selectedCompanyIds: string[];
+};
+
+const normalizeFilterMatchValue = (value: string | null | undefined) =>
+  normalizeText(value, { letterCase: "upper" });
+
+const getAgendaFilterValueFromRow = (row: AgendaRow, filterKey: string) => {
+  const map: Record<string, string | null | undefined> = {
+    supervisor: row.supervisor,
+    vendedor: row.vendedor,
+    cod_1: row.cod_1,
+    bairro: row.bairro,
+    cidade: row.cidade,
+    uf: row.uf,
+    grupo: row.grupo,
+    perfil_visita: row.perfil_visita,
+    empresa_nome: row.empresa ?? row.nome_fantasia,
+    situacao: row.situacao,
+  };
+  return map[filterKey] ?? "";
+};
+
+const sameStringArray = (left: string[], right: string[]) =>
+  left.length === right.length && left.every((value, index) => value === right[index]);
+
 export default function Agenda() {
   const { role, session } = useAuth();
   const canAccess = role === "SUPERVISOR" || role === "ASSISTENTE";
@@ -233,6 +274,8 @@ export default function Agenda() {
   const [detailsInstructionDraft, setDetailsInstructionDraft] = useState("");
   const [detailsInstructionSaving, setDetailsInstructionSaving] = useState(false);
   const [detailsInstructionMessage, setDetailsInstructionMessage] = useState<string | null>(null);
+  const [excludedAgendaIds, setExcludedAgendaIds] = useState<string[]>([]);
+  const [columnChipRemovalModal, setColumnChipRemovalModal] = useState<ColumnChipRemovalModalState | null>(null);
   const detailsObsRequestRef = useRef(0);
   const restoredViewRef = useRef(false);
   const restoredModalRef = useRef(false);
@@ -508,6 +551,24 @@ export default function Agenda() {
     return formatDate(fallback ?? null);
   };
 
+  const resolveLatestCompletedReasonSummary = (agendaId: string) => {
+    const visits = visitVendorsByAgenda[agendaId] ?? [];
+    const completedWithReason = visits.find(
+      (visit) =>
+        Boolean(visit.completed_at) &&
+        Boolean(visit.no_visit_reason?.trim()),
+    );
+    if (!completedWithReason) return null;
+    return {
+      reason: completedWithReason.no_visit_reason?.trim() ?? "",
+      vidas:
+        completedWithReason.completed_vidas !== null &&
+        completedWithReason.completed_vidas !== undefined
+          ? String(completedWithReason.completed_vidas)
+          : "-",
+    };
+  };
+
   const resolveScheduledObsVisit = (agendaId: string, rowInstructions?: string | null) => {
     const visits = scheduledVisitsByAgenda[agendaId] ?? [];
     if (visits.length === 0) return null;
@@ -548,13 +609,11 @@ export default function Agenda() {
 
   useEffect(() => {
     const loadOptions = async () => {
-      const entries = await Promise.all(
-        Object.entries(FILTER_SOURCES).map(async ([key, sources]) => [
-          key,
-          await fetchDistinctOptions(key, sources),
-        ]),
-      );
-      setFilterOptions(Object.fromEntries(entries));
+      const nextOptions: Record<string, string[]> = {};
+      for (const [key, sources] of Object.entries(FILTER_SOURCES)) {
+        nextOptions[key] = await fetchDistinctOptions(key, sources);
+      }
+      setFilterOptions(nextOptions);
     };
 
     loadOptions().catch((err) => {
@@ -667,42 +726,50 @@ export default function Agenda() {
 
   const filteredVendedores = useMemo(() => {
     if (!vendorQuery.trim()) return vendedores;
-    const term = vendorQuery.trim().toLowerCase();
+    const term = normalizeSearchText(vendorQuery);
     return vendedores.filter((vendor) =>
-      (vendor.display_name ?? vendor.user_id ?? "").toLowerCase().includes(term),
+      normalizeSearchText(vendor.display_name ?? vendor.user_id ?? "").includes(term),
     );
   }, [vendorQuery, vendedores]);
 
+  const excludedAgendaSet = useMemo(() => new Set(excludedAgendaIds), [excludedAgendaIds]);
+
   const displayData = useMemo(() => {
-    if (data.length <= 1) return data;
+    const sortedRows =
+      data.length <= 1
+        ? data
+        : (() => {
+            const primarySort = sorting[0];
+            if (primarySort && primarySort.id !== "obs") {
+              return data;
+            }
 
-    const primarySort = sorting[0];
-    if (primarySort && primarySort.id !== "obs") {
-      return data;
-    }
+            const descending = primarySort?.desc ?? true;
+            return [...data].sort((left, right) => {
+              const leftObsTimestamp = toSortableTimestamp(
+                resolveScheduledObsVisit(left.id, left.instructions)?.visitDate,
+              );
+              const rightObsTimestamp = toSortableTimestamp(
+                resolveScheduledObsVisit(right.id, right.instructions)?.visitDate,
+              );
+              const obsComparison = compareNullableTimestamps(leftObsTimestamp, rightObsTimestamp, descending);
+              if (obsComparison !== 0) return obsComparison;
 
-    const descending = primarySort?.desc ?? true;
-    return [...data].sort((left, right) => {
-      const leftObsTimestamp = toSortableTimestamp(
-        resolveScheduledObsVisit(left.id, left.instructions)?.visitDate,
-      );
-      const rightObsTimestamp = toSortableTimestamp(
-        resolveScheduledObsVisit(right.id, right.instructions)?.visitDate,
-      );
-      const obsComparison = compareNullableTimestamps(leftObsTimestamp, rightObsTimestamp, descending);
-      if (obsComparison !== 0) return obsComparison;
+              const leftLastVisit = toSortableTimestamp(left.data_da_ultima_visita);
+              const rightLastVisit = toSortableTimestamp(right.data_da_ultima_visita);
+              const lastVisitComparison = compareNullableTimestamps(leftLastVisit, rightLastVisit, true);
+              if (lastVisitComparison !== 0) return lastVisitComparison;
 
-      const leftLastVisit = toSortableTimestamp(left.data_da_ultima_visita);
-      const rightLastVisit = toSortableTimestamp(right.data_da_ultima_visita);
-      const lastVisitComparison = compareNullableTimestamps(leftLastVisit, rightLastVisit, true);
-      if (lastVisitComparison !== 0) return lastVisitComparison;
+              return (left.empresa ?? left.nome_fantasia ?? "").localeCompare(
+                right.empresa ?? right.nome_fantasia ?? "",
+                "pt-BR",
+              );
+            });
+          })();
 
-      return (left.empresa ?? left.nome_fantasia ?? "").localeCompare(
-        right.empresa ?? right.nome_fantasia ?? "",
-        "pt-BR",
-      );
-    });
-  }, [data, scheduledVisitsByAgenda, sorting]);
+    if (excludedAgendaSet.size === 0) return sortedRows;
+    return sortedRows.filter((row) => !excludedAgendaSet.has(row.id));
+  }, [data, excludedAgendaSet, scheduledVisitsByAgenda, sorting]);
 
   const selectedAgendaSet = useMemo(() => new Set(selectedAgendaIds), [selectedAgendaIds]);
   const visibleAgendaIds = useMemo(() => displayData.map((row) => row.id), [displayData]);
@@ -937,36 +1004,66 @@ export default function Agenda() {
 
   const handleSaveDetailsInstruction = async () => {
     if (!detailsModalRow || !canManageInstruction) return;
+    const rowId = detailsModalRow.id;
+    const previousInstructions = detailsModalRow.instructions ?? null;
+    const nextInstructions = detailsInstructionDraft.trim() || null;
+
+    if ((previousInstructions ?? null) === (nextInstructions ?? null)) {
+      setDetailsInstructionMessage("Sem alteracoes para salvar.");
+      return;
+    }
+
     setDetailsInstructionSaving(true);
     setDetailsInstructionMessage(null);
-    const nextInstructions = detailsInstructionDraft.trim() || null;
+
+    const applyLocalInstruction = (value: string | null) => {
+      setData((prev) =>
+        prev.map((row) =>
+          row.id === rowId ? { ...row, instructions: value } : row,
+        ),
+      );
+      setSelectedRow((prev) =>
+        prev?.id === rowId ? { ...prev, instructions: value } : prev,
+      );
+      setDetailsModalRow((prev) =>
+        prev?.id === rowId ? { ...prev, instructions: value } : prev,
+      );
+      setScheduledVisitsByAgenda((prev) => {
+        const visits = prev[rowId];
+        if (!visits || visits.length === 0) return prev;
+        return {
+          ...prev,
+          [rowId]: visits.map((visit) => ({ ...visit, instructions: value })),
+        };
+      });
+    };
+
+    applyLocalInstruction(nextInstructions);
+
     try {
       const { error: updateAgendaError } = await supabase
         .from("agenda")
         .update({ instructions: nextInstructions })
-        .eq("id", detailsModalRow.id);
+        .eq("id", rowId);
       if (updateAgendaError) throw new Error(updateAgendaError.message);
 
-      const { error: updateVisitsError } = await supabase
+      setDetailsInstructionMessage("Instrucoes atualizadas.");
+
+      void supabase
         .from("visits")
         .update({ instructions: nextInstructions })
-        .eq("agenda_id", detailsModalRow.id)
-        .is("completed_at", null);
-      if (updateVisitsError) throw new Error(updateVisitsError.message);
-
-      setData((prev) =>
-        prev.map((row) =>
-          row.id === detailsModalRow.id ? { ...row, instructions: nextInstructions } : row,
-        ),
-      );
-      setSelectedRow((prev) =>
-        prev?.id === detailsModalRow.id ? { ...prev, instructions: nextInstructions } : prev,
-      );
-      setDetailsModalRow((prev) =>
-        prev ? { ...prev, instructions: nextInstructions } : prev,
-      );
-      setDetailsInstructionMessage("Instrucoes atualizadas.");
+        .eq("agenda_id", rowId)
+        .is("completed_at", null)
+        .then(({ error: updateVisitsError }) => {
+          if (updateVisitsError) {
+            console.error(updateVisitsError);
+            setDetailsInstructionMessage(
+              "Instrucao salva. Houve atraso ao sincronizar visitas abertas.",
+            );
+          }
+        });
     } catch (err) {
+      applyLocalInstruction(previousInstructions);
       setDetailsInstructionMessage(err instanceof Error ? err.message : "Erro ao salvar instrucoes.");
     } finally {
       setDetailsInstructionSaving(false);
@@ -1406,9 +1503,11 @@ export default function Agenda() {
           const rowId = info.row.original.id;
           const row = info.row.original;
           const scheduledObs = resolveScheduledObsVisit(rowId, row.instructions);
-          if (!scheduledObs) return null;
-          const visitDate = scheduledObs.visitDate;
-          const firstInstructions = scheduledObs.instructions;
+          const completedSummary = resolveLatestCompletedReasonSummary(rowId);
+          if (!scheduledObs && !completedSummary) return null;
+
+          const visitDate = scheduledObs?.visitDate ?? null;
+          const firstInstructions = scheduledObs?.instructions ?? "";
           const badgeText = formatVisitBadge(visitDate);
           const titleText = visitDate
             ? `Visita agendada: ${formatDate(visitDate)}${
@@ -1418,24 +1517,34 @@ export default function Agenda() {
               ? `Instrucoes: ${firstInstructions}`
               : "Visita agendada";
           return (
-            <div className="flex items-center justify-center">
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  openScheduleModal(info.row.original);
-                }}
-                onPointerDown={(event) => event.stopPropagation()}
-                className="inline-flex min-h-6 items-center justify-center rounded-md border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-700 hover:border-red-300"
-                title={titleText}
-                aria-label={titleText}
-              >
-                {badgeText}
-              </button>
+            <div className="flex flex-col items-center justify-center gap-1">
+              {scheduledObs ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openScheduleModal(info.row.original);
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  className="inline-flex min-h-6 items-center justify-center rounded-md border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-700 hover:border-red-300"
+                  title={titleText}
+                  aria-label={titleText}
+                >
+                  {badgeText}
+                </button>
+              ) : null}
+              {completedSummary ? (
+                <div className="max-w-[150px] text-center">
+                  <p className="text-[10px] font-semibold uppercase text-ink/70">
+                    Motivo: {completedSummary.reason}
+                  </p>
+                  <p className="text-[10px] text-ink/60">Vidas: {completedSummary.vidas}</p>
+                </div>
+              ) : null}
             </div>
           );
         },
-        size: 70,
+        size: 160,
       },
       {
         accessorKey: "data_da_ultima_visita",
@@ -1488,8 +1597,6 @@ export default function Agenda() {
                   COD {codigo}
                 </span>
               </div>
-              <p className="text-xs text-ink/60">Pessoa: {row.pessoa ?? "-"}</p>
-              <p className="text-xs text-ink/60">Contato: {row.contato ?? "-"}</p>
             </div>
           );
         },
@@ -1648,10 +1755,11 @@ export default function Agenda() {
   });
 
   const activeChips = useMemo(() => {
-    const chips: { label: string; onRemove: () => void }[] = [];
+    const chips: { id: string; label: string; onRemove: () => void }[] = [];
 
     if (companyNameQuery) {
       chips.push({
+        id: "chip-company-name",
         label: `Nome: ${companyNameQuery}`,
         onRemove: () => setCompanyNameQuery(""),
       });
@@ -1659,23 +1767,37 @@ export default function Agenda() {
 
     if (companyCodeQuery) {
       chips.push({
+        id: "chip-company-code",
         label: `Codigo: ${companyCodeQuery}`,
         onRemove: () => setCompanyCodeQuery(""),
       });
     }
 
+    if (excludedAgendaIds.length > 0) {
+      chips.push({
+        id: "chip-excluded-companies",
+        label: `Empresas removidas: ${excludedAgendaIds.length}`,
+        onRemove: () => setExcludedAgendaIds([]),
+      });
+    }
+
     Object.entries(filters.columns).forEach(([key, values]) => {
-      values.forEach((value) => {
+      values.forEach((value, index) => {
+        const chipId = `chip-column-${key}-${index}-${value}`;
         chips.push({
+          id: chipId,
           label: `${FILTER_LABELS[key] ?? key}: ${value}`,
-          onRemove: () =>
-            setFilters((prev) => ({
-              ...prev,
-              columns: {
-                ...prev.columns,
-                [key]: prev.columns[key].filter((item) => item !== value),
-              },
-            })),
+          onRemove: () => {
+            const selectedValues = Array.from(new Set(filters.columns[key] ?? []));
+            setColumnChipRemovalModal({
+              filterKey: key,
+              filterLabel: FILTER_LABELS[key] ?? key,
+              triggerValue: value,
+              options: selectedValues,
+              selectedValues: [value],
+              selectedCompanyIds: [],
+            });
+          },
         });
       });
     });
@@ -1689,6 +1811,7 @@ export default function Agenda() {
         : "";
       const isInsideRange = Boolean(filters.dateRanges.data_da_ultima_visita.invert);
       chips.push({
+        id: "chip-date-range",
         label: isInsideRange
           ? `Ultima visita: ${fromLabel} - ${toLabel}`
           : `Ultima visita (fora): ${fromLabel} - ${toLabel}`,
@@ -1706,6 +1829,7 @@ export default function Agenda() {
         : null;
       const isInsideRange = Boolean(filters.dateRanges.data_da_ultima_visita.invert);
       chips.push({
+        id: "chip-month-year",
         label: monthLabel
           ? `${isInsideRange ? "Mes/Ano" : "Mes/Ano (fora)"}: ${monthLabel} ${
               filters.dateRanges.data_da_ultima_visita.year
@@ -1740,6 +1864,7 @@ export default function Agenda() {
             ? `Vidas ultima visita: a partir de ${fromLabel}`
             : `Vidas ultima visita: ate ${toLabel}`;
       chips.push({
+        id: "chip-vidas-range",
         label,
         onRemove: () =>
           setFilters((prev) => ({
@@ -1750,7 +1875,104 @@ export default function Agenda() {
     }
 
     return chips;
-  }, [companyCodeQuery, companyNameQuery, filters, setFilters]);
+  }, [companyCodeQuery, companyNameQuery, excludedAgendaIds.length, filters, setFilters]);
+
+  const hasActiveCompanySearch = useMemo(
+    () =>
+      Boolean(normalizeSearchText(companyNameQuery)) ||
+      Boolean(normalizeSearchText(companyCodeQuery)),
+    [companyCodeQuery, companyNameQuery],
+  );
+
+  const impactedCompaniesPreview = useMemo<ImpactedCompanyPreview[]>(() => {
+    if (!columnChipRemovalModal) return [];
+    const selectedSet = new Set(
+      columnChipRemovalModal.selectedValues.map((value) => normalizeFilterMatchValue(value)),
+    );
+    if (selectedSet.size === 0) return [];
+
+    return displayData
+      .filter((row) =>
+        selectedSet.has(
+          normalizeFilterMatchValue(getAgendaFilterValueFromRow(row, columnChipRemovalModal.filterKey)),
+        ),
+      )
+      .map((row) => ({
+        id: row.id,
+        companyName: row.empresa ?? row.nome_fantasia ?? "Sem empresa",
+        code: row.cod_1 ?? "-",
+        city: row.cidade ?? "-",
+        neighborhood: row.bairro ?? "-",
+        filterValue: String(getAgendaFilterValueFromRow(row, columnChipRemovalModal.filterKey) ?? "-"),
+      }));
+  }, [columnChipRemovalModal, displayData]);
+
+  useEffect(() => {
+    if (!columnChipRemovalModal) return;
+    const impactedIds = impactedCompaniesPreview.map((company) => company.id);
+    setColumnChipRemovalModal((prev) => {
+      if (!prev) return prev;
+      const keptSelected = prev.selectedCompanyIds.filter((id) => impactedIds.includes(id));
+      const nextSelected = keptSelected.length > 0 ? keptSelected : impactedIds;
+      if (sameStringArray(nextSelected, prev.selectedCompanyIds)) {
+        return prev;
+      }
+      return { ...prev, selectedCompanyIds: nextSelected };
+    });
+  }, [columnChipRemovalModal, impactedCompaniesPreview]);
+
+  const selectAllColumnChipModalValues = () => {
+    setColumnChipRemovalModal((prev) => {
+      if (!prev) return prev;
+      return { ...prev, selectedValues: [...prev.options] };
+    });
+  };
+
+  const selectOnlyTriggeredColumnChipValue = () => {
+    setColumnChipRemovalModal((prev) => {
+      if (!prev) return prev;
+      return { ...prev, selectedValues: [prev.triggerValue] };
+    });
+  };
+
+  const selectAllImpactedCompaniesForRemoval = () => {
+    setColumnChipRemovalModal((prev) => {
+      if (!prev) return prev;
+      return { ...prev, selectedCompanyIds: impactedCompaniesPreview.map((company) => company.id) };
+    });
+  };
+
+  const clearImpactedCompaniesSelection = () => {
+    setColumnChipRemovalModal((prev) => {
+      if (!prev) return prev;
+      return { ...prev, selectedCompanyIds: [] };
+    });
+  };
+
+  const toggleImpactedCompanySelection = (companyId: string) => {
+    setColumnChipRemovalModal((prev) => {
+      if (!prev) return prev;
+      const hasCompany = prev.selectedCompanyIds.includes(companyId);
+      const next = hasCompany
+        ? prev.selectedCompanyIds.filter((id) => id !== companyId)
+        : [...prev.selectedCompanyIds, companyId];
+      return { ...prev, selectedCompanyIds: next };
+    });
+  };
+
+  const applyColumnChipRemoval = () => {
+    if (!columnChipRemovalModal) return;
+    const removeSet = new Set(columnChipRemovalModal.selectedCompanyIds);
+    if (removeSet.size === 0) {
+      setColumnChipRemovalModal(null);
+      return;
+    }
+    setExcludedAgendaIds((prev) => Array.from(new Set([...prev, ...Array.from(removeSet)])));
+    setSelectedAgendaIds((prev) => prev.filter((id) => !removeSet.has(id)));
+    setSelectedRow((prev) => (prev && removeSet.has(prev.id) ? null : prev));
+    setSelectedRowId((prev) => (prev && removeSet.has(prev) ? null : prev));
+    setColumnChipRemovalModal(null);
+  };
 
   if (!canAccess) {
     return (
@@ -1779,22 +2001,22 @@ export default function Agenda() {
         <div className="flex flex-col gap-4">
           <div className="grid gap-3 md:grid-cols-2">
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] font-semibold text-ink/70">Buscar por nome</span>
+              <span className="text-[11px] font-semibold text-ink/70">Termo por nome (palavra exata)</span>
               <input
                 value={companyNameQuery}
                 onChange={(event) => setCompanyNameQuery(event.target.value)}
-                placeholder="Nome da empresa"
+                placeholder="Ex.: rio"
                 id="agenda-company-name-search"
                 name="agendaCompanyNameSearch"
                 className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
               />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] font-semibold text-ink/70">Buscar por codigo</span>
+              <span className="text-[11px] font-semibold text-ink/70">Busca exata por codigo</span>
               <input
                 value={companyCodeQuery}
                 onChange={(event) => setCompanyCodeQuery(event.target.value)}
-                placeholder="Codigo da empresa"
+                placeholder="Busca exata por codigo"
                 id="agenda-company-code-search"
                 name="agendaCompanyCodeSearch"
                 className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
@@ -2017,6 +2239,7 @@ export default function Agenda() {
                       clearFilters();
                       setCompanyNameQuery("");
                       setCompanyCodeQuery("");
+                      setExcludedAgendaIds([]);
                     }}
                     className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
                   >
@@ -2067,6 +2290,124 @@ export default function Agenda() {
       {generateMessage && (
         <div className="rounded-xl border border-sea/20 bg-white/80 px-3 py-2 text-xs text-ink/70">
           {generateMessage}
+        </div>
+      )}
+
+      {columnChipRemovalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setColumnChipRemovalModal(null)}
+          />
+          <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">
+              Remover do filtro: {columnChipRemovalModal.filterLabel}
+            </h3>
+            <p className="mt-1 text-xs text-ink/60">
+              Visualize as empresas impactadas antes de remover este filtro.
+            </p>
+
+            <div className="mt-3 flex items-center justify-between text-xs text-ink/70">
+              <button
+                type="button"
+                className="text-sea hover:text-seaLight"
+                onClick={selectOnlyTriggeredColumnChipValue}
+              >
+                Somente valor clicado
+              </button>
+              <button
+                type="button"
+                className="text-sea hover:text-seaLight"
+                onClick={selectAllColumnChipModalValues}
+              >
+                Todos desta coluna
+              </button>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              {columnChipRemovalModal.selectedValues.map((value) => (
+                <span
+                  key={value}
+                  className="rounded-full border border-sea/25 bg-sea/10 px-2 py-1 text-[11px] font-semibold text-sea"
+                >
+                  {columnChipRemovalModal.filterLabel}: {value}
+                </span>
+              ))}
+            </div>
+
+            <div className="mt-3 max-h-64 space-y-2 overflow-auto rounded-xl border border-sea/15 bg-white/90 p-2">
+              {impactedCompaniesPreview.length === 0 ? (
+                <p className="px-2 py-1 text-xs text-ink/60">Nenhuma empresa impactada na pagina atual.</p>
+              ) : (
+                impactedCompaniesPreview.map((company) => {
+                  const checked = columnChipRemovalModal.selectedCompanyIds.includes(company.id);
+                  return (
+                    <label
+                      key={company.id}
+                      className="flex cursor-pointer items-start justify-between gap-2 rounded-lg border border-sea/10 bg-white px-2 py-2 text-xs text-ink hover:bg-sea/5"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold">{company.companyName}</p>
+                        <p className="mt-1 text-[11px] text-ink/60">
+                          COD: {company.code} | {company.neighborhood} - {company.city}
+                        </p>
+                        <p className="text-[11px] text-ink/60">
+                          Valor do filtro: {company.filterValue || "-"}
+                        </p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleImpactedCompanySelection(company.id)}
+                        className="mt-1 h-4 w-4 shrink-0 accent-sea"
+                      />
+                    </label>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="mt-3 flex items-center justify-between text-[11px] text-ink/70">
+              <button
+                type="button"
+                className="text-sea hover:text-seaLight"
+                onClick={selectAllImpactedCompaniesForRemoval}
+              >
+                Selecionar todas empresas
+              </button>
+              <button
+                type="button"
+                className="text-ink/70 hover:text-ink"
+                onClick={clearImpactedCompaniesSelection}
+              >
+                Limpar selecao
+              </button>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between gap-2">
+              <span className="text-xs text-ink/60">
+                Selecionadas para sair: {columnChipRemovalModal.selectedCompanyIds.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setColumnChipRemovalModal(null)}
+                  className="rounded-lg border border-sea/30 bg-white/90 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={applyColumnChipRemoval}
+                  className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                  disabled={columnChipRemovalModal.selectedCompanyIds.length === 0}
+                >
+                  Remover empresas
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2537,12 +2878,13 @@ export default function Agenda() {
         <div className="flex flex-wrap gap-2">
           {activeChips.map((chip) => (
             <button
-              key={chip.label}
+              key={chip.id}
               type="button"
               onClick={chip.onRemove}
-              className="rounded-full border border-sea/30 bg-white/80 px-3 py-1 text-xs text-sea hover:border-sea hover:text-seaLight"
+              className="inline-flex items-center gap-1 rounded-full border border-sea/30 bg-white/80 px-3 py-1 text-xs text-sea hover:border-sea hover:text-seaLight"
             >
-              {chip.label} ?
+              <span>{chip.label}</span>
+              <X size={12} aria-hidden />
             </button>
           ))}
         </div>
@@ -2555,17 +2897,26 @@ export default function Agenda() {
           ) : error ? (
             <div className="px-4 py-6 text-center text-sm text-red-500">{error}</div>
           ) : data.length === 0 ? (
-            <div className="px-4 py-6 text-center text-sm text-ink/60">Nenhum registro encontrado.</div>
+            <div className="px-4 py-6 text-center text-sm text-ink/60">
+              {hasActiveCompanySearch ? "Termo nao encontrado." : "Nenhum registro encontrado."}
+            </div>
           ) : (
             <div className="space-y-3 px-3 py-3">
               {data.map((row) => {
                 const empresaLabel = row.empresa ?? "Sem empresa";
                 return (
-                  <button
+                  <div
                     key={row.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedRow(row)}
-                    className="w-full rounded-2xl border border-sea/15 bg-white/95 p-4 text-left shadow-sm transition hover:shadow-card"
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedRow(row);
+                      }
+                    }}
+                    className="w-full rounded-2xl border border-sea/15 bg-white/95 p-4 text-left shadow-sm transition hover:shadow-card focus:outline-none focus:ring-2 focus:ring-sea/50"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="space-y-1">
@@ -2575,8 +2926,6 @@ export default function Agenda() {
                             COD {row.cod_1 ?? "-"}
                           </span>
                         </div>
-                        <p className="text-xs text-ink/60">Pessoa: {row.pessoa ?? "-"}</p>
-                        <p className="text-xs text-ink/60">Contato: {row.contato ?? "-"}</p>
                       </div>
                       <div className="flex flex-col items-end gap-2">
                         <div
@@ -2597,9 +2946,10 @@ export default function Agenda() {
                         </div>
                         {(() => {
                           const scheduledObs = resolveScheduledObsVisit(row.id, row.instructions);
-                          if (!scheduledObs) return null;
-                          const visitDate = scheduledObs.visitDate;
-                          const firstInstructions = scheduledObs.instructions;
+                          const completedSummary = resolveLatestCompletedReasonSummary(row.id);
+                          if (!scheduledObs && !completedSummary) return null;
+                          const visitDate = scheduledObs?.visitDate ?? null;
+                          const firstInstructions = scheduledObs?.instructions ?? "";
                           const badgeText = formatVisitBadge(visitDate);
                           const titleText = visitDate
                             ? `Visita agendada: ${formatDate(visitDate)}${
@@ -2609,24 +2959,36 @@ export default function Agenda() {
                               ? `Instrucoes: ${firstInstructions}`
                               : "Visita agendada";
                           return (
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openScheduleModal(row);
-                              }}
-                              onPointerDown={(event) => event.stopPropagation()}
-                              className="inline-flex min-h-7 items-center justify-center rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-red-700"
-                              title={titleText}
-                              aria-label={titleText}
-                            >
-                              {badgeText}
-                            </button>
+                            <div className="flex flex-col items-end gap-1">
+                              {scheduledObs ? (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    openScheduleModal(row);
+                                  }}
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  className="inline-flex min-h-7 items-center justify-center rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-red-700"
+                                  title={titleText}
+                                  aria-label={titleText}
+                                >
+                                  {badgeText}
+                                </button>
+                              ) : null}
+                              {completedSummary ? (
+                                <div className="max-w-[160px] text-right">
+                                  <p className="text-[10px] font-semibold uppercase text-ink/70">
+                                    Motivo: {completedSummary.reason}
+                                  </p>
+                                  <p className="text-[10px] text-ink/60">Vidas: {completedSummary.vidas}</p>
+                                </div>
+                              ) : null}
+                            </div>
                           );
                         })()}
                       </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -2716,7 +3078,7 @@ export default function Agenda() {
                 ) : data.length === 0 ? (
                   <tr>
                     <td colSpan={columns.length} className="px-4 py-6 text-center text-sm text-ink/60">
-                      Nenhum registro encontrado.
+                      {hasActiveCompanySearch ? "Termo nao encontrado." : "Nenhum registro encontrado."}
                     </td>
                   </tr>
                 ) : (
