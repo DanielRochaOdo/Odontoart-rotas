@@ -4,7 +4,7 @@ import { extractCustomTimes } from "./perfilVisita";
 import { fetchNominatimCoordinatesByAddress, fetchNominatimCoordinatesByQuery } from "./nominatim";
 const DEFAULT_SITUACAO = "Ativo";
 const CLIENTES_SELECT_COLUMNS =
-  "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at";
+  "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf, created_at";
 
 const normalizePerfilTimes = (value: string | null) => {
   if (!value) return { perfil: null as string | null, opcoes: null as string | null };
@@ -77,6 +77,7 @@ export const createCliente = async (payload: {
   complemento?: string | null;
   perfil_visita?: string | null;
   situacao?: string | null;
+  categoria?: string | null;
   endereco?: string | null;
   bairro?: string | null;
   cidade?: string | null;
@@ -102,6 +103,7 @@ export const createCliente = async (payload: {
       complemento: payload.complemento ?? null,
       perfil_visita: payload.perfil_visita ?? null,
       situacao: payload.situacao ?? DEFAULT_SITUACAO,
+      categoria: payload.categoria ?? null,
       endereco: payload.endereco ?? null,
       bairro: payload.bairro ?? null,
       cidade: payload.cidade ?? null,
@@ -140,6 +142,7 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
   setIfDefined("complemento");
   setIfDefined("perfil_visita");
   setIfDefined("situacao");
+  setIfDefined("categoria");
   setIfDefined("endereco");
   setIfDefined("bairro");
   setIfDefined("cidade");
@@ -208,6 +211,7 @@ export const upsertClientes = async (
     complemento?: string | null;
     perfil_visita?: string | null;
     situacao?: string | null;
+    categoria?: string | null;
     endereco?: string | null;
     bairro?: string | null;
     cidade?: string | null;
@@ -236,6 +240,7 @@ export const upsertClientes = async (
     complemento: payload.complemento ?? null,
     perfil_visita: payload.perfil_visita ?? null,
     situacao: payload.situacao ?? DEFAULT_SITUACAO,
+    categoria: payload.categoria ?? null,
     endereco: payload.endereco ?? null,
     bairro: payload.bairro ?? null,
     cidade: payload.cidade ?? null,

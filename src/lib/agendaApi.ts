@@ -2,6 +2,7 @@
 import type { AgendaFilters, AgendaRow } from "../types/agenda";
 import type { SortingState } from "@tanstack/react-table";
 import { normalizeText } from "./textNormalize";
+import { buildCategoriaRawMap, CATEGORIA_OPTIONS } from "./categorias";
 
 const GLOBAL_SEARCH_COLUMNS = [
   "empresa",
@@ -10,6 +11,7 @@ const GLOBAL_SEARCH_COLUMNS = [
   "vendedor",
   "supervisor",
   "situacao",
+  "categoria",
   "grupo",
   "perfil_visita",
   "endereco",
@@ -227,6 +229,7 @@ const CLIENTES_FILTER_COLUMN_MAP: Record<string, string> = {
   uf: "uf",
   endereco: "endereco",
   situacao: "situacao",
+  categoria: "categoria",
 };
 
 const fetchColumnValuesPaged = async (
@@ -466,7 +469,7 @@ export const fetchAgenda = async (
   }
 
   const selectColumns =
-    "id, data_da_ultima_visita, visit_completed_vidas, cod_1:codigo, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1:obs_comercial, visit_generated_at, created_at";
+    "id, data_da_ultima_visita, visit_completed_vidas, cod_1:codigo, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, categoria, obs_contrato_1:obs_comercial, visit_generated_at, created_at";
 
   const baseQuery = () =>
     supabase
@@ -606,6 +609,12 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
   if (filterKey === "situacao") {
     const options = [...SITUACAO_OPTIONS];
     optionsCache.set(filterKey, { options, rawMap: buildSituacaoRawMap() });
+    return options;
+  }
+
+  if (filterKey === "categoria") {
+    const options = [...CATEGORIA_OPTIONS];
+    optionsCache.set(filterKey, { options, rawMap: buildCategoriaRawMap() });
     return options;
   }
 

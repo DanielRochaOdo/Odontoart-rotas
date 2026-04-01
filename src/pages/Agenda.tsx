@@ -29,6 +29,7 @@ import {
 import type { AgendaRow } from "../types/agenda";
 import { useAgendaFilters } from "../hooks/useAgendaFilters";
 import MultiSelectFilter from "../components/agenda/MultiSelectFilter";
+import CategoriaLegendPopover from "../components/agenda/CategoriaLegendPopover";
 import AgendaDrawer from "../components/agenda/AgendaDrawer";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
@@ -47,6 +48,7 @@ import {
   normalizePerfilVisita,
 } from "../lib/perfilVisita";
 import { normalizeSearchText, normalizeText } from "../lib/textNormalize";
+import { CATEGORIA_OPTIONS } from "../lib/categorias";
 
 const FILTER_SOURCES: Record<string, string[]> = {
   supervisor: ["supervisor"],
@@ -58,6 +60,7 @@ const FILTER_SOURCES: Record<string, string[]> = {
   grupo: ["grupo"],
   perfil_visita: ["perfil_visita"],
   empresa_nome: ["empresa"],
+  categoria: ["categoria"],
 };
 
 const FILTER_LABELS: Record<string, string> = {
@@ -70,6 +73,7 @@ const FILTER_LABELS: Record<string, string> = {
   grupo: "Grupo",
   perfil_visita: "Perfil Visita",
   empresa_nome: "Empresa",
+  categoria: "Categoria",
 };
 
 const parseDateValue = (value: string) => {
@@ -215,12 +219,60 @@ const getAgendaFilterValueFromRow = (row: AgendaRow, filterKey: string) => {
     grupo: row.grupo,
     perfil_visita: row.perfil_visita,
     empresa_nome: row.empresa ?? row.nome_fantasia,
+    categoria: row.categoria,
   };
   return map[filterKey] ?? "";
 };
 
 const sameStringArray = (left: string[], right: string[]) =>
   left.length === right.length && left.every((value, index) => value === right[index]);
+
+type AgendaPageCacheEntry = {
+  requestKey: string;
+  data: AgendaRow[];
+  count: number;
+  cachedAt: number;
+};
+
+const AGENDA_PAGE_CACHE_STORAGE_KEY = "agendaPageCacheV1";
+let agendaPageMemoryCache: AgendaPageCacheEntry | null = null;
+
+const readAgendaPageCache = (requestKey: string): AgendaPageCacheEntry | null => {
+  if (agendaPageMemoryCache?.requestKey === requestKey) {
+    return agendaPageMemoryCache;
+  }
+  try {
+    const raw = sessionStorage.getItem(AGENDA_PAGE_CACHE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<AgendaPageCacheEntry>;
+    if (
+      parsed.requestKey !== requestKey ||
+      !Array.isArray(parsed.data) ||
+      typeof parsed.count !== "number"
+    ) {
+      return null;
+    }
+    const entry: AgendaPageCacheEntry = {
+      requestKey,
+      data: parsed.data as AgendaRow[],
+      count: parsed.count,
+      cachedAt: typeof parsed.cachedAt === "number" ? parsed.cachedAt : Date.now(),
+    };
+    agendaPageMemoryCache = entry;
+    return entry;
+  } catch {
+    return null;
+  }
+};
+
+const writeAgendaPageCache = (entry: AgendaPageCacheEntry) => {
+  agendaPageMemoryCache = entry;
+  try {
+    sessionStorage.setItem(AGENDA_PAGE_CACHE_STORAGE_KEY, JSON.stringify(entry));
+  } catch {
+    // ignore storage failures
+  }
+};
 
 export default function Agenda() {
   const { role, session } = useAuth();
@@ -275,7 +327,6 @@ export default function Agenda() {
   const restoredViewRef = useRef(false);
   const restoredModalRef = useRef(false);
   const restoredRoutesDraftRef = useRef(false);
-  const initializedFiltersRef = useRef(false);
   const pendingModalRestoreRef = useRef<PendingAgendaModalState | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
 
@@ -447,15 +498,6 @@ export default function Agenda() {
       setSelectedAgendaIds(Array.from(new Set(draft.selectedAgendaIds.filter(Boolean))));
     }
   }, []);
-
-  useEffect(() => {
-    if (initializedFiltersRef.current) return;
-    initializedFiltersRef.current = true;
-    setCompanyNameQuery("");
-    setCompanyCodeQuery("");
-    setExcludedAgendaIds([]);
-    clearFilters();
-  }, [clearFilters]);
 
   useEffect(() => {
     if (!filters.global) return;
@@ -656,24 +698,63 @@ export default function Agenda() {
   }, [canGenerate]);
 
   useEffect(() => {
-    const load = async () => {
+    let active = true;
+    const requestKey = JSON.stringify({
+      pageIndex,
+      pageSize,
+      sorting,
+      filters,
+      companyNameQuery: companyNameQuery.trim(),
+      companyCodeQuery: companyCodeQuery.trim(),
+    });
+    const cached = readAgendaPageCache(requestKey);
+
+    if (cached) {
+      setData(cached.data);
+      setTotalCount(cached.count);
+      setLoading(false);
+      setError(null);
+    } else {
       setLoading(true);
       setError(null);
+    }
+
+    const load = async () => {
       try {
         const result = await fetchAgenda(pageIndex, pageSize, sorting, filters, {
           companyName: companyNameQuery,
           companyCode: companyCodeQuery,
         });
+        if (!active) return;
         setData(result.data);
         setTotalCount(result.count);
+        setError(null);
+        writeAgendaPageCache({
+          requestKey,
+          data: result.data,
+          count: result.count,
+          cachedAt: Date.now(),
+        });
       } catch (err) {
+        if (!active) return;
+        if (cached) {
+          console.error("Falha ao atualizar agenda em background:", err);
+          return;
+        }
         setError(err instanceof Error ? err.message : "Erro ao carregar agenda");
         setData([]);
+        setTotalCount(0);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
       }
-      setLoading(false);
     };
 
-    load();
+    void load();
+    return () => {
+      active = false;
+    };
   }, [companyCodeQuery, companyNameQuery, filters, pageIndex, pageSize, refreshKey, sorting]);
 
   useEffect(() => {
@@ -1977,7 +2058,7 @@ export default function Agenda() {
 
       <section className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
         <div className="flex flex-col gap-4">
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)_minmax(180px,220px)] md:items-end">
             <label className="flex flex-col gap-1">
               <span className="text-[11px] font-semibold text-ink/70">Termo por nome (palavra exata)</span>
               <input
@@ -1999,6 +2080,34 @@ export default function Agenda() {
                 name="agendaCompanyCodeSearch"
                 className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
               />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-ink/70">
+                Categoria
+                <CategoriaLegendPopover />
+              </span>
+              <div className="flex h-10 items-center justify-between rounded-lg border border-sea/20 bg-white/90 px-3">
+                <span className="text-xs text-ink/60">
+                  {(filters.columns.categoria ?? []).length
+                    ? `${(filters.columns.categoria ?? []).length} selecionada(s)`
+                    : "Selecione"}
+                </span>
+                <MultiSelectFilter
+                  label={
+                    (filters.columns.categoria ?? []).length
+                      ? `Categoria (${filters.columns.categoria.length})`
+                      : "Categoria"
+                  }
+                  options={filterOptions.categoria ?? [...CATEGORIA_OPTIONS]}
+                  value={filters.columns.categoria ?? []}
+                  onApply={(next) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      columns: { ...prev.columns, categoria: next },
+                    }))
+                  }
+                />
+              </div>
             </label>
           </div>
 

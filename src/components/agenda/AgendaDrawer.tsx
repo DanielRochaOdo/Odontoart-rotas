@@ -11,6 +11,7 @@ import {
   isPresetPerfilVisita,
   normalizePerfilVisita,
 } from "../../lib/perfilVisita";
+import { CATEGORIA_OPTIONS } from "../../lib/categorias";
 
 const formatValue = (value: string | number | null) =>
   value === null || value === "" ? "-" : String(value);
@@ -132,6 +133,7 @@ const FIELDS = [
   { key: "vendedor", label: "Vendedor", type: "text" },
   { key: "grupo", label: "Grupo", type: "text" },
   { key: "situacao", label: "Situacao", type: "text" },
+  { key: "categoria", label: "Categoria", type: "text" },
   { key: "obs_contrato_1", label: "Obs. Contrato", type: "text", wide: true },
 ] as const;
 
@@ -170,6 +172,7 @@ const buildFormState = (row: AgendaRow): AgendaFormState => ({
   vendedor: row.vendedor ?? "",
   grupo: row.grupo ?? "",
   situacao: row.situacao ?? "",
+  categoria: row.categoria ?? "",
   obs_contrato_1: row.obs_contrato_1 ?? "",
 });
 
@@ -333,6 +336,7 @@ export default function AgendaDrawer({
         vendedor: formState.vendedor.trim() || null,
         grupo: formState.grupo.trim() || null,
         situacao: formState.situacao.trim() || null,
+        categoria: formState.categoria.trim() || null,
         obs_comercial: formState.obs_contrato_1.trim() || null,
         instructions: canManageInstruction ? formState.instructions.trim() || null : row.instructions ?? null,
       };
@@ -342,7 +346,7 @@ export default function AgendaDrawer({
         .update(payload)
         .eq("id", row.id)
         .select(
-          "id, data_da_ultima_visita, cod_1:codigo, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1:obs_comercial, visit_generated_at, created_at",
+          "id, data_da_ultima_visita, cod_1:codigo, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, categoria, obs_contrato_1:obs_comercial, visit_generated_at, created_at",
         )
         .single();
 
@@ -385,6 +389,7 @@ export default function AgendaDrawer({
         hasChanged((updatedRow as AgendaRow & { complemento?: string | null }).complemento, (row as AgendaRow & { complemento?: string | null }).complemento) ||
         hasChanged(updatedRow.perfil_visita, row.perfil_visita) ||
         hasChanged(updatedRow.situacao, row.situacao) ||
+        hasChanged(updatedRow.categoria, row.categoria) ||
         hasChanged(updatedRow.endereco, row.endereco) ||
         hasChanged(updatedRow.bairro, row.bairro) ||
         hasChanged(updatedRow.cidade, row.cidade) ||
@@ -408,6 +413,7 @@ export default function AgendaDrawer({
           complemento: (updatedRow as AgendaRow & { complemento?: string | null }).complemento ?? null,
           perfil_visita: updatedRow.perfil_visita,
           situacao: updatedRow.situacao,
+          categoria: updatedRow.categoria,
           endereco: updatedRow.endereco,
           bairro: updatedRow.bairro,
           cidade: updatedRow.cidade,
@@ -578,6 +584,31 @@ export default function AgendaDrawer({
                   >
                     <option value="">Selecione</option>
                     {SITUACAO_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                ) : field.key === "categoria" ? (
+                  <select
+                    value={formState[field.key]}
+                    onChange={(event) =>
+                      setFormState((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              [field.key]: event.target.value,
+                            }
+                          : prev,
+                      )
+                    }
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  >
+                    <option value="">Selecione</option>
+                    {formState[field.key] && !CATEGORIA_OPTIONS.some((option) => option === formState[field.key]) && (
+                      <option value={formState[field.key]}>{formState[field.key]}</option>
+                    )}
+                    {CATEGORIA_OPTIONS.map((option) => (
                       <option key={option} value={option}>
                         {option}
                       </option>

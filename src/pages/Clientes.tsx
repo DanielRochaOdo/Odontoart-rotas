@@ -34,6 +34,8 @@ import {
 } from "../lib/odontoartEmpresaApi";
 import { fetchEmpresaByCnpjWs } from "../lib/cnpjWsApi";
 import { normalizeSearchText } from "../lib/textNormalize";
+import { CATEGORIA_OPTIONS } from "../lib/categorias";
+import CategoriaLegendPopover from "../components/agenda/CategoriaLegendPopover";
 
 const formatDate = (value: string | null) => {
   if (!value) return "-";
@@ -125,6 +127,7 @@ type ImportPayload = {
   obs_comercial?: string | null;
   obs?: string | null;
   situacao?: string | null;
+  categoria?: string | null;
   perfil_visita?: string | null;
   endereco?: string | null;
   complemento?: string | null;
@@ -170,6 +173,7 @@ const buildClientePayloadFromImport = (payload: ImportPayload) => ({
   complemento: payload.complemento ?? null,
   perfil_visita: payload.perfil_visita ?? null,
   situacao: "Ativo",
+  categoria: payload.categoria ?? null,
   endereco: payload.endereco ?? null,
   bairro: payload.bairro ?? null,
   cidade: payload.cidade ?? null,
@@ -370,6 +374,7 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
     obs_comercial: (empresa.ObservacaoComercial ?? "").trim(),
     obs: "",
     situacao,
+    categoria: "",
     endereco,
     complemento: "",
     bairro: (empresa.BairroNome ?? "").trim(),
@@ -595,6 +600,8 @@ const HEADER_MAP: Record<string, string> = {
   "obs filial": "obs",
   "observacao filial": "obs",
   situacao: "situacao",
+  categoria: "categoria",
+  categ: "categoria",
   "perfil visita": "perfil_visita",
   perfil: "perfil_visita",
   perfil_visita: "perfil_visita",
@@ -681,6 +688,7 @@ export default function Clientes() {
     obs_comercial: "",
     obs: "",
     situacao: "Ativo",
+    categoria: "",
     endereco: "",
     complemento: "",
     bairro: "",
@@ -717,6 +725,7 @@ export default function Clientes() {
     obs_comercial: "",
     obs: "",
     situacao: "",
+    categoria: "",
     endereco: "",
     complemento: "",
     bairro: "",
@@ -1132,6 +1141,7 @@ export default function Clientes() {
       obs_comercial: selected.obs_comercial ?? "",
       obs: selected.obs ?? "",
       situacao: selected.situacao ?? "Ativo",
+      categoria: selected.categoria ?? "",
       endereco: selected.endereco ?? "",
       complemento: selected.complemento ?? "",
       bairro: selected.bairro ?? "",
@@ -1561,6 +1571,7 @@ export default function Clientes() {
         obs: form.obs.trim() || null,
         perfil_visita: perfilCreate.perfil || null,
         situacao: form.situacao.trim() || "Ativo",
+        categoria: form.categoria.trim() || null,
         endereco: form.endereco.trim() || null,
         complemento: form.complemento.trim() || null,
         bairro: form.bairro.trim() || null,
@@ -1586,6 +1597,7 @@ export default function Clientes() {
         obs_comercial: "",
         obs: "",
         situacao: "Ativo",
+        categoria: "",
         endereco: "",
         complemento: "",
         bairro: "",
@@ -1865,6 +1877,7 @@ export default function Clientes() {
         obs: editForm.obs.trim() || null,
         perfil_visita: perfilEdit.perfil || null,
         situacao: editForm.situacao.trim() || "Ativo",
+        categoria: editForm.categoria.trim() || null,
         endereco: editForm.endereco.trim() || null,
         complemento: editForm.complemento.trim() || null,
         bairro: editForm.bairro.trim() || null,
@@ -2048,6 +2061,7 @@ export default function Clientes() {
       "pessoa",
       "contato",
       "grupo",
+      "categoria",
       "obs_comercial",
       "corte",
       "vencimento",
@@ -2067,6 +2081,7 @@ export default function Clientes() {
       "",
       "",
       "85999999999,85988888888",
+      "",
       "",
       "",
       "",
@@ -2174,6 +2189,7 @@ export default function Clientes() {
             obs_comercial: record.obs_comercial ?? null,
             obs: record.obs ?? null,
             situacao: "Ativo",
+            categoria: record.categoria ?? null,
             perfil_visita: record.perfil_visita ?? null,
             endereco: record.endereco ?? null,
             complemento: record.complemento ?? null,
@@ -2213,6 +2229,7 @@ export default function Clientes() {
               complemento: payload.complemento ?? null,
               perfil_visita: payload.perfil_visita ?? null,
               situacao: "Ativo",
+              categoria: payload.categoria ?? null,
               endereco: payload.endereco ?? null,
               bairro: payload.bairro ?? null,
               cidade: payload.cidade ?? null,
@@ -2722,6 +2739,29 @@ export default function Clientes() {
                   <option value={form.situacao}>{form.situacao}</option>
                 )}
                 {SITUACAO_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="w-36 shrink-0 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              <span className="inline-flex items-center gap-1">
+                Categoria
+                <CategoriaLegendPopover />
+              </span>
+              <select
+                value={form.categoria}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, categoria: event.target.value }))
+                }
+                className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+              >
+                <option value="">Selecione</option>
+                {form.categoria && !CATEGORIA_OPTIONS.some((option) => option === form.categoria) && (
+                  <option value={form.categoria}>{form.categoria}</option>
+                )}
+                {CATEGORIA_OPTIONS.map((option) => (
                   <option key={option} value={option}>
                     {option}
                   </option>
@@ -3293,6 +3333,29 @@ export default function Clientes() {
                       ))}
                     </select>
                   </label>
+                  <label className="w-36 shrink-0 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                    <span className="inline-flex items-center gap-1">
+                      Categoria
+                      <CategoriaLegendPopover />
+                    </span>
+                    <select
+                      value={editForm.categoria}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({ ...prev, categoria: event.target.value }))
+                      }
+                      className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    >
+                      <option value="">Selecione</option>
+                      {editForm.categoria && !CATEGORIA_OPTIONS.some((option) => option === editForm.categoria) && (
+                        <option value={editForm.categoria}>{editForm.categoria}</option>
+                      )}
+                      {CATEGORIA_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
                 <div className="md:col-span-6">
                   {(perfilEdit.singleTimeBase === "ALMOCO" || perfilEdit.singleTimeBase === "JANTAR") && (
@@ -3486,6 +3549,7 @@ export default function Clientes() {
                   ["Obs comercial", selected.obs_comercial],
                   ["Obs", selected.obs],
                   ["Situacao", selected.situacao ?? "Ativo"],
+                  ["Categoria", selected.categoria ?? "-"],
                   ["Perfil visita", formatPerfilDisplay(selected.perfil_visita)],
                   ["Endereco", selected.endereco],
                   ["Complemento", selected.complemento],

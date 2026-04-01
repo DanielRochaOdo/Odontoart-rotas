@@ -17,6 +17,7 @@ export type ClienteRow = {
   complemento: string | null;
   perfil_visita: string | null;
   situacao: string | null;
+  categoria: string | null;
   endereco: string | null;
   bairro: string | null;
   cidade: string | null;

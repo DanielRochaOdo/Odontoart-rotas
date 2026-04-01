@@ -49,8 +49,10 @@ import {
 } from "../lib/routesModuleDraft";
 import { normalizeSearchText, normalizeSearchTokenText, normalizeText } from "../lib/textNormalize";
 import MultiSelectFilter from "../components/agenda/MultiSelectFilter";
+import CategoriaLegendPopover from "../components/agenda/CategoriaLegendPopover";
 import cearaCitiesRaw from "../data/ceara_municipios.geojson?raw";
 import fortalezaBairrosRaw from "../data/fortaleza_bairros.geojson?raw";
+import { CATEGORIA_OPTIONS } from "../lib/categorias";
 
 const RMF_CENTER: [number, number] = [-3.86, -38.62];
 const CEARA_BOUNDS: [[number, number], [number, number]] = [
@@ -88,6 +90,7 @@ const FILTER_SOURCES: Record<string, string[]> = {
   vendedor: ["vendedor"],
   grupo: ["grupo"],
   perfil_visita: ["perfil_visita"],
+  categoria: ["categoria"],
 };
 
 const FILTER_LABELS: Record<string, string> = {
@@ -98,6 +101,7 @@ const FILTER_LABELS: Record<string, string> = {
   vendedor: "Vendedor",
   grupo: "Grupo",
   perfil_visita: "Perfil visita",
+  categoria: "Categoria",
 };
 
 const normalize = (v: string | null | undefined) =>
@@ -265,6 +269,62 @@ const dedupeEmpresaLookupRows = (rows: EmpresaLookupRow[]) => {
   return Array.from(byId.values());
 };
 
+type VendedorLookup = {
+  user_id: string;
+  display_name: string | null;
+  role: string;
+  supervisor_id?: string | null;
+};
+
+type SupervisorLookup = {
+  id?: string;
+  user_id: string;
+  display_name: string | null;
+  role: string;
+};
+
+type RoutesMapLookupCache = {
+  empresaRows: EmpresaLookupRow[];
+  vendedores: VendedorLookup[];
+  supervisores: SupervisorLookup[];
+  cachedAt: number;
+};
+
+const ROUTES_MAP_LOOKUP_CACHE_STORAGE_KEY = "routesMapLookupCacheV1";
+const ROUTES_MAP_LOOKUP_CACHE_TTL_MS = 5 * 60 * 1000;
+let routesMapLookupMemoryCache: RoutesMapLookupCache | null = null;
+
+const readRoutesMapLookupCache = () => {
+  if (routesMapLookupMemoryCache) return routesMapLookupMemoryCache;
+  try {
+    const raw = sessionStorage.getItem(ROUTES_MAP_LOOKUP_CACHE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<RoutesMapLookupCache>;
+    if (!Array.isArray(parsed.empresaRows) || !Array.isArray(parsed.vendedores) || !Array.isArray(parsed.supervisores)) {
+      return null;
+    }
+    const entry: RoutesMapLookupCache = {
+      empresaRows: parsed.empresaRows as EmpresaLookupRow[],
+      vendedores: parsed.vendedores as VendedorLookup[],
+      supervisores: parsed.supervisores as SupervisorLookup[],
+      cachedAt: typeof parsed.cachedAt === "number" ? parsed.cachedAt : Date.now(),
+    };
+    routesMapLookupMemoryCache = entry;
+    return entry;
+  } catch {
+    return null;
+  }
+};
+
+const writeRoutesMapLookupCache = (entry: RoutesMapLookupCache) => {
+  routesMapLookupMemoryCache = entry;
+  try {
+    sessionStorage.setItem(ROUTES_MAP_LOOKUP_CACHE_STORAGE_KEY, JSON.stringify(entry));
+  } catch {
+    // ignore storage failures
+  }
+};
+
 export default function RoutesMap() {
   const { role, session } = useAuth();
   const canGenerate = role === "SUPERVISOR" || role === "ASSISTENTE";
@@ -273,18 +333,13 @@ export default function RoutesMap() {
   const [companyNameQuery, setCompanyNameQuery] = useState("");
   const [companyCodeQuery, setCompanyCodeQuery] = useState("");
   const restoredDraftRef = useRef(false);
-  const initializedFiltersRef = useRef(false);
 
   const [empresaRows, setEmpresaRows] = useState<EmpresaLookupRow[]>([]);
   const [scheduledVisitsByEmpresa, setScheduledVisitsByEmpresa] = useState<
     Record<string, EmpresaScheduledVisit[]>
   >({});
-  const [vendedores, setVendedores] = useState<
-    { user_id: string; display_name: string | null; role: string; supervisor_id?: string | null }[]
-  >([]);
-  const [supervisores, setSupervisores] = useState<
-    { id?: string; user_id: string; display_name: string | null; role: string }[]
-  >([]);
+  const [vendedores, setVendedores] = useState<VendedorLookup[]>([]);
+  const [supervisores, setSupervisores] = useState<SupervisorLookup[]>([]);
 
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("RAIO");
   const [selectedEmpresaIds, setSelectedEmpresaIds] = useState<string[]>([]);
@@ -317,22 +372,50 @@ export default function RoutesMap() {
     if (restoredDraftRef.current) return;
     restoredDraftRef.current = true;
     const parsed = readRoutesModuleDraft();
+    setCompanyNameQuery(parsed.companyNameQuery ?? "");
+    setCompanyCodeQuery(parsed.companyCodeQuery ?? "");
     if (Array.isArray(parsed.selectedEmpresaIds)) {
       setSelectedEmpresaIds(Array.from(new Set(parsed.selectedEmpresaIds.filter(Boolean))));
+    }
+    if (Array.isArray(parsed.selectedVendorIds)) {
+      setSelectedVendorIds(Array.from(new Set(parsed.selectedVendorIds.filter(Boolean))));
+    }
+    setVendorQuery(parsed.vendorQuery ?? "");
+    setVisitDate(parsed.visitDate ?? "");
+    setSelectionMode(parsed.selectionMode ?? "RAIO");
+    if (Array.isArray(parsed.selectedBairroKeys)) {
+      setSelectedBairroKeys(Array.from(new Set(parsed.selectedBairroKeys.filter(Boolean))));
+    }
+    if (Array.isArray(parsed.excludedBairroEmpresaIds)) {
+      setExcludedBairroEmpresaIds(Array.from(new Set(parsed.excludedBairroEmpresaIds.filter(Boolean))));
+    }
+    if (parsed.radiusKm) {
+      setRadiusKm(parsed.radiusKm);
+    }
+    if (typeof parsed.radiusMode === "boolean") {
+      setRadiusMode(parsed.radiusMode);
+    }
+    if (typeof parsed.radiusReplaceSelection === "boolean") {
+      setRadiusReplaceSelection(parsed.radiusReplaceSelection);
+    }
+    if (parsed.radiusCenter) {
+      setRadiusCenter(L.latLng(parsed.radiusCenter.lat, parsed.radiusCenter.lng));
+    }
+    if (Array.isArray(parsed.radiusResultIds)) {
+      setRadiusResultIds(Array.from(new Set(parsed.radiusResultIds.filter(Boolean))));
     }
   }, []);
 
   useEffect(() => {
-    if (initializedFiltersRef.current) return;
-    initializedFiltersRef.current = true;
-    setCompanyNameQuery("");
-    setCompanyCodeQuery("");
-    clearFilters();
-  }, [clearFilters]);
-
-  useEffect(() => {
     if (!canGenerate) return;
     let active = true;
+
+    const cached = readRoutesMapLookupCache();
+    if (cached) {
+      setEmpresaRows(cached.empresaRows);
+      setVendedores(cached.vendedores);
+      setSupervisores(cached.supervisores);
+    }
 
     const load = async () => {
       try {
@@ -342,15 +425,27 @@ export default function RoutesMap() {
           fetchSupervisores(),
         ]);
         if (!active) return;
-        setEmpresaRows(empresas);
-        setVendedores(vends);
-        setSupervisores(sups);
+        const nextCache: RoutesMapLookupCache = {
+          empresaRows: empresas,
+          vendedores: vends as VendedorLookup[],
+          supervisores: sups as SupervisorLookup[],
+          cachedAt: Date.now(),
+        };
+        writeRoutesMapLookupCache(nextCache);
+        setEmpresaRows(nextCache.empresaRows);
+        setVendedores(nextCache.vendedores);
+        setSupervisores(nextCache.supervisores);
       } catch (e) {
         if (active) setMessage(e instanceof Error ? e.message : "Erro ao carregar dados.");
       }
     };
 
-    load();
+    const cacheIsFresh =
+      Boolean(cached) && Date.now() - (cached?.cachedAt ?? 0) <= ROUTES_MAP_LOOKUP_CACHE_TTL_MS;
+
+    if (!cacheIsFresh) {
+      load();
+    }
     const unsub = onProfilesUpdated(load);
     return () => {
       active = false;
@@ -428,6 +523,7 @@ export default function RoutesMap() {
         vendedor: row.vendedor,
         grupo: row.grupo,
         perfil_visita: row.perfil_visita,
+        categoria: row.categoria,
       };
 
       Object.entries(valuesByKey).forEach(([key, value]) => {
@@ -466,6 +562,7 @@ export default function RoutesMap() {
         vendedor: r.vendedor ?? "",
         grupo: r.grupo ?? "",
         perfil_visita: r.perfil_visita ?? "",
+        categoria: r.categoria ?? "",
       };
 
       for (const k of Object.keys(FILTER_SOURCES)) {
@@ -621,9 +718,37 @@ export default function RoutesMap() {
   useEffect(() => {
     if (!restoredDraftRef.current) return;
     writeRoutesModuleDraft({
+      companyNameQuery,
+      companyCodeQuery,
       selectedEmpresaIds: effectiveSelectedEmpresaIds,
+      selectedVendorIds,
+      vendorQuery,
+      visitDate,
+      selectionMode,
+      selectedBairroKeys,
+      excludedBairroEmpresaIds,
+      radiusKm,
+      radiusMode,
+      radiusReplaceSelection,
+      radiusCenter: radiusCenter ? { lat: radiusCenter.lat, lng: radiusCenter.lng } : null,
+      radiusResultIds,
     });
-  }, [effectiveSelectedEmpresaIds]);
+  }, [
+    companyCodeQuery,
+    companyNameQuery,
+    effectiveSelectedEmpresaIds,
+    excludedBairroEmpresaIds,
+    radiusCenter,
+    radiusKm,
+    radiusMode,
+    radiusReplaceSelection,
+    radiusResultIds,
+    selectedBairroKeys,
+    selectedVendorIds,
+    selectionMode,
+    vendorQuery,
+    visitDate,
+  ]);
 
   useEffect(() => {
     setExcludedBairroEmpresaIds((prev) => prev.filter((id) => selectedBairroEmpresaIds.includes(id)));
@@ -1112,7 +1237,7 @@ export default function RoutesMap() {
         <div className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
           <div className="flex flex-col gap-4">
             {/* Busca por nome e codigo */}
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)_minmax(180px,220px)] md:items-end">
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] font-semibold text-ink/70">Termo por nome (palavra exata)</span>
                 <input
@@ -1130,6 +1255,34 @@ export default function RoutesMap() {
                   placeholder="Busca exata por codigo"
                   className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
                 />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-ink/70">
+                  Categoria
+                  <CategoriaLegendPopover />
+                </span>
+                <div className="flex h-10 items-center justify-between rounded-lg border border-sea/20 bg-white/90 px-3">
+                  <span className="text-xs text-ink/60">
+                    {(filters.columns.categoria ?? []).length
+                      ? `${(filters.columns.categoria ?? []).length} selecionada(s)`
+                      : "Selecione"}
+                  </span>
+                  <MultiSelectFilter
+                    label={
+                      (filters.columns.categoria ?? []).length
+                        ? `Categoria (${filters.columns.categoria.length})`
+                        : "Categoria"
+                    }
+                    options={filterOptions.categoria ?? [...CATEGORIA_OPTIONS]}
+                    value={filters.columns.categoria ?? []}
+                    onApply={(next) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        columns: { ...prev.columns, categoria: next },
+                      }))
+                    }
+                  />
+                </div>
               </label>
             </div>
 
