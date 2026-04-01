@@ -3,13 +3,6 @@ import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import { extractCustomTimes } from "./perfilVisita";
 import { fetchNominatimCoordinatesByAddress, fetchNominatimCoordinatesByQuery } from "./nominatim";
 const DEFAULT_SITUACAO = "Ativo";
-const normalizeAgendaKeyPart = (value?: string | null) =>
-  (value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
-const buildAgendaDedupeKey = (empresa?: string | null, nomeFantasia?: string | null) =>
-  `${normalizeAgendaKeyPart(empresa)}|${normalizeAgendaKeyPart(nomeFantasia)}||`;
 const CLIENTES_SELECT_COLUMNS =
   "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf, created_at";
 
@@ -21,138 +14,6 @@ const normalizePerfilTimes = (value: string | null) => {
     perfil: cleanedPerfil,
     opcoes: hasTimes ? cleanedPerfil : null,
   };
-};
-
-const collectAgendaIdsForCliente = async (
-  cliente: Pick<ClienteRow, "codigo" | "empresa" | "nome_fantasia">,
-) => {
-  const codigo = cliente.codigo?.trim();
-  const empresa = cliente.empresa?.trim();
-  const nomeFantasia = cliente.nome_fantasia?.trim();
-  const hasEmpresaIdentity = Boolean(empresa || nomeFantasia);
-  const agendaIds = new Set<string>();
-
-  const appendAgendaIds = (
-    data: Array<{ id?: string | null }> | null,
-    error: { message: string } | null,
-  ) => {
-    if (error) throw new Error(error.message);
-    (data ?? []).forEach((row) => {
-      const id = row.id;
-      if (id) agendaIds.add(id);
-    });
-  };
-
-  if (hasEmpresaIdentity) {
-    const agendaKey = buildAgendaDedupeKey(empresa, nomeFantasia);
-    const { data, error } = await supabase.from("agenda").select("id").eq("dedupe_key", agendaKey);
-    appendAgendaIds(data as Array<{ id?: string | null }> | null, error);
-
-    if (agendaIds.size === 0) {
-      let fallbackQuery = supabase.from("agenda").select("id");
-      if (empresa && nomeFantasia) {
-        fallbackQuery = fallbackQuery.eq("empresa", empresa).eq("nome_fantasia", nomeFantasia);
-      } else if (empresa) {
-        fallbackQuery = fallbackQuery.eq("empresa", empresa);
-      } else if (nomeFantasia) {
-        fallbackQuery = fallbackQuery.eq("nome_fantasia", nomeFantasia);
-      }
-      const { data: fallbackData, error: fallbackError } = await fallbackQuery;
-      appendAgendaIds(fallbackData as Array<{ id?: string | null }> | null, fallbackError);
-    }
-  } else if (codigo) {
-    const { data, error } = await supabase.from("agenda").select("id").eq("cod_1", codigo);
-    appendAgendaIds(data as Array<{ id?: string | null }> | null, error);
-  }
-
-  return Array.from(agendaIds);
-};
-
-const upsertAgendaFromClientesPayloads = async (
-  payloads: Array<{
-    codigo?: string | null;
-    corte?: number | null;
-    venc?: number | null;
-    data_da_ultima_visita?: string | null;
-    valor?: number | null;
-    cep?: string | null;
-    empresa?: string | null;
-    pessoa?: string | null;
-    contato?: string | null;
-    grupo?: string | null;
-    obs_comercial?: string | null;
-    nome_fantasia?: string | null;
-    complemento?: string | null;
-    perfil_visita?: string | null;
-    situacao?: string | null;
-    endereco?: string | null;
-    bairro?: string | null;
-    cidade?: string | null;
-    uf?: string | null;
-  }>,
-  options?: {
-    skipDataUltimaVisitaSync?: boolean;
-  },
-) => {
-  const agendaRows = payloads
-    .map((payload) => {
-      const empresa = payload.empresa ?? null;
-      const nomeFantasia = payload.nome_fantasia ?? null;
-      if (!empresa && !nomeFantasia) return null;
-      return {
-        cod_1: payload.codigo ?? null,
-        corte: payload.corte ?? null,
-        venc: payload.venc ?? null,
-        data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
-        valor: payload.valor ?? null,
-        cep: payload.cep ?? null,
-        empresa,
-        pessoa: payload.pessoa ?? null,
-        contato: payload.contato ?? null,
-        grupo: payload.grupo ?? null,
-        obs_contrato_1: payload.obs_comercial ?? null,
-        nome_fantasia: nomeFantasia,
-        complemento: payload.complemento ?? null,
-        perfil_visita: payload.perfil_visita ?? null,
-        endereco: payload.endereco ?? null,
-        bairro: payload.bairro ?? null,
-        cidade: payload.cidade ?? null,
-        uf: payload.uf ?? null,
-        situacao: payload.situacao ?? DEFAULT_SITUACAO,
-        dedupe_key: buildAgendaDedupeKey(empresa, nomeFantasia),
-        raw_row: {
-          source: "clientes",
-        },
-      };
-    })
-    .filter((row): row is NonNullable<typeof row> => Boolean(row));
-
-  if (agendaRows.length === 0) return;
-
-  const { error } = await supabase
-    .from("agenda")
-    .upsert(agendaRows, { onConflict: "dedupe_key", ignoreDuplicates: true });
-
-  if (error) throw new Error(error.message);
-
-  if (options?.skipDataUltimaVisitaSync) return;
-
-  const updates = payloads.filter(
-    (payload) =>
-      payload.data_da_ultima_visita &&
-      (payload.empresa?.trim() || payload.nome_fantasia?.trim()),
-  );
-  for (const payload of updates) {
-    const empresa = payload.empresa?.trim() ?? null;
-    const nomeFantasia = payload.nome_fantasia?.trim() ?? null;
-    if (!empresa && !nomeFantasia) continue;
-    const query = supabase
-      .from("agenda")
-      .update({ data_da_ultima_visita: payload.data_da_ultima_visita })
-      .eq("dedupe_key", buildAgendaDedupeKey(empresa, nomeFantasia));
-    const { error: updateError } = await query;
-    if (updateError) throw new Error(updateError.message);
-  }
 };
 
 export const fetchClientes = async () => {
@@ -321,20 +182,6 @@ export const syncVisitsForCliente = async (cliente: ClienteRow) => {
     })
     .eq("cliente_id", cliente.id);
   if (updateByClienteError) throw new Error(updateByClienteError.message);
-
-  // Fallback for legacy rows not yet linked with cliente_id.
-  const agendaIds = await collectAgendaIdsForCliente(cliente);
-  if (agendaIds.length === 0) return;
-
-  const { error: updateLegacyError } = await supabase
-    .from("visits")
-    .update({
-      perfil_visita: perfil,
-      perfil_visita_opcoes: opcoes,
-    })
-    .is("cliente_id", null)
-    .in("agenda_id", agendaIds);
-  if (updateLegacyError) throw new Error(updateLegacyError.message);
 };
 
 export const deleteCliente = async (id: string) => {
@@ -366,8 +213,8 @@ export const upsertClientes = async (
     cidade?: string | null;
     uf?: string | null;
   }>,
-  options?: {
-    skipAgendaDataUltimaVisitaSync?: boolean;
+  _options?: {
+    skipDataUltimaVisitaSync?: boolean;
   },
 ) => {
   if (payloads.length === 0) return [];
@@ -400,42 +247,10 @@ export const upsertClientes = async (
     .upsert(clientesRows, { onConflict: "dedupe_key", ignoreDuplicates: true })
     .select(CLIENTES_SELECT_COLUMNS);
   if (error) throw new Error(error.message);
-  if (!options?.skipAgendaDataUltimaVisitaSync) {
-    await upsertAgendaFromClientesPayloads(normalized, {
-      skipDataUltimaVisitaSync: false,
-    });
-  }
   return (data ?? []) as ClienteRow[];
 };
 
 export const syncAgendaForCliente = async (cliente: ClienteRow) => {
-  const situacao = cliente.situacao ?? DEFAULT_SITUACAO;
-  const agendaIds = await collectAgendaIdsForCliente(cliente);
-  if (agendaIds.length === 0) return;
-
-  const { error } = await supabase.from("agenda").update({
-    situacao,
-    cod_1: cliente.codigo ?? null,
-    corte: cliente.corte ?? null,
-    venc: cliente.venc ?? null,
-    data_da_ultima_visita: cliente.data_da_ultima_visita ?? null,
-    cep: cliente.cep ?? null,
-    empresa: cliente.empresa ?? null,
-    pessoa: cliente.pessoa ?? null,
-    contato: cliente.contato ?? null,
-    grupo: cliente.grupo ?? null,
-    obs_contrato_1: cliente.obs_comercial ?? null,
-    nome_fantasia: cliente.nome_fantasia ?? null,
-    perfil_visita: cliente.perfil_visita ?? null,
-    valor: cliente.valor ?? null,
-    complemento: cliente.complemento ?? null,
-    endereco: cliente.endereco ?? null,
-    bairro: cliente.bairro ?? null,
-    cidade: cliente.cidade ?? null,
-    uf: cliente.uf ?? null,
-  }).in("id", agendaIds);
-  if (error) throw new Error(error.message);
-
   const road = [cliente.endereco?.trim(), cliente.bairro?.trim()].filter(Boolean).join(", ");
   const city = cliente.cidade?.trim();
   const state = cliente.uf?.trim();
@@ -450,26 +265,16 @@ export const syncAgendaForCliente = async (cliente: ClienteRow) => {
   }
   if (!geocoded) return;
 
-  const { data: matchingRows, error: missingError } = await supabase
-    .from("agenda")
-    .select("id, latitude, longitude")
-    .in("id", agendaIds);
-  if (missingError) throw new Error(missingError.message);
-  const missingIds = (matchingRows ?? [])
-    .filter((row) => row.latitude === null || row.longitude === null)
-    .map((row) => row.id)
-    .filter(Boolean);
-  if (missingIds.length === 0) return;
-
   const { error: coordsError } = await supabase
-    .from("agenda")
+    .from("clientes")
     .update({
       latitude: geocoded.latitude,
       longitude: geocoded.longitude,
       geocode_source: "nominatim",
       geocode_updated_at: new Date().toISOString(),
     })
-    .in("id", missingIds);
+    .eq("id", cliente.id)
+    .or("latitude.is.null,longitude.is.null");
   if (coordsError) throw new Error(coordsError.message);
 };
 
@@ -534,34 +339,6 @@ export const fetchClienteHistory = async (cliente: ClienteRow) => {
         completed_at?: string | null;
         completed_vidas?: number | null;
       }>);
-    }
-
-    const agendaIds = await collectAgendaIdsForCliente(cliente);
-    if (agendaIds.length > 0) {
-      const fallbackRows: Array<{
-        id: string;
-        visit_date?: string | null;
-        assigned_to_name?: string | null;
-        assigned_to_user_id?: string | null;
-        perfil_visita?: string | null;
-        perfil_visita_opcoes?: string | null;
-        completed_at?: string | null;
-        completed_vidas?: number | null;
-      }> = [];
-      const chunkSize = 500;
-      for (let i = 0; i < agendaIds.length; i += chunkSize) {
-        const ids = agendaIds.slice(i, i + chunkSize);
-        const { data: fallbackData, error: fallbackError } = await supabase
-          .from("visits")
-          .select(baseSelect)
-          .in("agenda_id", ids)
-          .order("visit_date", { ascending: false });
-        if (fallbackError) {
-          throw new Error(fallbackError.message);
-        }
-        fallbackRows.push(...((fallbackData ?? []) as typeof fallbackRows));
-      }
-      return mapHistoryRows(fallbackRows);
     }
 
     throw new Error(error.message);

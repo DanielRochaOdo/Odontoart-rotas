@@ -8,10 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "import:agenda": "tsx scripts/import_agenda_xlsx.ts",
     "backfill:bairro": "tsx scripts/backfill_bairro_nominatim.ts",
-    "backfill:coords": "tsx scripts/backfill_agenda_coordinates_nominatim.ts",
-    "backfill:agenda-last-visit": "tsx scripts/backfill_agenda_last_visit_from_visits.ts",
     "backfill:clientes-cnpj": "tsx scripts/backfill_clientes_cnpj.ts"
   },
   "dependencies": {

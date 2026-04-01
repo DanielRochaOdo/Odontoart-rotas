@@ -91,8 +91,8 @@ const parseFromSearchParams = (searchParams: URLSearchParams) => {
   return next;
 };
 
-const parseFromStorage = () => {
-  const stored = localStorage.getItem("agendaFilters");
+const parseFromStorage = (storageKey: string) => {
+  const stored = localStorage.getItem(storageKey);
   if (!stored) return null;
   try {
     const parsed = JSON.parse(stored) as Partial<AgendaFilters>;
@@ -161,7 +161,7 @@ const buildParams = (filters: AgendaFilters) => {
   return params;
 };
 
-export const useAgendaFilters = () => {
+export const useAgendaFilters = (storageKey = "agendaFilters") => {
   const [searchParams, setSearchParams] = useSearchParams();
   const searchKey = searchParams.toString();
   const searchParamsSnapshot = useMemo(() => new URLSearchParams(searchKey), [searchKey]);
@@ -169,9 +169,9 @@ export const useAgendaFilters = () => {
   const filters = useMemo(() => {
     const fromQuery = parseFromSearchParams(searchParamsSnapshot);
     if (fromQuery) return fromQuery;
-    const fromStorage = parseFromStorage();
+    const fromStorage = parseFromStorage(storageKey);
     return fromStorage ?? makeEmptyFilters();
-  }, [searchParamsSnapshot]);
+  }, [searchParamsSnapshot, storageKey]);
 
   const filtersRef = useRef(filters);
   useEffect(() => {
@@ -185,18 +185,18 @@ export const useAgendaFilters = () => {
       if (nextKey !== searchKey) {
         setSearchParams(params, { replace: true });
       }
-      localStorage.setItem("agendaFilters", JSON.stringify(next));
+      localStorage.setItem(storageKey, JSON.stringify(next));
     },
-    [searchKey, setSearchParams],
+    [searchKey, setSearchParams, storageKey],
   );
 
   useEffect(() => {
     if (searchKey.length !== 0) return;
-    const stored = parseFromStorage();
+    const stored = parseFromStorage(storageKey);
     if (stored) {
       syncFilters(stored);
     }
-  }, [searchKey, syncFilters]);
+  }, [searchKey, storageKey, syncFilters]);
 
   const setFilters = useCallback(
     (next: AgendaFilters | ((prev: AgendaFilters) => AgendaFilters)) => {

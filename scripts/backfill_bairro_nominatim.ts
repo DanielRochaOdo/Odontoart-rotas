@@ -91,32 +91,6 @@ const fetchAll = async <T,>(table: string, select: string): Promise<T[]> => {
 
 const hasValue = (value: string | null) => Boolean(value && value.trim());
 
-const escapeOrValue = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
-
-const updateAgendaForCliente = async (cliente: BaseRow, bairro: string) => {
-  const empresa = cliente.empresa?.trim();
-  const nomeFantasia = cliente.nome_fantasia?.trim();
-
-  let query = supabase.from("agenda").update({ bairro });
-
-  if (empresa && nomeFantasia) {
-    query = query.or(
-      `empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
-    );
-  } else if (empresa) {
-    query = query.eq("empresa", empresa);
-  } else if (nomeFantasia) {
-    query = query.eq("nome_fantasia", nomeFantasia);
-  } else {
-    return;
-  }
-
-  const { error } = await query;
-  if (error) {
-    throw new Error(error.message);
-  }
-};
-
 const backfillClientes = async () => {
   const rows = await fetchAll<BaseRow>(
     "clientes",
@@ -150,13 +124,6 @@ const backfillClientes = async () => {
       if (error) {
         console.error(`[clientes] ${row.id} - erro ao atualizar: ${error.message}`);
         continue;
-      }
-
-      try {
-        await updateAgendaForCliente(row, bairro);
-      } catch (agendaErr) {
-        const message = agendaErr instanceof Error ? agendaErr.message : String(agendaErr);
-        console.error(`[agenda] ${row.id} - erro ao refletir bairro: ${message}`);
       }
 
       updated += 1;

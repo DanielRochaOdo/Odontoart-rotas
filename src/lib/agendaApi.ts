@@ -1,7 +1,6 @@
 ﻿import { supabase } from "./supabase";
 import type { AgendaFilters, AgendaRow } from "../types/agenda";
 import type { SortingState } from "@tanstack/react-table";
-import { hydrateAgendaRowsFromClientes } from "./clientesCanonical";
 import { normalizeText } from "./textNormalize";
 
 const GLOBAL_SEARCH_COLUMNS = [
@@ -116,6 +115,12 @@ const AGENDA_SORTABLE_COLUMNS = new Set<string>([
   "perfil_visita",
 ]);
 
+const mapAgendaColumnToClientes = (column: string) => {
+  if (column === "cod_1") return "codigo";
+  if (column === "obs_contrato_1") return "obs_comercial";
+  return column;
+};
+
 const applyAgendaSorting = <T,>(query: T, sorting: SortingState): T => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let next: any = query;
@@ -126,12 +131,13 @@ const applyAgendaSorting = <T,>(query: T, sorting: SortingState): T => {
   }
 
   const { id, desc } = sorting[0];
-  const sortColumn =
+  const sortColumnRaw =
     id === "obs"
       ? "visit_generated_at"
       : AGENDA_SORTABLE_COLUMNS.has(id)
         ? id
         : "visit_generated_at";
+  const sortColumn = mapAgendaColumnToClientes(sortColumnRaw);
   next = next.order(sortColumn, { ascending: !desc, nullsFirst: false });
   return next as T;
 };
@@ -153,22 +159,22 @@ const stripVidasRange = (filters: AgendaFilters): AgendaFilters => ({
 });
 
 type VisitCompletedRow = {
-  agenda_id: string | null;
+  cliente_id: string | null;
   completed_vidas: number | null;
   completed_at: string | null;
   visit_date: string | null;
 };
 
 const fetchAgendaIdsByLatestCompletedVidas = async (range: { from: number | null; to: number | null }) => {
-  const latestByAgenda = new Map<string, number>();
+  const latestByCliente = new Map<string, number>();
   const pageSize = 1000;
   let from = 0;
 
   while (true) {
     const { data, error } = await supabase
       .from("visits")
-      .select("agenda_id, completed_vidas, completed_at, visit_date")
-      .not("agenda_id", "is", null)
+      .select("cliente_id, completed_vidas, completed_at, visit_date")
+      .not("cliente_id", "is", null)
       .not("completed_vidas", "is", null)
       .not("completed_at", "is", null)
       .order("completed_at", { ascending: false })
@@ -183,24 +189,24 @@ const fetchAgendaIdsByLatestCompletedVidas = async (range: { from: number | null
     if (rows.length === 0) break;
 
     rows.forEach((row) => {
-      if (!row.agenda_id) return;
-      if (latestByAgenda.has(row.agenda_id)) return;
+      if (!row.cliente_id) return;
+      if (latestByCliente.has(row.cliente_id)) return;
       if (row.completed_vidas === null || row.completed_vidas === undefined) return;
-      latestByAgenda.set(row.agenda_id, row.completed_vidas);
+      latestByCliente.set(row.cliente_id, row.completed_vidas);
     });
 
     if (rows.length < pageSize) break;
     from += pageSize;
   }
 
-  const agendaIds: string[] = [];
-  latestByAgenda.forEach((vidas, agendaId) => {
+  const clienteIds: string[] = [];
+  latestByCliente.forEach((vidas, clienteId) => {
     if (range.from !== null && vidas < range.from) return;
     if (range.to !== null && vidas > range.to) return;
-    agendaIds.push(agendaId);
+    clienteIds.push(clienteId);
   });
 
-  return agendaIds;
+  return clienteIds;
 };
 
 type OptionsCacheEntry = {
@@ -224,7 +230,7 @@ const CLIENTES_FILTER_COLUMN_MAP: Record<string, string> = {
 };
 
 const fetchColumnValuesPaged = async (
-  sourceTable: "clientes" | "agenda",
+  sourceTable: "clientes",
   targetColumn: string,
 ) => {
   const rows: Array<Record<string, unknown>> = [];
@@ -278,29 +284,28 @@ type AgendaPerfilRow = {
   nome_fantasia?: string | null;
 };
 
-const resolvePerfilFromClientes = async <T extends AgendaPerfilRow>(rows: T[]) =>
-  hydrateAgendaRowsFromClientes(rows);
-
 const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let next: any = query;
 
   Object.entries(filters.columns).forEach(([key, values]) => {
+    if (key === "situacao") return;
     if (!values || values.length === 0) return;
     const cleaned = values.map((value) => normalizeOption(value)).filter(Boolean);
     if (cleaned.length === 0) return;
     const expanded = expandFilterValues(key, cleaned);
     if (expanded.length === 0) return;
+    const sourceKey = mapAgendaColumnToClientes(key === "empresa_nome" ? "empresa" : key);
 
     if (key === "empresa_nome") {
-      next = next.in("empresa", expanded);
+      next = next.in(sourceKey, expanded);
       return;
     }
 
     if (key === "perfil_visita") {
       const cacheEntry = optionsCache.get(key);
       if (cacheEntry) {
-        next = next.in("perfil_visita", expanded);
+        next = next.in(sourceKey, expanded);
       } else {
         const conditions = cleaned.map(buildPerfilVisitaCondition).filter(Boolean);
         if (conditions.length) {
@@ -310,7 +315,7 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
       return;
     }
 
-    next = next.in(key, expanded);
+    next = next.in(sourceKey, expanded);
   });
 
   if (filters.global) {
@@ -412,7 +417,7 @@ export type AgendaSearchFilters = {
 
 export type AgendaScheduledVisit = {
   id: string;
-  agenda_id: string;
+  cliente_id: string | null;
   visit_date: string;
   assigned_to_user_id: string | null;
   assigned_to_name: string | null;
@@ -423,17 +428,13 @@ export type AgendaScheduledVisit = {
 };
 
 export type AgendaVisitVendor = {
-  agenda_id: string;
+  cliente_id: string | null;
   visit_date: string;
   assigned_to_user_id: string | null;
   assigned_to_name: string | null;
   completed_at: string | null;
   completed_vidas: number | null;
   no_visit_reason: string | null;
-};
-
-type AgendaExactMatchIdRow = {
-  id: string;
 };
 
 export const fetchAgenda = async (
@@ -458,48 +459,46 @@ export const fetchAgenda = async (
 
   const companyName = search?.companyName?.replace(/%/g, "").trim();
   const companyCode = search?.companyCode?.replace(/%/g, "").trim();
-  let agendaIdsByExactSearch: string[] | null = null;
-
-  if (companyName || companyCode) {
-    const { data, error } = await supabase.rpc("agenda_exact_match_ids", {
-      p_company_name: companyName || null,
-      p_company_code: companyCode || null,
-    });
-    if (error) throw new Error(error.message);
-    agendaIdsByExactSearch = ((data ?? []) as AgendaExactMatchIdRow[])
-      .map((row) => row.id)
-      .filter(Boolean);
-  }
-
-  let restrictedAgendaIds: string[] | null = null;
-  if (agendaIdsByVidas && agendaIdsByExactSearch) {
-    const byVidas = new Set(agendaIdsByVidas);
-    restrictedAgendaIds = agendaIdsByExactSearch.filter((id) => byVidas.has(id));
-  } else if (agendaIdsByVidas) {
-    restrictedAgendaIds = agendaIdsByVidas;
-  } else if (agendaIdsByExactSearch) {
-    restrictedAgendaIds = agendaIdsByExactSearch;
-  }
+  const restrictedAgendaIds = agendaIdsByVidas;
 
   if (restrictedAgendaIds && restrictedAgendaIds.length === 0) {
     return { data: [], count: 0 };
   }
 
   const selectColumns =
-    "id, data_da_ultima_visita, visit_completed_vidas, cod_1, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1, visit_generated_at, created_at";
+    "id, data_da_ultima_visita, visit_completed_vidas, cod_1:codigo, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1:obs_comercial, visit_generated_at, created_at";
 
   const baseQuery = () =>
     supabase
-    .from("agenda")
-    .select(selectColumns, { count: "planned" });
+    .from("clientes")
+    .select(selectColumns, { count: "exact" });
 
-  const baseQueryNoCount = () => supabase.from("agenda").select(selectColumns);
+  const baseQueryNoCount = () => supabase.from("clientes").select(selectColumns);
+
+  const runExactCount = async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let countQuery: any = applySearchAndIds(
+      applyFilters(
+        supabase.from("clientes").select("id", { count: "exact", head: true }),
+        effectiveFilters,
+      ),
+    );
+    const { count: exactCount, error: countError } = await countQuery;
+    if (countError) throw new Error(countError.message);
+    return exactCount ?? 0;
+  };
 
   const applySearchAndIds = <T,>(inputQuery: T): T => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let next: any = inputQuery;
     if (restrictedAgendaIds) {
       next = next.in("id", restrictedAgendaIds);
+    }
+    if (companyCode) {
+      next = next.eq("codigo", companyCode);
+    }
+    if (companyName) {
+      next = next.ilike("empresa", `%${companyName}%`);
     }
     return next as T;
   };
@@ -534,30 +533,41 @@ export const fetchAgenda = async (
     data = retry.data;
     error = null;
     count = data?.length ?? 0;
+    try {
+      count = await runExactCount();
+    } catch (countErr) {
+      console.warn("fetchAgenda exact count fallback failed:", countErr);
+    }
   }
 
   if (error) throw new Error(error.message);
+  if (count === null || count === undefined) {
+    try {
+      count = await runExactCount();
+    } catch (countErr) {
+      console.warn("fetchAgenda exact count recovery failed:", countErr);
+    }
+  }
 
   const pageRows = (data ?? []) as AgendaRow[];
-  const hydrated = (await resolvePerfilFromClientes(pageRows)) as AgendaRow[];
-  const deduped = dedupeAgendaRows(hydrated);
+  const deduped = dedupeAgendaRows(pageRows);
 
   return { data: deduped, count: count ?? deduped.length };
 };
 
-export const fetchAgendaScheduledVisits = async (agendaIds: string[]) => {
-  if (!agendaIds.length) return [] as AgendaScheduledVisit[];
+export const fetchAgendaScheduledVisits = async (clienteIds: string[]) => {
+  if (!clienteIds.length) return [] as AgendaScheduledVisit[];
   const chunkSize = 500;
   const results: AgendaScheduledVisit[] = [];
 
-  for (let index = 0; index < agendaIds.length; index += chunkSize) {
-    const chunk = agendaIds.slice(index, index + chunkSize);
+  for (let index = 0; index < clienteIds.length; index += chunkSize) {
+    const chunk = clienteIds.slice(index, index + chunkSize);
     const { data, error } = await supabase
       .from("visits")
       .select(
-        "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, instructions, completed_at, route_id",
+        "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, instructions, completed_at, route_id",
       )
-      .in("agenda_id", chunk)
+      .in("cliente_id", chunk)
       .is("completed_at", null)
       .order("visit_date", { ascending: true });
 
@@ -571,12 +581,12 @@ export const fetchAgendaScheduledVisits = async (agendaIds: string[]) => {
   return results;
 };
 
-export const fetchAgendaVisitVendors = async (agendaIds: string[]) => {
-  if (!agendaIds.length) return [] as AgendaVisitVendor[];
+export const fetchAgendaVisitVendors = async (clienteIds: string[]) => {
+  if (!clienteIds.length) return [] as AgendaVisitVendor[];
   const { data, error } = await supabase
     .from("visits")
-    .select("agenda_id, visit_date, assigned_to_user_id, assigned_to_name, completed_at, completed_vidas, no_visit_reason")
-    .in("agenda_id", agendaIds)
+    .select("cliente_id, visit_date, assigned_to_user_id, assigned_to_name, completed_at, completed_vidas, no_visit_reason")
+    .in("cliente_id", clienteIds)
     .order("completed_at", { ascending: false })
     .order("visit_date", { ascending: false });
 
@@ -628,11 +638,11 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
   }
 
   const clientesColumn = CLIENTES_FILTER_COLUMN_MAP[filterKey];
-  const sourceTable = clientesColumn ? "clientes" : "agenda";
+  const sourceTable = "clientes";
 
   for (const column of columns) {
-    const targetColumn = clientesColumn ?? column;
-    const data = await fetchColumnValuesPaged(sourceTable as "clientes" | "agenda", targetColumn);
+    const targetColumn = mapAgendaColumnToClientes(clientesColumn ?? column);
+    const data = await fetchColumnValuesPaged(sourceTable, targetColumn);
 
     (data ?? []).forEach((row) => {
       const rawValue = row[targetColumn as keyof typeof row];
@@ -671,8 +681,8 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
 export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: string[]) => {
   const buildQuery = () =>
     supabase
-      .from("agenda")
-      .select("id, perfil_visita, instructions, cod_1, empresa, nome_fantasia")
+      .from("clientes")
+      .select("id, perfil_visita, instructions, cod_1:codigo, empresa, nome_fantasia")
       .order("id", { ascending: true });
 
   if (ids && ids.length > 0) {
@@ -686,8 +696,9 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
       results.push(...((data ?? []) as AgendaPerfilRow[]));
     }
 
-    const hydrated = (await resolvePerfilFromClientes(results)) as AgendaPerfilRow[];
-    const deduped = dedupeAgendaRows(hydrated as Partial<AgendaRow>[] as AgendaRow[]) as unknown as AgendaPerfilRow[];
+    const deduped = dedupeAgendaRows(
+      results as Partial<AgendaRow>[] as AgendaRow[],
+    ) as unknown as AgendaPerfilRow[];
     return deduped.map((item) => ({
       id: item.id,
       perfil_visita: item.perfil_visita ?? null,
@@ -731,8 +742,9 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
     from += pageSize;
   }
 
-  const hydrated = (await resolvePerfilFromClientes(results)) as AgendaPerfilRow[];
-  const deduped = dedupeAgendaRows(hydrated as Partial<AgendaRow>[] as AgendaRow[]) as unknown as AgendaPerfilRow[];
+  const deduped = dedupeAgendaRows(
+    results as Partial<AgendaRow>[] as AgendaRow[],
+  ) as unknown as AgendaPerfilRow[];
   return deduped.map((item) => ({
     id: item.id,
     perfil_visita: item.perfil_visita ?? null,

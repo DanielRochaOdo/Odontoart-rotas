@@ -70,7 +70,6 @@ type DigitalSummary = {
 const computeVisitStats = (
   data: Array<{
     cliente_id: string | null;
-    agenda_id?: string | null;
     completed_at: string | null;
     completed_vidas: number | null;
     no_visit_reason: string | null;
@@ -92,7 +91,7 @@ const computeVisitStats = (
         visitasNaoRealizadas += 1;
       } else {
         visitasRealizadas += 1;
-        const empresaId = item.cliente_id ?? item.agenda_id ?? null;
+        const empresaId = item.cliente_id ?? null;
         if (empresaId) empresasSet.add(empresaId);
       }
     } else {
@@ -297,7 +296,7 @@ export default function Dashboard() {
       setLoading(true);
       setError(null);
       const { data, error: supabaseError } = await supabase
-        .from("agenda")
+        .from("clientes")
         .select("data_da_ultima_visita, situacao, cidade, uf, vendedor")
         .limit(5000);
 
@@ -456,7 +455,7 @@ export default function Dashboard() {
 
       let visitsQuery = supabase
         .from("visits")
-        .select("cliente_id, agenda_id, completed_at, completed_vidas, no_visit_reason, visit_date")
+        .select("cliente_id, completed_at, completed_vidas, no_visit_reason, visit_date")
         .gte("visit_date", globalFrom)
         .lte("visit_date", globalTo);
       let aceiteQuery = supabase
@@ -510,7 +509,6 @@ export default function Dashboard() {
         computeVisitStats(
           (visitsData ?? []).map((item) => ({
             cliente_id: item.cliente_id ?? null,
-            agenda_id: item.agenda_id ?? null,
             completed_at: item.completed_at ?? null,
             completed_vidas: item.completed_vidas ?? null,
             no_visit_reason: item.no_visit_reason ?? null,
@@ -576,7 +574,7 @@ export default function Dashboard() {
 
       let visitsQuery = supabase
         .from("visits")
-        .select("cliente_id, agenda_id, completed_at, completed_vidas, no_visit_reason, visit_date")
+        .select("cliente_id, completed_at, completed_vidas, no_visit_reason, visit_date")
         .gte("visit_date", globalFrom)
         .lte("visit_date", globalTo);
 
@@ -611,7 +609,6 @@ export default function Dashboard() {
         computeVisitStats(
           (visitsData ?? []).map((item) => ({
             cliente_id: item.cliente_id ?? null,
-            agenda_id: item.agenda_id ?? null,
             completed_at: item.completed_at ?? null,
             completed_vidas: item.completed_vidas ?? null,
             no_visit_reason: item.no_visit_reason ?? null,

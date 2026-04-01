@@ -2323,7 +2323,7 @@ export default function Clientes() {
         }>,
       ): Promise<ClienteRow[]> => {
         try {
-          return await upsertClientes(batch, { skipAgendaDataUltimaVisitaSync: true });
+          return await upsertClientes(batch, { skipDataUltimaVisitaSync: true });
         } catch (error) {
           if (!isStatementTimeoutError(error) || batch.length <= 1) {
             throw error;
