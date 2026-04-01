@@ -285,20 +285,30 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
   setIfDefined("uf");
 
   if (Object.keys(updatePayload).length === 0) {
-    const { data, error } = await supabase.from("clientes").select(CLIENTES_SELECT_COLUMNS).eq("id", id).single();
+    const { data, error } = await supabase
+      .from("clientes")
+      .select(CLIENTES_SELECT_COLUMNS)
+      .eq("id", id)
+      .maybeSingle();
     if (error) throw new Error(error.message);
+    if (!data) throw new Error(`Cliente ${id} nao encontrado.`);
     return data as ClienteRow;
   }
 
-  const { data, error } = await supabase
+  const { error: updateError } = await supabase
     .from("clientes")
     .update(updatePayload)
-    .eq("id", id)
-    .select(CLIENTES_SELECT_COLUMNS)
-    .single();
+    .eq("id", id);
+  if (updateError) throw new Error(updateError.message);
 
-  if (error) throw new Error(error.message);
-  return data as ClienteRow;
+  const { data: fallbackData, error: fallbackError } = await supabase
+    .from("clientes")
+    .select(CLIENTES_SELECT_COLUMNS)
+    .eq("id", id)
+    .maybeSingle();
+  if (fallbackError) throw new Error(fallbackError.message);
+  if (!fallbackData) throw new Error(`Cliente ${id} nao encontrado.`);
+  return fallbackData as ClienteRow;
 };
 
 export const syncVisitsForCliente = async (cliente: ClienteRow) => {

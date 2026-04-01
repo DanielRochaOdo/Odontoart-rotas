@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { normalizeText } from "./textNormalize";
 
 type ClienteCanonicalRow = {
   id: string;
@@ -52,11 +53,7 @@ const CLIENTES_CANONICAL_SELECT =
 const CLIENTES_CANONICAL_CHUNK_SIZE = 50;
 
 const normalize = (value: string | null | undefined) =>
-  (value ?? "")
-    .trim()
-    .toUpperCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+  normalizeText(value, { letterCase: "upper" });
 
 const makeCodigoKey = (codigo: string | null | undefined) => {
   const normalized = normalize(codigo);

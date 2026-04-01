@@ -2,6 +2,7 @@
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { formatDateBr } from "../lib/dateFormat";
+import { normalizeText } from "../lib/textNormalize";
 
 const formatNumber = (value: number) => new Intl.NumberFormat("pt-BR").format(value);
 const startOfWeek = (date: Date) => {
@@ -33,11 +34,7 @@ const formatOrValues = (values: string[]) =>
   values.map((value) => `"${value.replace(/"/g, '\\"')}"`).join(",");
 
 const normalizeKey = (value: string) =>
-  value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .trim();
+  normalizeText(value, { letterCase: "upper" });
 
 type VisitStats = {
   totalVidas: number;

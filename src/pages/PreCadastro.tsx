@@ -14,6 +14,7 @@ import {
   rejectPreCadastro,
 } from "../lib/preCadastroApi";
 import type { PreCadastroRow } from "../types/preCadastro";
+import { normalizeSearchText } from "../lib/textNormalize";
 
 const SITUACAO_OPTIONS = ["Ativo", "Suspenso/Inadimplente", "Cancelado"] as const;
 
@@ -127,7 +128,7 @@ const resolveCepFromApi = (empresa: OdontoartEmpresaResponseRow) => {
 };
 
 const normalizeStatus = (value: string) => {
-  const cleaned = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+  const cleaned = normalizeSearchText(value);
   if (cleaned === "ativo") return "Ativo";
   if (cleaned === "cancelado") return "Cancelado";
   if (cleaned.includes("suspenso") || cleaned.includes("inadimplente")) return "Suspenso/Inadimplente";

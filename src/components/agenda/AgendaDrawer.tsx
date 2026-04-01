@@ -311,86 +311,120 @@ export default function AgendaDrawer({
     setSaving(true);
     setStatus(null);
 
-    const payload: Partial<AgendaRow> = {
-      data_da_ultima_visita: formState.data_da_ultima_visita
-        ? new Date(`${formState.data_da_ultima_visita}T12:00:00`).toISOString()
-        : null,
-      cod_1: formState.cod_1.trim() || null,
-      empresa: formState.empresa.trim() || null,
-      pessoa: formState.pessoa.trim() || null,
-      contato: formState.contato.trim() || null,
-      perfil_visita: formState.perfil_visita.trim() || null,
-      corte: formState.corte ? parseNumber(formState.corte) : null,
-      venc: formState.venc ? parseNumber(formState.venc) : null,
-      valor: formState.valor ? parseCurrency(formState.valor) : null,
-      endereco: formState.endereco.trim() || null,
-      complemento: formState.complemento.trim() || null,
-      bairro: formState.bairro.trim() || null,
-      cidade: formState.cidade.trim() || null,
-      uf: formState.uf.trim() || null,
-      supervisor: formState.supervisor.trim() || null,
-      vendedor: formState.vendedor.trim() || null,
-      grupo: formState.grupo.trim() || null,
-      situacao: formState.situacao.trim() || null,
-      obs_contrato_1: formState.obs_contrato_1.trim() || null,
-      instructions: canManageInstruction ? formState.instructions.trim() || null : row.instructions ?? null,
-    };
+    try {
+      const payload: Partial<AgendaRow> = {
+        data_da_ultima_visita: formState.data_da_ultima_visita
+          ? new Date(`${formState.data_da_ultima_visita}T12:00:00`).toISOString()
+          : null,
+        cod_1: formState.cod_1.trim() || null,
+        empresa: formState.empresa.trim() || null,
+        pessoa: formState.pessoa.trim() || null,
+        contato: formState.contato.trim() || null,
+        perfil_visita: formState.perfil_visita.trim() || null,
+        corte: formState.corte ? parseNumber(formState.corte) : null,
+        venc: formState.venc ? parseNumber(formState.venc) : null,
+        valor: formState.valor ? parseCurrency(formState.valor) : null,
+        endereco: formState.endereco.trim() || null,
+        complemento: formState.complemento.trim() || null,
+        bairro: formState.bairro.trim() || null,
+        cidade: formState.cidade.trim() || null,
+        uf: formState.uf.trim() || null,
+        supervisor: formState.supervisor.trim() || null,
+        vendedor: formState.vendedor.trim() || null,
+        grupo: formState.grupo.trim() || null,
+        situacao: formState.situacao.trim() || null,
+        obs_contrato_1: formState.obs_contrato_1.trim() || null,
+        instructions: canManageInstruction ? formState.instructions.trim() || null : row.instructions ?? null,
+      };
 
-    const { data, error } = await supabase
-      .from("agenda")
-      .update(payload)
-      .eq("id", row.id)
-      .select("*")
-      .single();
+      const { data, error } = await supabase
+        .from("agenda")
+        .update(payload)
+        .eq("id", row.id)
+        .select("*")
+        .single();
 
-    if (error) {
-      setStatus(error.message);
-      setSaving(false);
-      return;
-    }
-
-    const updatedRow = data as AgendaRow;
-    if (canManageInstruction && (updatedRow.instructions ?? null) !== (row.instructions ?? null)) {
-      const { error: visitInstructionsError } = await supabase
-        .from("visits")
-        .update({ instructions: updatedRow.instructions ?? null })
-        .eq("agenda_id", row.id)
-        .is("completed_at", null);
-      if (visitInstructionsError) {
-        setStatus(visitInstructionsError.message);
-        setSaving(false);
-        return;
+      if (error || !data) {
+        throw new Error(error?.message ?? "Erro ao atualizar dados.");
       }
-    }
 
-    await syncAgendaRowAcrossModules({
-      id: updatedRow.id,
-      codigo: updatedRow.cod_1,
-      corte: updatedRow.corte,
-      venc: updatedRow.venc,
-      valor: updatedRow.valor,
-      data_da_ultima_visita: updatedRow.data_da_ultima_visita,
-      cep: (updatedRow as AgendaRow & { cep?: string | null }).cep ?? null,
-      empresa: updatedRow.empresa,
-      pessoa: (updatedRow as AgendaRow & { pessoa?: string | null }).pessoa ?? null,
-      contato: (updatedRow as AgendaRow & { contato?: string | null }).contato ?? null,
-      grupo: updatedRow.grupo,
-      obs_comercial: updatedRow.obs_contrato_1,
-      nome_fantasia: updatedRow.nome_fantasia,
-      complemento: (updatedRow as AgendaRow & { complemento?: string | null }).complemento ?? null,
-      perfil_visita: updatedRow.perfil_visita,
-      situacao: updatedRow.situacao,
-      endereco: updatedRow.endereco,
-      bairro: updatedRow.bairro,
-      cidade: updatedRow.cidade,
-      uf: updatedRow.uf,
-    });
-    setFormState(buildFormState(updatedRow));
-    syncPerfilState(updatedRow.perfil_visita ?? "");
-    setIsEditing(false);
-    setStatus("Dados atualizados.");
-    onUpdated?.(updatedRow);
-    setSaving(false);
+      const updatedRow = data as AgendaRow;
+      const instructionsChanged =
+        canManageInstruction && (updatedRow.instructions ?? null) !== (row.instructions ?? null);
+
+      if (instructionsChanged) {
+        void supabase
+          .from("visits")
+          .update({ instructions: updatedRow.instructions ?? null })
+          .eq("agenda_id", row.id)
+          .is("completed_at", null)
+          .then(({ error: visitInstructionsError }) => {
+            if (visitInstructionsError) {
+              console.error(visitInstructionsError);
+              setStatus("Instrucao salva. Houve atraso na sincronizacao das visitas abertas.");
+            }
+          });
+      }
+
+      const hasChanged = (nextValue: unknown, prevValue: unknown) => (nextValue ?? null) !== (prevValue ?? null);
+      const shouldSyncModules =
+        hasChanged(updatedRow.cod_1, row.cod_1) ||
+        hasChanged(updatedRow.corte, row.corte) ||
+        hasChanged(updatedRow.venc, row.venc) ||
+        hasChanged(updatedRow.valor, row.valor) ||
+        hasChanged(updatedRow.data_da_ultima_visita, row.data_da_ultima_visita) ||
+        hasChanged((updatedRow as AgendaRow & { cep?: string | null }).cep, (row as AgendaRow & { cep?: string | null }).cep) ||
+        hasChanged(updatedRow.empresa, row.empresa) ||
+        hasChanged((updatedRow as AgendaRow & { pessoa?: string | null }).pessoa, (row as AgendaRow & { pessoa?: string | null }).pessoa) ||
+        hasChanged((updatedRow as AgendaRow & { contato?: string | null }).contato, (row as AgendaRow & { contato?: string | null }).contato) ||
+        hasChanged(updatedRow.grupo, row.grupo) ||
+        hasChanged(updatedRow.obs_contrato_1, row.obs_contrato_1) ||
+        hasChanged(updatedRow.nome_fantasia, row.nome_fantasia) ||
+        hasChanged((updatedRow as AgendaRow & { complemento?: string | null }).complemento, (row as AgendaRow & { complemento?: string | null }).complemento) ||
+        hasChanged(updatedRow.perfil_visita, row.perfil_visita) ||
+        hasChanged(updatedRow.situacao, row.situacao) ||
+        hasChanged(updatedRow.endereco, row.endereco) ||
+        hasChanged(updatedRow.bairro, row.bairro) ||
+        hasChanged(updatedRow.cidade, row.cidade) ||
+        hasChanged(updatedRow.uf, row.uf);
+
+      if (shouldSyncModules) {
+        await syncAgendaRowAcrossModules({
+          id: updatedRow.id,
+          codigo: updatedRow.cod_1,
+          corte: updatedRow.corte,
+          venc: updatedRow.venc,
+          valor: updatedRow.valor,
+          data_da_ultima_visita: updatedRow.data_da_ultima_visita,
+          cep: (updatedRow as AgendaRow & { cep?: string | null }).cep ?? null,
+          empresa: updatedRow.empresa,
+          pessoa: (updatedRow as AgendaRow & { pessoa?: string | null }).pessoa ?? null,
+          contato: (updatedRow as AgendaRow & { contato?: string | null }).contato ?? null,
+          grupo: updatedRow.grupo,
+          obs_comercial: updatedRow.obs_contrato_1,
+          nome_fantasia: updatedRow.nome_fantasia,
+          complemento: (updatedRow as AgendaRow & { complemento?: string | null }).complemento ?? null,
+          perfil_visita: updatedRow.perfil_visita,
+          situacao: updatedRow.situacao,
+          endereco: updatedRow.endereco,
+          bairro: updatedRow.bairro,
+          cidade: updatedRow.cidade,
+          uf: updatedRow.uf,
+        });
+      }
+
+      setFormState(buildFormState(updatedRow));
+      syncPerfilState(updatedRow.perfil_visita ?? "");
+      setIsEditing(false);
+      setStatus(
+        instructionsChanged && !shouldSyncModules ? "Instrucoes atualizadas." : "Dados atualizados.",
+      );
+      onUpdated?.(updatedRow);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Erro ao salvar dados.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDelete = async () => {

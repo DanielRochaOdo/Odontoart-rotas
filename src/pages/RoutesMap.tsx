@@ -47,6 +47,7 @@ import {
   readRoutesModuleDraft,
   writeRoutesModuleDraft,
 } from "../lib/routesModuleDraft";
+import { normalizeSearchText, normalizeSearchTokenText, normalizeText } from "../lib/textNormalize";
 import MultiSelectFilter from "../components/agenda/MultiSelectFilter";
 import cearaCitiesRaw from "../data/ceara_municipios.geojson?raw";
 import fortalezaBairrosRaw from "../data/fortaleza_bairros.geojson?raw";
@@ -102,11 +103,18 @@ const FILTER_LABELS: Record<string, string> = {
 };
 
 const normalize = (v: string | null | undefined) =>
-  (v ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toUpperCase();
+  normalizeText(v, { letterCase: "upper" });
+
+const normalizeTokenText = (v: string | null | undefined) =>
+  normalizeSearchTokenText(v);
+
+const containsExactTerm = (source: string | null | undefined, term: string) => {
+  const normalizedTerm = normalizeTokenText(term);
+  if (!normalizedTerm) return true;
+  const normalizedSource = normalizeTokenText(source);
+  if (!normalizedSource) return false;
+  return ` ${normalizedSource} `.includes(` ${normalizedTerm} `);
+};
 
 const normalizeNumberInput = (v: string) => v.replace(/\D/g, "");
 const toDateKey = (v: string | null | undefined) => (v ?? "").slice(0, 10);
@@ -362,8 +370,8 @@ export default function RoutesMap() {
 
   const filteredVendedores = useMemo(() => {
     if (!vendorQuery.trim()) return vendedores;
-    const t = vendorQuery.trim().toLowerCase();
-    return vendedores.filter((v) => (v.display_name ?? v.user_id).toLowerCase().includes(t));
+    const t = normalizeSearchText(vendorQuery);
+    return vendedores.filter((v) => normalizeSearchText(v.display_name ?? v.user_id).includes(t));
   }, [vendorQuery, vendedores]);
 
   const dedupedEmpresaRows = useMemo(() => dedupeEmpresaLookupRows(empresaRows), [empresaRows]);
@@ -431,20 +439,19 @@ export default function RoutesMap() {
   }, [dedupedEmpresaRows]);
 
   const rowsMatchingFilters = useMemo(() => {
-    const companyNameTerm = normalize(companyNameQuery);
+    const companyNameTerm = companyNameQuery.trim();
     const companyCodeTerm = normalize(companyCodeQuery);
     const d = filters.dateRanges.data_da_ultima_visita;
     const vr = filters.ranges.vidas_ultima_visita;
 
     return dedupedEmpresaRows.filter((r) => {
       if (companyNameTerm) {
-        const companyName = normalize(r.empresa);
-        if (!companyName.includes(companyNameTerm)) return false;
+        if (!containsExactTerm(r.empresa, companyNameTerm)) return false;
       }
 
       if (companyCodeTerm) {
         const code = normalize(r.codigo);
-        if (!code.includes(companyCodeTerm)) return false;
+        if (code !== companyCodeTerm) return false;
       }
 
       const ck: Record<string, string> = {
@@ -503,6 +510,16 @@ export default function RoutesMap() {
       return true;
     });
   }, [companyCodeQuery, companyNameQuery, dedupedEmpresaRows, filters]);
+
+  const hasActiveRowsFilter = useMemo(() => {
+    if (normalizeSearchText(companyNameQuery) || normalizeSearchText(companyCodeQuery)) return true;
+    if (Object.values(filters.columns).some((values) => values.length > 0)) return true;
+    const dateRange = filters.dateRanges.data_da_ultima_visita;
+    if (dateRange.from || dateRange.to || dateRange.month || dateRange.year || dateRange.invert) return true;
+    const vidasRange = filters.ranges.vidas_ultima_visita;
+    if (vidasRange.from || vidasRange.to) return true;
+    return false;
+  }, [companyCodeQuery, companyNameQuery, filters.columns, filters.dateRanges.data_da_ultima_visita, filters.ranges.vidas_ultima_visita]);
 
   const resolveMapObs = useCallback((empresaId: string) => {
     const visits = scheduledVisitsByEmpresa[empresaId] ?? [];
@@ -1097,20 +1114,20 @@ export default function RoutesMap() {
             {/* Busca por nome e codigo */}
             <div className="grid gap-3 md:grid-cols-2">
               <label className="flex flex-col gap-1">
-                <span className="text-[11px] font-semibold text-ink/70">Pesquisar por nome</span>
+                <span className="text-[11px] font-semibold text-ink/70">Termo por nome (palavra exata)</span>
                 <input
                   value={companyNameQuery}
                   onChange={(e) => setCompanyNameQuery(e.target.value)}
-                  placeholder="Nome da empresa"
+                  placeholder="Ex.: rio"
                   className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
                 />
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-[11px] font-semibold text-ink/70">Pesquisar por codigo</span>
+                <span className="text-[11px] font-semibold text-ink/70">Busca exata por codigo</span>
                 <input
                   value={companyCodeQuery}
                   onChange={(e) => setCompanyCodeQuery(e.target.value)}
-                  placeholder="Codigo da empresa"
+                  placeholder="Busca exata por codigo"
                   className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
                 />
               </label>
@@ -1470,6 +1487,11 @@ export default function RoutesMap() {
                 </div>
               </div>
             </div>
+            {rowsMatchingFilters.length === 0 && (
+              <div className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink/70">
+                {hasActiveRowsFilter ? "Termo nao encontrado." : "Nenhum registro encontrado."}
+              </div>
+            )}
           </div>
         </div>
 

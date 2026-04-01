@@ -2,6 +2,7 @@
 import type { AgendaFilters, AgendaRow } from "../types/agenda";
 import type { SortingState } from "@tanstack/react-table";
 import { hydrateAgendaRowsFromClientes } from "./clientesCanonical";
+import { normalizeText } from "./textNormalize";
 
 const GLOBAL_SEARCH_COLUMNS = [
   "empresa",
@@ -35,9 +36,7 @@ const buildSituacaoRawMap = () => {
 };
 
 const normalizeMatchKey = (value: string) =>
-  normalizeOption(value)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+  normalizeText(normalizeOption(value), { letterCase: "upper" });
 
 const normalizePerfilVisitaOption = (value: string) => {
   const match = normalizeMatchKey(value);
@@ -88,6 +87,9 @@ const parseOptionalNumber = (value?: string) => {
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : null;
 };
+
+const isStatementTimeoutError = (message?: string | null) =>
+  (message ?? "").toLowerCase().includes("statement timeout");
 
 const dedupeAgendaRows = <T extends Partial<AgendaRow>>(rows: T[]) => {
   const byId = new Map<string, T>();
@@ -208,14 +210,49 @@ type OptionsCacheEntry = {
 
 const optionsCache = new Map<string, OptionsCacheEntry>();
 const CLIENTES_FILTER_COLUMN_MAP: Record<string, string> = {
+  supervisor: "supervisor",
+  vendedor: "vendedor",
   cod_1: "codigo",
   empresa_nome: "empresa",
+  grupo: "grupo",
   perfil_visita: "perfil_visita",
   bairro: "bairro",
   cidade: "cidade",
   uf: "uf",
   endereco: "endereco",
   situacao: "situacao",
+};
+
+const fetchColumnValuesPaged = async (
+  sourceTable: "clientes" | "agenda",
+  targetColumn: string,
+) => {
+  const rows: Array<Record<string, unknown>> = [];
+  const pageSize = 1000;
+  let from = 0;
+
+  while (true) {
+    const response = (await supabase
+      .from(sourceTable)
+      .select(`${targetColumn}, id`)
+      .not(targetColumn, "is", null)
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1)) as unknown as {
+      data: Array<Record<string, unknown>> | null;
+      error: { message: string } | null;
+    };
+
+    const { data, error } = response;
+
+    if (error) throw new Error(error.message);
+
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return rows;
 };
 
 export const clearAgendaOptionsCache = () => {
@@ -392,6 +429,11 @@ export type AgendaVisitVendor = {
   assigned_to_name: string | null;
   completed_at: string | null;
   completed_vidas: number | null;
+  no_visit_reason: string | null;
+};
+
+type AgendaExactMatchIdRow = {
+  id: string;
 };
 
 export const fetchAgenda = async (
@@ -414,37 +456,86 @@ export const fetchAgenda = async (
     }
   }
 
+  const companyName = search?.companyName?.replace(/%/g, "").trim();
+  const companyCode = search?.companyCode?.replace(/%/g, "").trim();
+  let agendaIdsByExactSearch: string[] | null = null;
+
+  if (companyName || companyCode) {
+    const { data, error } = await supabase.rpc("agenda_exact_match_ids", {
+      p_company_name: companyName || null,
+      p_company_code: companyCode || null,
+    });
+    if (error) throw new Error(error.message);
+    agendaIdsByExactSearch = ((data ?? []) as AgendaExactMatchIdRow[])
+      .map((row) => row.id)
+      .filter(Boolean);
+  }
+
+  let restrictedAgendaIds: string[] | null = null;
+  if (agendaIdsByVidas && agendaIdsByExactSearch) {
+    const byVidas = new Set(agendaIdsByVidas);
+    restrictedAgendaIds = agendaIdsByExactSearch.filter((id) => byVidas.has(id));
+  } else if (agendaIdsByVidas) {
+    restrictedAgendaIds = agendaIdsByVidas;
+  } else if (agendaIdsByExactSearch) {
+    restrictedAgendaIds = agendaIdsByExactSearch;
+  }
+
+  if (restrictedAgendaIds && restrictedAgendaIds.length === 0) {
+    return { data: [], count: 0 };
+  }
+
+  const selectColumns =
+    "id, data_da_ultima_visita, visit_completed_vidas, cod_1, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1, visit_generated_at, created_at";
+
   const baseQuery = () =>
     supabase
     .from("agenda")
-    .select(
-      "id, data_da_ultima_visita, visit_completed_vidas, cod_1, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, obs_contrato_1, visit_generated_at, created_at",
-      { count: "exact" },
-    );
+    .select(selectColumns, { count: "planned" });
 
-  let query = applyFilters(baseQuery(), effectiveFilters);
-  const companyName = search?.companyName?.replace(/%/g, "").trim();
-  if (companyName) {
-    query = query.ilike("empresa", `%${companyName}%`);
-  }
+  const baseQueryNoCount = () => supabase.from("agenda").select(selectColumns);
 
-  const companyCode = search?.companyCode?.replace(/%/g, "").trim();
-  if (companyCode) {
-    query = query.ilike("cod_1", `%${companyCode}%`);
-  }
-
-  if (agendaIdsByVidas) {
-    if (agendaIdsByVidas.length === 0) {
-      return { data: [], count: 0 };
+  const applySearchAndIds = <T,>(inputQuery: T): T => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let next: any = inputQuery;
+    if (restrictedAgendaIds) {
+      next = next.in("id", restrictedAgendaIds);
     }
-    query = query.in("id", agendaIdsByVidas);
-  }
+    return next as T;
+  };
+
+  let query = applySearchAndIds(applyFilters(baseQuery(), effectiveFilters));
 
   const pageFrom = pageIndex * pageSize;
   const pageTo = pageFrom + pageSize - 1;
 
   query = applyAgendaSorting(query, sorting);
-  const { data, error, count } = await query.range(pageFrom, pageTo);
+  let { data, error, count } = await query.range(pageFrom, pageTo);
+
+  if (error && isStatementTimeoutError(error.message)) {
+    console.warn("fetchAgenda timed out with count; retrying without count");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let retryQuery: any = applySearchAndIds(applyFilters(baseQueryNoCount(), effectiveFilters));
+    retryQuery = applyAgendaSorting(retryQuery, sorting);
+    let retry = await retryQuery.range(pageFrom, pageTo);
+
+    if (retry.error && isStatementTimeoutError(retry.error.message)) {
+      console.warn("fetchAgenda timed out again; retrying with id sort");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let emergencyQuery: any = applySearchAndIds(applyFilters(baseQueryNoCount(), effectiveFilters));
+      emergencyQuery = emergencyQuery.order("id", { ascending: false });
+      retry = await emergencyQuery.range(pageFrom, pageTo);
+    }
+
+    if (retry.error) {
+      throw new Error(retry.error.message);
+    }
+
+    data = retry.data;
+    error = null;
+    count = data?.length ?? 0;
+  }
+
   if (error) throw new Error(error.message);
 
   const pageRows = (data ?? []) as AgendaRow[];
@@ -484,7 +575,7 @@ export const fetchAgendaVisitVendors = async (agendaIds: string[]) => {
   if (!agendaIds.length) return [] as AgendaVisitVendor[];
   const { data, error } = await supabase
     .from("visits")
-    .select("agenda_id, visit_date, assigned_to_user_id, assigned_to_name, completed_at, completed_vidas")
+    .select("agenda_id, visit_date, assigned_to_user_id, assigned_to_name, completed_at, completed_vidas, no_visit_reason")
     .in("agenda_id", agendaIds)
     .order("completed_at", { ascending: false })
     .order("visit_date", { ascending: false });
@@ -511,15 +602,10 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
   const normalizedMap = new Map<string, Set<string>>();
 
   if (filterKey === "perfil_visita") {
-    const { data, error } = await supabase
-      .from("clientes")
-      .select("perfil_visita")
-      .not("perfil_visita", "is", null)
-      .limit(4000);
-    if (error) throw new Error(error.message);
+    const data = await fetchColumnValuesPaged("clientes", "perfil_visita");
 
     data?.forEach((row) => {
-      const rawValue = row.perfil_visita;
+      const rawValue = row.perfil_visita as string | null | undefined;
       if (!rawValue) return;
       const rawText = String(rawValue);
       const normalizedValues = extractPerfilVisitaOptions(rawText);
@@ -546,16 +632,7 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
 
   for (const column of columns) {
     const targetColumn = clientesColumn ?? column;
-    const query = supabase
-      .from(sourceTable)
-      .select(targetColumn)
-      .not(targetColumn, "is", null)
-      .limit(2000);
-    const { data, error } = await query;
-
-    if (error) {
-      throw new Error(error.message);
-    }
+    const data = await fetchColumnValuesPaged(sourceTable as "clientes" | "agenda", targetColumn);
 
     (data ?? []).forEach((row) => {
       const rawValue = row[targetColumn as keyof typeof row];

@@ -33,6 +33,7 @@ import {
   type OdontoartEmpresaResponseRow,
 } from "../lib/odontoartEmpresaApi";
 import { fetchEmpresaByCnpjWs } from "../lib/cnpjWsApi";
+import { normalizeSearchText } from "../lib/textNormalize";
 
 const formatDate = (value: string | null) => {
   if (!value) return "-";
@@ -68,12 +69,7 @@ const toIsoDateInput = (value: string) => {
 };
 
 const normalizeAddressValue = (value: string | null | undefined) =>
-  (value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
+  normalizeSearchText(value);
 
 type AddressIdentity = {
   endereco?: string | null;
@@ -211,12 +207,7 @@ const buildPerfilState = (value: string | null) => {
 const SITUACAO_OPTIONS = ["Ativo", "Suspenso/Inadimplente", "Cancelado"] as const;
 
 const normalizeHeader = (value: string) =>
-  value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
+  normalizeSearchText(value);
 
 const IMPORT_NUMERIC_FIELDS = new Set(["corte", "venc"]);
 const IMPORT_BATCH_SIZE = 80;
@@ -389,7 +380,23 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
 
 const normalizeCodigoValue = (value: string | null | undefined) => (value ?? "").trim();
 const normalizeObsValue = (value: string | null | undefined) =>
-  (value ?? "").trim().toLocaleLowerCase("pt-BR");
+  normalizeSearchText(value);
+
+const isClientesDedupeConflictError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.includes("clientes_dedupe_key_unique");
+};
+const isClienteSyncNoResultError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return (
+    message.includes("Cannot coerce the result to a single JSON object") ||
+    message.includes("nao encontrado")
+  );
+};
+const buildClientesDedupeKey = (
+  empresa: string | null | undefined,
+  nomeFantasia: string | null | undefined,
+) => `${(empresa ?? "").toLowerCase()}|${(nomeFantasia ?? "").toLowerCase()}`;
 const normalizeNullableText = (value: string | null | undefined) => {
   const cleaned = (value ?? "").trim();
   return cleaned ? cleaned : null;
@@ -599,11 +606,7 @@ const HEADER_MAP: Record<string, string> = {
 };
 
 const normalizeStatus = (value: string) => {
-  const cleaned = value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
+  const cleaned = normalizeSearchText(value);
   if (cleaned.startsWith("ativo")) return "Ativo";
   if (cleaned.startsWith("cancelado")) return "Cancelado";
   if (cleaned.includes("suspenso") || cleaned.includes("inadimplente") || cleaned.includes("inadimlente")) {
@@ -613,11 +616,7 @@ const normalizeStatus = (value: string) => {
 };
 
 const normalizeName = (value: string | null) =>
-  (value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
+  normalizeSearchText(value);
 
 const formatPerfilDisplay = (value: string | null) => {
   if (!value) return "Sem perfil";
@@ -810,6 +809,17 @@ export default function Clientes() {
     apiSyncInFlightRef.current = true;
     try {
       const updatesById = new Map<string, ClienteRow>();
+      const dedupeOwnersByKey = new Map<string, Set<string>>();
+
+      candidates.forEach((cliente) => {
+        const key = buildClientesDedupeKey(cliente.empresa, cliente.nome_fantasia);
+        const owners = dedupeOwnersByKey.get(key);
+        if (owners) {
+          owners.add(cliente.id);
+          return;
+        }
+        dedupeOwnersByKey.set(key, new Set([cliente.id]));
+      });
 
       for (const codigo of codigos) {
         let empresaApi: OdontoartEmpresaResponseRow | null = null;
@@ -828,13 +838,88 @@ export default function Clientes() {
         );
         for (const cliente of matches) {
           const updatePayload = pickChangedApiFields(cliente, apiPayload);
+          if (updatePayload.empresa !== undefined) {
+            const targetKey = buildClientesDedupeKey(updatePayload.empresa, cliente.nome_fantasia);
+            const targetOwners = dedupeOwnersByKey.get(targetKey);
+            const hasOtherOwner = Boolean(
+              targetOwners &&
+                Array.from(targetOwners).some((ownerId) => ownerId !== cliente.id),
+            );
+            if (hasOtherOwner) {
+              delete updatePayload.empresa;
+            }
+          }
           if (Object.keys(updatePayload).length === 0) continue;
 
           try {
             const updated = await updateCliente(cliente.id, updatePayload);
             await syncAgendaForCliente(updated);
             updatesById.set(updated.id, updated);
+            const previousKey = buildClientesDedupeKey(cliente.empresa, cliente.nome_fantasia);
+            const nextKey = buildClientesDedupeKey(updated.empresa, updated.nome_fantasia);
+            if (previousKey !== nextKey) {
+              const previousOwners = dedupeOwnersByKey.get(previousKey);
+              if (previousOwners) {
+                previousOwners.delete(cliente.id);
+                if (previousOwners.size === 0) {
+                  dedupeOwnersByKey.delete(previousKey);
+                }
+              }
+              const nextOwners = dedupeOwnersByKey.get(nextKey);
+              if (nextOwners) {
+                nextOwners.add(updated.id);
+              } else {
+                dedupeOwnersByKey.set(nextKey, new Set([updated.id]));
+              }
+            }
           } catch (err) {
+            if (isClientesDedupeConflictError(err)) {
+              if (updatePayload.empresa === undefined) {
+                continue;
+              }
+              const retryPayload: Partial<ClienteRow> = { ...updatePayload };
+              delete retryPayload.empresa;
+              if (Object.keys(retryPayload).length > 0) {
+                try {
+                  const updated = await updateCliente(cliente.id, retryPayload);
+                  await syncAgendaForCliente(updated);
+                  updatesById.set(updated.id, updated);
+                  const previousKey = buildClientesDedupeKey(cliente.empresa, cliente.nome_fantasia);
+                  const nextKey = buildClientesDedupeKey(updated.empresa, updated.nome_fantasia);
+                  if (previousKey !== nextKey) {
+                    const previousOwners = dedupeOwnersByKey.get(previousKey);
+                    if (previousOwners) {
+                      previousOwners.delete(cliente.id);
+                      if (previousOwners.size === 0) {
+                        dedupeOwnersByKey.delete(previousKey);
+                      }
+                    }
+                    const nextOwners = dedupeOwnersByKey.get(nextKey);
+                    if (nextOwners) {
+                      nextOwners.add(updated.id);
+                    } else {
+                      dedupeOwnersByKey.set(nextKey, new Set([updated.id]));
+                    }
+                  }
+                  continue;
+                } catch (retryError) {
+                  if (
+                    !isClientesDedupeConflictError(retryError) &&
+                    !isClienteSyncNoResultError(retryError)
+                  ) {
+                    console.error(
+                      `Erro ao atualizar dados da API para o cliente ${cliente.id} apos retry sem nome.`,
+                      retryError,
+                    );
+                  }
+                  continue;
+                }
+              }
+              continue;
+            }
+            if (isClienteSyncNoResultError(err)) {
+              continue;
+            }
             console.error(`Erro ao atualizar dados da API para o cliente ${cliente.id}.`, err);
           }
         }
@@ -1135,11 +1220,12 @@ export default function Clientes() {
           if (effectiveSearchMode === "codigo") {
             return normalizeCodigoValue(cliente.codigo) === normalizedSearchTerm;
           }
-          const term = normalizedSearchTerm.toLowerCase();
+          const term = normalizeSearchText(normalizedSearchTerm);
           if (effectiveSearchMode === "empresa") {
-            return (cliente.empresa ?? "").toLowerCase().includes(term);
+            return normalizeSearchText(cliente.empresa).includes(term);
           }
-          const fields = [
+          const fields = normalizeSearchText(
+            [
             cliente.codigo,
             cliente.cep,
             cliente.empresa,
@@ -1154,9 +1240,9 @@ export default function Clientes() {
             cliente.uf,
             cliente.bairro,
           ]
-            .filter(Boolean)
-            .join(" ")
-            .toLowerCase();
+              .filter(Boolean)
+              .join(" "),
+          );
           return fields.includes(term);
         })
       : sourceClientes;
@@ -1191,7 +1277,7 @@ export default function Clientes() {
     }
     if (filteredClientes.length > 0) return;
 
-    const key = `${effectiveSearchMode}|${situacaoFilter}|${normalizedSearchTerm.toLowerCase()}`;
+    const key = `${effectiveSearchMode}|${situacaoFilter}|${normalizeSearchText(normalizedSearchTerm)}`;
     if (searchRefreshKeyRef.current === key) return;
     searchRefreshKeyRef.current = key;
 
@@ -2820,7 +2906,9 @@ export default function Clientes() {
         <div className="rounded-2xl border border-sea/15 bg-white/95">
           <div className="divide-y divide-sea/10">
             {displayClientes.length === 0 ? (
-              <div className="px-4 py-6 text-sm text-ink/60">Nenhum cliente encontrado.</div>
+              <div className="px-4 py-6 text-sm text-ink/60">
+                {isSearching ? "Termo nao encontrado." : "Nenhum cliente encontrado."}
+              </div>
             ) : (
               displayClientes.map((cliente) => (
                 <button

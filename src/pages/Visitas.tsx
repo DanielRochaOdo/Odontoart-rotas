@@ -1,13 +1,13 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
-import { addDays, endOfMonth, endOfWeek, format, isAfter, isSameDay, isSameMonth, startOfMonth, startOfWeek } from "date-fns";
+import { addDays, endOfMonth, format, isAfter, isSameDay, startOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { CheckCircle2, ChevronLeft, ChevronRight, Eye, MapPin, Pencil } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { fetchVendedores } from "../lib/agendaApi";
 import { onProfilesUpdated } from "../lib/profileEvents";
-import { hydrateAgendaRowsFromClientes } from "../lib/clientesCanonical";
 import { fetchObservacaoComercialByEmpresaId } from "../lib/odontoartEmpresaApi";
+import { normalizeSearchText } from "../lib/textNormalize";
 import {
   PERFIL_VISITA_PRESETS,
   extractCustomTimes,
@@ -20,6 +20,7 @@ import {
 type VisitRow = {
   id: string;
   agenda_id: string;
+  cliente_id?: string | null;
   visit_date: string;
   assigned_to_user_id: string | null;
   assigned_to_name: string | null;
@@ -51,6 +52,28 @@ type VisitRow = {
     perfil_visita: string | null;
     supervisor?: string | null;
   } | null;
+  cliente?: ClienteCanonicalModalRow | null;
+};
+
+type ClienteCanonicalModalRow = {
+  id: string;
+  codigo: string | null;
+  corte: number | null;
+  venc: number | null;
+  valor: number | null;
+  data_da_ultima_visita: string | null;
+  empresa: string | null;
+  pessoa: string | null;
+  contato: string | null;
+  obs_comercial: string | null;
+  nome_fantasia: string | null;
+  complemento: string | null;
+  perfil_visita: string | null;
+  situacao: string | null;
+  endereco: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
 };
 
 const buildMapAddress = (agenda?: VisitRow["agenda"] | null) => {
@@ -107,7 +130,10 @@ const toDateInput = (value: string | null) => {
   return local.toISOString().slice(0, 10);
 };
 
-const normalize = (value: string | null) => (value ?? "").trim().toLowerCase();
+const normalize = (value: string | null) => normalizeSearchText(value);
+
+const CLIENTE_CANONICAL_MODAL_SELECT =
+  "id, codigo, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf";
 
 const formatCurrency = (value?: number | null) => {
   if (value === null || value === undefined) return "-";
@@ -116,8 +142,8 @@ const formatCurrency = (value?: number | null) => {
 
 const NO_VISIT_REASONS = [
   "NAO AUTORIZADO",
-  "NÃƒO CHEGOU A TEMPO",
-  "ENDEREÃ‡O NAO LOCALIZADO",
+  "NAO CHEGOU A TEMPO",
+  "ENDERECO NAO LOCALIZADO",
   "AUSENTE NO DIA",
 ];
 
@@ -360,7 +386,10 @@ export default function Visitas() {
   }, [canManage]);
 
   useEffect(() => {
+    let active = true;
+
     const load = async () => {
+      if (!active) return;
       setLoading(true);
       setError(null);
 
@@ -488,19 +517,24 @@ export default function Visitas() {
         }
 
         if (blockReason) {
+          if (!active) return;
           setBlockMessage(blockReason);
         } else {
+          if (!active) return;
           setBlockMessage(null);
         }
 
+        if (!active) return;
         setMaxVisibleDate(maxDate);
         effectiveEnd = maxDate < endDate ? maxDate : endDate;
         if (effectiveEnd < startDate) {
+          if (!active) return;
           setVisits([]);
           setLoading(false);
           return;
         }
       } else {
+        if (!active) return;
         setMaxVisibleDate(null);
         setBlockMessage(null);
       }
@@ -508,7 +542,7 @@ export default function Visitas() {
       let visitsQuery = supabase
         .from("visits")
         .select(
-          "id, agenda_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, agenda:agenda_id (id, empresa, nome_fantasia, cod_1, corte, venc, valor, obs_contrato_1, pessoa, contato, instructions, endereco, complemento, bairro, cidade, uf, situacao, perfil_visita, supervisor)",
+          "id, agenda_id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, agenda:agenda_id (id, empresa, nome_fantasia, cod_1, corte, venc, valor, obs_contrato_1, pessoa, contato, instructions, endereco, complemento, bairro, cidade, uf, situacao, perfil_visita, supervisor)",
         )
         .gte("visit_date", startDate)
         .lte("visit_date", effectiveEnd)
@@ -527,6 +561,7 @@ export default function Visitas() {
       }
 
       const { data, error: supaError } = await visitsQuery;
+      if (!active) return;
 
       if (supaError) {
         setError(supaError.message);
@@ -538,38 +573,48 @@ export default function Visitas() {
         const normalized = (data ?? []).map((row) => {
           const item = row as VisitRowJoin;
           const agenda = Array.isArray(item.agenda) ? item.agenda[0] ?? null : item.agenda ?? null;
-          return { ...item, agenda };
+          return { ...item, agenda, cliente: null };
         }) as VisitRow[];
-        const hydratedAgenda = await hydrateAgendaRowsFromClientes(
-          normalized
-            .map((visit) => visit.agenda)
-            .filter((agenda): agenda is NonNullable<VisitRow["agenda"]> => Boolean(agenda)),
-        );
-        const agendaById = new Map(hydratedAgenda.map((agenda) => [agenda.id, agenda]));
-        setVisits(
-          normalized.map((visit) => {
-            if (!visit.agenda) return visit;
-            return { ...visit, agenda: agendaById.get(visit.agenda.id) ?? visit.agenda };
-          }),
-        );
+        setVisits(normalized);
       }
 
+      if (!active) return;
       setLoading(false);
     };
 
-    load();
+    void load().catch((err) => {
+      if (!active) return;
+      setError(err instanceof Error ? err.message : "Erro ao carregar visitas.");
+      setVisits([]);
+      setLoading(false);
+    });
+
+    return () => {
+      active = false;
+    };
   }, [currentMonth, refreshKey, isVendor, profile?.display_name, session?.user.id]);
 
-  const calendarDays = useMemo(() => {
-    const start = startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 1 });
-    const end = endOfWeek(endOfMonth(currentMonth), { weekStartsOn: 1 });
-    const days = [] as Date[];
-    let date = start;
-    while (date <= end) {
-      days.push(date);
-      date = addDays(date, 1);
+  const calendarCells = useMemo(() => {
+    const firstDayOfMonth = startOfMonth(currentMonth);
+    const lastDayOfMonth = endOfMonth(currentMonth);
+    const dayCount = lastDayOfMonth.getDate();
+    const leadingEmptyCells = (firstDayOfMonth.getDay() + 6) % 7;
+    const cells: Array<Date | null> = [];
+
+    for (let index = 0; index < leadingEmptyCells; index += 1) {
+      cells.push(null);
     }
-    return days;
+
+    for (let day = 1; day <= dayCount; day += 1) {
+      cells.push(new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day));
+    }
+
+    const trailingEmptyCells = (7 - (cells.length % 7)) % 7;
+    for (let index = 0; index < trailingEmptyCells; index += 1) {
+      cells.push(null);
+    }
+
+    return cells;
   }, [currentMonth]);
 
   const filteredVisits = useMemo(() => {
@@ -1061,8 +1106,25 @@ export default function Visitas() {
     setConfirmVisit(item);
   };
 
-  const fetchObsComercialFromClientes = async (agenda?: VisitRow["agenda"] | null) => {
+  const fetchObsComercialFromClientes = async (visit?: VisitRow | null) => {
+    const agenda = visit?.agenda;
     if (!agenda) return null;
+
+    if (visit?.cliente?.obs_comercial?.trim()) {
+      return visit.cliente.obs_comercial.trim();
+    }
+
+    const clienteId = visit?.cliente?.id ?? visit?.cliente_id ?? null;
+    if (clienteId) {
+      const { data, error } = await supabase
+        .from("clientes")
+        .select("obs_comercial")
+        .eq("id", clienteId)
+        .limit(1);
+      if (!error && data && data.length > 0) {
+        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
+      }
+    }
 
     const codigo = agenda.cod_1?.trim();
     if (codigo) {
@@ -1120,6 +1182,192 @@ export default function Visitas() {
     return null;
   };
 
+  const fetchAgendaCanonicalFromClientes = async (visit?: VisitRow | null) => {
+    const agenda = visit?.agenda;
+    if (!agenda) return null;
+
+    const mapCanonicalToAgenda = (row: ClienteCanonicalModalRow): NonNullable<VisitRow["agenda"]> => ({
+      ...agenda,
+      cod_1: row.codigo,
+      corte: row.corte,
+      venc: row.venc,
+      valor: row.valor,
+      empresa: row.empresa,
+      pessoa: row.pessoa,
+      contato: row.contato,
+      obs_contrato_1: row.obs_comercial,
+      nome_fantasia: row.nome_fantasia,
+      complemento: row.complemento,
+      perfil_visita: row.perfil_visita,
+      situacao: row.situacao,
+      endereco: row.endereco,
+      bairro: row.bairro,
+      cidade: row.cidade,
+      uf: row.uf,
+    });
+
+    if (visit?.cliente) {
+      return mapCanonicalToAgenda(visit.cliente);
+    }
+
+    const fetchCanonicalRows = async (
+      queryPromise: PromiseLike<{
+        data: ClienteCanonicalModalRow[] | null;
+        error: { message: string } | null;
+      }>,
+    ) => {
+      const { data, error } = await queryPromise;
+      if (error) {
+        console.error(error);
+        return [] as ClienteCanonicalModalRow[];
+      }
+      return (data ?? []) as ClienteCanonicalModalRow[];
+    };
+
+    const clienteId = visit?.cliente_id ?? null;
+    if (clienteId) {
+      const rows = await fetchCanonicalRows(
+        supabase.from("clientes").select(CLIENTE_CANONICAL_MODAL_SELECT).eq("id", clienteId).limit(1),
+      );
+      if (rows.length > 0) {
+        return mapCanonicalToAgenda(rows[0]);
+      }
+    }
+
+    const codigo = agenda.cod_1?.trim() ?? "";
+    const codigoCandidates = Array.from(
+      new Set(
+        [
+          codigo,
+          codigo.replace(/^0+/, ""),
+          (() => {
+            const numeric = Number(codigo);
+            return Number.isFinite(numeric) ? String(numeric) : "";
+          })(),
+        ].filter(Boolean),
+      ),
+    );
+
+    const candidateById = new Map<string, ClienteCanonicalModalRow>();
+    const ingestCandidates = (rows: ClienteCanonicalModalRow[]) => {
+      rows.forEach((row) => {
+        if (!row?.id) return;
+        candidateById.set(row.id, row);
+      });
+    };
+
+    if (codigoCandidates.length > 0) {
+      const rows = await fetchCanonicalRows(
+        supabase.from("clientes").select(CLIENTE_CANONICAL_MODAL_SELECT).in("codigo", codigoCandidates).limit(100),
+      );
+      ingestCandidates(rows);
+    }
+
+    const empresa = agenda.empresa?.trim() ?? "";
+    const nomeFantasia = agenda.nome_fantasia?.trim() ?? "";
+
+    if (empresa && nomeFantasia) {
+      const rows = await fetchCanonicalRows(
+        supabase
+          .from("clientes")
+          .select(CLIENTE_CANONICAL_MODAL_SELECT)
+          .eq("empresa", empresa)
+          .eq("nome_fantasia", nomeFantasia)
+          .limit(100),
+      );
+      ingestCandidates(rows);
+    }
+
+    if (empresa) {
+      const rows = await fetchCanonicalRows(
+        supabase.from("clientes").select(CLIENTE_CANONICAL_MODAL_SELECT).eq("empresa", empresa).limit(100),
+      );
+      ingestCandidates(rows);
+    }
+
+    if (nomeFantasia) {
+      const rows = await fetchCanonicalRows(
+        supabase.from("clientes").select(CLIENTE_CANONICAL_MODAL_SELECT).eq("nome_fantasia", nomeFantasia).limit(100),
+      );
+      ingestCandidates(rows);
+    }
+
+    const candidates = Array.from(candidateById.values());
+    if (candidates.length === 0) return null;
+
+    const normalizedAgendaCodigoSet = new Set(codigoCandidates.map((value) => normalize(value)).filter(Boolean));
+    const normalizedAgendaEmpresa = normalize(agenda.empresa);
+    const normalizedAgendaFantasia = normalize(agenda.nome_fantasia);
+    const normalizedAgendaEndereco = normalize(agenda.endereco);
+    const normalizedAgendaComplemento = normalize(agenda.complemento ?? null);
+    const normalizedAgendaBairro = normalize(agenda.bairro);
+    const normalizedAgendaCidade = normalize(agenda.cidade);
+    const normalizedAgendaUf = normalize(agenda.uf);
+
+    const scoreCandidate = (candidate: ClienteCanonicalModalRow) => {
+      let score = 0;
+
+      const normalizedCodigo = normalize(candidate.codigo);
+      const normalizedEmpresa = normalize(candidate.empresa);
+      const normalizedFantasia = normalize(candidate.nome_fantasia);
+      const normalizedEndereco = normalize(candidate.endereco);
+      const normalizedComplemento = normalize(candidate.complemento);
+      const normalizedBairro = normalize(candidate.bairro);
+      const normalizedCidade = normalize(candidate.cidade);
+      const normalizedUf = normalize(candidate.uf);
+
+      if (normalizedCodigo && normalizedAgendaCodigoSet.has(normalizedCodigo)) {
+        score += 500;
+      }
+      if (normalizedAgendaEmpresa && normalizedEmpresa && normalizedAgendaEmpresa === normalizedEmpresa) {
+        score += 120;
+      }
+      if (normalizedAgendaFantasia && normalizedFantasia && normalizedAgendaFantasia === normalizedFantasia) {
+        score += 80;
+      }
+      if (normalizedAgendaEndereco && normalizedEndereco && normalizedAgendaEndereco === normalizedEndereco) {
+        score += 60;
+      }
+      if (
+        normalizedAgendaComplemento &&
+        normalizedComplemento &&
+        normalizedAgendaComplemento === normalizedComplemento
+      ) {
+        score += 20;
+      }
+      if (normalizedAgendaBairro && normalizedBairro && normalizedAgendaBairro === normalizedBairro) {
+        score += 25;
+      }
+      if (normalizedAgendaCidade && normalizedCidade && normalizedAgendaCidade === normalizedCidade) {
+        score += 25;
+      }
+      if (normalizedAgendaUf && normalizedUf && normalizedAgendaUf === normalizedUf) {
+        score += 10;
+      }
+
+      // Prefer candidates with more canonical data filled.
+      if (candidate.corte !== null) score += 3;
+      if (candidate.venc !== null) score += 3;
+      if (candidate.valor !== null) score += 3;
+      if (candidate.endereco) score += 1;
+      if (candidate.bairro) score += 1;
+      if (candidate.cidade) score += 1;
+      if (candidate.uf) score += 1;
+
+      return score;
+    };
+
+    const best = candidates.reduce<ClienteCanonicalModalRow | null>((currentBest, candidate) => {
+      if (!currentBest) return candidate;
+      const bestScore = scoreCandidate(currentBest);
+      const nextScore = scoreCandidate(candidate);
+      if (nextScore > bestScore) return candidate;
+      return currentBest;
+    }, null);
+
+    return best ? mapCanonicalToAgenda(best) : null;
+  };
+
   const openDetailsModal = (item: VisitRow) => {
     setDetailsObsExpanded(false);
     setDetailsVisit(item);
@@ -1129,7 +1377,7 @@ export default function Visitas() {
     setDetailsObsText(fallbackObs);
     const requestId = detailsObsRequestRef.current + 1;
     detailsObsRequestRef.current = requestId;
-    fetchObsComercialFromClientes(item.agenda)
+    fetchObsComercialFromClientes(item)
       .then((obsComercial) => {
         if (detailsObsRequestRef.current !== requestId) return;
         setDetailsObsText((obsComercial ?? fallbackObs ?? "").trim());
@@ -1137,6 +1385,37 @@ export default function Visitas() {
       .catch((err) => {
         console.error(err);
       });
+
+    if (item.agenda) {
+      fetchAgendaCanonicalFromClientes(item)
+        .then((hydratedAgenda) => {
+          if (detailsObsRequestRef.current !== requestId) return;
+          if (!hydratedAgenda) return;
+
+          setVisits((prev) =>
+            prev.map((visit) =>
+              visit.id === item.id
+                ? {
+                    ...visit,
+                    agenda: hydratedAgenda,
+                  }
+                : visit,
+            ),
+          );
+
+          setDetailsVisit((prev) =>
+            prev && prev.id === item.id
+              ? {
+                  ...prev,
+                  agenda: hydratedAgenda,
+                }
+              : prev,
+          );
+        })
+        .catch((err) => {
+          console.error(err);
+        });
+    }
   };
 
   const closeDetailsModal = () => {
@@ -1148,6 +1427,17 @@ export default function Visitas() {
     setDetailsInstructionSaving(false);
     setDetailsInstructionMessage(null);
   };
+
+  useEffect(() => {
+    if (!detailsVisit) return;
+    const latestVisit = visits.find((visit) => visit.id === detailsVisit.id);
+    if (!latestVisit) return;
+    setDetailsVisit((prev) => {
+      if (!prev || prev.id !== latestVisit.id) return prev;
+      if (prev === latestVisit) return prev;
+      return latestVisit;
+    });
+  }, [detailsVisit, visits]);
 
   const handleSaveDetailsInstruction = async () => {
     if (!detailsVisit || !canManageInstruction) return;
@@ -1402,9 +1692,14 @@ export default function Visitas() {
             </div>
 
             <div className="mt-2 grid grid-cols-7 gap-2">
-              {calendarDays.map((day) => {
+              {calendarCells.map((day, index) => {
+                if (!day) {
+                  return <div key={`calendar-empty-${index}`} aria-hidden="true" className="h-16 rounded-xl" />;
+                }
+
                 const key = format(day, "yyyy-MM-dd");
                 const count = visitsByDate.get(key)?.length ?? 0;
+                const hasVisits = count > 0;
                 const isSelected = selectedDate ? isSameDay(day, selectedDate) : false;
                 const maxDate = isVendor && maxVisibleDate ? new Date(`${maxVisibleDate}T12:00:00`) : null;
                 const isDisabled = maxDate ? isAfter(day, maxDate) : false;
@@ -1414,30 +1709,36 @@ export default function Visitas() {
                     type="button"
                     onClick={() => (isDisabled ? null : setSelectedDate(day))}
                     disabled={isDisabled}
-	                    className={[
-	                      "flex h-16 flex-col items-center justify-center rounded-xl border px-1 text-xs transition",
-	                      isSameMonth(day, currentMonth)
-	                        ? isSelected
-	                          ? "border-orange-300"
-	                          : "border-sea/20 bg-white"
-	                        : isSelected
-	                          ? "border-orange-300"
-	                          : "border-mist/50 bg-white/50 text-ink/40",
-	                      isSelected
-	                        ? "bg-orange-200 shadow-lg shadow-orange-200/70 ring-2 ring-orange-200"
-	                        : "hover:border-sea hover:bg-sand/40",
-	                      isDisabled ? "cursor-not-allowed opacity-40 hover:border-sea/20 hover:bg-white/50" : "",
-	                    ].join(" ")}
-	                  >
-	                    <span className={["text-sm font-semibold", isSelected ? "text-green-700" : "text-ink"].join(" ")}>
-	                      {format(day, "d")}
-	                    </span>
-	                    <span className={["text-[10px]", isSelected ? "text-green-700/80" : "text-ink/60"].join(" ")}>
-	                      {count} visitas
-	                    </span>
-	                  </button>
-	                );
-	              })}
+                    title={
+                      hasVisits
+                        ? `${count} visita(s) em ${format(day, "dd/MM/yyyy")}`
+                        : undefined
+                    }
+                    className={[
+                      "relative flex h-16 flex-col items-center justify-center rounded-xl border px-1 text-xs transition",
+                      isSelected ? "border-orange-300" : "border-sea/20 bg-white",
+                      isSelected
+                        ? "bg-orange-200 shadow-lg shadow-orange-200/70 ring-2 ring-orange-200"
+                        : "hover:border-sea hover:bg-sand/40",
+                      hasVisits && !isSelected ? "ring-1 ring-sea/35 shadow-sm" : "",
+                      isDisabled ? "cursor-not-allowed opacity-40 hover:border-sea/20 hover:bg-white/50" : "",
+                    ].join(" ")}
+                  >
+                    {hasVisits ? (
+                      <span className="absolute right-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full border border-orange-300 bg-orange-100 text-orange-600">
+                        <MapPin size={11} strokeWidth={2.5} />
+                        <span className="sr-only">{count} visita(s) no dia</span>
+                      </span>
+                    ) : null}
+                    <span className={["text-sm font-semibold", isSelected ? "text-green-700" : "text-ink"].join(" ")}>
+                      {format(day, "d")}
+                    </span>
+                    <span className={["text-[10px]", isSelected ? "text-green-700/80" : "text-ink/60"].join(" ")}>
+                      {count} visitas
+                    </span>
+                  </button>
+                );
+              })}
             </div>
 
             {loading && (
@@ -1635,6 +1936,9 @@ export default function Visitas() {
                                     {item.no_visit_reason ? (
                                       <span>Motivo: {item.no_visit_reason}</span>
                                     ) : null}
+                                    {isCompleted ? (
+                                      <span>Vidas: {item.completed_vidas ?? "-"}</span>
+                                    ) : null}
                                   </div>
                                 ) : (
                                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
@@ -1647,6 +1951,9 @@ export default function Visitas() {
                                       ) : null}
                                       {item.no_visit_reason ? (
                                         <span>Motivo: {item.no_visit_reason}</span>
+                                      ) : null}
+                                      {isCompleted ? (
+                                        <span>Vidas: {item.completed_vidas ?? "-"}</span>
                                       ) : null}
                                     </div>
                                     <button
