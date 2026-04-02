@@ -1,6 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { Building2, MapPin, Plus, Search } from "lucide-react";
+import { Building2, DollarSign, LoaderCircle, MapPin, Plus, Search } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -28,8 +28,11 @@ import {
 import { formatCep, sanitizeCep } from "../lib/cep";
 import { fetchNominatimByAddress, fetchNominatimByCep } from "../lib/nominatim";
 import {
+  extractOdontoartPlanoValores,
   fetchEmpresaByEmpresaId,
   fetchObservacaoComercialByEmpresaId,
+  resolveOdontoartValorTitular,
+  type OdontoartPlanoValor,
   type OdontoartEmpresaResponseRow,
 } from "../lib/odontoartEmpresaApi";
 import { fetchEmpresaByCnpjWs } from "../lib/cnpjWsApi";
@@ -276,13 +279,6 @@ const formatCurrency = (value: number | string | null) => {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(numeric);
 };
 
-const formatCurrencyInput = (value: string) => {
-  const digits = value.replace(/\D/g, "");
-  if (!digits) return "";
-  const amount = Number(digits) / 100;
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(amount);
-};
-
 const parseNumberFromUnknown = (value: unknown) => {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -291,12 +287,6 @@ const parseNumberFromUnknown = (value: unknown) => {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
-};
-
-const resolveValorTitular = (empresa: OdontoartEmpresaResponseRow) => {
-  const direct = parseNumberFromUnknown(empresa.ValorTitular);
-  if (direct !== null) return direct;
-  return parseNumberFromUnknown(empresa.PrecoPlano?.[0]?.ValorTitular);
 };
 
 const resolveCnpjFromEmpresa = (empresa: OdontoartEmpresaResponseRow) => {
@@ -349,7 +339,7 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
       ? String(empresa.Numero).trim()
       : "";
   const endereco = buildEnderecoWithNumero(logradouro, numero);
-  const valorTitular = resolveValorTitular(empresa);
+  const valorTitular = resolveOdontoartValorTitular(empresa);
   const situacaoRaw = (empresa.NomeSituacao ?? empresa.nomeSituacao ?? "").trim();
   const situacao = normalizeStatus(situacaoRaw) ?? situacaoRaw;
 
@@ -460,7 +450,7 @@ const mapEmpresaApiToClienteSyncPayload = async (
     cnpj: normalizeCnpj(resolveCnpjFromEmpresa(empresa)),
     corte: parseNumberFromUnknown(empresa.Corte),
     venc: parseNumberFromUnknown(empresa.Vencimento),
-    valor: resolveValorTitular(empresa),
+    valor: resolveOdontoartValorTitular(empresa),
     cep: normalizeNullableText(resolveCepFromEmpresa(empresa)),
     empresa: normalizeNullableText(resolveEmpresaFromApi(empresa)),
     obs_comercial: obsComercial,
@@ -696,6 +686,7 @@ export default function Clientes() {
     uf: "",
   });
   const [perfilCreate, setPerfilCreate] = useState(() => buildPerfilState(null));
+  const [createPlanoValores, setCreatePlanoValores] = useState<OdontoartPlanoValor[]>([]);
 
   const [selected, setSelected] = useState<ClienteRow | null>(null);
   const [history, setHistory] = useState<ClienteHistoryRow[]>([]);
@@ -733,6 +724,16 @@ export default function Clientes() {
     uf: "",
   });
   const [perfilEdit, setPerfilEdit] = useState(() => buildPerfilState(null));
+  const [editPlanoValores, setEditPlanoValores] = useState<OdontoartPlanoValor[]>([]);
+  const [planosModalState, setPlanosModalState] = useState<{
+    title: string;
+    source: "create" | "edit";
+    codigo: string;
+    empresa: string;
+    valores: OdontoartPlanoValor[];
+    loading: boolean;
+    error: string | null;
+  } | null>(null);
 
   const applyPerfilTimes = (
     setter: Dispatch<
@@ -1122,6 +1123,7 @@ export default function Clientes() {
   useEffect(() => {
     if (!selected) return;
     setIsEditing(false);
+    setEditPlanoValores([]);
     setDeletePasswordEdit("");
     setHistorySupervisorId("all");
     setHistoryDateFrom("");
@@ -1403,6 +1405,7 @@ export default function Clientes() {
     let apiFormData: ReturnType<typeof mapEmpresaApiToClienteForm> | null = null;
     let apiSyncPayload: ClienteApiSyncPayload | null = null;
     let obsComercialApi: string | null = null;
+    let planoValoresApi: OdontoartPlanoValor[] = [];
     const codigoValue = modalState.codigo.trim();
     if (codigoValue) {
       try {
@@ -1418,6 +1421,7 @@ export default function Clientes() {
           );
           return;
         }
+        planoValoresApi = extractOdontoartPlanoValores(empresaApi);
         apiFormData = await enrichFormDataCepByAddress(
           mapEmpresaApiToClienteForm(empresaApi, codigoValue),
         );
@@ -1465,6 +1469,7 @@ export default function Clientes() {
         cidade: apiFormData?.cidade ?? prev.cidade,
         uf: apiFormData?.uf ?? prev.uf,
       }));
+      setEditPlanoValores(planoValoresApi);
     } else {
       setForm((prev) => ({
         ...prev,
@@ -1483,6 +1488,7 @@ export default function Clientes() {
         cidade: apiFormData?.cidade ?? prev.cidade,
         uf: apiFormData?.uf ?? prev.uf,
       }));
+      setCreatePlanoValores(planoValoresApi);
     }
 
     setCodigoDuplicadoAprovado({
@@ -1604,6 +1610,7 @@ export default function Clientes() {
         cidade: "",
         uf: "",
       });
+      setCreatePlanoValores([]);
       setCodigoDuplicadoAprovado(null);
       setPerfilCreate(buildPerfilState(null));
     } catch (err) {
@@ -1754,10 +1761,12 @@ export default function Clientes() {
       if (!empresaApi) {
         throw new Error("Empresa nao encontrada na API.");
       }
+      const planoValores = extractOdontoartPlanoValores(empresaApi);
       const formData = await enrichFormDataCepByAddress(
         mapEmpresaApiToClienteForm(empresaApi, empresaId),
       );
       setForm(formData);
+      setCreatePlanoValores(planoValores);
       setPerfilCreate(buildPerfilState(null));
       setCepError(null);
       setAddressLookupError(null);
@@ -1780,6 +1789,7 @@ export default function Clientes() {
     try {
       const empresaApi = await fetchEmpresaByCnpjWs(cnpj);
       const endereco = buildEnderecoWithNumero(empresaApi.logradouro, empresaApi.numero);
+      setCreatePlanoValores([]);
       setForm((prev) => ({
         ...prev,
         empresa: empresaApi.razao_social ?? prev.empresa,
@@ -1984,10 +1994,12 @@ export default function Clientes() {
       if (!empresaApi) {
         throw new Error("Empresa nao encontrada na API.");
       }
+      const planoValores = extractOdontoartPlanoValores(empresaApi);
       const formData = await enrichFormDataCepByAddress(
         mapEmpresaApiToClienteForm(empresaApi, empresaId),
       );
       setEditForm(formData);
+      setEditPlanoValores(planoValores);
       setPerfilEdit(buildPerfilState(null));
       setCepErrorEdit(null);
       setAddressLookupErrorEdit(null);
@@ -2010,6 +2022,7 @@ export default function Clientes() {
     try {
       const empresaApi = await fetchEmpresaByCnpjWs(cnpj);
       const endereco = buildEnderecoWithNumero(empresaApi.logradouro, empresaApi.numero);
+      setEditPlanoValores([]);
       setEditForm((prev) => ({
         ...prev,
         empresa: empresaApi.razao_social ?? prev.empresa,
@@ -2423,6 +2436,117 @@ export default function Clientes() {
   const canSearchEndereco = Boolean(form.endereco.trim() && canEditEndereco);
   const canEditEnderecoEdit = Boolean(editForm.cidade.trim() && editForm.uf.trim());
   const canSearchEnderecoEdit = Boolean(editForm.endereco.trim() && canEditEnderecoEdit);
+  const hasPlanoValores = (valores: OdontoartPlanoValor[]) =>
+    valores.some((plano) => plano.valorTitular !== null || plano.valorDependente !== null);
+
+  const openPlanoValoresModal = async ({
+    title,
+    source,
+    codigo,
+    empresa,
+    valores,
+  }: {
+    title: string;
+    source: "create" | "edit";
+    codigo: string;
+    empresa: string;
+    valores: OdontoartPlanoValor[];
+  }) => {
+    const codigoNormalizado = codigo.trim();
+    const empresaNormalizada = empresa.trim();
+
+    if (valores.length > 0) {
+      setPlanosModalState({
+        title,
+        source,
+        codigo: codigoNormalizado,
+        empresa: empresaNormalizada,
+        valores,
+        loading: false,
+        error: null,
+      });
+      return;
+    }
+
+    if (!codigoNormalizado) {
+      setPlanosModalState({
+        title,
+        source,
+        codigo: "",
+        empresa: empresaNormalizada,
+        valores: [],
+        loading: false,
+        error: "Informe o codigo da empresa para consultar os planos.",
+      });
+      return;
+    }
+
+    setPlanosModalState({
+      title,
+      source,
+      codigo: codigoNormalizado,
+      empresa: empresaNormalizada,
+      valores: [],
+      loading: true,
+      error: null,
+    });
+
+    try {
+      const empresaApi = await fetchEmpresaByEmpresaId(codigoNormalizado);
+      if (!empresaApi) {
+        setPlanosModalState((prev) =>
+          prev
+            ? {
+                ...prev,
+                loading: false,
+                error: "Empresa nao encontrada na API.",
+              }
+            : prev,
+        );
+        return;
+      }
+
+      const valoresApi = extractOdontoartPlanoValores(empresaApi);
+      if (source === "create") {
+        setCreatePlanoValores(valoresApi);
+      } else {
+        setEditPlanoValores(valoresApi);
+      }
+
+      const empresaApiNome = (
+        empresaApi.NomeFantazia ??
+        empresaApi.NomeFantasia ??
+        empresaApi.RazaoSocial ??
+        empresaNormalizada
+      )
+        ?.trim();
+
+      setPlanosModalState((prev) =>
+        prev
+          ? {
+              ...prev,
+              codigo: codigoNormalizado,
+              empresa: empresaApiNome || empresaNormalizada,
+              valores: valoresApi,
+              loading: false,
+              error: null,
+            }
+          : prev,
+      );
+    } catch (err) {
+      setPlanosModalState((prev) =>
+        prev
+          ? {
+              ...prev,
+              loading: false,
+              error: err instanceof Error ? err.message : "Erro ao consultar valores por plano.",
+            }
+          : prev,
+      );
+    }
+  };
+  const createValoresLoading = planosModalState?.loading && planosModalState.source === "create";
+  const editValoresLoading = planosModalState?.loading && planosModalState.source === "edit";
   const hasPendingDuplicates = Boolean(duplicateModal || duplicateQueue.length > 0);
   const importElapsedSeconds = importStartedAt ? Math.max(0, (importTick - importStartedAt) / 1000) : 0;
   const importRemaining = Math.max(0, importTotal - importProgress);
@@ -2590,15 +2714,26 @@ export default function Clientes() {
               />
             </label>
             <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">
-              Valor
-              <input
-                value={form.valor}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, valor: formatCurrencyInput(event.target.value) }))
-                }
-                inputMode="decimal"
-                className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-              />
+              <span>Valor</span>
+              <div className="flex h-10 items-center">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void openPlanoValoresModal({
+                      title: "Valores por plano (cadastro)",
+                      source: "create",
+                      codigo: form.codigo,
+                      empresa: form.empresa,
+                      valores: createPlanoValores,
+                    })
+                  }
+                  title="Ver valores Titular/Dependente"
+                  aria-label="Ver valores Titular e Dependente"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                >
+                  {createValoresLoading ? <LoaderCircle size={14} className="animate-spin" /> : <DollarSign size={14} />}
+                </button>
+              </div>
             </label>
             <label className="w-40 flex flex-col gap-1 text-xs font-semibold text-ink/70">
               Data da ultima visita
@@ -3240,15 +3375,26 @@ export default function Clientes() {
                     />
                   </label>
                   <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                    Valor
-                    <input
-                      value={editForm.valor}
-                      onChange={(event) =>
-                        setEditForm((prev) => ({ ...prev, valor: formatCurrencyInput(event.target.value) }))
-                      }
-                      inputMode="decimal"
-                      className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                    />
+                    <span>Valor</span>
+                    <div className="flex h-10 items-center">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void openPlanoValoresModal({
+                            title: "Valores por plano (edicao)",
+                            source: "edit",
+                            codigo: editForm.codigo,
+                            empresa: editForm.empresa,
+                            valores: editPlanoValores,
+                          })
+                        }
+                        title="Ver valores Titular/Dependente"
+                        aria-label="Ver valores Titular e Dependente"
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                      >
+                        {editValoresLoading ? <LoaderCircle size={14} className="animate-spin" /> : <DollarSign size={14} />}
+                      </button>
+                    </div>
                   </label>
                   <label className="w-40 flex flex-col gap-1 text-xs font-semibold text-ink/70">
                     Data da ultima visita
@@ -3538,7 +3684,6 @@ export default function Clientes() {
                   ["Codigo", selected.codigo],
                   ["Corte", selected.corte ?? null],
                   ["Venc", selected.venc ?? null],
-                  ["Valor", selected.valor !== null && selected.valor !== undefined ? formatCurrency(selected.valor) : null],
                   ["Data da ultima visita", formatDate(selected.data_da_ultima_visita)],
                   ["CEP", selected.cep],
                   ["CNPJ", selected.cnpj],
@@ -3692,6 +3837,63 @@ export default function Clientes() {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {planosModalState && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setPlanosModalState(null)}
+          />
+          <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">{planosModalState.title}</h3>
+            <p className="mt-2 text-xs text-ink/60">
+              Planos consultados: 2 (ODONTOART PJ INDIVIDUAL), 18 (Multiprev), 19 (Multiplus) e 20 (Multimaster).
+            </p>
+            <p className="mt-1 text-[11px] text-ink/50">
+              Empresa: {planosModalState.empresa || "-"} | COD {planosModalState.codigo || "-"}
+            </p>
+
+            {planosModalState.loading ? (
+              <div className="mt-4 flex items-center gap-2 text-xs text-ink/60">
+                <LoaderCircle size={14} className="animate-spin" />
+                Carregando valores...
+              </div>
+            ) : planosModalState.error ? (
+              <p className="mt-4 text-xs text-red-600">{planosModalState.error}</p>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {planosModalState.valores.map((plano) => (
+                  <div key={plano.planoCodigo} className="rounded-xl border border-sea/15 bg-sand/30 p-3">
+                    <p className="text-xs font-semibold text-ink">
+                      {plano.planoCodigo} - {plano.planoNome}
+                    </p>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-ink/70">
+                      <p>Titular: {plano.valorTitular !== null ? formatCurrency(plano.valorTitular) : "-"}</p>
+                      <p>Dependente: {plano.valorDependente !== null ? formatCurrency(plano.valorDependente) : "-"}</p>
+                    </div>
+                  </div>
+                ))}
+                {!hasPlanoValores(planosModalState.valores) ? (
+                  <p className="text-xs text-ink/60">
+                    Nenhum valor encontrado para os planos 2, 18, 19 e 20 nesta empresa.
+                  </p>
+                ) : null}
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setPlanosModalState(null)}
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Fechar
+              </button>
             </div>
           </div>
         </div>

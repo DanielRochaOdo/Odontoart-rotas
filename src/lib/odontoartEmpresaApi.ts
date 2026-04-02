@@ -1,6 +1,21 @@
 const ODONTOART_EMPRESA_URL = "https://odontoart.s4e.com.br//api/empresa/BuscaEmpresas";
 const ODONTOART_DEFAULT_TOKEN = "7DqKKmNcZDWY2Pie35tbKwY6hAKXzS5wWl7hNLAmPWBIljmfeX";
 
+export type OdontoartPlanoCodigo = 2 | 18 | 19 | 20;
+
+export type OdontoartPlanoValor = {
+  planoCodigo: OdontoartPlanoCodigo;
+  planoNome: "ODONTOART PJ INDIVIDUAL" | "Multimaster" | "Multiplus" | "Multiprev";
+  valorTitular: number | null;
+  valorDependente: number | null;
+};
+
+type OdontoartPrecoPlanoRow = {
+  Plano?: number | string | null;
+  ValorTitular?: number | string | null;
+  ValorDependente?: number | string | null;
+};
+
 export type OdontoartEmpresaResponseRow = {
   Id?: number | string | null;
   Cnpj?: string | number | null;
@@ -28,9 +43,172 @@ export type OdontoartEmpresaResponseRow = {
   Corte?: number | string | null;
   Vencimento?: number | string | null;
   ObservacaoComercial?: string | null;
-  PrecoPlano?: Array<{
-    ValorTitular?: number | string | null;
-  }> | null;
+  PrecoPlano?: OdontoartPrecoPlanoRow[] | null;
+};
+
+const ODONTOART_PLANOS: Array<{ codigo: OdontoartPlanoCodigo; nome: OdontoartPlanoValor["planoNome"] }> = [
+  { codigo: 2, nome: "ODONTOART PJ INDIVIDUAL" },
+  { codigo: 18, nome: "Multiprev" },
+  { codigo: 19, nome: "Multiplus" },
+  { codigo: 20, nome: "Multimaster" },
+];
+
+const PLANO_CODE_KEYS = [
+  "Plano",
+  "plano",
+  "IdPlano",
+  "idPlano",
+  "PlanoId",
+  "planoId",
+  "CodigoPlano",
+  "codigoPlano",
+  "id",
+] as const;
+
+const PLANO_VALOR_TITULAR_KEYS = [
+  "ValorTitular",
+  "valorTitular",
+  "valor_titular",
+  "Titular",
+  "titular",
+] as const;
+
+const PLANO_VALOR_DEPENDENTE_KEYS = [
+  "ValorDependente",
+  "valorDependente",
+  "valor_dependente",
+  "Dependente",
+  "dependente",
+] as const;
+
+const parseNumberFromUnknown = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string") return null;
+  const normalized = value.replace(/\./g, "").replace(",", ".").trim();
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const parsePlanoCodigo = (value: unknown): OdontoartPlanoCodigo | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value === 2 || value === 18 || value === 19 || value === 20) return value;
+    return null;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    const parsed = Number(normalized);
+    if (parsed === 2 || parsed === 18 || parsed === 19 || parsed === 20) return parsed;
+    const firstNumber = Number(normalized.match(/\d+/)?.[0] ?? "");
+    if (firstNumber === 2 || firstNumber === 18 || firstNumber === 19 || firstNumber === 20) return firstNumber;
+  }
+  if (typeof value === "object" && value !== null) {
+    const maybeRecord = value as Record<string, unknown>;
+    const nested =
+      parsePlanoCodigo(maybeRecord.Plano) ??
+      parsePlanoCodigo(maybeRecord.plano) ??
+      parsePlanoCodigo(maybeRecord.id);
+    if (nested) return nested;
+  }
+  return null;
+};
+
+const readRecordValueByKeyInsensitive = (record: Record<string, unknown>, key: string) => {
+  if (key in record) return record[key];
+  const target = key.toLowerCase();
+  const foundKey = Object.keys(record).find((candidate) => candidate.toLowerCase() === target);
+  if (!foundKey) return undefined;
+  return record[foundKey];
+};
+
+const readRecordValueByKeys = (record: Record<string, unknown>, keys: readonly string[]) => {
+  for (const key of keys) {
+    const value = readRecordValueByKeyInsensitive(record, key);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+};
+
+const collectPlanoCandidates = (
+  value: unknown,
+  target: Array<{
+    codigo: OdontoartPlanoCodigo;
+    valorTitular: number | null;
+    valorDependente: number | null;
+  }>,
+  depth = 0,
+) => {
+  if (depth > 6 || value === null || value === undefined) return;
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectPlanoCandidates(item, target, depth + 1));
+    return;
+  }
+
+  if (typeof value !== "object") return;
+
+  const record = value as Record<string, unknown>;
+  const rawPlano = readRecordValueByKeys(record, PLANO_CODE_KEYS);
+  const codigo = parsePlanoCodigo(rawPlano);
+  const valorTitular = parseNumberFromUnknown(readRecordValueByKeys(record, PLANO_VALOR_TITULAR_KEYS));
+  const valorDependente = parseNumberFromUnknown(readRecordValueByKeys(record, PLANO_VALOR_DEPENDENTE_KEYS));
+  const hasPlanoField = rawPlano !== undefined;
+  const hasAnyValorField =
+    readRecordValueByKeys(record, PLANO_VALOR_TITULAR_KEYS) !== undefined ||
+    readRecordValueByKeys(record, PLANO_VALOR_DEPENDENTE_KEYS) !== undefined;
+
+  if (codigo && (hasPlanoField || hasAnyValorField)) {
+    target.push({
+      codigo,
+      valorTitular,
+      valorDependente,
+    });
+  }
+
+  Object.values(record).forEach((nested) => collectPlanoCandidates(nested, target, depth + 1));
+};
+
+export const extractOdontoartPlanoValores = (
+  empresa: OdontoartEmpresaResponseRow,
+): OdontoartPlanoValor[] => {
+  const byPlano = new Map<
+    OdontoartPlanoCodigo,
+    { valorTitular: number | null; valorDependente: number | null }
+  >();
+
+  const candidates: Array<{
+    codigo: OdontoartPlanoCodigo;
+    valorTitular: number | null;
+    valorDependente: number | null;
+  }> = [];
+
+  collectPlanoCandidates(empresa, candidates);
+
+  candidates.forEach((candidate) => {
+    const previous = byPlano.get(candidate.codigo);
+    byPlano.set(candidate.codigo, {
+      valorTitular: candidate.valorTitular ?? previous?.valorTitular ?? null,
+      valorDependente: candidate.valorDependente ?? previous?.valorDependente ?? null,
+    });
+  });
+
+  return ODONTOART_PLANOS.map(({ codigo, nome }) => {
+    const row = byPlano.get(codigo);
+    return {
+      planoCodigo: codigo,
+      planoNome: nome,
+      valorTitular: row?.valorTitular ?? null,
+      valorDependente: row?.valorDependente ?? null,
+    };
+  });
+};
+
+export const resolveOdontoartValorTitular = (empresa: OdontoartEmpresaResponseRow) => {
+  const fromPlanos = extractOdontoartPlanoValores(empresa).find((plano) => plano.valorTitular !== null);
+  if (fromPlanos?.valorTitular !== null && fromPlanos?.valorTitular !== undefined) {
+    return fromPlanos.valorTitular;
+  }
+  return parseNumberFromUnknown(empresa.ValorTitular);
 };
 
 const OBS_CANDIDATE_KEYS = [

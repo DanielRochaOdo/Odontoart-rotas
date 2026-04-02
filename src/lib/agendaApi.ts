@@ -473,23 +473,10 @@ export const fetchAgenda = async (
 
   const baseQuery = () =>
     supabase
-    .from("clientes")
-    .select(selectColumns, { count: "exact" });
+      .from("clientes")
+      .select(selectColumns, { count: "planned" });
 
   const baseQueryNoCount = () => supabase.from("clientes").select(selectColumns);
-
-  const runExactCount = async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let countQuery: any = applySearchAndIds(
-      applyFilters(
-        supabase.from("clientes").select("id", { count: "exact", head: true }),
-        effectiveFilters,
-      ),
-    );
-    const { count: exactCount, error: countError } = await countQuery;
-    if (countError) throw new Error(countError.message);
-    return exactCount ?? 0;
-  };
 
   const applySearchAndIds = <T,>(inputQuery: T): T => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -510,12 +497,14 @@ export const fetchAgenda = async (
 
   const pageFrom = pageIndex * pageSize;
   const pageTo = pageFrom + pageSize - 1;
+  const estimateCountFromPage = (rowsLength: number) =>
+    rowsLength < pageSize ? pageFrom + rowsLength : pageTo + 2;
 
   query = applyAgendaSorting(query, sorting);
   let { data, error, count } = await query.range(pageFrom, pageTo);
 
   if (error && isStatementTimeoutError(error.message)) {
-    console.warn("fetchAgenda timed out with count; retrying without count");
+    console.warn("fetchAgenda timed out; retrying with simplified query");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let retryQuery: any = applySearchAndIds(applyFilters(baseQueryNoCount(), effectiveFilters));
     retryQuery = applyAgendaSorting(retryQuery, sorting);
@@ -535,21 +524,12 @@ export const fetchAgenda = async (
 
     data = retry.data;
     error = null;
-    count = data?.length ?? 0;
-    try {
-      count = await runExactCount();
-    } catch (countErr) {
-      console.warn("fetchAgenda exact count fallback failed:", countErr);
-    }
+    count = estimateCountFromPage(data?.length ?? 0);
   }
 
   if (error) throw new Error(error.message);
   if (count === null || count === undefined) {
-    try {
-      count = await runExactCount();
-    } catch (countErr) {
-      console.warn("fetchAgenda exact count recovery failed:", countErr);
-    }
+    count = estimateCountFromPage(data?.length ?? 0);
   }
 
   const pageRows = (data ?? []) as AgendaRow[];

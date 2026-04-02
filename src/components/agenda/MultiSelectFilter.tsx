@@ -14,6 +14,24 @@ type MultiSelectFilterProps = {
 const makeFieldId = (label: string) =>
   `agenda-filter-${label}`.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
+const normalizeOptionKey = (value: string) =>
+  normalizeSearchText(value).replace(/\s+/g, " ").trim();
+
+const areSameOption = (left: string, right: string) =>
+  normalizeOptionKey(left) === normalizeOptionKey(right);
+
+const dedupeOptions = (values: string[]) => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  values.forEach((value) => {
+    const key = normalizeOptionKey(value);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    result.push(value);
+  });
+  return result;
+};
+
 export default function MultiSelectFilter({
   label,
   options,
@@ -29,6 +47,25 @@ export default function MultiSelectFilter({
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const fieldId = useMemo(() => makeFieldId(label), [label]);
+  const optionsByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    options.forEach((option) => {
+      const key = normalizeOptionKey(option);
+      if (key && !map.has(key)) {
+        map.set(key, option);
+      }
+    });
+    return map;
+  }, [options]);
+  const canonicalizeValue = (valueToCanonicalize: string) => {
+    const key = normalizeOptionKey(valueToCanonicalize);
+    if (!key) return valueToCanonicalize;
+    return optionsByKey.get(key) ?? valueToCanonicalize;
+  };
+  const mergedOptions = useMemo(
+    () => dedupeOptions([...options, ...value.map((item) => canonicalizeValue(item))]),
+    [options, optionsByKey, value],
+  );
 
   const computePosition = () => {
     const button = buttonRef.current;
@@ -52,7 +89,7 @@ export default function MultiSelectFilter({
       setOpen(false);
       return;
     }
-    setDraft(value);
+    setDraft(dedupeOptions(value.map((item) => canonicalizeValue(item))));
     setQuery("");
     onOpen?.();
     setOpen(true);
@@ -60,14 +97,17 @@ export default function MultiSelectFilter({
   };
 
   const filteredOptions = useMemo(() => {
-    if (!query.trim()) return options;
+    if (!query.trim()) return mergedOptions;
     const term = normalizeSearchText(query);
-    return options.filter((option) => normalizeSearchText(option).includes(term));
-  }, [options, query]);
+    return mergedOptions.filter((option) => normalizeSearchText(option).includes(term));
+  }, [mergedOptions, query]);
 
   const toggleValue = (option: string) => {
+    const canonical = canonicalizeValue(option);
     setDraft((prev) =>
-      prev.includes(option) ? prev.filter((item) => item !== option) : [...prev, option],
+      prev.some((item) => areSameOption(item, canonical))
+        ? prev.filter((item) => !areSameOption(item, canonical))
+        : dedupeOptions([...prev, canonical]),
     );
   };
 
@@ -184,7 +224,7 @@ export default function MultiSelectFilter({
                   <p className="text-xs text-ink/60">Nenhuma opcao</p>
                 ) : (
                   filteredOptions.map((option) => {
-                    const checked = draft.includes(option);
+                    const checked = draft.some((item) => areSameOption(item, option));
                     return (
                       <button
                         key={option}
@@ -204,7 +244,7 @@ export default function MultiSelectFilter({
                 <button
                   type="button"
                   className="text-xs text-ink/60"
-                  onClick={() => setDraft(filteredOptions)}
+                  onClick={() => setDraft(dedupeOptions(filteredOptions.map((item) => canonicalizeValue(item))))}
                 >
                   Selecionar todos
                 </button>
