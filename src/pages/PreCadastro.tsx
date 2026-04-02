@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Building2, Check, MapPin, Search, X } from "lucide-react";
+import { Building2, Check, DollarSign, MapPin, Search, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { formatCep, sanitizeCep } from "../lib/cep";
 import { fetchEmpresaByCnpjWs } from "../lib/cnpjWsApi";
 import { fetchNominatimByAddress, fetchNominatimByCep } from "../lib/nominatim";
-import { fetchEmpresaByEmpresaId, type OdontoartEmpresaResponseRow } from "../lib/odontoartEmpresaApi";
+import {
+  extractOdontoartPlanoValores,
+  fetchEmpresaByEmpresaId,
+  resolveOdontoartValorTitular,
+  type OdontoartPlanoValor,
+  type OdontoartEmpresaResponseRow,
+} from "../lib/odontoartEmpresaApi";
 import { PERFIL_VISITA_PRESETS } from "../lib/perfilVisita";
 import {
   approvePreCadastro,
@@ -47,13 +53,6 @@ const normalizeCnpj = (value: string | number | null | undefined) => {
   return formatCnpjInput(digits);
 };
 
-const formatCurrencyInput = (value: string) => {
-  const digits = sanitizeDigits(value);
-  if (!digits) return "";
-  const amount = Number(digits) / 100;
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(amount);
-};
-
 const parseCurrency = (value: string) => {
   const cleaned = value.replace(/[^\d.,-]/g, "");
   if (!cleaned) return null;
@@ -84,13 +83,6 @@ const buildEndereco = (logradouro?: string | null, numero?: string | number | nu
   ]
     .filter(Boolean)
     .join(", ");
-
-const resolveValorTitular = (empresa: OdontoartEmpresaResponseRow) => {
-  const direct = Number(String(empresa.ValorTitular ?? "").replace(/\./g, "").replace(",", "."));
-  if (Number.isFinite(direct)) return direct;
-  const fallback = Number(String(empresa.PrecoPlano?.[0]?.ValorTitular ?? "").replace(/\./g, "").replace(",", "."));
-  return Number.isFinite(fallback) ? fallback : null;
-};
 
 const resolveEmpresaFromApi = (empresa: OdontoartEmpresaResponseRow) =>
   (empresa.NomeFantazia ?? empresa.NomeFantasia ?? empresa.RazaoSocial ?? "").trim();
@@ -192,6 +184,8 @@ export default function PreCadastro() {
   const [error, setError] = useState<string | null>(null);
   const [lookupLoading, setLookupLoading] = useState<"" | "codigo" | "cnpj" | "cep" | "endereco">("");
   const [lookupError, setLookupError] = useState<string | null>(null);
+  const [planoValores, setPlanoValores] = useState<OdontoartPlanoValor[]>([]);
+  const [showPlanoValoresModal, setShowPlanoValoresModal] = useState(false);
 
   const [statusRows, setStatusRows] = useState<PreCadastroRow[]>([]);
   const [statusLoading, setStatusLoading] = useState(false);
@@ -245,7 +239,9 @@ export default function PreCadastro() {
 
   const mergeEmpresaApi = (empresa: OdontoartEmpresaResponseRow, codigoFallback: string) => {
     const codigo = empresa.Id !== null && empresa.Id !== undefined ? String(empresa.Id).trim() : codigoFallback.trim();
-    const valor = resolveValorTitular(empresa);
+    const valor = resolveOdontoartValorTitular(empresa);
+    const valoresPlano = extractOdontoartPlanoValores(empresa);
+    setPlanoValores(valoresPlano);
     setForm((prev) => ({
       ...prev,
       codigo,
@@ -287,6 +283,7 @@ export default function PreCadastro() {
     setLookupError(null);
     try {
       const empresaApi = await fetchEmpresaByCnpjWs(cnpj);
+      setPlanoValores([]);
       setForm((prev) => ({
         ...prev,
         empresa: empresaApi.razao_social ?? prev.empresa,
@@ -370,6 +367,7 @@ export default function PreCadastro() {
         { createdByUserId: session.user.id, createdByName: profile?.display_name ?? profile?.nome ?? null },
       );
       setForm(buildInitialForm());
+      setPlanoValores([]);
       setMessage("Pre-cadastro enviado para aprovacao.");
       void loadVendorStatus();
     } catch (err) {
@@ -419,6 +417,7 @@ export default function PreCadastro() {
       setActingId(null);
     }
   };
+  const hasPlanoValoresDisponiveis = planoValores.length > 0;
 
   if (!canAccess) {
     return <div className="rounded-2xl border border-sea/20 bg-sand/30 p-6 text-sm text-ink/70">Este modulo e restrito a usuarios autorizados.</div>;
@@ -502,7 +501,21 @@ export default function PreCadastro() {
           <div className="md:col-span-6 flex flex-wrap items-end gap-2">
             <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">Corte<input value={form.corte} onChange={(event) => setForm((prev) => ({ ...prev, corte: sanitizeDigits(event.target.value).slice(0, 2) }))} inputMode="numeric" maxLength={2} className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea" /></label>
             <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">Venc<input value={form.venc} onChange={(event) => setForm((prev) => ({ ...prev, venc: sanitizeDigits(event.target.value).slice(0, 2) }))} inputMode="numeric" maxLength={2} className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea" /></label>
-            <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">Valor<input value={form.valor} onChange={(event) => setForm((prev) => ({ ...prev, valor: formatCurrencyInput(event.target.value) }))} inputMode="decimal" className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea" /></label>
+            <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              <span>Valor</span>
+              <div className="flex h-10 items-center">
+                <button
+                  type="button"
+                  onClick={() => setShowPlanoValoresModal(true)}
+                  disabled={!hasPlanoValoresDisponiveis}
+                  title="Ver valores Titular/Dependente"
+                  aria-label="Ver valores Titular e Dependente"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <DollarSign size={14} />
+                </button>
+              </div>
+            </label>
             <label className="w-40 flex flex-col gap-1 text-xs font-semibold text-ink/70">Data da ultima visita<input type="date" value={form.data_da_ultima_visita} onChange={(event) => setForm((prev) => ({ ...prev, data_da_ultima_visita: event.target.value }))} className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea" /></label>
             <label className="w-44 flex flex-col gap-1 text-xs font-semibold text-ink/70">Perfil visita<select value={form.perfil_visita} onChange={(event) => setForm((prev) => ({ ...prev, perfil_visita: event.target.value }))} className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"><option value="">Selecione</option>{PERFIL_VISITA_PRESETS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
             <label className="w-40 shrink-0 flex flex-col gap-1 text-xs font-semibold text-ink/70">Situacao<select value={form.situacao} onChange={(event) => setForm((prev) => ({ ...prev, situacao: event.target.value }))} className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea">{SITUACAO_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
@@ -523,6 +536,44 @@ export default function PreCadastro() {
           {message && <div className="md:col-span-6 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{message}</div>}
           {error && <div className="md:col-span-6 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>}
         </form>
+      )}
+
+      {showPlanoValoresModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setShowPlanoValoresModal(false)}
+          />
+          <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Valores por plano</h3>
+            <p className="mt-2 text-xs text-ink/60">
+              Planos consultados: 2 (ODONTOART PJ INDIVIDUAL), 18 (Multiprev), 19 (Multiplus) e 20 (Multimaster).
+            </p>
+            <div className="mt-4 space-y-2">
+              {planoValores.map((plano) => (
+                <div key={plano.planoCodigo} className="rounded-xl border border-sea/15 bg-sand/30 p-3">
+                  <p className="text-xs font-semibold text-ink">
+                    {plano.planoCodigo} - {plano.planoNome}
+                  </p>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-ink/70">
+                    <p>Titular: {plano.valorTitular !== null ? new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(plano.valorTitular) : "-"}</p>
+                    <p>Dependente: {plano.valorDependente !== null ? new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(plano.valorDependente) : "-"}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowPlanoValoresModal(false)}
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {activeTab === "status" && vendorHasPreCadastroAccess && (

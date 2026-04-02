@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
+import { DollarSign, LoaderCircle } from "lucide-react";
 import type { AgendaRow } from "../../types/agenda";
 import { supabase } from "../../lib/supabase";
 import { fetchNominatimByAddress } from "../../lib/nominatim";
 import { syncAgendaRowAcrossModules } from "../../lib/empresaSync";
+import {
+  extractOdontoartPlanoValores,
+  fetchEmpresaByEmpresaId,
+  type OdontoartPlanoValor,
+} from "../../lib/odontoartEmpresaApi";
 import {
   PERFIL_VISITA_PRESETS,
   extractCustomTimes,
@@ -21,13 +27,6 @@ const formatCurrency = (value: number | string | null) => {
   const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric)) return String(value);
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(numeric);
-};
-
-const formatCurrencyInput = (value: string) => {
-  const digits = value.replace(/\D/g, "");
-  if (!digits) return "";
-  const amount = Number(digits) / 100;
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(amount);
 };
 
 const formatDate = (value: string | null) => {
@@ -77,41 +76,22 @@ const parseNumber = (value: string) => {
   return Number.isNaN(parsed) ? null : parsed;
 };
 
-const parseCurrency = (value: string) => {
-  const cleaned = value.replace(/[^\d.,-]/g, "");
-  if (!cleaned) return null;
-  const hasComma = cleaned.includes(",");
-  const hasDot = cleaned.includes(".");
-  let normalized = cleaned;
-  if (hasComma && hasDot) {
-    normalized = cleaned.replace(/\./g, "").replace(",", ".");
-  } else if (hasComma) {
-    normalized = cleaned.replace(",", ".");
-  }
-  const parsed = Number(normalized);
-  return Number.isNaN(parsed) ? null : parsed;
-};
 const sanitizeDigits = (value: string) => value.replace(/\D/g, "");
-
-const sanitizeDecimal = (value: string) => {
-  const raw = value.replace(/[^\d.,]/g, "");
-  const firstComma = raw.indexOf(",");
-  const firstDot = raw.indexOf(".");
-  const decimalIndex =
-    firstComma === -1 ? firstDot : firstDot === -1 ? firstComma : Math.min(firstComma, firstDot);
-  if (decimalIndex === -1) {
-    return raw.replace(/[^\d]/g, "");
-  }
-  const integerPart = raw.slice(0, decimalIndex).replace(/[^\d]/g, "");
-  const decimalPart = raw.slice(decimalIndex + 1).replace(/[^\d]/g, "");
-  const separator = raw[decimalIndex] ?? ",";
-  return `${integerPart}${separator}${decimalPart}`;
-};
 
 const SITUACAO_OPTIONS = ["Ativo", "Suspenso/Inadimplente", "Cancelado"];
 
 const NUMERIC_ONLY_FIELDS = new Set(["cod_1", "corte", "venc"]);
-const DECIMAL_FIELDS = new Set(["valor"]);
+
+type PlanoValoresModalState = {
+  loading: boolean;
+  codigo: string;
+  empresa: string | null;
+  valores: OdontoartPlanoValor[];
+  error: string | null;
+};
+
+const hasPlanoValores = (planos: OdontoartPlanoValor[]) =>
+  planos.some((plano) => plano.valorTitular !== null || plano.valorDependente !== null);
 
 const FIELDS = [
   { key: "data_da_ultima_visita", label: "Data da ultima visita", type: "date" },
@@ -195,6 +175,7 @@ export default function AgendaDrawer({
   const [deletePassword, setDeletePassword] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [bairroLoading, setBairroLoading] = useState(false);
+  const [planoValoresModal, setPlanoValoresModal] = useState<PlanoValoresModalState | null>(null);
   const initialPerfilValue = normalizePerfilVisita(row?.perfil_visita ?? "");
   const initialCustomTimes = extractCustomTimes(row?.perfil_visita ?? null);
   const initialSingleTimeBase = getSingleTimePerfilBase(row?.perfil_visita ?? null);
@@ -309,6 +290,64 @@ export default function AgendaDrawer({
 
   if (!row || !formState) return null;
 
+  const openPlanoValoresModal = async (
+    codigoRaw: string | null | undefined,
+    empresaNome: string | null | undefined,
+  ) => {
+    const codigo = (codigoRaw ?? "").trim();
+    setPlanoValoresModal({
+      loading: true,
+      codigo,
+      empresa: empresaNome?.trim() || null,
+      valores: [],
+      error: null,
+    });
+
+    if (!codigo) {
+      setPlanoValoresModal({
+        loading: false,
+        codigo: "",
+        empresa: empresaNome?.trim() || null,
+        valores: [],
+        error: "Codigo da empresa indisponivel para consulta.",
+      });
+      return;
+    }
+
+    try {
+      const empresaApi = await fetchEmpresaByEmpresaId(codigo);
+      if (!empresaApi) {
+        setPlanoValoresModal({
+          loading: false,
+          codigo,
+          empresa: empresaNome?.trim() || null,
+          valores: [],
+          error: "Empresa nao encontrada na API.",
+        });
+        return;
+      }
+
+      const valores = extractOdontoartPlanoValores(empresaApi);
+      setPlanoValoresModal({
+        loading: false,
+        codigo,
+        empresa:
+          (empresaApi.NomeFantazia ?? empresaApi.NomeFantasia ?? empresaApi.RazaoSocial ?? empresaNome ?? "").trim() ||
+          null,
+        valores,
+        error: null,
+      });
+    } catch (err) {
+      setPlanoValoresModal({
+        loading: false,
+        codigo,
+        empresa: empresaNome?.trim() || null,
+        valores: [],
+        error: err instanceof Error ? err.message : "Erro ao consultar valores por plano.",
+      });
+    }
+  };
+
   const handleSave = async () => {
     if (!row || !formState) return;
     setSaving(true);
@@ -326,7 +365,7 @@ export default function AgendaDrawer({
         perfil_visita: formState.perfil_visita.trim() || null,
         corte: formState.corte ? parseNumber(formState.corte) : null,
         venc: formState.venc ? parseNumber(formState.venc) : null,
-        valor: formState.valor ? parseCurrency(formState.valor) : null,
+        valor: row.valor ?? null,
         endereco: formState.endereco.trim() || null,
         complemento: formState.complemento.trim() || null,
         bairro: formState.bairro.trim() || null,
@@ -756,6 +795,25 @@ export default function AgendaDrawer({
                       </span>
                     )}
                   </>
+                ) : field.key === "valor" ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void openPlanoValoresModal(formState.cod_1, formState.empresa)}
+                      title="Ver valores Titular/Dependente"
+                      aria-label="Ver valores Titular e Dependente"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                    >
+                      {planoValoresModal?.loading ? (
+                        <LoaderCircle size={14} className="animate-spin" />
+                      ) : (
+                        <DollarSign size={14} />
+                      )}
+                    </button>
+                    <span className="text-[11px] font-normal text-ink/60">
+                      2 ODONTOART PJ INDIVIDUAL, 18 Multiprev, 19 Multiplus, 20 Multimaster
+                    </span>
+                  </div>
                 ) : field.key === "bairro" ? (
                   <>
                     <input
@@ -782,23 +840,13 @@ export default function AgendaDrawer({
                 ) : (
                   <input
                     type={
-                      NUMERIC_ONLY_FIELDS.has(field.key) || DECIMAL_FIELDS.has(field.key)
-                        ? "text"
-                        : field.type
+                      NUMERIC_ONLY_FIELDS.has(field.key) ? "text" : field.type
                     }
                     inputMode={
-                      NUMERIC_ONLY_FIELDS.has(field.key)
-                        ? "numeric"
-                        : DECIMAL_FIELDS.has(field.key)
-                          ? "decimal"
-                          : undefined
+                      NUMERIC_ONLY_FIELDS.has(field.key) ? "numeric" : undefined
                     }
                     pattern={
-                      NUMERIC_ONLY_FIELDS.has(field.key)
-                        ? "[0-9]*"
-                        : DECIMAL_FIELDS.has(field.key)
-                          ? "[0-9.,]*"
-                          : undefined
+                      NUMERIC_ONLY_FIELDS.has(field.key) ? "[0-9]*" : undefined
                     }
                     value={formState[field.key]}
                     onChange={(event) => {
@@ -806,11 +854,7 @@ export default function AgendaDrawer({
                       const raw = event.target.value;
                       const nextValue = NUMERIC_ONLY_FIELDS.has(field.key)
                         ? sanitizeDigits(raw)
-                        : field.key === "valor"
-                          ? formatCurrencyInput(raw)
-                          : DECIMAL_FIELDS.has(field.key)
-                            ? sanitizeDecimal(raw)
-                            : raw;
+                        : raw;
                       setFormState((prev) =>
                         prev
                           ? {
@@ -836,15 +880,32 @@ export default function AgendaDrawer({
                 className="flex items-center justify-between border-b border-mist/50 pb-2"
               >
                 <span className="text-xs font-semibold text-muted">{field.label}</span>
-                <span className="text-sm text-ink">
-                  {field.type === "date"
-                    ? formatDate(row[field.key] as string | null)
-                    : field.key === "perfil_visita"
-                      ? formatPerfilDisplay(row[field.key] as string | null)
-                    : field.key === "valor"
-                      ? formatCurrency(row[field.key] as number | string | null)
-                      : formatValue(row[field.key] as string | number | null)}
-                </span>
+                {field.key === "valor" ? (
+                  <div className="flex items-center gap-2 text-sm text-ink">
+                    <button
+                      type="button"
+                      onClick={() => void openPlanoValoresModal(row.cod_1, row.empresa)}
+                      title="Ver valores Titular/Dependente"
+                      aria-label="Ver valores Titular e Dependente"
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                    >
+                      {planoValoresModal?.loading ? (
+                        <LoaderCircle size={12} className="animate-spin" />
+                      ) : (
+                        <DollarSign size={12} />
+                      )}
+                    </button>
+                    <span className="text-xs text-ink/70">Ver por plano</span>
+                  </div>
+                ) : (
+                  <span className="text-sm text-ink">
+                    {field.type === "date"
+                      ? formatDate(row[field.key] as string | null)
+                      : field.key === "perfil_visita"
+                        ? formatPerfilDisplay(row[field.key] as string | null)
+                        : formatValue(row[field.key] as string | number | null)}
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -903,6 +964,61 @@ export default function AgendaDrawer({
           </div>
         )}
       </div>
+      {planoValoresModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 px-4">
+          <button
+            type="button"
+            className="absolute inset-0"
+            aria-label="Fechar modal de valores por plano"
+            onClick={() => setPlanoValoresModal(null)}
+          />
+          <div className="relative w-full max-w-md rounded-2xl border border-mist/60 bg-white p-5 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-lg text-ink">Valores por plano</h3>
+              <button
+                type="button"
+                onClick={() => setPlanoValoresModal(null)}
+                className="rounded-lg border border-sea/30 px-2 py-1 text-xs text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Fechar
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-ink/60">
+              Empresa: {planoValoresModal.empresa ?? "-"} | COD {planoValoresModal.codigo || "-"}
+            </p>
+            <p className="mt-2 text-[11px] text-ink/50">
+              Planos permitidos: 2 ODONTOART PJ INDIVIDUAL, 18 Multiprev, 19 Multiplus, 20 Multimaster
+            </p>
+            {planoValoresModal.loading ? (
+              <div className="mt-4 flex items-center gap-2 text-xs text-ink/60">
+                <LoaderCircle size={14} className="animate-spin" />
+                Carregando valores...
+              </div>
+            ) : planoValoresModal.error ? (
+              <p className="mt-4 text-xs text-red-600">{planoValoresModal.error}</p>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {planoValoresModal.valores.map((plano) => (
+                  <div key={plano.planoCodigo} className="rounded-lg border border-mist/50 bg-sand/20 px-3 py-2">
+                    <p className="text-xs font-semibold text-ink">{plano.planoCodigo} - {plano.planoNome}</p>
+                    <p className="text-xs text-ink/70">
+                      Titular: {plano.valorTitular !== null ? formatCurrency(plano.valorTitular) : "-"}
+                    </p>
+                    <p className="text-xs text-ink/70">
+                      Dependente: {plano.valorDependente !== null ? formatCurrency(plano.valorDependente) : "-"}
+                    </p>
+                  </div>
+                ))}
+                {!hasPlanoValores(planoValoresModal.valores) ? (
+                  <p className="text-xs text-ink/60">
+                    Nenhum valor encontrado para os planos 2, 18, 19 e 20 nesta empresa.
+                  </p>
+                ) : null}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

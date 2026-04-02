@@ -1,12 +1,26 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { addDays, endOfMonth, format, isAfter, isSameDay, startOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { CheckCircle2, ChevronLeft, ChevronRight, Eye, MapPin, Pencil } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  DollarSign,
+  Eye,
+  LoaderCircle,
+  MapPin,
+  Pencil,
+} from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { fetchVendedores } from "../lib/agendaApi";
 import { onProfilesUpdated } from "../lib/profileEvents";
-import { fetchObservacaoComercialByEmpresaId } from "../lib/odontoartEmpresaApi";
+import {
+  extractOdontoartPlanoValores,
+  fetchEmpresaByEmpresaId,
+  fetchObservacaoComercialByEmpresaId,
+  type OdontoartPlanoValor,
+} from "../lib/odontoartEmpresaApi";
 import { normalizeSearchText } from "../lib/textNormalize";
 import {
   PERFIL_VISITA_PRESETS,
@@ -74,6 +88,17 @@ type ClienteCanonicalModalRow = {
   cidade: string | null;
   uf: string | null;
 };
+
+type PlanoValoresModalState = {
+  codigo: string;
+  empresa: string | null;
+  valores: OdontoartPlanoValor[];
+  loading: boolean;
+  error: string | null;
+};
+
+const hasPlanoValores = (planos: OdontoartPlanoValor[]) =>
+  planos.some((plano) => plano.valorTitular !== null || plano.valorDependente !== null);
 
 const buildMapAddress = (agenda?: VisitRow["agenda"] | null) => {
   if (!agenda) return null;
@@ -341,6 +366,7 @@ export default function Visitas() {
   const [detailsInstructionDraft, setDetailsInstructionDraft] = useState("");
   const [detailsInstructionSaving, setDetailsInstructionSaving] = useState(false);
   const [detailsInstructionMessage, setDetailsInstructionMessage] = useState<string | null>(null);
+  const [planoValoresModal, setPlanoValoresModal] = useState<PlanoValoresModalState | null>(null);
   const detailsObsRequestRef = useRef(0);
 
   useEffect(() => {
@@ -1454,6 +1480,60 @@ export default function Visitas() {
     setDetailsInstructionDraft("");
     setDetailsInstructionSaving(false);
     setDetailsInstructionMessage(null);
+    setPlanoValoresModal(null);
+  };
+
+  const openPlanoValoresModal = async (codigoRaw: string | null | undefined, empresa: string | null) => {
+    const codigo = (codigoRaw ?? "").trim();
+    setPlanoValoresModal({
+      codigo,
+      empresa,
+      valores: [],
+      loading: true,
+      error: null,
+    });
+
+    if (!codigo) {
+      setPlanoValoresModal({
+        codigo,
+        empresa,
+        valores: [],
+        loading: false,
+        error: "Codigo da empresa nao informado.",
+      });
+      return;
+    }
+
+    try {
+      const empresaApi = await fetchEmpresaByEmpresaId(codigo);
+      if (!empresaApi) {
+        setPlanoValoresModal({
+          codigo,
+          empresa,
+          valores: [],
+          loading: false,
+          error: "Empresa nao encontrada na API.",
+        });
+        return;
+      }
+
+      const valores = extractOdontoartPlanoValores(empresaApi);
+      setPlanoValoresModal({
+        codigo,
+        empresa,
+        valores,
+        loading: false,
+        error: null,
+      });
+    } catch (err) {
+      setPlanoValoresModal({
+        codigo,
+        empresa,
+        valores: [],
+        loading: false,
+        error: err instanceof Error ? err.message : "Erro ao carregar valores de plano.",
+      });
+    }
   };
 
   useEffect(() => {
@@ -2056,8 +2136,24 @@ export default function Visitas() {
                   <p className="mt-1">{detailsVisit.agenda?.venc ?? "-"}</p>
                 </div>
                 <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
-                  <p className="text-[11px] font-semibold text-ink/60">Valor</p>
-                  <p className="mt-1">{formatCurrency(detailsVisit.agenda?.valor)}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-[11px] font-semibold text-ink/60">Valores dos planos</p>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void openPlanoValoresModal(detailsVisit.agenda?.cod_1, detailsVisit.agenda?.empresa ?? null)
+                      }
+                      className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                      title="Ver valores Titular/Dependente"
+                      aria-label="Ver valores Titular e Dependente"
+                    >
+                      {planoValoresModal?.loading ? (
+                        <LoaderCircle size={12} className="animate-spin" />
+                      ) : (
+                        <DollarSign size={12} />
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
               <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
@@ -2116,6 +2212,60 @@ export default function Visitas() {
                 )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {planoValoresModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setPlanoValoresModal(null)}
+          />
+          <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <div className="flex items-start justify-between gap-2">
+              <h3 className="font-display text-lg text-ink">Valores por plano</h3>
+              <button
+                type="button"
+                onClick={() => setPlanoValoresModal(null)}
+                className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Fechar
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-ink/60">
+              Empresa: {planoValoresModal.empresa ?? "-"} | COD {planoValoresModal.codigo || "-"}
+            </p>
+            <p className="mt-1 text-xs text-ink/60">
+              Planos consultados: 2 (ODONTOART PJ INDIVIDUAL), 18 (Multiprev), 19 (Multiplus), 20 (Multimaster).
+            </p>
+
+            {planoValoresModal.loading ? (
+              <div className="mt-4 inline-flex items-center gap-2 text-sm text-ink/70">
+                <LoaderCircle size={14} className="animate-spin" />
+                Carregando valores...
+              </div>
+            ) : planoValoresModal.error ? (
+              <p className="mt-4 text-xs text-red-600">{planoValoresModal.error}</p>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {planoValoresModal.valores.map((plano) => (
+                  <div key={plano.planoCodigo} className="rounded-xl border border-sea/15 bg-sand/30 p-3">
+                    <p className="text-xs font-semibold text-ink">
+                      {plano.planoCodigo} - {plano.planoNome}
+                    </p>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-ink/70">
+                      <p>Titular: {plano.valorTitular !== null ? formatCurrency(plano.valorTitular) : "-"}</p>
+                      <p>Dependente: {plano.valorDependente !== null ? formatCurrency(plano.valorDependente) : "-"}</p>
+                    </div>
+                  </div>
+                ))}
+                {!hasPlanoValores(planoValoresModal.valores) ? (
+                  <p className="text-xs text-ink/60">Nenhum valor de plano retornado para esta empresa.</p>
+                ) : null}
+              </div>
+            )}
           </div>
         </div>
       )}
