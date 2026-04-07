@@ -47,6 +47,19 @@ const jsonResponse = (status: number, body: Record<string, unknown>) =>
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 
+const chunkArray = <T>(items: T[], chunkSize: number) => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+  return chunks;
+};
+
+const isMissingUserError = (message: string) => {
+  const normalized = message.toLowerCase();
+  return normalized.includes("not found") || normalized.includes("does not exist");
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -200,31 +213,50 @@ serve(async (req) => {
       return jsonResponse(200, { emails: {} });
     }
 
-    const remainingIds = new Set(targetIds);
     const emailsByUserId: Record<string, string> = {};
-    let page = 1;
-    const perPage = 1000;
+    const missingUserIds: string[] = [];
+    const warnings: string[] = [];
 
-    while (remainingIds.size > 0) {
-      const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
-      if (error) {
-        return jsonResponse(400, { error: error.message });
+    const idChunks = chunkArray(targetIds, 50);
+    for (const idChunk of idChunks) {
+      const results = await Promise.allSettled(
+        idChunk.map((userId) => supabase.auth.admin.getUserById(userId)),
+      );
+
+      for (let index = 0; index < results.length; index += 1) {
+        const userId = idChunk[index];
+        const result = results[index];
+
+        if (result.status === "rejected") {
+          missingUserIds.push(userId);
+          warnings.push(`Falha ao buscar usuario ${userId}.`);
+          continue;
+        }
+
+        const { data, error } = result.value;
+        if (error) {
+          if (isMissingUserError(error.message)) {
+            missingUserIds.push(userId);
+            continue;
+          }
+          warnings.push(`Falha ao buscar usuario ${userId}: ${error.message}`);
+          continue;
+        }
+
+        const email = data?.user?.email;
+        if (!email) {
+          missingUserIds.push(userId);
+          continue;
+        }
+        emailsByUserId[userId] = email;
       }
-
-      const users = data?.users ?? [];
-      if (users.length === 0) break;
-
-      for (const authUser of users) {
-        if (!remainingIds.has(authUser.id)) continue;
-        emailsByUserId[authUser.id] = authUser.email ?? "";
-        remainingIds.delete(authUser.id);
-      }
-
-      if (users.length < perPage) break;
-      page += 1;
     }
 
-    return jsonResponse(200, { emails: emailsByUserId });
+    return jsonResponse(200, {
+      emails: emailsByUserId,
+      missing_user_ids: missingUserIds,
+      warnings,
+    });
   }
 
   return jsonResponse(400, { error: "Acao desconhecida." });
