@@ -221,6 +221,8 @@ const IMPORT_BATCH_SIZE = 80;
 const BAIRRO_LOOKUP_DELAY_MS = 450;
 const CLIENTES_PER_PAGE = 50;
 const CLIENTE_API_AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const CLIENTES_VIEW_STATE_KEY = "clientesViewStateV2";
+let clientesMemoryCache: ClienteRow[] | null = null;
 const sanitizeDigits = (value: string) => value.replace(/\D/g, "");
 const sanitizeCnpjDigits = (value: string) => sanitizeDigits(value).slice(0, 14);
 const formatCnpjInput = (value: string) => {
@@ -945,10 +947,17 @@ export default function Clientes() {
   };
 
   const loadClientes = async () => {
-    setLoading(true);
+    const cached = clientesMemoryCache;
+    if (cached && cached.length > 0) {
+      setClientes(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError(null);
     try {
       const data = await fetchClientes();
+      clientesMemoryCache = data;
       setClientes(data);
       if (canEdit) {
         void syncClienteApiFields(data);
@@ -963,6 +972,7 @@ export default function Clientes() {
   const refreshClientesSilently = async () => {
     try {
       const data = await fetchClientes();
+      clientesMemoryCache = data;
       setClientes(data);
     } catch (err) {
       console.error(err);
@@ -1014,6 +1024,7 @@ export default function Clientes() {
 
   useEffect(() => {
     clientesRef.current = clientes;
+    clientesMemoryCache = clientes;
   }, [clientes]);
 
   useEffect(() => {
@@ -1029,7 +1040,7 @@ export default function Clientes() {
   useEffect(() => {
     if (restoredViewRef.current) return;
     try {
-      const raw = sessionStorage.getItem("clientesViewState");
+      const raw = sessionStorage.getItem(CLIENTES_VIEW_STATE_KEY);
       if (!raw) {
         restoredViewRef.current = true;
         return;
@@ -1099,7 +1110,7 @@ export default function Clientes() {
       historyDateTo,
     };
     try {
-      sessionStorage.setItem("clientesViewState", JSON.stringify(payload));
+      sessionStorage.setItem(CLIENTES_VIEW_STATE_KEY, JSON.stringify(payload));
     } catch {
       // ignore
     }
@@ -2713,9 +2724,9 @@ export default function Clientes() {
                 className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
               />
             </label>
-            <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+            <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">
               <span>Valor</span>
-              <div className="flex h-10 items-center">
+              <div className="flex h-10 w-full items-center">
                 <button
                   type="button"
                   onClick={() =>
@@ -2729,7 +2740,7 @@ export default function Clientes() {
                   }
                   title="Ver valores Titular/Dependente"
                   aria-label="Ver valores Titular e Dependente"
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                  className="inline-flex h-10 w-full items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
                 >
                   {createValoresLoading ? <LoaderCircle size={14} className="animate-spin" /> : <DollarSign size={14} />}
                 </button>
@@ -3374,9 +3385,9 @@ export default function Clientes() {
                       className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
                     />
                   </label>
-                  <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">
                     <span>Valor</span>
-                    <div className="flex h-10 items-center">
+                    <div className="flex h-10 w-full items-center">
                       <button
                         type="button"
                         onClick={() =>
@@ -3390,7 +3401,7 @@ export default function Clientes() {
                         }
                         title="Ver valores Titular/Dependente"
                         aria-label="Ver valores Titular e Dependente"
-                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                        className="inline-flex h-10 w-full items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
                       >
                         {editValoresLoading ? <LoaderCircle size={14} className="animate-spin" /> : <DollarSign size={14} />}
                       </button>
@@ -3684,6 +3695,7 @@ export default function Clientes() {
                   ["Codigo", selected.codigo],
                   ["Corte", selected.corte ?? null],
                   ["Venc", selected.venc ?? null],
+                  ["Valor", null],
                   ["Data da ultima visita", formatDate(selected.data_da_ultima_visita)],
                   ["CEP", selected.cep],
                   ["CNPJ", selected.cnpj],
@@ -3704,7 +3716,31 @@ export default function Clientes() {
                 ].map(([label, value]) => (
                   <div key={label} className="flex items-center justify-between border-b border-mist/50 pb-2">
                     <span className="text-xs font-semibold text-muted">{label}</span>
-                    <span className="text-sm text-ink">{value ?? "-"}</span>
+                    {label === "Valor" ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void openPlanoValoresModal({
+                            title: "Valores por plano",
+                            source: "edit",
+                            codigo: selected.codigo ?? "",
+                            empresa: selected.empresa ?? "",
+                            valores: [],
+                          })
+                        }
+                        title="Ver valores Titular/Dependente"
+                        aria-label="Ver valores Titular e Dependente"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                      >
+                        {editValoresLoading ? (
+                          <LoaderCircle size={12} className="animate-spin" />
+                        ) : (
+                          <DollarSign size={12} />
+                        )}
+                      </button>
+                    ) : (
+                      <span className="text-sm text-ink">{value ?? "-"}</span>
+                    )}
                   </div>
                 ))}
               </div>
@@ -4143,8 +4179,5 @@ export default function Clientes() {
     </div>
   );
 }
-
-
-
 
 

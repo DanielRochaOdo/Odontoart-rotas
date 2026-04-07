@@ -32,8 +32,15 @@ const buildSituacaoRawMap = () => {
     "SUSPENSO/INADIMPLENTE",
     "SUSPENSO/INADIMLENTE",
   ]);
-  rawMap.set(normalizeOption("Cancelado"), ["Cancelado", "CANCELADO"]);
+  rawMap.set(normalizeOption("Cancelado"), ["Cancelado", "CANCELADO", "Cancelado1", "CANCELADO1"]);
   return rawMap;
+};
+
+const expandSituacaoValues = (values: string[]) => {
+  const rawMap = buildSituacaoRawMap();
+  const normalized = values.map((value) => normalizeOption(value)).filter(Boolean);
+  const expanded = normalized.flatMap((value) => rawMap.get(value) ?? [value]);
+  return Array.from(new Set(expanded)).filter(Boolean);
 };
 
 const normalizeMatchKey = (value: string) =>
@@ -232,21 +239,42 @@ const CLIENTES_FILTER_COLUMN_MAP: Record<string, string> = {
   categoria: "categoria",
 };
 
+const CLIENTES_DYNAMIC_FILTER_KEYS = Object.keys(CLIENTES_FILTER_COLUMN_MAP).filter(
+  (key) => key !== "situacao" && key !== "categoria",
+);
+const CLIENTES_DYNAMIC_FILTER_COLUMNS = Array.from(
+  new Set(
+    CLIENTES_DYNAMIC_FILTER_KEYS.map((key) =>
+      mapAgendaColumnToClientes(CLIENTES_FILTER_COLUMN_MAP[key] ?? key),
+    ),
+  ),
+);
+const CLIENTES_DYNAMIC_FILTER_PAIRS = CLIENTES_DYNAMIC_FILTER_KEYS.map((key) => ({
+  key,
+  column: mapAgendaColumnToClientes(CLIENTES_FILTER_COLUMN_MAP[key] ?? key),
+}));
+
+let clientesOptionsBuildPromise: Promise<void> | null = null;
+
 const fetchColumnValuesPaged = async (
   sourceTable: "clientes",
-  targetColumn: string,
+  targetColumns: string[],
 ) => {
   const rows: Array<Record<string, unknown>> = [];
   const pageSize = 1000;
-  let from = 0;
+  let cursorId: string | null = null;
+  let guard = 0;
+  const maxBatches = 200;
+  const selectColumns = Array.from(new Set(["id", ...targetColumns])).join(", ");
 
   while (true) {
-    const response = (await supabase
-      .from(sourceTable)
-      .select(`${targetColumn}, id`)
-      .not(targetColumn, "is", null)
-      .order("id", { ascending: true })
-      .range(from, from + pageSize - 1)) as unknown as {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query: any = supabase.from(sourceTable).select(selectColumns).order("id", { ascending: true }).limit(pageSize);
+    if (cursorId) {
+      query = query.gt("id", cursorId);
+    }
+
+    const response = (await query) as unknown as {
       data: Array<Record<string, unknown>> | null;
       error: { message: string } | null;
     };
@@ -256,9 +284,26 @@ const fetchColumnValuesPaged = async (
     if (error) throw new Error(error.message);
 
     const batch = data ?? [];
-    rows.push(...batch);
+    if (batch.length === 0) break;
+    batch.forEach((row) => {
+      const hasSomeValue = targetColumns.some((column) => {
+        const value = row[column as keyof typeof row];
+        return value !== null && value !== undefined && String(value).trim() !== "";
+      });
+      if (hasSomeValue) rows.push(row);
+    });
     if (batch.length < pageSize) break;
-    from += pageSize;
+
+    const lastId = batch[batch.length - 1]?.id;
+    const nextCursor = lastId ? String(lastId) : null;
+    if (!nextCursor || nextCursor === cursorId) break;
+    cursorId = nextCursor;
+
+    guard += 1;
+    if (guard >= maxBatches) {
+      console.warn(`fetchColumnValuesPaged reached max batches for ${sourceTable}.`);
+      break;
+    }
   }
 
   return rows;
@@ -266,6 +311,7 @@ const fetchColumnValuesPaged = async (
 
 export const clearAgendaOptionsCache = () => {
   optionsCache.clear();
+  clientesOptionsBuildPromise = null;
 };
 
 const expandFilterValues = (key: string, values: string[]) => {
@@ -320,6 +366,13 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
 
     next = next.in(sourceKey, expanded);
   });
+
+  const explicitSituacao = filters.columns.situacao ?? [];
+  const situacaoValues = explicitSituacao.length > 0 ? explicitSituacao : ["Ativo"];
+  const expandedSituacao = expandSituacaoValues(situacaoValues);
+  if (expandedSituacao.length > 0) {
+    next = next.in("situacao", expandedSituacao);
+  }
 
   if (filters.global) {
     const term = filters.global.replace(/%/g, "").trim();
@@ -471,10 +524,7 @@ export const fetchAgenda = async (
   const selectColumns =
     "id, data_da_ultima_visita, visit_completed_vidas, cod_1:codigo, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, categoria, obs_contrato_1:obs_comercial, visit_generated_at, created_at";
 
-  const baseQuery = () =>
-    supabase
-      .from("clientes")
-      .select(selectColumns, { count: "planned" });
+  const baseQuery = () => supabase.from("clientes").select(selectColumns);
 
   const baseQueryNoCount = () => supabase.from("clientes").select(selectColumns);
 
@@ -499,9 +549,33 @@ export const fetchAgenda = async (
   const pageTo = pageFrom + pageSize - 1;
   const estimateCountFromPage = (rowsLength: number) =>
     rowsLength < pageSize ? pageFrom + rowsLength : pageTo + 2;
+  const hasColumnFilters = Object.values(effectiveFilters.columns).some((values) => values.length > 0);
+  const hasDateFilters = Boolean(
+    effectiveFilters.dateRanges.data_da_ultima_visita.from ||
+      effectiveFilters.dateRanges.data_da_ultima_visita.to ||
+      effectiveFilters.dateRanges.data_da_ultima_visita.month ||
+      effectiveFilters.dateRanges.data_da_ultima_visita.year ||
+      effectiveFilters.dateRanges.data_da_ultima_visita.invert,
+  );
+  const hasGlobalFilter = Boolean(effectiveFilters.global?.trim());
+  const hasSearchFilters = Boolean(companyName || companyCode || hasGlobalFilter);
+  const shouldUseExactCount = !hasColumnFilters && !hasDateFilters && !hasSearchFilters && !restrictedAgendaIds;
+
+  const runCountQuery = async (mode: "exact" | "planned") => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let countQuery: any = applySearchAndIds(
+      applyFilters(
+        supabase.from("clientes").select("id", { count: mode, head: true }),
+        effectiveFilters,
+      ),
+    );
+    const { count, error } = await countQuery;
+    if (error) throw new Error(error.message);
+    return count ?? 0;
+  };
 
   query = applyAgendaSorting(query, sorting);
-  let { data, error, count } = await query.range(pageFrom, pageTo);
+  let { data, error } = await query.range(pageFrom, pageTo);
 
   if (error && isStatementTimeoutError(error.message)) {
     console.warn("fetchAgenda timed out; retrying with simplified query");
@@ -524,11 +598,25 @@ export const fetchAgenda = async (
 
     data = retry.data;
     error = null;
-    count = estimateCountFromPage(data?.length ?? 0);
   }
 
   if (error) throw new Error(error.message);
-  if (count === null || count === undefined) {
+  let count: number | null = null;
+  try {
+    count = await runCountQuery(shouldUseExactCount ? "exact" : "planned");
+  } catch (countError) {
+    const message = countError instanceof Error ? countError.message : String(countError ?? "");
+    if (shouldUseExactCount && isStatementTimeoutError(message)) {
+      try {
+        count = await runCountQuery("planned");
+      } catch (plannedError) {
+        console.warn("fetchAgenda count fallback failed:", plannedError);
+      }
+    } else {
+      console.warn("fetchAgenda count query failed:", countError);
+    }
+  }
+  if (count === null) {
     count = estimateCountFromPage(data?.length ?? 0);
   }
 
@@ -598,65 +686,77 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
     return options;
   }
 
-  const normalizedMap = new Map<string, Set<string>>();
+  const ensureClientesOptionsCache = async () => {
+    const hasMissing = CLIENTES_DYNAMIC_FILTER_KEYS.some((key) => !optionsCache.has(key));
+    if (!hasMissing) return;
 
-  if (filterKey === "perfil_visita") {
-    const data = await fetchColumnValuesPaged("clientes", "perfil_visita");
-
-    data?.forEach((row) => {
-      const rawValue = row.perfil_visita as string | null | undefined;
-      if (!rawValue) return;
-      const rawText = String(rawValue);
-      const normalizedValues = extractPerfilVisitaOptions(rawText);
-      normalizedValues.forEach((normalized) => {
-        if (!normalized) return;
-        if (!normalizedMap.has(normalized)) {
-          normalizedMap.set(normalized, new Set());
-        }
-        normalizedMap.get(normalized)?.add(rawText);
-      });
-    });
-
-    const options = Array.from(normalizedMap.keys()).sort((a, b) => a.localeCompare(b));
-    const rawMap = new Map<string, string[]>();
-    normalizedMap.forEach((set, key) => {
-      rawMap.set(key, Array.from(set));
-    });
-    optionsCache.set(filterKey, { options, rawMap });
-    return options;
-  }
-
-  const clientesColumn = CLIENTES_FILTER_COLUMN_MAP[filterKey];
-  const sourceTable = "clientes";
-
-  for (const column of columns) {
-    const targetColumn = mapAgendaColumnToClientes(clientesColumn ?? column);
-    const data = await fetchColumnValuesPaged(sourceTable, targetColumn);
-
-    (data ?? []).forEach((row) => {
-      const rawValue = row[targetColumn as keyof typeof row];
-      if (!rawValue) return;
-      const rawText = String(rawValue);
-      if (filterKey === "perfil_visita") {
-        const normalizedValues = extractPerfilVisitaOptions(rawText);
-        normalizedValues.forEach((normalized) => {
-          if (!normalized) return;
-          if (!normalizedMap.has(normalized)) {
-            normalizedMap.set(normalized, new Set());
-          }
-          normalizedMap.get(normalized)?.add(rawText);
+    if (!clientesOptionsBuildPromise) {
+      clientesOptionsBuildPromise = (async () => {
+        const normalizedMaps = new Map<string, Map<string, Set<string>>>();
+        CLIENTES_DYNAMIC_FILTER_KEYS.forEach((key) => {
+          normalizedMaps.set(key, new Map());
         });
-        return;
-      }
 
-      const normalized = normalizeOption(rawText);
-      if (!normalized) return;
-      if (!normalizedMap.has(normalized)) {
-        normalizedMap.set(normalized, new Set());
-      }
-      normalizedMap.get(normalized)?.add(rawText);
-    });
+        const data = await fetchColumnValuesPaged("clientes", CLIENTES_DYNAMIC_FILTER_COLUMNS);
+
+        data.forEach((row) => {
+          CLIENTES_DYNAMIC_FILTER_PAIRS.forEach(({ key, column }) => {
+            const rawValue = row[column as keyof typeof row];
+            if (rawValue === null || rawValue === undefined) return;
+            const rawText = String(rawValue).trim();
+            if (!rawText) return;
+
+            const values =
+              key === "perfil_visita" ? extractPerfilVisitaOptions(rawText) : [normalizeOption(rawText)];
+            const targetMap = normalizedMaps.get(key);
+            if (!targetMap) return;
+
+            values.forEach((value) => {
+              if (!value) return;
+              if (!targetMap.has(value)) targetMap.set(value, new Set());
+              targetMap.get(value)?.add(rawText);
+            });
+          });
+        });
+
+        CLIENTES_DYNAMIC_FILTER_KEYS.forEach((key) => {
+          const normalizedMap = normalizedMaps.get(key) ?? new Map<string, Set<string>>();
+          const options = Array.from(normalizedMap.keys()).sort((a, b) => a.localeCompare(b));
+          const rawMap = new Map<string, string[]>();
+          normalizedMap.forEach((set, option) => {
+            rawMap.set(option, Array.from(set));
+          });
+          optionsCache.set(key, { options, rawMap });
+        });
+      })().finally(() => {
+        clientesOptionsBuildPromise = null;
+      });
+    }
+
+    await clientesOptionsBuildPromise;
+  };
+
+  await ensureClientesOptionsCache();
+  const hydrated = optionsCache.get(filterKey);
+  if (hydrated) {
+    return hydrated.options;
   }
+
+  const normalizedMap = new Map<string, Set<string>>();
+  const fallbackColumn = mapAgendaColumnToClientes(
+    CLIENTES_FILTER_COLUMN_MAP[filterKey] ?? columns[0] ?? filterKey,
+  );
+  const fallbackRows = await fetchColumnValuesPaged("clientes", [fallbackColumn]);
+  fallbackRows.forEach((row) => {
+    const rawValue = row[fallbackColumn as keyof typeof row];
+    if (rawValue === null || rawValue === undefined) return;
+    const rawText = String(rawValue).trim();
+    if (!rawText) return;
+    const normalized = normalizeOption(rawText);
+    if (!normalized) return;
+    if (!normalizedMap.has(normalized)) normalizedMap.set(normalized, new Set());
+    normalizedMap.get(normalized)?.add(rawText);
+  });
 
   const options = Array.from(normalizedMap.keys()).sort((a, b) => a.localeCompare(b));
   const rawMap = new Map<string, string[]>();
@@ -744,7 +844,7 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
 export const fetchVendedores = async () => {
   const { data, error } = await supabase
     .from("profiles")
-    .select("user_id, display_name, role, supervisor_id")
+    .select("user_id, display_name, role, supervisor_id, can_access_next_route_dashboard")
     .eq("role", "VENDEDOR")
     .order("display_name", { ascending: true });
 

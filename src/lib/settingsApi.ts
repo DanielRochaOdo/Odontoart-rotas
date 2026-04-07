@@ -8,6 +8,7 @@ export type ManagedProfile = {
   display_name: string | null;
   nome?: string | null;
   can_access_pre_cadastro: boolean;
+  can_access_next_route_dashboard: boolean;
   supervisor_id: string | null;
   vendedor_id: string | null;
   supervisor?: { id: string; display_name: string | null } | null;
@@ -18,7 +19,7 @@ export const fetchManagedProfiles = async () => {
   const { data, error } = await supabase
     .from("profiles")
     .select(
-      "id, user_id, role, display_name, nome, can_access_pre_cadastro, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
+      "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
     )
     .order("display_name", { ascending: true });
 
@@ -31,6 +32,7 @@ export const updateManagedProfile = async (payload: {
   display_name?: string | null;
   nome?: string | null;
   can_access_pre_cadastro?: boolean;
+  can_access_next_route_dashboard?: boolean;
   supervisor_id?: string | null;
   vendedor_id?: string | null;
 }) => {
@@ -40,6 +42,7 @@ export const updateManagedProfile = async (payload: {
     supervisor_id: string | null;
     vendedor_id: string | null;
     can_access_pre_cadastro?: boolean;
+    can_access_next_route_dashboard?: boolean;
   } = {
     display_name: payload.display_name ?? null,
     nome: payload.nome ?? payload.display_name ?? null,
@@ -50,13 +53,16 @@ export const updateManagedProfile = async (payload: {
   if (payload.can_access_pre_cadastro !== undefined) {
     updates.can_access_pre_cadastro = payload.can_access_pre_cadastro;
   }
+  if (payload.can_access_next_route_dashboard !== undefined) {
+    updates.can_access_next_route_dashboard = payload.can_access_next_route_dashboard;
+  }
 
   const { data, error } = await supabase
     .from("profiles")
     .update(updates)
     .eq("id", payload.id)
     .select(
-      "id, user_id, role, display_name, nome, can_access_pre_cadastro, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
+      "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
     )
     .single();
 
@@ -71,6 +77,7 @@ export const createManagedUser = async (payload: {
   nome?: string | null;
   role: UserRole;
   can_access_pre_cadastro?: boolean;
+  can_access_next_route_dashboard?: boolean;
   supervisor_id?: string | null;
   vendedor_id?: string | null;
 }) => {

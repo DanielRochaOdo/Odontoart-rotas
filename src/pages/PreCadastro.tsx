@@ -501,7 +501,7 @@ export default function PreCadastro() {
           <div className="md:col-span-6 flex flex-wrap items-end gap-2">
             <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">Corte<input value={form.corte} onChange={(event) => setForm((prev) => ({ ...prev, corte: sanitizeDigits(event.target.value).slice(0, 2) }))} inputMode="numeric" maxLength={2} className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea" /></label>
             <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">Venc<input value={form.venc} onChange={(event) => setForm((prev) => ({ ...prev, venc: sanitizeDigits(event.target.value).slice(0, 2) }))} inputMode="numeric" maxLength={2} className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea" /></label>
-            <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+            <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">
               <span>Valor</span>
               <div className="flex h-10 items-center">
                 <button

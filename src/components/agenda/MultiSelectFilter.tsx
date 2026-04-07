@@ -62,6 +62,10 @@ export default function MultiSelectFilter({
     if (!key) return valueToCanonicalize;
     return optionsByKey.get(key) ?? valueToCanonicalize;
   };
+  const normalizedExternalValue = useMemo(
+    () => dedupeOptions(value.map((item) => canonicalizeValue(item))),
+    [optionsByKey, value],
+  );
   const mergedOptions = useMemo(
     () => dedupeOptions([...options, ...value.map((item) => canonicalizeValue(item))]),
     [options, optionsByKey, value],
@@ -155,6 +159,11 @@ export default function MultiSelectFilter({
       window.removeEventListener("scroll", handler, true);
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setDraft(normalizedExternalValue);
+  }, [normalizedExternalValue, open]);
 
   return (
     <div
