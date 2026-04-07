@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
+  Clock3,
   ChevronDown,
   ChevronUp,
   DollarSign,
@@ -67,6 +68,7 @@ const FILTER_SOURCES: Record<string, string[]> = {
   grupo: ["grupo"],
   perfil_visita: ["perfil_visita"],
   empresa_nome: ["empresa"],
+  situacao: ["situacao"],
   categoria: ["categoria"],
 };
 
@@ -80,8 +82,12 @@ const FILTER_LABELS: Record<string, string> = {
   grupo: "Grupo",
   perfil_visita: "Perfil Visita",
   empresa_nome: "Empresa",
+  situacao: "Situacao",
   categoria: "Categoria",
 };
+
+const SITUACAO_FILTER_OPTIONS = ["Ativo", "Suspenso/Inadimplente", "Cancelado"];
+const COLUMN_CHIP_MODAL_PAGE_SIZE = 25;
 
 const parseDateValue = (value: string) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -210,6 +216,7 @@ type ColumnChipRemovalModalState = {
   options: string[];
   selectedValues: string[];
   selectedCompanyIds: string[];
+  hasManualCompanySelection: boolean;
 };
 
 type PlanoValoresModalState = {
@@ -220,11 +227,69 @@ type PlanoValoresModalState = {
   error: string | null;
 };
 
+type VendorHistoryModalState = {
+  empresa: string;
+  codigo: string;
+  assignments: Array<{ name: string; visitDate: string | null }>;
+};
+
 const hasPlanoValores = (planos: OdontoartPlanoValor[]) =>
   planos.some((plano) => plano.valorTitular !== null || plano.valorDependente !== null);
 
 const normalizeFilterMatchValue = (value: string | null | undefined) =>
   normalizeText(value, { letterCase: "upper" });
+
+const getCategoriaBadgeStyles = (value: string | null | undefined) => {
+  const normalized = normalizeText(value, { letterCase: "upper" });
+  const baseClassName =
+    "inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.02em]";
+  if (!normalized) {
+    return {
+      label: "-",
+      className: `${baseClassName} bg-slate-700 text-slate-100`,
+    };
+  }
+  if (normalized === "INATIVO") {
+    return {
+      label: value?.trim() || "Inativo",
+      className: `${baseClassName} bg-[#f2f2f2] text-black`,
+    };
+  }
+  if (normalized === "SO PERDA") {
+    return {
+      label: value?.trim() || "So perda",
+      className: `${baseClassName} bg-[#8b0000] text-[#ff8c8c]`,
+    };
+  }
+  if (normalized === "CRESCIMENTO") {
+    return {
+      label: value?.trim() || "Crescimento",
+      className: `${baseClassName} bg-[#1f5f1f] text-[#8fff8f]`,
+    };
+  }
+  if (normalized === "QUEDA") {
+    return {
+      label: value?.trim() || "Queda",
+      className: `${baseClassName} bg-[#6b5a00] text-[#ffe45c]`,
+    };
+  }
+  if (normalized === "SO VENDA") {
+    return {
+      label: value?.trim() || "So venda",
+      className: `${baseClassName} bg-[#004e7a] text-[#7de2ff]`,
+    };
+  }
+  if (normalized === "NEUTRO") {
+    return {
+      label: value?.trim() || "Neutro",
+      className: `${baseClassName} bg-[#006a78] text-[#85f7ff]`,
+    };
+  }
+  return {
+    label: value?.trim() || "-",
+    className: `${baseClassName} bg-slate-700 text-slate-100`,
+  };
+};
 
 const getAgendaFilterValueFromRow = (row: AgendaRow, filterKey: string) => {
   const map: Record<string, string | null | undefined> = {
@@ -252,7 +317,7 @@ type AgendaPageCacheEntry = {
   cachedAt: number;
 };
 
-const AGENDA_PAGE_CACHE_STORAGE_KEY = "agendaPageCacheV1";
+const AGENDA_PAGE_CACHE_STORAGE_KEY = "agendaPageCacheV2";
 let agendaPageMemoryCache: AgendaPageCacheEntry | null = null;
 
 const readAgendaPageCache = (requestKey: string): AgendaPageCacheEntry | null => {
@@ -295,7 +360,7 @@ const writeAgendaPageCache = (entry: AgendaPageCacheEntry) => {
 export default function Agenda() {
   const { role, session } = useAuth();
   const canAccess = role === "SUPERVISOR" || role === "ASSISTENTE";
-  const { filters, setFilters, clearFilters } = useAgendaFilters("routesTableFilters");
+  const { filters, setFilters, clearFilters } = useAgendaFilters("routesTableFiltersV2");
   const [companyNameQuery, setCompanyNameQuery] = useState("");
   const [companyCodeQuery, setCompanyCodeQuery] = useState("");
   const [data, setData] = useState<AgendaRow[]>([]);
@@ -340,8 +405,10 @@ export default function Agenda() {
   const [detailsInstructionSaving, setDetailsInstructionSaving] = useState(false);
   const [detailsInstructionMessage, setDetailsInstructionMessage] = useState<string | null>(null);
   const [planoValoresModal, setPlanoValoresModal] = useState<PlanoValoresModalState | null>(null);
+  const [vendorHistoryModal, setVendorHistoryModal] = useState<VendorHistoryModalState | null>(null);
   const [excludedAgendaIds, setExcludedAgendaIds] = useState<string[]>([]);
   const [columnChipRemovalModal, setColumnChipRemovalModal] = useState<ColumnChipRemovalModalState | null>(null);
+  const [columnChipRemovalPageIndex, setColumnChipRemovalPageIndex] = useState(0);
   const detailsObsRequestRef = useRef(0);
   const restoredViewRef = useRef(false);
   const restoredModalRef = useRef(false);
@@ -525,6 +592,19 @@ export default function Agenda() {
   }, []);
 
   useEffect(() => {
+    const situacoes = filters.columns.situacao ?? [];
+    if (situacoes.length !== 1) return;
+    if (normalizeText(situacoes[0], { letterCase: "upper" }) !== "ATIVO") return;
+    setFilters((prev) => ({
+      ...prev,
+      columns: {
+        ...prev.columns,
+        situacao: [],
+      },
+    }));
+  }, [filters.columns.situacao, setFilters]);
+
+  useEffect(() => {
     if (!filters.global) return;
     setFilters((prev) => (prev.global ? { ...prev, global: "" } : prev));
   }, [filters.global, setFilters]);
@@ -581,62 +661,84 @@ export default function Agenda() {
 
   const resolveVendorsForAgenda = (agendaId: string, fallback?: string | null) => {
     const visits = visitVendorsByAgenda[agendaId] ?? scheduledVisitsByAgenda[agendaId] ?? [];
-    if (!visits.length) return fallback ?? "-";
-    const names = visits
-      .map(
-        (visit) =>
-          visit.assigned_to_name ??
-          (visit.assigned_to_user_id ? vendorById.get(visit.assigned_to_user_id) : null) ??
-          "",
-      )
-      .map((name) => name.trim())
-      .filter(Boolean);
-    if (!names.length) return fallback ?? "-";
-    return Array.from(new Set(names)).join(", ");
+    const fallbackAssignments = Array.from(
+      new Set(
+        (fallback ?? "")
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean),
+      ),
+    )
+      .slice(0, 2)
+      .map((name) => ({ name, visitDate: null as string | null, userId: null as string | null }));
+
+    if (!visits.length) return fallbackAssignments;
+
+    const sortedVisits = [...visits].sort((left, right) => {
+      const leftVisitDate = toSortableTimestamp(left.visit_date);
+      const rightVisitDate = toSortableTimestamp(right.visit_date);
+      if (leftVisitDate === null && rightVisitDate !== null) return 1;
+      if (leftVisitDate !== null && rightVisitDate === null) return -1;
+      if (leftVisitDate !== null && rightVisitDate !== null && leftVisitDate !== rightVisitDate) {
+        return rightVisitDate - leftVisitDate;
+      }
+
+      const leftCompletedAt = toSortableTimestamp(left.completed_at);
+      const rightCompletedAt = toSortableTimestamp(right.completed_at);
+      if (leftCompletedAt === null && rightCompletedAt !== null) return 1;
+      if (leftCompletedAt !== null && rightCompletedAt === null) return -1;
+      if (leftCompletedAt !== null && rightCompletedAt !== null && leftCompletedAt !== rightCompletedAt) {
+        return rightCompletedAt - leftCompletedAt;
+      }
+      return 0;
+    });
+
+    const picked: Array<{ name: string; visitDate: string | null; userId: string | null }> = [];
+    const seen = new Set<string>();
+    for (const visit of sortedVisits) {
+      const vendorName =
+        visit.assigned_to_name ??
+        (visit.assigned_to_user_id ? vendorById.get(visit.assigned_to_user_id) : null) ??
+        "";
+      const normalizedName = vendorName.trim();
+      if (!normalizedName || seen.has(normalizedName)) continue;
+      seen.add(normalizedName);
+      picked.push({
+        name: normalizedName,
+        visitDate: visit.visit_date ?? null,
+        userId: visit.assigned_to_user_id ?? null,
+      });
+      if (picked.length >= 2) break;
+    }
+
+    return picked.length ? picked : fallbackAssignments;
   };
 
   const resolveLastCompletedVidas = (agendaId: string, fallback?: number | null) => {
     const visits = visitVendorsByAgenda[agendaId] ?? [];
-    const completed = visits.find(
-      (visit) =>
-        Boolean(visit.completed_at) &&
-        visit.completed_vidas !== null &&
-        visit.completed_vidas !== undefined,
-    );
-    if (completed) return String(completed.completed_vidas);
+    const latestCompleted = visits.find((visit) => Boolean(visit.completed_at));
+    if (latestCompleted) {
+      if (
+        latestCompleted.completed_vidas !== null &&
+        latestCompleted.completed_vidas !== undefined
+      ) {
+        return String(latestCompleted.completed_vidas);
+      }
+      return "-";
+    }
     if (fallback !== null && fallback !== undefined) return String(fallback);
     return "-";
   };
 
   const resolveLastCompletedVisitDate = (agendaId: string, fallback?: string | null) => {
     const visits = visitVendorsByAgenda[agendaId] ?? [];
-    const completed = visits.find(
-      (visit) =>
-        Boolean(visit.completed_at) &&
-        visit.completed_vidas !== null &&
-        visit.completed_vidas !== undefined &&
-        Boolean(visit.visit_date),
-    );
-    if (completed?.visit_date) return formatDate(completed.visit_date);
+    const latestCompleted = visits.find((visit) => Boolean(visit.completed_at));
+    if (latestCompleted) {
+      const noVisitReason = latestCompleted.no_visit_reason?.trim();
+      if (noVisitReason) return noVisitReason;
+      if (latestCompleted.visit_date) return formatDate(latestCompleted.visit_date);
+    }
     return formatDate(fallback ?? null);
-  };
-
-  const resolveLatestCompletedReasonSummary = (agendaId: string) => {
-    const visits = visitVendorsByAgenda[agendaId] ?? [];
-    const completedWithReason = visits.find(
-      (visit) =>
-        Boolean(visit.completed_at) &&
-        Boolean(visit.no_visit_reason?.trim()),
-    );
-    if (!completedWithReason) return null;
-    return {
-      reason: completedWithReason.no_visit_reason?.trim() ?? "",
-      vidas:
-        completedWithReason.completed_vidas !== null &&
-        completedWithReason.completed_vidas !== undefined
-          ? String(completedWithReason.completed_vidas)
-          : "-",
-    };
   };
 
   const resolveScheduledObsVisit = (agendaId: string, rowInstructions?: string | null) => {
@@ -682,17 +784,17 @@ export default function Agenda() {
     let active = true;
 
     const loadOptions = async () => {
-      const entries = await Promise.all(
-        Object.entries(FILTER_SOURCES).map(async ([key, sources]) => {
-          try {
-            const options = await fetchDistinctOptions(key, sources);
-            return [key, options] as const;
-          } catch (error) {
-            console.error(`Falha ao carregar opcoes do filtro "${key}".`, error);
-            return [key, []] as const;
-          }
-        }),
-      );
+      const entries: Array<readonly [string, string[]]> = [];
+      for (const [key, sources] of Object.entries(FILTER_SOURCES)) {
+        if (!active) return;
+        try {
+          const options = await fetchDistinctOptions(key, sources);
+          entries.push([key, options] as const);
+        } catch (error) {
+          console.error(`Falha ao carregar opcoes do filtro "${key}".`, error);
+          entries.push([key, []] as const);
+        }
+      }
       if (!active) return;
       const nextOptions: Record<string, string[]> = Object.fromEntries(entries);
       setFilterOptions(nextOptions);
@@ -1600,7 +1702,7 @@ export default function Agenda() {
             type="button"
             onClick={handler}
             disabled={!column.getCanSort() || !handler}
-            className="flex items-center gap-1 text-left disabled:opacity-70"
+            className="inline-flex items-center justify-center gap-1 text-center disabled:opacity-70"
           >
             <span className="leading-tight">{label}</span>
             {column.getIsSorted() ? (
@@ -1654,48 +1756,26 @@ export default function Agenda() {
         id: "obs",
         header: ({ column }) => renderSortLabel(column, "Obs"),
         cell: (info) => {
-          const rowId = info.row.original.id;
           const row = info.row.original;
-          const scheduledObs = resolveScheduledObsVisit(rowId, row.instructions);
-          const completedSummary = resolveLatestCompletedReasonSummary(rowId);
-          if (!scheduledObs && !completedSummary) return null;
-
-          const visitDate = scheduledObs?.visitDate ?? null;
-          const firstInstructions = scheduledObs?.instructions ?? "";
-          const badgeText = formatVisitBadge(visitDate);
-          const titleText = visitDate
-            ? `Visita agendada: ${formatDate(visitDate)}${
-                firstInstructions ? ` | Instrucoes: ${firstInstructions}` : ""
-              }`
-            : firstInstructions
-              ? `Instrucoes: ${firstInstructions}`
-              : "Visita agendada";
+          const scheduledObs = resolveScheduledObsVisit(row.id, row.instructions);
+          if (!scheduledObs) return null;
+          const firstInstructions = scheduledObs.instructions ?? "";
+          const buttonLabel = scheduledObs.visitDate ? formatDate(scheduledObs.visitDate) : "Ver";
+          const titleText = firstInstructions ? `Instrucoes: ${firstInstructions}` : "Abrir agenda";
           return (
-            <div className="flex flex-col items-center justify-center gap-1">
-              {scheduledObs ? (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    openScheduleModal(info.row.original);
-                  }}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  className="inline-flex min-h-6 items-center justify-center rounded-md border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-700 hover:border-red-300"
-                  title={titleText}
-                  aria-label={titleText}
-                >
-                  {badgeText}
-                </button>
-              ) : null}
-              {completedSummary ? (
-                <div className="max-w-[150px] text-center">
-                  <p className="text-[10px] font-semibold uppercase text-ink/70">
-                    Motivo: {completedSummary.reason}
-                  </p>
-                  <p className="text-[10px] text-ink/60">Vidas: {completedSummary.vidas}</p>
-                </div>
-              ) : null}
-            </div>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                openScheduleModal(info.row.original);
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              className="inline-flex min-h-6 items-center justify-center rounded-md border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-700 hover:border-red-300"
+              title={titleText}
+              aria-label={titleText}
+            >
+              {buttonLabel}
+            </button>
           );
         },
         size: 160,
@@ -1707,6 +1787,7 @@ export default function Agenda() {
           const row = info.row.original;
           return resolveLastCompletedVisitDate(row.id, info.getValue() as string | null);
         },
+        size: 92,
       },
       {
         accessorKey: "visit_completed_vidas",
@@ -1716,11 +1797,12 @@ export default function Agenda() {
           const value = info.getValue<number | null>();
           return resolveLastCompletedVidas(row.id, value);
         },
+        size: 170,
       },
       {
         accessorKey: "empresa",
         header: ({ column }) => (
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-col items-center justify-center gap-1 text-center">
             {renderSortLabel(column, "Empresa")}
             <MultiSelectFilter
               label={
@@ -1754,11 +1836,46 @@ export default function Agenda() {
             </div>
           );
         },
+        size: 180,
+      },
+      {
+        accessorKey: "categoria",
+        header: ({ column }) => (
+          <div className="flex flex-col items-center justify-center gap-1 text-center">
+            {renderSortLabel(column, "Categoria")}
+            <MultiSelectFilter
+              label={
+                (filters.columns.categoria ?? []).length
+                  ? `Filtro (${filters.columns.categoria.length})`
+                  : "Filtro"
+              }
+              options={filterOptions.categoria ?? []}
+              value={filters.columns.categoria}
+              onApply={(next) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  columns: { ...prev.columns, categoria: next },
+                }))
+              }
+            />
+          </div>
+        ),
+        cell: (info) => {
+          const badge = getCategoriaBadgeStyles(info.getValue<string | null>());
+          return (
+            <span
+              className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${badge.className}`}
+            >
+              {badge.label}
+            </span>
+          );
+        },
+        size: 90,
       },
       {
         accessorKey: "bairro",
         header: ({ column }) => (
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-col items-center justify-center gap-1 text-center">
             {renderSortLabel(column, "Bairro")}
             <MultiSelectFilter
               label={
@@ -1778,11 +1895,12 @@ export default function Agenda() {
           </div>
         ),
         cell: (info) => info.getValue<string | null>() ?? "-",
+        size: 90,
       },
       {
         accessorKey: "cidade",
         header: ({ column }) => (
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-col items-center justify-center gap-1 text-center">
             {renderSortLabel(column, "Cidade")}
             <MultiSelectFilter
               label={
@@ -1802,11 +1920,12 @@ export default function Agenda() {
           </div>
         ),
         cell: (info) => info.getValue<string | null>() ?? "-",
+        size: 84,
       },
       {
         accessorKey: "vendedor",
         header: ({ column }) => (
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-col items-center justify-center gap-1 text-center">
             {renderSortLabel(column, "Vendedor")}
             <MultiSelectFilter
               label={
@@ -1827,13 +1946,47 @@ export default function Agenda() {
         ),
         cell: (info) => {
           const row = info.row.original;
-          return resolveVendorsForAgenda(row.id, row.vendedor);
+          const recentVendors = resolveVendorsForAgenda(row.id, row.vendedor);
+          const vendorLabel =
+            recentVendors.length > 0
+              ? recentVendors.map((item) => item.name).join(", ")
+              : "-";
+          const historyTooltip = "Ver historico de atribuicao";
+          const hasAnyHistoryDate = recentVendors.some((item) => Boolean(item.visitDate));
+          return (
+            <div className="relative min-h-[28px] pr-6">
+              <p>{vendorLabel}</p>
+              {hasAnyHistoryDate ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setVendorHistoryModal({
+                      empresa: row.empresa ?? row.nome_fantasia ?? "Sem empresa",
+                      codigo: row.cod_1 ?? "-",
+                      assignments: recentVendors.map((item) => ({
+                        name: item.name,
+                        visitDate: item.visitDate,
+                      })),
+                    });
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  className="absolute right-0 top-0 inline-flex h-4 w-4 items-center justify-center rounded-full border border-orange-300 bg-orange-50 text-orange-600 hover:border-orange-400 hover:text-orange-700"
+                  title={historyTooltip}
+                  aria-label={historyTooltip}
+                >
+                  <Clock3 size={10} />
+                </button>
+              ) : null}
+            </div>
+          );
         },
+        size: 105,
       },
       {
         accessorKey: "grupo",
         header: ({ column }) => (
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-col items-center justify-center gap-1 text-center">
             {renderSortLabel(column, "Grupo")}
             <MultiSelectFilter
               label={
@@ -1853,11 +2006,12 @@ export default function Agenda() {
           </div>
         ),
         cell: (info) => info.getValue<string | null>() ?? "-",
+        size: 82,
       },
       {
         accessorKey: "perfil_visita",
         header: ({ column }) => (
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-col items-center justify-center gap-1 text-center">
             {renderSortLabel(column, "Perfil Visita")}
             <MultiSelectFilter
               label={
@@ -1877,6 +2031,7 @@ export default function Agenda() {
           </div>
         ),
         cell: (info) => formatPerfilVisitaDisplay(info.getValue<string | null>()),
+        size: 120,
       },
     ];
     },
@@ -1908,6 +2063,20 @@ export default function Agenda() {
     pageCount: Math.ceil(totalCount / pageSize),
   });
 
+  const compactColumnWidths: Record<string, number> = {
+    select: 30,
+    obs: 120,
+    data_da_ultima_visita: 92,
+    visit_completed_vidas: 86,
+    empresa: 180,
+    categoria: 90,
+    bairro: 90,
+    cidade: 84,
+    vendedor: 105,
+    grupo: 82,
+    perfil_visita: 120,
+  };
+
   const activeChips = useMemo(() => {
     const chips: { id: string; label: string; onRemove: () => void }[] = [];
 
@@ -1927,14 +2096,6 @@ export default function Agenda() {
       });
     }
 
-    if (excludedAgendaIds.length > 0) {
-      chips.push({
-        id: "chip-excluded-companies",
-        label: `Empresas removidas: ${excludedAgendaIds.length}`,
-        onRemove: () => setExcludedAgendaIds([]),
-      });
-    }
-
     Object.keys(FILTER_SOURCES).forEach((key) => {
       const values = filters.columns[key] ?? [];
       values.forEach((value, index) => {
@@ -1951,6 +2112,7 @@ export default function Agenda() {
               options: selectedValues,
               selectedValues: [value],
               selectedCompanyIds: [],
+              hasManualCompanySelection: false,
             });
           },
         });
@@ -2030,7 +2192,7 @@ export default function Agenda() {
     }
 
     return chips;
-  }, [companyCodeQuery, companyNameQuery, excludedAgendaIds.length, filters, setFilters]);
+  }, [companyCodeQuery, companyNameQuery, filters, setFilters]);
 
   const hasActiveCompanySearch = useMemo(
     () =>
@@ -2062,45 +2224,91 @@ export default function Agenda() {
       }));
   }, [columnChipRemovalModal, displayData]);
 
+  const impactedCompaniesPageCount = useMemo(
+    () => Math.max(1, Math.ceil(impactedCompaniesPreview.length / COLUMN_CHIP_MODAL_PAGE_SIZE)),
+    [impactedCompaniesPreview.length],
+  );
+
+  const pagedImpactedCompanies = useMemo(() => {
+    const start = columnChipRemovalPageIndex * COLUMN_CHIP_MODAL_PAGE_SIZE;
+    return impactedCompaniesPreview.slice(start, start + COLUMN_CHIP_MODAL_PAGE_SIZE);
+  }, [columnChipRemovalPageIndex, impactedCompaniesPreview]);
+
   useEffect(() => {
-    if (!columnChipRemovalModal) return;
+    if (!columnChipRemovalModal) {
+      setColumnChipRemovalPageIndex(0);
+      return;
+    }
+    setColumnChipRemovalPageIndex(0);
+  }, [
+    columnChipRemovalModal?.filterKey,
+    columnChipRemovalModal?.triggerValue,
+    columnChipRemovalModal?.selectedValues.join("||"),
+  ]);
+
+  useEffect(() => {
+    setColumnChipRemovalPageIndex((prev) => {
+      const maxIndex = Math.max(0, impactedCompaniesPageCount - 1);
+      return prev > maxIndex ? maxIndex : prev;
+    });
+  }, [impactedCompaniesPageCount]);
+
+  useEffect(() => {
     const impactedIds = impactedCompaniesPreview.map((company) => company.id);
     setColumnChipRemovalModal((prev) => {
       if (!prev) return prev;
       const keptSelected = prev.selectedCompanyIds.filter((id) => impactedIds.includes(id));
-      const nextSelected = keptSelected.length > 0 ? keptSelected : impactedIds;
+      const nextSelected = prev.hasManualCompanySelection
+        ? keptSelected
+        : keptSelected.length > 0
+          ? keptSelected
+          : impactedIds;
       if (sameStringArray(nextSelected, prev.selectedCompanyIds)) {
         return prev;
       }
       return { ...prev, selectedCompanyIds: nextSelected };
     });
-  }, [columnChipRemovalModal, impactedCompaniesPreview]);
+  }, [impactedCompaniesPreview]);
 
   const selectAllColumnChipModalValues = () => {
     setColumnChipRemovalModal((prev) => {
       if (!prev) return prev;
-      return { ...prev, selectedValues: [...prev.options] };
+      return {
+        ...prev,
+        selectedValues: [...prev.options],
+        selectedCompanyIds: [],
+        hasManualCompanySelection: false,
+      };
     });
   };
 
   const selectOnlyTriggeredColumnChipValue = () => {
     setColumnChipRemovalModal((prev) => {
       if (!prev) return prev;
-      return { ...prev, selectedValues: [prev.triggerValue] };
+      return {
+        ...prev,
+        selectedValues: [prev.triggerValue],
+        selectedCompanyIds: [],
+        hasManualCompanySelection: false,
+      };
     });
   };
 
   const selectAllImpactedCompaniesForRemoval = () => {
     setColumnChipRemovalModal((prev) => {
       if (!prev) return prev;
-      return { ...prev, selectedCompanyIds: impactedCompaniesPreview.map((company) => company.id) };
+      return {
+        ...prev,
+        selectedCompanyIds: impactedCompaniesPreview.map((company) => company.id),
+        hasManualCompanySelection: true,
+      };
     });
   };
 
   const clearImpactedCompaniesSelection = () => {
     setColumnChipRemovalModal((prev) => {
       if (!prev) return prev;
-      return { ...prev, selectedCompanyIds: [] };
+      return { ...prev, selectedCompanyIds: [], hasManualCompanySelection: true };
     });
   };
 
@@ -2111,21 +2319,38 @@ export default function Agenda() {
       const next = hasCompany
         ? prev.selectedCompanyIds.filter((id) => id !== companyId)
         : [...prev.selectedCompanyIds, companyId];
-      return { ...prev, selectedCompanyIds: next };
+      return { ...prev, selectedCompanyIds: next, hasManualCompanySelection: true };
     });
   };
 
   const applyColumnChipRemoval = () => {
     if (!columnChipRemovalModal) return;
-    const removeSet = new Set(columnChipRemovalModal.selectedCompanyIds);
-    if (removeSet.size === 0) {
-      setColumnChipRemovalModal(null);
-      return;
+    const removeFilterValueSet = new Set(
+      columnChipRemovalModal.selectedValues.map((value) => normalizeFilterMatchValue(value)),
+    );
+    if (removeFilterValueSet.size > 0) {
+      setFilters((prev) => {
+        const currentValues = prev.columns[columnChipRemovalModal.filterKey] ?? [];
+        const nextValues = currentValues.filter(
+          (value) => !removeFilterValueSet.has(normalizeFilterMatchValue(value)),
+        );
+        return {
+          ...prev,
+          columns: {
+            ...prev.columns,
+            [columnChipRemovalModal.filterKey]: nextValues,
+          },
+        };
+      });
     }
-    setExcludedAgendaIds((prev) => Array.from(new Set([...prev, ...Array.from(removeSet)])));
-    setSelectedAgendaIds((prev) => prev.filter((id) => !removeSet.has(id)));
-    setSelectedRow((prev) => (prev && removeSet.has(prev.id) ? null : prev));
-    setSelectedRowId((prev) => (prev && removeSet.has(prev) ? null : prev));
+
+    const removeSet = new Set(columnChipRemovalModal.selectedCompanyIds);
+    if (removeSet.size > 0) {
+      setExcludedAgendaIds((prev) => Array.from(new Set([...prev, ...Array.from(removeSet)])));
+      setSelectedAgendaIds((prev) => prev.filter((id) => !removeSet.has(id)));
+      setSelectedRow((prev) => (prev && removeSet.has(prev.id) ? null : prev));
+      setSelectedRowId((prev) => (prev && removeSet.has(prev) ? null : prev));
+    }
     setColumnChipRemovalModal(null);
   };
 
@@ -2154,7 +2379,7 @@ export default function Agenda() {
 
       <section className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
         <div className="flex flex-col gap-4">
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)_minmax(180px,220px)] md:items-end">
+          <div className="grid gap-3 md:grid-cols-[minmax(0,0.95fr)_minmax(0,0.55fr)_minmax(180px,220px)_minmax(180px,220px)] md:items-end">
             <label className="flex flex-col gap-1">
               <span className="text-[11px] font-semibold text-ink/70">Termo por nome (palavra exata)</span>
               <input
@@ -2200,6 +2425,31 @@ export default function Agenda() {
                     setFilters((prev) => ({
                       ...prev,
                       columns: { ...prev.columns, categoria: next },
+                    }))
+                  }
+                />
+              </div>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold text-ink/70">Situacao da empresa</span>
+              <div className="flex h-10 items-center justify-between rounded-lg border border-sea/20 bg-white/90 px-3">
+                <span className="text-xs text-ink/60">
+                  {(filters.columns.situacao ?? []).length
+                    ? `${(filters.columns.situacao ?? []).length} selecionada(s)`
+                    : "Ativo"}
+                </span>
+                <MultiSelectFilter
+                  label={
+                    (filters.columns.situacao ?? []).length
+                      ? `Situacao (${filters.columns.situacao.length})`
+                      : "Situacao"
+                  }
+                  options={filterOptions.situacao ?? [...SITUACAO_FILTER_OPTIONS]}
+                  value={filters.columns.situacao ?? []}
+                  onApply={(next) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      columns: { ...prev.columns, situacao: next },
                     }))
                   }
                 />
@@ -2523,7 +2773,7 @@ export default function Agenda() {
               {impactedCompaniesPreview.length === 0 ? (
                 <p className="px-2 py-1 text-xs text-ink/60">Nenhuma empresa impactada na pagina atual.</p>
               ) : (
-                impactedCompaniesPreview.map((company) => {
+                pagedImpactedCompanies.map((company) => {
                   const checked = columnChipRemovalModal.selectedCompanyIds.includes(company.id);
                   return (
                     <label
@@ -2550,6 +2800,39 @@ export default function Agenda() {
                 })
               )}
             </div>
+
+            {impactedCompaniesPreview.length > 0 && (
+              <div className="mt-2 flex items-center justify-between text-[11px] text-ink/70">
+                <span>
+                  Pagina {columnChipRemovalPageIndex + 1} de {impactedCompaniesPageCount} (
+                  {impactedCompaniesPreview.length} empresas)
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setColumnChipRemovalPageIndex((prev) => Math.max(prev - 1, 0))
+                    }
+                    disabled={columnChipRemovalPageIndex === 0}
+                    className="rounded border border-sea/30 px-2 py-1 disabled:opacity-50"
+                  >
+                    Anterior
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setColumnChipRemovalPageIndex((prev) =>
+                        Math.min(prev + 1, impactedCompaniesPageCount - 1),
+                      )
+                    }
+                    disabled={columnChipRemovalPageIndex >= impactedCompaniesPageCount - 1}
+                    className="rounded border border-sea/30 px-2 py-1 disabled:opacity-50"
+                  >
+                    Proxima
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="mt-3 flex items-center justify-between text-[11px] text-ink/70">
               <button
@@ -2584,9 +2867,9 @@ export default function Agenda() {
                   type="button"
                   onClick={applyColumnChipRemoval}
                   className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
-                  disabled={columnChipRemovalModal.selectedCompanyIds.length === 0}
+                  disabled={columnChipRemovalModal.selectedValues.length === 0}
                 >
-                  Remover empresas
+                  Aplicar remocao
                 </button>
               </div>
             </div>
@@ -3124,6 +3407,51 @@ export default function Agenda() {
         </div>
       )}
 
+      {vendorHistoryModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setVendorHistoryModal(null)}
+          />
+          <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <div className="flex items-start justify-between gap-2">
+              <h3 className="font-display text-lg text-ink">Historico de vendedores</h3>
+              <button
+                type="button"
+                onClick={() => setVendorHistoryModal(null)}
+                className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Fechar
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-ink/60">
+              Empresa: {vendorHistoryModal.empresa} | COD {vendorHistoryModal.codigo}
+            </p>
+            <div className="mt-4 space-y-2 text-sm text-ink/80">
+              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                <p className="text-[11px] font-semibold text-ink/60">Ultimo vendedor</p>
+                <p className="mt-1 font-semibold text-ink">
+                  {vendorHistoryModal.assignments[0]?.name ?? "-"}
+                </p>
+                <p className="text-xs text-ink/60">
+                  Data: {formatDate(vendorHistoryModal.assignments[0]?.visitDate ?? null)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                <p className="text-[11px] font-semibold text-ink/60">Penultimo vendedor</p>
+                <p className="mt-1 font-semibold text-ink">
+                  {vendorHistoryModal.assignments[1]?.name ?? "-"}
+                </p>
+                <p className="text-xs text-ink/60">
+                  Data: {formatDate(vendorHistoryModal.assignments[1]?.visitDate ?? null)}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {activeChips.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -3147,14 +3475,18 @@ export default function Agenda() {
             <div className="px-4 py-6 text-center text-sm text-ink/60">Carregando agenda...</div>
           ) : error ? (
             <div className="px-4 py-6 text-center text-sm text-red-500">{error}</div>
-          ) : data.length === 0 ? (
+          ) : displayData.length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-ink/60">
               {hasActiveCompanySearch ? "Termo nao encontrado." : "Nenhum registro encontrado."}
             </div>
           ) : (
-            <div className="space-y-3 px-3 py-3">
-              {data.map((row) => {
+            <div className="space-y-4 px-4 py-4">
+              {displayData.map((row) => {
                 const empresaLabel = row.empresa ?? "Sem empresa";
+                const recentVendors = resolveVendorsForAgenda(row.id, row.vendedor);
+                const mobileVendorLabel = recentVendors.length
+                  ? recentVendors.map((item) => item.name).join(", ")
+                  : "-";
                 return (
                   <div
                     key={row.id}
@@ -3167,24 +3499,28 @@ export default function Agenda() {
                         setSelectedRow(row);
                       }
                     }}
-                    className="w-full rounded-2xl border border-sea/15 bg-white/95 p-4 text-left shadow-sm transition hover:shadow-card focus:outline-none focus:ring-2 focus:ring-sea/50"
+                    className="w-full rounded-2xl border border-sea/15 bg-white/95 p-5 text-left shadow-sm transition hover:shadow-card focus:outline-none focus:ring-2 focus:ring-sea/50"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-semibold text-ink">{empresaLabel}</p>
-                          <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
-                            COD {row.cod_1 ?? "-"}
-                          </span>
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 space-y-2">
+                          <p className="break-words text-sm font-semibold text-ink">{empresaLabel}</p>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
+                              COD {row.cod_1 ?? "-"}
+                            </span>
+                            {row.categoria ? (() => {
+                              const badge = getCategoriaBadgeStyles(row.categoria);
+                              return <span className={badge.className}>{badge.label}</span>;
+                            })() : null}
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
                         <div
-                          className="flex items-center gap-2"
+                          className="shrink-0"
                           onClick={(event) => event.stopPropagation()}
                           onPointerDown={(event) => event.stopPropagation()}
                         >
-                          <label className="flex items-center gap-1 text-[10px] text-ink/60">
+                          <label className="inline-flex items-center gap-1 rounded-full border border-sea/20 bg-white px-2 py-1 text-[10px] text-ink/70">
                             <input
                               type="checkbox"
                               checked={selectedAgendaSet.has(row.id)}
@@ -3192,52 +3528,89 @@ export default function Agenda() {
                               className="h-3.5 w-3.5 accent-sea"
                               aria-label="Selecionar empresa"
                             />
-                            Selecionar
+                            Sel.
                           </label>
                         </div>
-                        {(() => {
-                          const scheduledObs = resolveScheduledObsVisit(row.id, row.instructions);
-                          const completedSummary = resolveLatestCompletedReasonSummary(row.id);
-                          if (!scheduledObs && !completedSummary) return null;
-                          const visitDate = scheduledObs?.visitDate ?? null;
-                          const firstInstructions = scheduledObs?.instructions ?? "";
-                          const badgeText = formatVisitBadge(visitDate);
-                          const titleText = visitDate
-                            ? `Visita agendada: ${formatDate(visitDate)}${
-                                firstInstructions ? ` | Instrucoes: ${firstInstructions}` : ""
-                              }`
-                            : firstInstructions
-                              ? `Instrucoes: ${firstInstructions}`
-                              : "Visita agendada";
-                          return (
-                            <div className="flex flex-col items-end gap-1">
-                              {scheduledObs ? (
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    openScheduleModal(row);
-                                  }}
-                                  onPointerDown={(event) => event.stopPropagation()}
-                                  className="inline-flex min-h-7 items-center justify-center rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-red-700"
-                                  title={titleText}
-                                  aria-label={titleText}
-                                >
-                                  {badgeText}
-                                </button>
-                              ) : null}
-                              {completedSummary ? (
-                                <div className="max-w-[160px] text-right">
-                                  <p className="text-[10px] font-semibold uppercase text-ink/70">
-                                    Motivo: {completedSummary.reason}
-                                  </p>
-                                  <p className="text-[10px] text-ink/60">Vidas: {completedSummary.vidas}</p>
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })()}
                       </div>
+
+                      <div className="grid gap-1 text-[11px] text-ink/70">
+                        <p className="break-words">
+                          <span className="font-semibold text-ink/80">Cidade:</span>{" "}
+                          {(row.cidade ?? "-")} / {(row.uf ?? "-")}
+                        </p>
+                        <p className="break-words">
+                          <span className="font-semibold text-ink/80">Bairro:</span> {row.bairro ?? "-"}
+                        </p>
+                        <p className="break-words">
+                          <span className="font-semibold text-ink/80">Vendedor:</span> {mobileVendorLabel}
+                        </p>
+                        <p className="break-words">
+                          <span className="font-semibold text-ink/80">Ultima visita:</span>{" "}
+                          {resolveLastCompletedVisitDate(row.id, row.data_da_ultima_visita)}
+                        </p>
+                        <p className="break-words">
+                          <span className="font-semibold text-ink/80">Vidas ultima visita:</span>{" "}
+                          {resolveLastCompletedVidas(row.id, row.visit_completed_vidas)}
+                        </p>
+                      </div>
+
+                      {(() => {
+                        const scheduledObs = resolveScheduledObsVisit(row.id, row.instructions);
+                        const hasAnyHistoryDate = recentVendors.some((item) => Boolean(item.visitDate));
+                        if (!scheduledObs && !hasAnyHistoryDate) return null;
+                        const visitDate = scheduledObs?.visitDate ?? null;
+                        const firstInstructions = scheduledObs?.instructions ?? "";
+                        const badgeText = formatVisitBadge(visitDate);
+                        const titleText = visitDate
+                          ? `Visita agendada: ${formatDate(visitDate)}${
+                              firstInstructions ? ` | Instrucoes: ${firstInstructions}` : ""
+                            }`
+                          : firstInstructions
+                            ? `Instrucoes: ${firstInstructions}`
+                            : "Visita agendada";
+                        const historyTooltip = "Ver historico de atribuicao";
+                        return (
+                          <div className="flex flex-wrap items-start gap-2">
+                            {scheduledObs ? (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openScheduleModal(row);
+                                }}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                className="inline-flex min-h-7 items-center justify-center rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-red-700"
+                                title={titleText}
+                                aria-label={titleText}
+                              >
+                                {badgeText}
+                              </button>
+                            ) : null}
+                            {hasAnyHistoryDate ? (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setVendorHistoryModal({
+                                    empresa: row.empresa ?? row.nome_fantasia ?? "Sem empresa",
+                                    codigo: row.cod_1 ?? "-",
+                                    assignments: recentVendors.map((item) => ({
+                                      name: item.name,
+                                      visitDate: item.visitDate,
+                                    })),
+                                  });
+                                }}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-orange-300 bg-orange-50 text-orange-600 hover:border-orange-400 hover:text-orange-700"
+                                title={historyTooltip}
+                                aria-label={historyTooltip}
+                              >
+                                <Clock3 size={12} />
+                              </button>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 );
@@ -3283,25 +3656,26 @@ export default function Agenda() {
 
         <div className="hidden md:block">
           <div className="overflow-x-auto">
-            <table className="w-full table-fixed border-collapse text-left text-sm">
+            <table className="w-full table-fixed border-collapse text-xs">
               <thead className="sticky top-0 z-30 bg-sand/60 shadow-sm overflow-visible">
                 {table.getHeaderGroups().map((headerGroup) => (
                   <tr key={headerGroup.id}>
                     {headerGroup.headers.map((header) => {
                       const isTight = header.column.id === "select" || header.column.id === "obs";
-                      const tightStyles = isTight
+                      const explicitWidth = compactColumnWidths[header.column.id];
+                      const columnStyles = explicitWidth
                         ? {
-                            width: header.getSize(),
-                            minWidth: header.getSize(),
-                            maxWidth: header.getSize(),
+                            width: explicitWidth,
+                            minWidth: explicitWidth,
+                            maxWidth: explicitWidth,
                           }
                         : undefined;
                       return (
                         <th
                           key={header.id}
-                          style={tightStyles}
-                          className={`relative align-top whitespace-normal border-b border-sea/20 py-3 text-xs font-semibold text-ink/70 overflow-visible ${
-                            isTight ? "px-1 text-center" : "px-4"
+                          style={columnStyles}
+                          className={`relative align-top whitespace-normal border-b border-sea/20 py-2 text-[11px] font-semibold text-ink/70 text-center overflow-visible ${
+                            isTight ? "px-1" : "px-2"
                           }`}
                         >
                           {header.isPlaceholder
@@ -3344,19 +3718,20 @@ export default function Agenda() {
                     >
                       {row.getVisibleCells().map((cell) => {
                         const isTight = cell.column.id === "select" || cell.column.id === "obs";
-                        const tightStyles = isTight
+                        const explicitWidth = compactColumnWidths[cell.column.id];
+                        const columnStyles = explicitWidth
                           ? {
-                              width: cell.column.getSize(),
-                              minWidth: cell.column.getSize(),
-                              maxWidth: cell.column.getSize(),
+                              width: explicitWidth,
+                              minWidth: explicitWidth,
+                              maxWidth: explicitWidth,
                             }
                           : undefined;
                         return (
                           <td
                             key={cell.id}
-                            style={tightStyles}
-                            className={`whitespace-normal break-words py-3 text-sm text-ink ${
-                              isTight ? "px-1 text-center" : "px-4"
+                            style={columnStyles}
+                            className={`whitespace-normal break-words py-2 text-xs text-ink ${
+                              isTight ? "px-1 text-center" : "px-2"
                             }`}
                           >
                             {flexRender(cell.column.columnDef.cell, cell.getContext())}

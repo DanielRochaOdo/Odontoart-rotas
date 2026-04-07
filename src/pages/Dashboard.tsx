@@ -67,6 +67,19 @@ type DigitalSummary = {
   hasAnyEntries: boolean;
 };
 
+type VendorNextRoutePreview = {
+  date: string;
+  routes: Array<{
+    client: string;
+    perfil: string;
+  }>;
+};
+
+type NeighborhoodVidasRow = {
+  bairro: string;
+  vidas: number;
+};
+
 const computeVisitStats = (
   data: Array<{
     cliente_id: string | null;
@@ -158,6 +171,7 @@ export default function Dashboard() {
     {
       data_da_ultima_visita: string | null;
       situacao: string | null;
+      bairro: string | null;
       cidade: string | null;
       uf: string | null;
       vendedor: string | null;
@@ -202,6 +216,12 @@ export default function Dashboard() {
     month: 0,
   });
   const [scheduledCountsError, setScheduledCountsError] = useState<string | null>(null);
+  const [vendorNextRouteAccessAllowed, setVendorNextRouteAccessAllowed] = useState(false);
+  const [nextRoutePreview, setNextRoutePreview] = useState<VendorNextRoutePreview | null>(null);
+  const [nextRoutePreviewLoading, setNextRoutePreviewLoading] = useState(false);
+  const [nextRoutePreviewError, setNextRoutePreviewError] = useState<string | null>(null);
+  const [showNextRouteModal, setShowNextRouteModal] = useState(false);
+  const [topNeighborhoodsByVidas, setTopNeighborhoodsByVidas] = useState<NeighborhoodVidasRow[]>([]);
 
   const isVendor = role === "VENDEDOR";
   const canSelectSupervisor = role === "SUPERVISOR" || role === "ASSISTENTE";
@@ -297,7 +317,7 @@ export default function Dashboard() {
       setError(null);
       const { data, error: supabaseError } = await supabase
         .from("clientes")
-        .select("data_da_ultima_visita, situacao, cidade, uf, vendedor")
+        .select("data_da_ultima_visita, situacao, bairro, cidade, uf, vendedor")
         .limit(5000);
 
       if (supabaseError) {
@@ -433,6 +453,262 @@ export default function Dashboard() {
       active = false;
     };
   }, [activeSupervisorId, activeVendorId, activeVendorName, globalFrom, globalTo, isVendor, profile?.display_name, session?.user.id]);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadNeighborhoodLives = async () => {
+      if (!globalFrom || !globalTo || globalFrom > globalTo) {
+        setTopNeighborhoodsByVidas([]);
+        return;
+      }
+
+      try {
+        let visitsQuery = supabase
+          .from("visits")
+          .select(
+            "assigned_to_user_id, assigned_to_name, completed_vidas, completed_at, no_visit_reason, visit_date, cliente:cliente_id (bairro)",
+          )
+          .gte("visit_date", globalFrom)
+          .lte("visit_date", globalTo)
+          .not("completed_at", "is", null)
+          .is("no_visit_reason", null);
+
+        if (isVendor) {
+          if (session?.user.id && profile?.display_name) {
+            visitsQuery = visitsQuery.or(
+              `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
+            );
+          } else if (session?.user.id) {
+            visitsQuery = visitsQuery.eq("assigned_to_user_id", session.user.id);
+          } else if (profile?.display_name) {
+            visitsQuery = visitsQuery.eq("assigned_to_name", profile.display_name);
+          }
+        } else if (activeVendorId || activeVendorName) {
+          if (activeVendorId && activeVendorName) {
+            visitsQuery = visitsQuery.or(
+              `assigned_to_user_id.eq.${activeVendorId},assigned_to_name.eq.${activeVendorName}`,
+            );
+          } else if (activeVendorId) {
+            visitsQuery = visitsQuery.eq("assigned_to_user_id", activeVendorId);
+          } else if (activeVendorName) {
+            visitsQuery = visitsQuery.eq("assigned_to_name", activeVendorName);
+          }
+        } else if (activeSupervisorId) {
+          const vendorsQuery = supabase
+            .from("profiles")
+            .select("user_id, display_name")
+            .eq("role", "VENDEDOR")
+            .eq("supervisor_id", activeSupervisorId);
+          const { data: vendors, error: vendorsError } = await vendorsQuery;
+          if (vendorsError) throw new Error(vendorsError.message);
+
+          const vendorIds = (vendors ?? [])
+            .map((vendor) => vendor.user_id)
+            .filter((value): value is string => Boolean(value));
+          const vendorNames = (vendors ?? [])
+            .map((vendor) => vendor.display_name)
+            .filter((value): value is string => Boolean(value));
+
+          if (vendorIds.length === 0 && vendorNames.length === 0) {
+            if (active) setTopNeighborhoodsByVidas([]);
+            return;
+          }
+
+          if (vendorIds.length && vendorNames.length) {
+            visitsQuery = visitsQuery.or(
+              `assigned_to_user_id.in.(${formatOrValues(vendorIds)}),assigned_to_name.in.(${formatOrValues(vendorNames)})`,
+            );
+          } else if (vendorIds.length) {
+            visitsQuery = visitsQuery.in("assigned_to_user_id", vendorIds);
+          } else {
+            visitsQuery = visitsQuery.in("assigned_to_name", vendorNames);
+          }
+        }
+
+        const { data: visitsData, error: visitsError } = await visitsQuery;
+        if (visitsError) throw new Error(visitsError.message);
+        if (!active) return;
+
+        type NeighborhoodVisitRow = {
+          completed_vidas: number | null;
+          cliente:
+            | { bairro: string | null }
+            | Array<{ bairro: string | null }>
+            | null;
+        };
+
+        const byNeighborhood = new Map<string, number>();
+        ((visitsData ?? []) as NeighborhoodVisitRow[]).forEach((item) => {
+          const cliente = Array.isArray(item.cliente) ? item.cliente[0] ?? null : item.cliente ?? null;
+          const neighborhood = cliente?.bairro?.trim() ?? "";
+          if (!neighborhood) return;
+          const vidas = Number(item.completed_vidas ?? 0);
+          if (!Number.isFinite(vidas)) return;
+          byNeighborhood.set(neighborhood, (byNeighborhood.get(neighborhood) ?? 0) + vidas);
+        });
+
+        const topRows = Array.from(byNeighborhood.entries())
+          .map(([bairro, vidas]) => ({ bairro, vidas }))
+          .sort((a, b) => b.vidas - a.vidas)
+          .slice(0, 6);
+        setTopNeighborhoodsByVidas(topRows);
+      } catch (err) {
+        console.error(err);
+        if (active) setTopNeighborhoodsByVidas([]);
+      }
+    };
+
+    void loadNeighborhoodLives();
+    return () => {
+      active = false;
+    };
+  }, [
+    activeSupervisorId,
+    activeVendorId,
+    activeVendorName,
+    globalFrom,
+    globalTo,
+    isVendor,
+    profile?.display_name,
+    session?.user.id,
+  ]);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadVendorNextRoute = async () => {
+      if (!isVendor) {
+        setVendorNextRouteAccessAllowed(false);
+        setNextRoutePreview(null);
+        setNextRoutePreviewError(null);
+        setShowNextRouteModal(false);
+        return;
+      }
+
+      setNextRoutePreviewLoading(true);
+      setNextRoutePreviewError(null);
+      try {
+        if (!session?.user.id) {
+          setVendorNextRouteAccessAllowed(false);
+          setNextRoutePreview(null);
+          setShowNextRouteModal(false);
+          return;
+        }
+
+        const todayRouteKey = toLocalDateInput(new Date());
+        let nextRouteQuery = supabase
+          .from("visits")
+          .select(
+            "visit_date, perfil_visita, completed_at, assigned_to_user_id, assigned_to_name, cliente:cliente_id (empresa, nome_fantasia)",
+          )
+          .gt("visit_date", todayRouteKey)
+          .is("completed_at", null)
+          .order("visit_date", { ascending: true })
+          .limit(120);
+
+        if (session.user.id && profile?.display_name) {
+          nextRouteQuery = nextRouteQuery.or(
+            `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
+          );
+        } else if (session.user.id) {
+          nextRouteQuery = nextRouteQuery.eq("assigned_to_user_id", session.user.id);
+        } else if (profile?.display_name) {
+          nextRouteQuery = nextRouteQuery.eq("assigned_to_name", profile.display_name);
+        }
+
+        const { data: nextRoutesData, error: nextRoutesError } = await nextRouteQuery;
+        if (nextRoutesError) throw new Error(nextRoutesError.message);
+        if (!active) return;
+
+        type NextRouteRow = {
+          visit_date: string | null;
+          perfil_visita: string | null;
+          cliente:
+            | { empresa: string | null; nome_fantasia: string | null }
+            | Array<{ empresa: string | null; nome_fantasia: string | null }>
+            | null;
+        };
+        const futureRoutes = ((nextRoutesData ?? []) as NextRouteRow[]).filter(
+          (row): row is NextRouteRow & { visit_date: string } => Boolean(row.visit_date),
+        );
+
+        if (futureRoutes.length === 0) {
+          setVendorNextRouteAccessAllowed(true);
+          setNextRoutePreview(null);
+          setShowNextRouteModal(false);
+          return;
+        }
+
+        const candidateDates = Array.from(
+          new Set(
+            futureRoutes
+              .map((row) => row.visit_date)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        );
+        if (candidateDates.length === 0) {
+          setVendorNextRouteAccessAllowed(false);
+          setNextRoutePreview(null);
+          setShowNextRouteModal(false);
+          return;
+        }
+
+        const { data: releasedDatesData, error: releasedDatesError } = await supabase
+          .from("vendor_next_route_releases")
+          .select("release_date")
+          .eq("vendor_user_id", session.user.id)
+          .in("release_date", candidateDates);
+        if (releasedDatesError) throw new Error(releasedDatesError.message);
+        if (!active) return;
+
+        const releasedDateSet = new Set(
+          ((releasedDatesData ?? []) as Array<{ release_date: string | null }>)
+            .map((item) => item.release_date)
+            .filter((value): value is string => Boolean(value)),
+        );
+
+        const releasedRoute = futureRoutes.find((route) => releasedDateSet.has(route.visit_date));
+        if (!releasedRoute) {
+          setVendorNextRouteAccessAllowed(false);
+          setNextRoutePreview(null);
+          setShowNextRouteModal(false);
+          return;
+        }
+
+        const releasedDateRoutes = futureRoutes.filter(
+          (route) => route.visit_date === releasedRoute.visit_date,
+        );
+        const routeItems = releasedDateRoutes.map((route) => {
+          const cliente = Array.isArray(route.cliente) ? route.cliente[0] ?? null : route.cliente ?? null;
+          return {
+            client: cliente?.empresa ?? cliente?.nome_fantasia ?? "Sem empresa",
+            perfil: route.perfil_visita?.trim() || "-",
+          };
+        });
+        setVendorNextRouteAccessAllowed(true);
+        setNextRoutePreview({
+          date: formatDateBr(releasedRoute.visit_date, "-"),
+          routes: routeItems,
+        });
+      } catch (err) {
+        if (!active) return;
+        setVendorNextRouteAccessAllowed(false);
+        setNextRoutePreview(null);
+        setShowNextRouteModal(false);
+        setNextRoutePreviewError(
+          err instanceof Error ? err.message : "Erro ao carregar a proxima rota.",
+        );
+      } finally {
+        if (active) setNextRoutePreviewLoading(false);
+      }
+    };
+
+    void loadVendorNextRoute();
+    return () => {
+      active = false;
+    };
+  }, [isVendor, profile?.display_name, session?.user.id]);
 
   useEffect(() => {
     if (!isVendor) return;
@@ -1030,7 +1306,6 @@ export default function Dashboard() {
 
     const totals = { today: 0, week: 0, month: 0 };
     const byStatus: Record<string, number> = {};
-    const byCity: Record<string, number> = {};
     const byVendor: Record<string, number> = {};
 
     summaryRows.forEach((row) => {
@@ -1047,21 +1322,15 @@ export default function Dashboard() {
         byStatus[row.situacao] = (byStatus[row.situacao] ?? 0) + 1;
       }
 
-      if (row.cidade || row.uf) {
-        const label = [row.cidade, row.uf].filter(Boolean).join(" / ");
-        byCity[label] = (byCity[label] ?? 0) + 1;
-      }
-
       if (row.vendedor) {
         byVendor[row.vendedor] = (byVendor[row.vendedor] ?? 0) + 1;
       }
     });
 
     const topStatus = Object.entries(byStatus).sort((a, b) => b[1] - a[1]).slice(0, 6);
-    const topCities = Object.entries(byCity).sort((a, b) => b[1] - a[1]).slice(0, 6);
     const ranking = Object.entries(byVendor).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
-    return { totals, topStatus, topCities, ranking, byVendor };
+    return { totals, topStatus, ranking, byVendor };
   }, [summaryRows]);
 
   const vendorVisitsList = useMemo(
@@ -1290,7 +1559,7 @@ export default function Dashboard() {
               {scheduledCountsError}
             </div>
           )}
-          <section className="grid gap-4 md:grid-cols-3">
+          <section className={`grid gap-4 ${isVendor ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
             <div className="rounded-2xl border border-sea/20 bg-sand/40 p-5">
               <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Hoje</p>
               <p className="mt-2 font-display text-3xl text-ink">
@@ -1312,7 +1581,40 @@ export default function Dashboard() {
               </p>
               <p className="text-xs text-ink/60">Visitas marcadas para o mes</p>
             </div>
+            {isVendor && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (vendorNextRouteAccessAllowed && nextRoutePreview) {
+                    setShowNextRouteModal(true);
+                  }
+                }}
+                disabled={!vendorNextRouteAccessAllowed || !nextRoutePreview}
+                className={`rounded-2xl border border-sea/20 bg-sand/40 p-5 text-left ${
+                  !vendorNextRouteAccessAllowed || !nextRoutePreview
+                    ? "cursor-not-allowed opacity-80"
+                    : "transition hover:border-sea hover:bg-sand/55"
+                }`}
+              >
+                <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Proxima rota</p>
+                {nextRoutePreviewLoading ? (
+                  <p className="mt-2 text-sm text-ink/70">Carregando...</p>
+                ) : !vendorNextRouteAccessAllowed ? (
+                  <p className="mt-2 text-sm text-ink/70">visualização não disponivel</p>
+                ) : nextRoutePreview ? (
+                  <p className="mt-2 font-display text-3xl text-ink">{nextRoutePreview.date}</p>
+                ) : (
+                  <p className="mt-2 text-sm text-ink/70">Nenhuma rota agendada.</p>
+                )}
+                <p className="text-xs text-ink/60">
+                  {vendorNextRouteAccessAllowed && nextRoutePreview ? "Clique para ver detalhes" : ""}
+                </p>
+              </button>
+            )}
           </section>
+          {isVendor && nextRoutePreviewError ? (
+            <p className="text-xs text-red-500">{nextRoutePreviewError}</p>
+          ) : null}
 
           {canViewTeamStats && (
             <section className="rounded-2xl border border-sea/15 bg-white/90 p-5">
@@ -1410,17 +1712,17 @@ export default function Dashboard() {
           <section className="grid gap-4 lg:grid-cols-2">
             <div className="rounded-2xl border border-sea/15 bg-white/90 p-5">
               <div className="flex items-center justify-between">
-                <h3 className="font-display text-lg text-ink">Por cidade / UF</h3>
+                <h3 className="font-display text-lg text-ink">Por bairro</h3>
                 <span className="text-xs text-ink/60">Top 6</span>
               </div>
               <div className="mt-4 space-y-2">
-                {summary.topCities.length === 0 ? (
+                {topNeighborhoodsByVidas.length === 0 ? (
                   <p className="text-sm text-ink/60">Sem dados.</p>
                 ) : (
-                  summary.topCities.map(([label, value]) => (
-                    <div key={label} className="flex items-center justify-between text-sm">
-                      <span className="text-ink">{label}</span>
-                      <span className="font-semibold text-sea">{formatNumber(value)}</span>
+                  topNeighborhoodsByVidas.map((item) => (
+                    <div key={item.bairro} className="flex items-center justify-between text-sm">
+                      <span className="text-ink">{item.bairro}</span>
+                      <span className="font-semibold text-sea">{formatNumber(item.vidas)} vidas</span>
                     </div>
                   ))
                 )}
@@ -1713,6 +2015,56 @@ export default function Dashboard() {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isVendor && showNextRouteModal && nextRoutePreview && vendorNextRouteAccessAllowed && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setShowNextRouteModal(false)}
+            aria-label="Fechar modal da proxima rota"
+          />
+          <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-display text-lg text-ink">Proxima rota</h3>
+                <p className="mt-1 text-xs text-ink/60">Visualizacao somente leitura.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowNextRouteModal(false)}
+                className="rounded-full border border-sea/30 bg-white px-3 py-1 text-xs text-ink/70 hover:border-sea"
+              >
+                Fechar
+              </button>
+            </div>
+            <div className="mt-4 space-y-2 rounded-2xl border border-sea/15 bg-sand/25 p-4 text-sm text-ink/80">
+              <p>
+                <span className="font-semibold text-ink">Data:</span> {nextRoutePreview.date}
+              </p>
+              <p>
+                <span className="font-semibold text-ink">Empresas:</span>{" "}
+                {nextRoutePreview.routes.length}
+              </p>
+              <div className="space-y-2">
+                {nextRoutePreview.routes.map((route, index) => (
+                  <div
+                    key={`${route.client}-${route.perfil}-${index}`}
+                    className="rounded-xl border border-sea/15 bg-white/80 p-3"
+                  >
+                    <p>
+                      <span className="font-semibold text-ink">Cliente:</span> {route.client}
+                    </p>
+                    <p>
+                      <span className="font-semibold text-ink">Perfil:</span> {route.perfil}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>

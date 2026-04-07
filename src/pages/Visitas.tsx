@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { addDays, endOfMonth, format, isAfter, isSameDay, startOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -7,6 +7,8 @@ import {
   ChevronRight,
   DollarSign,
   Eye,
+  Lock,
+  LockOpen,
   LoaderCircle,
   MapPin,
   Pencil,
@@ -14,7 +16,7 @@ import {
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { fetchVendedores } from "../lib/agendaApi";
-import { onProfilesUpdated } from "../lib/profileEvents";
+import { emitProfilesUpdated, onProfilesUpdated } from "../lib/profileEvents";
 import {
   extractOdontoartPlanoValores,
   fetchEmpresaByEmpresaId,
@@ -133,6 +135,13 @@ type VendorOption = {
   display_name: string | null;
   role: string;
   supervisor_id?: string | null;
+};
+
+type VendorDashboardAccessModalState = {
+  vendorUserId: string;
+  vendorName: string;
+  releaseDate: string;
+  grantAccess: boolean;
 };
 
 const formatDateKey = (value: string) => {
@@ -367,6 +376,11 @@ export default function Visitas() {
   const [detailsInstructionSaving, setDetailsInstructionSaving] = useState(false);
   const [detailsInstructionMessage, setDetailsInstructionMessage] = useState<string | null>(null);
   const [planoValoresModal, setPlanoValoresModal] = useState<PlanoValoresModalState | null>(null);
+  const [vendorDashboardAccessModal, setVendorDashboardAccessModal] =
+    useState<VendorDashboardAccessModalState | null>(null);
+  const [vendorDashboardAccessSaving, setVendorDashboardAccessSaving] = useState(false);
+  const [vendorDashboardAccessError, setVendorDashboardAccessError] = useState<string | null>(null);
+  const [releasedVendorIdsForDate, setReleasedVendorIdsForDate] = useState<string[]>([]);
   const detailsObsRequestRef = useRef(0);
 
   useEffect(() => {
@@ -761,7 +775,19 @@ export default function Visitas() {
     () => new Map(vendors.map((vendor) => [vendor.user_id, vendor])),
     [vendors],
   );
-
+  const vendorByName = useMemo(() => {
+    const map = new Map<string, VendorOption>();
+    vendors.forEach((vendor) => {
+      const normalizedName = normalize(vendor.display_name);
+      if (!normalizedName || map.has(normalizedName)) return;
+      map.set(normalizedName, vendor);
+    });
+    return map;
+  }, [vendors]);
+  const selectedDateKey = useMemo(
+    () => (selectedDate ? format(selectedDate, "yyyy-MM-dd") : ""),
+    [selectedDate],
+  );
   const groupedBySeller = useMemo(() => {
     const groups: Record<string, VisitRow[]> = {};
     selectedVisits.forEach((visit) => {
@@ -776,6 +802,68 @@ export default function Visitas() {
     });
     return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
   }, [selectedVisits, vendorById]);
+  const releasedVendorIdSet = useMemo(
+    () => new Set(releasedVendorIdsForDate),
+    [releasedVendorIdsForDate],
+  );
+
+  const resolveSellerVendor = useCallback((seller: string, items: VisitRow[]) => {
+    for (const item of items) {
+      if (!item.assigned_to_user_id) continue;
+      const matched = vendorById.get(item.assigned_to_user_id);
+      if (matched) return matched;
+    }
+    const normalizedSeller = normalize(seller);
+    if (!normalizedSeller) return null;
+    return vendorByName.get(normalizedSeller) ?? null;
+  }, [vendorById, vendorByName]);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadVendorRouteReleaseByDate = async () => {
+      if (!canManage || !selectedDateKey) {
+        setReleasedVendorIdsForDate([]);
+        return;
+      }
+
+      const vendorIds = Array.from(
+        new Set(
+          groupedBySeller
+            .map(([seller, items]) => resolveSellerVendor(seller, items)?.user_id ?? "")
+            .filter(Boolean),
+        ),
+      );
+
+      if (vendorIds.length === 0) {
+        setReleasedVendorIdsForDate([]);
+        return;
+      }
+
+      const { data, error: releasesError } = await supabase
+        .from("vendor_next_route_releases")
+        .select("vendor_user_id")
+        .eq("release_date", selectedDateKey)
+        .in("vendor_user_id", vendorIds);
+
+      if (!active) return;
+      if (releasesError) {
+        console.error(releasesError);
+        setReleasedVendorIdsForDate([]);
+        return;
+      }
+
+      const next = (data ?? [])
+        .map((item) => item.vendor_user_id)
+        .filter((value): value is string => Boolean(value));
+      setReleasedVendorIdsForDate(next);
+    };
+
+    void loadVendorRouteReleaseByDate();
+    return () => {
+      active = false;
+    };
+  }, [canManage, groupedBySeller, resolveSellerVendor, selectedDateKey]);
 
   useEffect(() => {
     if (!visits.length) {
@@ -1712,6 +1800,52 @@ export default function Visitas() {
     }
   };
 
+  const handleConfirmVendorDashboardAccess = async () => {
+    if (!vendorDashboardAccessModal) return;
+    setVendorDashboardAccessSaving(true);
+    setVendorDashboardAccessError(null);
+    try {
+      if (vendorDashboardAccessModal.grantAccess) {
+        const { error: upsertError } = await supabase
+          .from("vendor_next_route_releases")
+          .upsert(
+            {
+              vendor_user_id: vendorDashboardAccessModal.vendorUserId,
+              release_date: vendorDashboardAccessModal.releaseDate,
+              released_by_user_id: session?.user.id ?? null,
+            },
+            { onConflict: "vendor_user_id,release_date" },
+          );
+        if (upsertError) throw new Error(upsertError.message);
+      } else {
+        const { error: deleteError } = await supabase
+          .from("vendor_next_route_releases")
+          .delete()
+          .eq("vendor_user_id", vendorDashboardAccessModal.vendorUserId)
+          .eq("release_date", vendorDashboardAccessModal.releaseDate);
+        if (deleteError) throw new Error(deleteError.message);
+      }
+
+      setReleasedVendorIdsForDate((prev) => {
+        const next = new Set(prev);
+        if (vendorDashboardAccessModal.grantAccess) {
+          next.add(vendorDashboardAccessModal.vendorUserId);
+        } else {
+          next.delete(vendorDashboardAccessModal.vendorUserId);
+        }
+        return Array.from(next);
+      });
+      emitProfilesUpdated();
+      setVendorDashboardAccessModal(null);
+    } catch (err) {
+      setVendorDashboardAccessError(
+        err instanceof Error ? err.message : "Erro ao atualizar permissao do vendedor.",
+      );
+    } finally {
+      setVendorDashboardAccessSaving(false);
+    }
+  };
+
   const updateCustomOptions = (options: string[]) => {
     setCompleteVisit((prev) => {
       if (!prev) return prev;
@@ -1871,16 +2005,56 @@ export default function Visitas() {
               <div className="mt-4 space-y-4">
                 {groupedBySeller.map(([seller, items]) => {
                   const isExpanded = expandedVendor === seller;
+                  const sellerVendor = resolveSellerVendor(seller, items);
+                  const canAccessNextRouteDashboard = Boolean(
+                    sellerVendor && releasedVendorIdSet.has(sellerVendor.user_id),
+                  );
+                  const lockTooltip = canAccessNextRouteDashboard
+                    ? `Acesso liberado para ${selectedDate ? format(selectedDate, "dd/MM/yyyy") : "a data selecionada"}`
+                    : `Acesso bloqueado para ${selectedDate ? format(selectedDate, "dd/MM/yyyy") : "a data selecionada"}`;
                   return (
                     <div key={seller} className="rounded-2xl border border-sea/20 bg-sand/20 p-3">
-                      <button
-                        type="button"
-                        onClick={() => setExpandedVendor(isExpanded ? null : seller)}
-                        className="flex w-full items-center justify-between text-left"
-                      >
-                        <span className="text-sm font-semibold text-ink">{seller}</span>
-                        <span className="text-xs text-ink/60">{items.length} empresa(s)</span>
-                      </button>
+                      <div className="flex w-full items-center justify-between text-left">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedVendor(isExpanded ? null : seller)}
+                            className="text-sm font-semibold text-ink"
+                          >
+                            {seller}
+                          </button>
+                          {canManage && sellerVendor ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setVendorDashboardAccessError(null);
+                                setVendorDashboardAccessModal({
+                                  vendorUserId: sellerVendor.user_id,
+                                  vendorName: sellerVendor.display_name ?? seller,
+                                  releaseDate: selectedDateKey,
+                                  grantAccess: !canAccessNextRouteDashboard,
+                                });
+                              }}
+                              className={`inline-flex h-5 w-5 items-center justify-center rounded-full border ${
+                                canAccessNextRouteDashboard
+                                  ? "border-emerald-400 bg-emerald-50 text-emerald-600 hover:border-emerald-500"
+                                  : "border-red-300 bg-red-50 text-red-600 hover:border-red-400"
+                              }`}
+                              title={lockTooltip}
+                              aria-label={lockTooltip}
+                            >
+                              {canAccessNextRouteDashboard ? <LockOpen size={11} /> : <Lock size={11} />}
+                            </button>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedVendor(isExpanded ? null : seller)}
+                          className="text-xs text-ink/60"
+                        >
+                          {items.length} empresa(s)
+                        </button>
+                      </div>
 
                       {isExpanded && (
                         <div className="mt-3 space-y-3 text-xs text-ink/70">
@@ -2270,6 +2444,52 @@ export default function Visitas() {
         </div>
       )}
 
+      {vendorDashboardAccessModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => (vendorDashboardAccessSaving ? null : setVendorDashboardAccessModal(null))}
+          />
+          <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Liberar proxima rota</h3>
+            <p className="mt-2 text-sm text-ink/80">
+              O vendedor{" "}
+              <span className="font-semibold text-ink">{vendorDashboardAccessModal.vendorName}</span>{" "}
+              {vendorDashboardAccessModal.grantAccess ? "tera" : "nao tera"} acesso ao bloco
+              Proxima rota no dashboard em{" "}
+              <span className="font-semibold text-ink">
+                {format(new Date(`${vendorDashboardAccessModal.releaseDate}T12:00:00`), "dd/MM/yyyy")}
+              </span>.
+            </p>
+            <p className="mt-2 text-xs text-amber-700">
+              Aviso: essa liberacao vale apenas para esta data. Para outras datas, libere manualmente.
+            </p>
+            {vendorDashboardAccessError ? (
+              <p className="mt-3 text-xs text-red-500">{vendorDashboardAccessError}</p>
+            ) : null}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setVendorDashboardAccessModal(null)}
+                disabled={vendorDashboardAccessSaving}
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-60"
+              >
+                Nao
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmVendorDashboardAccess}
+                disabled={vendorDashboardAccessSaving}
+                className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+              >
+                {vendorDashboardAccessSaving ? "Salvando..." : "Sim"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {completeVisit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <button
@@ -2620,5 +2840,6 @@ export default function Visitas() {
     </div>
   );
 }
+
 
 

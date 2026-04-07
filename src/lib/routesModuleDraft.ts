@@ -16,7 +16,7 @@ export type RoutesModuleDraftState = {
   radiusResultIds?: string[];
 };
 
-const ROUTES_MODULE_DRAFT_STORAGE_KEY = "routesModuleDraft";
+const ROUTES_MODULE_DRAFT_STORAGE_KEY = "routesModuleDraftV2";
 
 const normalizeString = (value: unknown) => (typeof value === "string" ? value : "");
 

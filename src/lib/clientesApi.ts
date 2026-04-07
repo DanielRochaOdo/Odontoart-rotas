@@ -18,28 +18,42 @@ const normalizePerfilTimes = (value: string | null) => {
 
 export const fetchClientes = async () => {
   const PAGE_SIZE = 1000;
+  const CONCURRENCY = 4;
   const rowsById = new Map<string, ClienteRow>();
-  let from = 0;
+  const { count, error: countError } = await supabase
+    .from("clientes")
+    .select("id", { count: "exact", head: true });
+  if (countError) throw new Error(countError.message);
+  const total = count ?? 0;
+  if (total === 0) return [] as ClienteRow[];
 
-  while (true) {
-    const to = from + PAGE_SIZE - 1;
+  const fetchRange = async (from: number, to: number) => {
     const { data, error } = await supabase
       .from("clientes")
       .select(CLIENTES_SELECT_COLUMNS)
       // Stable ordering avoids duplicates/missing rows across paginated ranges.
       .order("id", { ascending: true })
       .range(from, to);
-
     if (error) throw new Error(error.message);
+    return (data ?? []) as ClienteRow[];
+  };
 
-    const batch = (data ?? []) as ClienteRow[];
-    batch.forEach((row) => {
-      if (!row.id) return;
-      rowsById.set(row.id, row);
+  const starts = Array.from(
+    { length: Math.ceil(total / PAGE_SIZE) },
+    (_, index) => index * PAGE_SIZE,
+  );
+
+  for (let index = 0; index < starts.length; index += CONCURRENCY) {
+    const chunk = starts.slice(index, index + CONCURRENCY);
+    const batches = await Promise.all(
+      chunk.map((start) => fetchRange(start, start + PAGE_SIZE - 1)),
+    );
+    batches.forEach((batch) => {
+      batch.forEach((row) => {
+        if (!row.id) return;
+        rowsById.set(row.id, row);
+      });
     });
-
-    if (batch.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
   }
 
   return Array.from(rowsById.values());
