@@ -15,6 +15,50 @@ export type ManagedProfile = {
   vendedor?: { id: string; display_name: string | null } | null;
 };
 
+const EMAIL_LOOKUP_COOLDOWN_MS = 60_000;
+let emailLookupBlockedUntil = 0;
+
+const invokeManageUsers = async (body: {
+  action: "create" | "delete" | "update" | "list-emails";
+  payload: Record<string, unknown>;
+}) => {
+  const {
+    data: { session: currentSession },
+  } = await supabase.auth.getSession();
+
+  let session = currentSession;
+  const expiresAtMs = (session?.expires_at ?? 0) * 1000;
+  const shouldRefresh = !session || expiresAtMs - Date.now() < 30_000;
+
+  if (shouldRefresh) {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (!error && data.session) {
+      session = data.session;
+    }
+  }
+
+  const accessToken = session?.access_token;
+  if (!accessToken) {
+    throw new Error("Sessao expirada. Faca login novamente.");
+  }
+
+  const anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() ?? "";
+  const firstAttempt = await supabase.functions.invoke("manage-users", {
+    body,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(anonKey ? { apikey: anonKey } : {}),
+    },
+  });
+
+  if (!firstAttempt.error) return firstAttempt;
+
+  const secondAttempt = await supabase.functions.invoke("manage-users", {
+    body,
+  });
+  return secondAttempt;
+};
+
 export const fetchManagedProfiles = async () => {
   const { data, error } = await supabase
     .from("profiles")
@@ -81,8 +125,9 @@ export const createManagedUser = async (payload: {
   supervisor_id?: string | null;
   vendedor_id?: string | null;
 }) => {
-  const { data, error } = await supabase.functions.invoke("manage-users", {
-    body: { action: "create", payload },
+  const { data, error } = await invokeManageUsers({
+    action: "create",
+    payload: payload as unknown as Record<string, unknown>,
   });
 
   if (error) throw new Error(error.message);
@@ -91,8 +136,9 @@ export const createManagedUser = async (payload: {
 };
 
 export const deleteManagedUser = async (user_id: string) => {
-  const { data, error } = await supabase.functions.invoke("manage-users", {
-    body: { action: "delete", payload: { user_id } },
+  const { data, error } = await invokeManageUsers({
+    action: "delete",
+    payload: { user_id },
   });
 
   if (error) throw new Error(error.message);
@@ -104,8 +150,9 @@ export const updateManagedUserCredentials = async (payload: {
   email?: string | null;
   password?: string | null;
 }) => {
-  const { data, error } = await supabase.functions.invoke("manage-users", {
-    body: { action: "update", payload },
+  const { data, error } = await invokeManageUsers({
+    action: "update",
+    payload: payload as unknown as Record<string, unknown>,
   });
 
   if (error) throw new Error(error.message);
@@ -115,17 +162,45 @@ export const updateManagedUserCredentials = async (payload: {
 export const fetchManagedUserEmails = async (userIds: string[]) => {
   const uniqueIds = [...new Set(userIds.filter(Boolean))];
   if (uniqueIds.length === 0) return {} as Record<string, string>;
-
-  const { data, error } = await supabase.functions.invoke("manage-users", {
-    body: { action: "list-emails", payload: { user_ids: uniqueIds } },
-  });
-
-  // Backward-compatible fallback: older deployed function may not support list-emails yet.
-  if (error) {
-    console.warn("manage-users list-emails unavailable:", error.message);
+  if (Date.now() < emailLookupBlockedUntil) {
     return {} as Record<string, string>;
   }
-  return (data?.emails ?? {}) as Record<string, string>;
+
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let data: { emails?: Record<string, string>; missing_user_ids?: string[] } | null = null;
+    let error: Error | null = null;
+    try {
+      const response = await invokeManageUsers({
+        action: "list-emails",
+        payload: { user_ids: uniqueIds },
+      });
+      data = (response.data ?? null) as { emails?: Record<string, string>; missing_user_ids?: string[] } | null;
+      error = response.error ? new Error(response.error.message) : null;
+    } catch (invokeError) {
+      error = invokeError instanceof Error ? invokeError : new Error("Erro ao consultar e-mails.");
+    }
+
+    if (!error) {
+      const missingUserIds = Array.isArray(data?.missing_user_ids)
+        ? (data.missing_user_ids as string[])
+        : [];
+      if (missingUserIds.length > 0) {
+        console.warn(`manage-users list-emails missing ${missingUserIds.length} user(s).`);
+      }
+      return (data?.emails ?? {}) as Record<string, string>;
+    }
+
+    lastError = new Error(error.message);
+    if (attempt === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      continue;
+    }
+  }
+
+  emailLookupBlockedUntil = Date.now() + EMAIL_LOOKUP_COOLDOWN_MS;
+  console.warn("manage-users list-emails unavailable:", lastError?.message ?? "unknown error");
+  return {} as Record<string, string>;
 };
 
 export const deleteProfileOnly = async (id: string) => {

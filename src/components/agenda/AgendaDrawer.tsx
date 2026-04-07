@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { DollarSign, LoaderCircle } from "lucide-react";
+import { useMemo, useState } from "react";
+import { DollarSign, LoaderCircle, MapPin } from "lucide-react";
 import type { AgendaRow } from "../../types/agenda";
 import { supabase } from "../../lib/supabase";
 import { fetchNominatimByAddress } from "../../lib/nominatim";
@@ -175,6 +175,7 @@ export default function AgendaDrawer({
   const [deletePassword, setDeletePassword] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [bairroLoading, setBairroLoading] = useState(false);
+  const [bairroLookupError, setBairroLookupError] = useState<string | null>(null);
   const [planoValoresModal, setPlanoValoresModal] = useState<PlanoValoresModalState | null>(null);
   const initialPerfilValue = normalizePerfilVisita(row?.perfil_visita ?? "");
   const initialCustomTimes = extractCustomTimes(row?.perfil_visita ?? null);
@@ -246,49 +247,43 @@ export default function AgendaDrawer({
     return values;
   }, [supervisorOptions, formState?.supervisor]);
 
-  useEffect(() => {
-    if (!isEditing || !formState) {
-      setBairroLoading(false);
-      return;
-    }
+  if (!row || !formState) return null;
+
+  const canSearchBairro = Boolean(
+    formState.endereco.trim() && formState.cidade.trim() && formState.uf.trim(),
+  );
+
+  const handleBairroLookup = async () => {
+    if (!isEditing || !formState) return;
     const road = formState.endereco.trim();
     const city = formState.cidade.trim();
     const state = formState.uf.trim();
     if (!road || !city || !state) {
-      setBairroLoading(false);
+      setBairroLookupError("Informe endereco, cidade e UF.");
       return;
     }
-    const controller = new AbortController();
-    const handler = window.setTimeout(async () => {
-      setBairroLoading(true);
-      try {
-        const mapped = await fetchNominatimByAddress(road, city, state, controller.signal);
-        if (mapped?.bairro) {
-          setFormState((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  bairro: mapped.bairro ?? prev.bairro,
-                }
-              : prev,
-          );
-        }
-      } catch (err) {
-        if ((err as Error).name !== "AbortError") {
-          console.error(err);
-        }
-      } finally {
-        setBairroLoading(false);
-      }
-    }, 600);
-    return () => {
-      window.clearTimeout(handler);
-      controller.abort();
-      setBairroLoading(false);
-    };
-  }, [formState, isEditing, formState?.endereco, formState?.cidade, formState?.uf]);
 
-  if (!row || !formState) return null;
+    setBairroLoading(true);
+    setBairroLookupError(null);
+    try {
+      const mapped = await fetchNominatimByAddress(road, city, state);
+      if (!mapped?.bairro?.trim()) {
+        throw new Error("Bairro nao encontrado.");
+      }
+      setFormState((prev) =>
+        prev
+          ? {
+              ...prev,
+              bairro: mapped.bairro ?? prev.bairro,
+            }
+          : prev,
+      );
+    } catch {
+      setBairroLookupError("Bairro nao encontrado ou API indisponivel.");
+    } finally {
+      setBairroLoading(false);
+    }
+  };
 
   const openPlanoValoresModal = async (
     codigoRaw: string | null | undefined,
@@ -816,24 +811,41 @@ export default function AgendaDrawer({
                   </div>
                 ) : field.key === "bairro" ? (
                   <>
-                    <input
-                      type={field.type}
-                      value={formState[field.key]}
-                      onChange={(event) =>
-                        setFormState((prev) =>
-                          prev
-                            ? {
-                                ...prev,
-                                [field.key]: event.target.value,
-                              }
-                            : prev,
-                        )
-                      }
-                      className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                    />
+                    <div className="flex items-end gap-2">
+                      <input
+                        type={field.type}
+                        value={formState[field.key]}
+                        onChange={(event) =>
+                          setFormState((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  [field.key]: event.target.value,
+                                }
+                              : prev,
+                          )
+                        }
+                        className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleBairroLookup()}
+                        disabled={!canSearchBairro || bairroLoading}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                        title={bairroLoading ? "Buscando bairro..." : "Buscar bairro por endereco"}
+                        aria-label={bairroLoading ? "Buscando bairro..." : "Buscar bairro por endereco"}
+                      >
+                        <MapPin size={15} className={bairroLoading ? "animate-pulse" : ""} />
+                      </button>
+                    </div>
                     {bairroLoading && (
                       <span className="text-[10px] font-normal text-ink/50 animate-pulse">
                         Buscando bairro...
+                      </span>
+                    )}
+                    {bairroLookupError && (
+                      <span className="text-[10px] font-normal text-red-600">
+                        {bairroLookupError}
                       </span>
                     )}
                   </>

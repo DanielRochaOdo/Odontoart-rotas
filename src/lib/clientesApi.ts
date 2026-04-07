@@ -4,7 +4,7 @@ import { extractCustomTimes } from "./perfilVisita";
 import { fetchNominatimCoordinatesByAddress, fetchNominatimCoordinatesByQuery } from "./nominatim";
 const DEFAULT_SITUACAO = "Ativo";
 const CLIENTES_SELECT_COLUMNS =
-  "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf, created_at";
+  "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf, latitude, longitude, geocode_source, geocode_updated_at, created_at";
 
 const normalizePerfilTimes = (value: string | null) => {
   if (!value) return { perfil: null as string | null, opcoes: null as string | null };
@@ -270,6 +270,8 @@ export const upsertClientes = async (
 };
 
 export const syncAgendaForCliente = async (cliente: ClienteRow) => {
+  if (cliente.latitude !== null && cliente.longitude !== null) return;
+
   const road = [cliente.endereco?.trim(), cliente.bairro?.trim()].filter(Boolean).join(", ");
   const city = cliente.cidade?.trim();
   const state = cliente.uf?.trim();

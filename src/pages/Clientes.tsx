@@ -773,8 +773,6 @@ export default function Clientes() {
   const [cnpjError, setCnpjError] = useState<string | null>(null);
   const [cepLoadingEdit, setCepLoadingEdit] = useState(false);
   const [cepErrorEdit, setCepErrorEdit] = useState<string | null>(null);
-  const [codigoLoadingEdit, setCodigoLoadingEdit] = useState(false);
-  const [codigoErrorEdit, setCodigoErrorEdit] = useState<string | null>(null);
   const [cnpjLoadingEdit, setCnpjLoadingEdit] = useState(false);
   const [cnpjErrorEdit, setCnpjErrorEdit] = useState<string | null>(null);
   const [importProgress, setImportProgress] = useState(0);
@@ -1983,44 +1981,6 @@ export default function Clientes() {
     }
   };
 
-  const handleCodigoLookupEdit = async () => {
-    const empresaId = editForm.codigo.trim();
-    if (!empresaId) {
-      setCodigoErrorEdit("Informe o codigo da empresa.");
-      return;
-    }
-    if (findClientesByCodigo(empresaId, selected?.id ?? null).length > 0) {
-      openCodigoDuplicadoModal({
-        codigo: empresaId,
-        origem: "edit",
-        excludeId: selected?.id ?? null,
-        obsAtual: editForm.obs,
-      });
-      return;
-    }
-    setCodigoLoadingEdit(true);
-    setCodigoErrorEdit(null);
-    try {
-      const empresaApi = await fetchEmpresaByEmpresaId(empresaId);
-      if (!empresaApi) {
-        throw new Error("Empresa nao encontrada na API.");
-      }
-      const planoValores = extractOdontoartPlanoValores(empresaApi);
-      const formData = await enrichFormDataCepByAddress(
-        mapEmpresaApiToClienteForm(empresaApi, empresaId),
-      );
-      setEditForm(formData);
-      setEditPlanoValores(planoValores);
-      setPerfilEdit(buildPerfilState(null));
-      setCepErrorEdit(null);
-      setAddressLookupErrorEdit(null);
-    } catch (err) {
-      setCodigoErrorEdit(err instanceof Error ? err.message : "Erro ao buscar codigo na API.");
-    } finally {
-      setCodigoLoadingEdit(false);
-    }
-  };
-
   const handleCnpjLookupEdit = async () => {
     const cnpj = sanitizeCnpjDigits(editForm.cnpj);
     if (cnpj.length !== 14) {
@@ -2236,9 +2196,9 @@ export default function Clientes() {
           duplicateCandidates.push({
             newCliente: {
               id: `import-${index}`,
-	              codigo: payload.codigo ?? null,
-	              cnpj: payload.cnpj ?? null,
-	              corte: payload.corte ?? null,
+              codigo: payload.codigo ?? null,
+              cnpj: payload.cnpj ?? null,
+              corte: payload.corte ?? null,
               venc: payload.venc ?? null,
               valor: payload.valor ?? null,
               data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
@@ -2258,6 +2218,10 @@ export default function Clientes() {
               bairro: payload.bairro ?? null,
               cidade: payload.cidade ?? null,
               uf: payload.uf ?? null,
+              latitude: null,
+              longitude: null,
+              geocode_source: null,
+              geocode_updated_at: null,
               created_at: null,
             },
             existing: matches,
@@ -3237,32 +3201,13 @@ export default function Clientes() {
               <div className="mt-6 grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-4 md:grid-cols-6">
                 <label className="min-w-0 flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
                   Codigo
-                  <div className="min-w-0 flex items-end gap-1">
-                    <input
-                      value={editForm.codigo}
-                      onChange={(event) => {
-                        setCodigoErrorEdit(null);
-                        setEditForm((prev) => ({ ...prev, codigo: event.target.value }));
-                      }}
-                      className="min-w-0 w-full flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleCodigoLookupEdit}
-                      disabled={codigoLoadingEdit || !editForm.codigo.trim()}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
-                      title={codigoLoadingEdit ? "Buscando codigo..." : "Buscar por codigo"}
-                      aria-label={codigoLoadingEdit ? "Buscando codigo..." : "Buscar por codigo"}
-                    >
-                      <Search size={15} className={codigoLoadingEdit ? "animate-pulse" : ""} />
-                    </button>
-                  </div>
-                  {codigoLoadingEdit && (
-                    <span className="text-[11px] font-normal text-ink/60">Consultando codigo...</span>
-                  )}
-                  {codigoErrorEdit && (
-                    <span className="text-[11px] font-normal text-red-600">{codigoErrorEdit}</span>
-                  )}
+                  <input
+                    value={editForm.codigo}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, codigo: event.target.value }))
+                    }
+                    className="min-w-0 w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
                 </label>
                 <label className="min-w-0 flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
                   CNPJ
@@ -3627,8 +3572,8 @@ export default function Clientes() {
                         onClick={handleAddressLookupEdit}
                         disabled={!canSearchEnderecoEdit || addressLookupLoadingEdit}
                         className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
-                        title={addressLookupLoadingEdit ? "Buscando endereco..." : "Cadastrar via endereco"}
-                        aria-label={addressLookupLoadingEdit ? "Buscando endereco..." : "Cadastrar via endereco"}
+                        title={addressLookupLoadingEdit ? "Buscando bairro..." : "Buscar bairro por endereco"}
+                        aria-label={addressLookupLoadingEdit ? "Buscando bairro..." : "Buscar bairro por endereco"}
                       >
                         <MapPin size={15} className={addressLookupLoadingEdit ? "animate-pulse" : ""} />
                       </button>
@@ -3653,13 +3598,25 @@ export default function Clientes() {
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Bairro
-                  <input
-                    value={editForm.bairro}
-                    onChange={(event) =>
-                      setEditForm((prev) => ({ ...prev, bairro: event.target.value }))
-                    }
-                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
+                  <div className="flex items-end gap-1">
+                    <input
+                      value={editForm.bairro}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({ ...prev, bairro: event.target.value }))
+                      }
+                      className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddressLookupEdit}
+                      disabled={!canSearchEnderecoEdit || addressLookupLoadingEdit}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                      title={addressLookupLoadingEdit ? "Buscando bairro..." : "Buscar bairro por endereco"}
+                      aria-label={addressLookupLoadingEdit ? "Buscando bairro..." : "Buscar bairro por endereco"}
+                    >
+                      <MapPin size={15} className={addressLookupLoadingEdit ? "animate-pulse" : ""} />
+                    </button>
+                  </div>
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   CEP
@@ -4179,5 +4136,3 @@ export default function Clientes() {
     </div>
   );
 }
-
-

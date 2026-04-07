@@ -62,10 +62,17 @@ const REVERSE_URL = `${NOMINATIM_ROOT}/reverse`;
 const REQUEST_INTERVAL_MS = 2200;
 const RETRYABLE_STATUS = new Set([429, 503, 504]);
 const MAX_ATTEMPTS = 3;
+const AUTH_FAILURE_COOLDOWN_MS = 10 * 60 * 1000;
+const SUPABASE_ANON_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() ?? "";
+const USE_FUNCTION_PROXY_AUTH_HEADERS =
+  NOMINATIM_ROOT.includes(".functions.supabase.co") ||
+  NOMINATIM_ROOT.includes("/functions/v1/") ||
+  NOMINATIM_ROOT.includes("/nominatim-proxy");
 
 let lastRequestAt = 0;
 let queue: Promise<void> = Promise.resolve();
 let cooldownUntil = 0;
+let authFailureBlockedUntil = 0;
 const coordinateCache = new Map<string, NominatimCoordinates | null>();
 const inflightCoordinates = new Map<string, Promise<NominatimCoordinates | null>>();
 
@@ -126,17 +133,33 @@ const fetchJsonWithRetry = async <T,>(
   signal?: AbortSignal,
 ): Promise<T> => {
   let lastError: Error | null = null;
+  const blockedWait = authFailureBlockedUntil - Date.now();
+  if (blockedWait > 0) {
+    throw new Error("Proxy de geocodificacao temporariamente indisponivel. Tente novamente em alguns minutos.");
+  }
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     const response = await fetch(url, {
       signal,
       headers: {
         "Accept-Language": "pt-BR",
+        ...(USE_FUNCTION_PROXY_AUTH_HEADERS && SUPABASE_ANON_KEY
+          ? {
+              apikey: SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            }
+          : {}),
       },
     });
 
     if (response.ok) {
       return (await response.json()) as T;
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      authFailureBlockedUntil = Date.now() + AUTH_FAILURE_COOLDOWN_MS;
+      lastError = new Error("Falha de autenticacao no proxy de geocodificacao.");
+      break;
     }
 
     if (RETRYABLE_STATUS.has(response.status) && attempt < MAX_ATTEMPTS) {

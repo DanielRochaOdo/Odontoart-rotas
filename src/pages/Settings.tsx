@@ -42,7 +42,7 @@ const sortByName = (items: ManagedProfile[]) =>
 const normalizeSearch = (value: string) => normalizeSearchText(value);
 
 export default function Settings() {
-  const { role } = useAuth();
+  const { role, session, loading: authLoading } = useAuth();
   const isSupervisor = role === "SUPERVISOR";
 
   const [activeTab, setActiveTab] = useState<TabKey>("SUPERVISORES");
@@ -139,9 +139,14 @@ export default function Settings() {
       setProfiles(data);
       const userIds = data.map((profile) => profile.user_id).filter((value): value is string => Boolean(value));
       const emails = await fetchManagedUserEmails(userIds);
-      setUserEmailsByUserId(emails);
+      setUserEmailsByUserId((prev) => {
+        const scopedPrevious: Record<string, string> = {};
+        for (const userId of userIds) {
+          if (prev[userId]) scopedPrevious[userId] = prev[userId];
+        }
+        return { ...scopedPrevious, ...emails };
+      });
     } catch (err) {
-      setUserEmailsByUserId({});
       setError(err instanceof Error ? err.message : "Erro ao carregar perfis.");
     } finally {
       setLoading(false);
@@ -154,9 +159,9 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    if (!isSupervisor) return;
+    if (authLoading || !isSupervisor || !session?.access_token) return;
     loadProfiles();
-  }, [isSupervisor]);
+  }, [authLoading, isSupervisor, session?.access_token]);
 
   useEffect(() => {
     if (!isSupervisor) return;
@@ -214,6 +219,7 @@ export default function Settings() {
     }
     setCreatingSupervisor(true);
     setError(null);
+    const createdEmail = supervisorForm.email.trim();
     try {
       const created = await createManagedUser({
         display_name: supervisorForm.display_name,
@@ -223,6 +229,10 @@ export default function Settings() {
         role: "SUPERVISOR",
       });
       setProfiles((prev) => [created, ...prev]);
+      if (created.user_id && createdEmail) {
+        const createdUserId = created.user_id;
+        setUserEmailsByUserId((prev) => ({ ...prev, [createdUserId]: createdEmail }));
+      }
       emitProfilesUpdated();
       setSupervisorForm({ display_name: "", email: "", password: "" });
     } catch (err) {
@@ -240,6 +250,7 @@ export default function Settings() {
     }
     setCreatingVendor(true);
     setError(null);
+    const createdEmail = vendorForm.email.trim();
     try {
       const created = await createManagedUser({
         display_name: vendorForm.display_name,
@@ -251,6 +262,10 @@ export default function Settings() {
         can_access_pre_cadastro: vendorForm.can_access_pre_cadastro,
       });
       setProfiles((prev) => [created, ...prev]);
+      if (created.user_id && createdEmail) {
+        const createdUserId = created.user_id;
+        setUserEmailsByUserId((prev) => ({ ...prev, [createdUserId]: createdEmail }));
+      }
       emitProfilesUpdated();
       setVendorForm({
         display_name: "",
@@ -274,6 +289,7 @@ export default function Settings() {
     }
     setCreatingAssistant(true);
     setError(null);
+    const createdEmail = assistantForm.email.trim();
     try {
       const created = await createManagedUser({
         display_name: assistantForm.display_name,
@@ -283,6 +299,10 @@ export default function Settings() {
         role: "ASSISTENTE",
       });
       setProfiles((prev) => [created, ...prev]);
+      if (created.user_id && createdEmail) {
+        const createdUserId = created.user_id;
+        setUserEmailsByUserId((prev) => ({ ...prev, [createdUserId]: createdEmail }));
+      }
       emitProfilesUpdated();
       setAssistantForm({ display_name: "", email: "", password: "" });
     } catch (err) {
@@ -348,11 +368,15 @@ export default function Settings() {
 
       if (supervisorEdit.email || supervisorEdit.password) {
         if (!current.user_id) throw new Error("Supervisor sem usuario vinculado.");
+        const currentUserId = current.user_id;
         await updateManagedUserCredentials({
-          user_id: current.user_id,
+          user_id: currentUserId,
           email: supervisorEdit.email || null,
           password: supervisorEdit.password || null,
         });
+        if (supervisorEdit.email.trim()) {
+          setUserEmailsByUserId((prev) => ({ ...prev, [currentUserId]: supervisorEdit.email.trim() }));
+        }
       }
 
       setEditingSupervisorId(null);
@@ -389,11 +413,15 @@ export default function Settings() {
 
       if (vendorEdit.email || vendorEdit.password) {
         if (!current.user_id) throw new Error("Vendedor sem usuario vinculado.");
+        const currentUserId = current.user_id;
         await updateManagedUserCredentials({
-          user_id: current.user_id,
+          user_id: currentUserId,
           email: vendorEdit.email || null,
           password: vendorEdit.password || null,
         });
+        if (vendorEdit.email.trim()) {
+          setUserEmailsByUserId((prev) => ({ ...prev, [currentUserId]: vendorEdit.email.trim() }));
+        }
       }
 
       setEditingVendorId(null);
@@ -435,11 +463,15 @@ export default function Settings() {
 
       if (assistantEdit.email || assistantEdit.password) {
         if (!current.user_id) throw new Error("Assistente sem usuario vinculado.");
+        const currentUserId = current.user_id;
         await updateManagedUserCredentials({
-          user_id: current.user_id,
+          user_id: currentUserId,
           email: assistantEdit.email || null,
           password: assistantEdit.password || null,
         });
+        if (assistantEdit.email.trim()) {
+          setUserEmailsByUserId((prev) => ({ ...prev, [currentUserId]: assistantEdit.email.trim() }));
+        }
       }
 
       setEditingAssistantId(null);
@@ -461,6 +493,15 @@ export default function Settings() {
         await deleteProfileOnly(profile.id);
       }
       setProfiles((prev) => prev.filter((item) => item.id !== profile.id));
+      if (profile.user_id) {
+        const profileUserId = profile.user_id;
+        setUserEmailsByUserId((prev) => {
+          if (!prev[profileUserId]) return prev;
+          const next = { ...prev };
+          delete next[profileUserId];
+          return next;
+        });
+      }
       resetEdits();
       emitProfilesUpdated();
     } catch (err) {

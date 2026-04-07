@@ -22,6 +22,10 @@ export type ClienteRow = {
   bairro: string | null;
   cidade: string | null;
   uf: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  geocode_source?: string | null;
+  geocode_updated_at?: string | null;
   created_at: string | null;
 };
 

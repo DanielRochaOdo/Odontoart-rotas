@@ -9,6 +9,8 @@ export const CATEGORIA_OPTIONS = [
   "Neutro",
 ] as const;
 
+export const CATEGORIA_FILTER_SEM_CATEGORIA = "Sem categoria" as const;
+
 export type CategoriaValue = (typeof CATEGORIA_OPTIONS)[number];
 
 export const CATEGORIA_DESCRIPTIONS: Record<CategoriaValue, string> = {
