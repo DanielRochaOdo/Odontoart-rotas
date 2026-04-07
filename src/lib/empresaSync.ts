@@ -25,8 +25,6 @@ type ClienteSyncPayload = {
   uf?: string | null;
 };
 
-const escapeOrValue = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
-
 const toVisitPerfilPayload = (perfil: string | null) => {
   if (!perfil) {
     return { perfil_visita: null as string | null, perfil_visita_opcoes: null as string | null };
@@ -40,13 +38,6 @@ const toVisitPerfilPayload = (perfil: string | null) => {
 };
 
 export const syncAgendaRowAcrossModules = async (row: ClienteSyncPayload) => {
-  const codigo = row.codigo?.trim() ?? "";
-  const empresa = row.empresa?.trim() ?? "";
-  const nomeFantasia = row.nome_fantasia?.trim() ?? "";
-
-  const canMatch = Boolean(codigo || empresa || nomeFantasia);
-  if (!canMatch) return;
-
   const clientePayload: Record<string, string | number | null> = {};
   if (row.codigo !== undefined) clientePayload.codigo = row.codigo;
   if (row.corte !== undefined) clientePayload.corte = row.corte;
@@ -70,24 +61,10 @@ export const syncAgendaRowAcrossModules = async (row: ClienteSyncPayload) => {
   if (row.uf !== undefined) clientePayload.uf = row.uf;
 
   if (Object.keys(clientePayload).length > 0) {
-    let clientesQuery = supabase.from("clientes").update(clientePayload);
-    if (codigo && empresa && nomeFantasia) {
-      clientesQuery = clientesQuery.or(
-        `codigo.eq.${escapeOrValue(codigo)},empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
-      );
-    } else if (codigo) {
-      clientesQuery = clientesQuery.eq("codigo", codigo);
-    } else if (empresa && nomeFantasia) {
-      clientesQuery = clientesQuery.or(
-        `empresa.eq.${escapeOrValue(empresa)},nome_fantasia.eq.${escapeOrValue(nomeFantasia)}`,
-      );
-    } else if (empresa) {
-      clientesQuery = clientesQuery.eq("empresa", empresa);
-    } else {
-      clientesQuery = clientesQuery.eq("nome_fantasia", nomeFantasia);
-    }
-
-    const { error: clienteError } = await clientesQuery;
+    const { error: clienteError } = await supabase
+      .from("clientes")
+      .update(clientePayload)
+      .eq("id", row.id);
     if (clienteError) throw new Error(clienteError.message);
   }
 

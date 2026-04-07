@@ -2,7 +2,11 @@
 import type { AgendaFilters, AgendaRow } from "../types/agenda";
 import type { SortingState } from "@tanstack/react-table";
 import { normalizeText } from "./textNormalize";
-import { buildCategoriaRawMap, CATEGORIA_OPTIONS } from "./categorias";
+import {
+  buildCategoriaRawMap,
+  CATEGORIA_FILTER_SEM_CATEGORIA,
+  CATEGORIA_OPTIONS,
+} from "./categorias";
 
 const GLOBAL_SEARCH_COLUMNS = [
   "empresa",
@@ -20,6 +24,11 @@ const GLOBAL_SEARCH_COLUMNS = [
 
 const normalizeOption = (value: string) =>
   value.trim().replace(/\s+/g, " ").toUpperCase();
+
+const CATEGORIA_SEM_CATEGORIA_NORMALIZED = normalizeOption(CATEGORIA_FILTER_SEM_CATEGORIA);
+
+const formatOrValues = (values: string[]) =>
+  values.map((value) => `"${value.replace(/"/g, '\\"')}"`).join(",");
 
 const SITUACAO_OPTIONS = ["Ativo", "Suspenso/Inadimplente", "Cancelado"] as const;
 
@@ -364,6 +373,27 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
       return;
     }
 
+    if (key === "categoria") {
+      const includeSemCategoria = cleaned.includes(CATEGORIA_SEM_CATEGORIA_NORMALIZED);
+      const categoriaValues = expanded.filter(
+        (value) => normalizeOption(value) !== CATEGORIA_SEM_CATEGORIA_NORMALIZED,
+      );
+
+      if (includeSemCategoria) {
+        const conditions = ["categoria.is.null", 'categoria.eq.""'];
+        if (categoriaValues.length > 0) {
+          conditions.push(`categoria.in.(${formatOrValues(categoriaValues)})`);
+        }
+        next = next.or(conditions.join(","));
+        return;
+      }
+
+      if (categoriaValues.length > 0) {
+        next = next.in(sourceKey, categoriaValues);
+      }
+      return;
+    }
+
     next = next.in(sourceKey, expanded);
   });
 
@@ -681,7 +711,7 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
   }
 
   if (filterKey === "categoria") {
-    const options = [...CATEGORIA_OPTIONS];
+    const options = [...CATEGORIA_OPTIONS, CATEGORIA_FILTER_SEM_CATEGORIA];
     optionsCache.set(filterKey, { options, rawMap: buildCategoriaRawMap() });
     return options;
   }

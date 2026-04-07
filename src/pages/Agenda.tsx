@@ -51,7 +51,7 @@ import {
   normalizePerfilVisita,
 } from "../lib/perfilVisita";
 import { normalizeSearchText, normalizeText } from "../lib/textNormalize";
-import { CATEGORIA_OPTIONS } from "../lib/categorias";
+import { CATEGORIA_FILTER_SEM_CATEGORIA, CATEGORIA_OPTIONS } from "../lib/categorias";
 import {
   extractOdontoartPlanoValores,
   fetchEmpresaByEmpresaId,
@@ -292,6 +292,9 @@ const getCategoriaBadgeStyles = (value: string | null | undefined) => {
 };
 
 const getAgendaFilterValueFromRow = (row: AgendaRow, filterKey: string) => {
+  const categoriaValue = row.categoria?.trim()
+    ? row.categoria
+    : CATEGORIA_FILTER_SEM_CATEGORIA;
   const map: Record<string, string | null | undefined> = {
     supervisor: row.supervisor,
     vendedor: row.vendedor,
@@ -302,7 +305,7 @@ const getAgendaFilterValueFromRow = (row: AgendaRow, filterKey: string) => {
     grupo: row.grupo,
     perfil_visita: row.perfil_visita,
     empresa_nome: row.empresa ?? row.nome_fantasia,
-    categoria: row.categoria,
+    categoria: categoriaValue,
   };
   return map[filterKey] ?? "";
 };
@@ -1849,7 +1852,7 @@ export default function Agenda() {
                   ? `Filtro (${filters.columns.categoria.length})`
                   : "Filtro"
               }
-              options={filterOptions.categoria ?? []}
+              options={filterOptions.categoria ?? [...CATEGORIA_OPTIONS, CATEGORIA_FILTER_SEM_CATEGORIA]}
               value={filters.columns.categoria}
               onApply={(next) =>
                 setFilters((prev) => ({
@@ -2419,7 +2422,7 @@ export default function Agenda() {
                       ? `Categoria (${filters.columns.categoria.length})`
                       : "Categoria"
                   }
-                  options={filterOptions.categoria ?? [...CATEGORIA_OPTIONS]}
+                  options={filterOptions.categoria ?? [...CATEGORIA_OPTIONS, CATEGORIA_FILTER_SEM_CATEGORIA]}
                   value={filters.columns.categoria ?? []}
                   onApply={(next) =>
                     setFilters((prev) => ({
