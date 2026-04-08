@@ -1902,16 +1902,20 @@ export default function Dashboard() {
                   )}
                   {renderDonut(
                     "Impacto no periodo",
-                    vendorImpactVidas + visitStats.empresasVisitadas,
+                    vendorImpactVidas,
                     [
                       {
-                        label: "Vidas registradas (visitas + aceite digital)",
-                        value: vendorImpactVidas,
+                        label: "Vidas em visitas",
+                        value: visitStats.totalVidas,
                         color: "#0f766e",
                       },
-                      { label: "Empresas visitadas", value: visitStats.empresasVisitadas, color: "#38bdf8" },
+                      {
+                        label: "Vidas em aceite digital",
+                        value: vendorAceitePeriodVidas,
+                        color: "#38bdf8",
+                      },
                     ],
-                    globalPeriodLabel,
+                    `${globalPeriodLabel} • Empresas visitadas: ${formatNumber(visitStats.empresasVisitadas)}`,
                   )}
                   {renderDonut(
                     "Vidas por dia",
@@ -1948,16 +1952,20 @@ export default function Dashboard() {
                   )}
                   {renderDonut(
                     "Impacto no periodo (equipe)",
-                    teamImpactVidas + teamStats.empresasVisitadas,
+                    teamImpactVidas,
                     [
                       {
-                        label: "Vidas registradas (visitas + aceite digital)",
-                        value: teamImpactVidas,
+                        label: "Vidas em visitas",
+                        value: teamStats.totalVidas,
                         color: "#0f766e",
                       },
-                      { label: "Empresas visitadas", value: teamStats.empresasVisitadas, color: "#38bdf8" },
+                      {
+                        label: "Vidas em aceite digital",
+                        value: digitalSummary?.periodTotalVidas ?? 0,
+                        color: "#38bdf8",
+                      },
                     ],
-                    globalPeriodLabel,
+                    `${globalPeriodLabel} • Empresas visitadas: ${formatNumber(teamStats.empresasVisitadas)}`,
                   )}
                   {renderDonut(
                     "Vidas por dia (equipe)",
