@@ -17,16 +17,78 @@ export type ManagedProfile = {
 
 const EMAIL_LOOKUP_COOLDOWN_MS = 60_000;
 let emailLookupBlockedUntil = 0;
+const EMAIL_RPC_LOOKUP_COOLDOWN_MS = 5 * 60_000;
+let emailRpcLookupBlockedUntil = 0;
 
 type ProfileEmailLookupRow = {
   user_id: string | null;
   email: string | null;
 };
 
+type ManageUsersInvokeResult = {
+  data: unknown;
+  error: { message: string } | null;
+};
+
+const parseErrorMessage = (payload: unknown, fallback: string) => {
+  if (!payload || typeof payload !== "object") return fallback;
+  const record = payload as Record<string, unknown>;
+  if (typeof record.error === "string" && record.error.trim()) return record.error;
+  if (typeof record.message === "string" && record.message.trim()) return record.message;
+  return fallback;
+};
+
+const invokeManageUsersViaHttp = async (
+  accessToken: string,
+  body: {
+    action: "create" | "delete" | "update" | "list-emails";
+    payload: Record<string, unknown>;
+  },
+): Promise<ManageUsersInvokeResult> => {
+  const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() ?? "";
+  const anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() ?? "";
+
+  if (!supabaseUrl || !anonKey) {
+    return {
+      data: null,
+      error: { message: "Configuracao do Supabase ausente no cliente." },
+    };
+  }
+
+  const endpoint = `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/manage-users`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      apikey: anonKey,
+    },
+    body: JSON.stringify(body),
+  });
+
+  let payload: unknown = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    return {
+      data: payload,
+      error: {
+        message: parseErrorMessage(payload, `Edge Function returned status ${response.status}.`),
+      },
+    };
+  }
+
+  return { data: payload, error: null };
+};
+
 const invokeManageUsers = async (body: {
   action: "create" | "delete" | "update" | "list-emails";
   payload: Record<string, unknown>;
-}) => {
+}): Promise<ManageUsersInvokeResult> => {
   const {
     data: { session: currentSession },
   } = await supabase.auth.getSession();
@@ -47,21 +109,25 @@ const invokeManageUsers = async (body: {
     throw new Error("Sessao expirada. Faca login novamente.");
   }
 
-  const anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() ?? "";
-  const firstAttempt = await supabase.functions.invoke("manage-users", {
-    body,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      ...(anonKey ? { apikey: anonKey } : {}),
-    },
-  });
+  let firstAttempt = await invokeManageUsersViaHttp(accessToken, body);
 
   if (!firstAttempt.error) return firstAttempt;
 
-  const secondAttempt = await supabase.functions.invoke("manage-users", {
-    body,
-  });
-  return secondAttempt;
+  const shouldRetryWithRefresh =
+    firstAttempt.error.message.toLowerCase().includes("sessao invalida") ||
+    firstAttempt.error.message.toLowerCase().includes("token ausente") ||
+    firstAttempt.error.message.toLowerCase().includes("status 401");
+
+  if (shouldRetryWithRefresh) {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (!error && data.session?.access_token) {
+      const retry = await invokeManageUsersViaHttp(data.session.access_token, body);
+      if (!retry.error) return retry;
+      firstAttempt = retry;
+    }
+  }
+
+  return firstAttempt;
 };
 
 export const fetchManagedProfiles = async () => {
@@ -136,8 +202,9 @@ export const createManagedUser = async (payload: {
   });
 
   if (error) throw new Error(error.message);
-  if (!data?.profile) throw new Error("Resposta invalida ao criar usuario.");
-  return data.profile as ManagedProfile;
+  const response = (data ?? null) as { profile?: ManagedProfile } | null;
+  if (!response?.profile) throw new Error("Resposta invalida ao criar usuario.");
+  return response.profile;
 };
 
 export const deleteManagedUser = async (user_id: string) => {
@@ -183,18 +250,21 @@ export const fetchManagedUserEmails = async (userIds: string[]) => {
   };
 
   const rpcResultByUserId: Record<string, string> = {};
-  try {
-    const fetched = await fetchViaRpc(uniqueIds);
-    Object.assign(rpcResultByUserId, fetched);
-    const missingAfterRpc = uniqueIds.filter((id) => !fetched[id]);
-    if (missingAfterRpc.length === 0) {
-      return rpcResultByUserId;
+  if (Date.now() >= emailRpcLookupBlockedUntil) {
+    try {
+      const fetched = await fetchViaRpc(uniqueIds);
+      Object.assign(rpcResultByUserId, fetched);
+      const missingAfterRpc = uniqueIds.filter((id) => !fetched[id]);
+      if (missingAfterRpc.length === 0) {
+        return rpcResultByUserId;
+      }
+    } catch (rpcError) {
+      const message = rpcError instanceof Error ? rpcError.message : "unknown error";
+      if (message.toLowerCase().includes("structure of query does not match function result type")) {
+        emailRpcLookupBlockedUntil = Date.now() + EMAIL_RPC_LOOKUP_COOLDOWN_MS;
+      }
+      console.warn("list_profile_emails unavailable, using edge fallback:", message);
     }
-  } catch (rpcError) {
-    console.warn(
-      "list_profile_emails unavailable, using edge fallback:",
-      rpcError instanceof Error ? rpcError.message : "unknown error",
-    );
   }
 
   const pendingIds = uniqueIds.filter((id) => !rpcResultByUserId[id]);

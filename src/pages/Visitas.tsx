@@ -437,6 +437,8 @@ export default function Visitas() {
       const baseDate = new Date();
       const todayKey = getDateKey(baseDate);
       const yesterdayKey = getDateKey(addDays(baseDate, -1));
+      const tomorrowKey = getDateKey(addDays(baseDate, 1));
+      const canUnlockTomorrowByTime = baseDate.getHours() >= 19;
       let effectiveEnd = endDate;
       let maxDate = endDate;
 
@@ -536,15 +538,18 @@ export default function Visitas() {
           } else {
             const todayGate = await resolveDayGate(
               todayKey,
-              "Conclua todas as visitas de hoje.",
-              "Registre o aceite digital de hoje.",
+              "Conclua todas as visitas de hoje para ver as visitas de amanha.",
+              "Registre o aceite digital de hoje para ver as visitas de amanha.",
             );
 
             if (todayGate.blocked) {
               maxDate = todayKey;
               blockReason = todayGate.reason;
-            } else {
+            } else if (!canUnlockTomorrowByTime) {
               maxDate = todayKey;
+              blockReason = "A agenda de amanha sera liberada a partir das 19:00.";
+            } else {
+              maxDate = tomorrowKey;
             }
           }
         } catch (gateError) {
