@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Building2, Check, DollarSign, MapPin, Search, X } from "lucide-react";
+import { Building2, Check, DollarSign, Search, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { formatCep, sanitizeCep } from "../lib/cep";
 import { fetchEmpresaByCnpjWs } from "../lib/cnpjWsApi";
-import { fetchNominatimByAddress, fetchNominatimByCep } from "../lib/nominatim";
 import {
   extractOdontoartPlanoValores,
   fetchEmpresaByEmpresaId,
@@ -182,7 +181,7 @@ export default function PreCadastro() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [lookupLoading, setLookupLoading] = useState<"" | "codigo" | "cnpj" | "cep" | "endereco">("");
+  const [lookupLoading, setLookupLoading] = useState<"" | "codigo" | "cnpj">("");
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [planoValores, setPlanoValores] = useState<OdontoartPlanoValor[]>([]);
   const [showPlanoValoresModal, setShowPlanoValoresModal] = useState(false);
@@ -295,39 +294,6 @@ export default function PreCadastro() {
       }));
     } catch (err) {
       setLookupError(err instanceof Error ? err.message : "Erro ao buscar CNPJ na API.");
-    } finally {
-      setLookupLoading("");
-    }
-  };
-
-  const handleCepLookup = async () => {
-    const digits = sanitizeCep(form.cep);
-    if (digits.length !== 8) return setLookupError("Informe um CEP valido.");
-    setLookupLoading("cep");
-    setLookupError(null);
-    try {
-      const mapped = await fetchNominatimByCep(digits);
-      if (!mapped) throw new Error("CEP nao encontrado.");
-      setForm((prev) => ({ ...prev, endereco: mapped.endereco ?? prev.endereco, bairro: mapped.bairro ?? prev.bairro, cidade: mapped.cidade ?? prev.cidade, uf: mapped.uf ?? prev.uf }));
-    } catch {
-      setLookupError("CEP nao encontrado ou API indisponivel.");
-    } finally {
-      setLookupLoading("");
-    }
-  };
-
-  const handleEnderecoLookup = async () => {
-    if (!form.endereco.trim() || !form.cidade.trim() || !form.uf.trim()) {
-      return setLookupError("Informe endereco, cidade e UF.");
-    }
-    setLookupLoading("endereco");
-    setLookupError(null);
-    try {
-      const mapped = await fetchNominatimByAddress(form.endereco.trim(), form.cidade.trim(), form.uf.trim());
-      if (!mapped) throw new Error("Endereco nao encontrado.");
-      setForm((prev) => ({ ...prev, bairro: mapped.bairro ?? prev.bairro, cep: mapped.cep ? formatCep(mapped.cep) : prev.cep }));
-    } catch {
-      setLookupError("Endereco nao encontrado ou API indisponivel.");
     } finally {
       setLookupLoading("");
     }
@@ -524,12 +490,12 @@ export default function PreCadastro() {
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">Cidade<input value={form.cidade} onChange={(event) => setForm((prev) => ({ ...prev, cidade: event.target.value }))} className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea" /></label>
           <div className="md:col-span-4 grid gap-3 md:grid-cols-[80px_minmax(0,1fr)] md:items-start">
             <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">UF<input value={form.uf} onChange={(event) => setForm((prev) => ({ ...prev, uf: event.target.value.toUpperCase().slice(0, 3) }))} maxLength={3} className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm uppercase tracking-wide text-ink outline-none focus:border-sea" /></label>
-            <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70"><span>Endereco + Nº</span><div className="flex items-end gap-1"><input value={form.endereco} onChange={(event) => setForm((prev) => ({ ...prev, endereco: event.target.value }))} disabled={!canEditEndereco} className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea" /><button type="button" onClick={handleEnderecoLookup} disabled={lookupLoading === "endereco" || !form.endereco.trim() || !form.cidade.trim() || !form.uf.trim()} className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"><MapPin size={15} className={lookupLoading === "endereco" ? "animate-pulse" : ""} /></button></div></label>
+            <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70"><span>Endereco + Nº</span><div className="flex items-end gap-1"><input value={form.endereco} onChange={(event) => setForm((prev) => ({ ...prev, endereco: event.target.value }))} disabled={!canEditEndereco} className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea" /></div></label>
           </div>
 
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">Complemento<input value={form.complemento} onChange={(event) => setForm((prev) => ({ ...prev, complemento: event.target.value }))} className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea" /></label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">Bairro<input value={form.bairro} onChange={(event) => setForm((prev) => ({ ...prev, bairro: event.target.value }))} className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea" /></label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">CEP<div className="flex items-end gap-1"><input value={form.cep} onChange={(event) => setForm((prev) => ({ ...prev, cep: formatCep(event.target.value) }))} placeholder="00000-000" className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea" /><button type="button" onClick={handleCepLookup} disabled={lookupLoading === "cep" || sanitizeCep(form.cep).length !== 8} className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"><Search size={15} className={lookupLoading === "cep" ? "animate-pulse" : ""} /></button></div></label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">CEP<div className="flex items-end gap-1"><input value={form.cep} onChange={(event) => setForm((prev) => ({ ...prev, cep: formatCep(event.target.value) }))} placeholder="00000-000" className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea" /></div></label>
 
           <div className="md:col-span-6"><button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60">{saving ? "Enviando..." : "Pre cadastrar"}</button></div>
           {lookupError && <div className="md:col-span-6 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{lookupError}</div>}

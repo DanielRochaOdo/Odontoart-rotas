@@ -35,6 +35,7 @@ const formatOrValues = (values: string[]) =>
 
 const normalizeKey = (value: string) =>
   normalizeText(value, { letterCase: "upper" });
+const SHOW_NEXT_ROUTE_BLOCK = false;
 
 type VisitStats = {
   totalVidas: number;
@@ -1581,7 +1582,7 @@ export default function Dashboard() {
               </p>
               <p className="text-xs text-ink/60">Visitas marcadas para o mes</p>
             </div>
-            {isVendor && (
+            {SHOW_NEXT_ROUTE_BLOCK && isVendor && (
               <button
                 type="button"
                 onClick={() => {
@@ -2020,7 +2021,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {isVendor && showNextRouteModal && nextRoutePreview && vendorNextRouteAccessAllowed && (
+      {SHOW_NEXT_ROUTE_BLOCK && isVendor && showNextRouteModal && nextRoutePreview && vendorNextRouteAccessAllowed && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <button
             type="button"

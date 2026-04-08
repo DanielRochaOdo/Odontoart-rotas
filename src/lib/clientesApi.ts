@@ -1,7 +1,6 @@
 import { supabase } from "./supabase";
 import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import { extractCustomTimes } from "./perfilVisita";
-import { fetchNominatimCoordinatesByAddress, fetchNominatimCoordinatesByQuery } from "./nominatim";
 const DEFAULT_SITUACAO = "Ativo";
 const CLIENTES_SELECT_COLUMNS =
   "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf, latitude, longitude, geocode_source, geocode_updated_at, created_at";
@@ -267,36 +266,6 @@ export const upsertClientes = async (
     .select(CLIENTES_SELECT_COLUMNS);
   if (error) throw new Error(error.message);
   return (data ?? []) as ClienteRow[];
-};
-
-export const syncAgendaForCliente = async (cliente: ClienteRow) => {
-  if (cliente.latitude !== null && cliente.longitude !== null) return;
-
-  const road = [cliente.endereco?.trim(), cliente.bairro?.trim()].filter(Boolean).join(", ");
-  const city = cliente.cidade?.trim();
-  const state = cliente.uf?.trim();
-  if (!road || !city || !state) return;
-
-  let geocoded = await fetchNominatimCoordinatesByAddress(road, city, state).catch(() => null);
-  if (!geocoded && cliente.bairro?.trim()) {
-    geocoded = await fetchNominatimCoordinatesByQuery(`${cliente.bairro.trim()}, ${city}, ${state}, Brasil`).catch(() => null);
-  }
-  if (!geocoded) {
-    geocoded = await fetchNominatimCoordinatesByQuery(`${city}, ${state}, Brasil`).catch(() => null);
-  }
-  if (!geocoded) return;
-
-  const { error: coordsError } = await supabase
-    .from("clientes")
-    .update({
-      latitude: geocoded.latitude,
-      longitude: geocoded.longitude,
-      geocode_source: "nominatim",
-      geocode_updated_at: new Date().toISOString(),
-    })
-    .eq("id", cliente.id)
-    .or("latitude.is.null,longitude.is.null");
-  if (coordsError) throw new Error(coordsError.message);
 };
 
 export const fetchClienteHistory = async (cliente: ClienteRow) => {

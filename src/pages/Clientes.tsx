@@ -1,6 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { Building2, DollarSign, LoaderCircle, MapPin, Plus, Search } from "lucide-react";
+import { Building2, DollarSign, LoaderCircle, Plus, Search } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -10,7 +10,6 @@ import {
   fetchClienteHistory,
   fetchClientes,
   updateCliente,
-  syncAgendaForCliente,
   syncVisitsForCliente,
   upsertClientes,
 } from "../lib/clientesApi";
@@ -26,7 +25,6 @@ import {
   normalizePerfilVisita,
 } from "../lib/perfilVisita";
 import { formatCep, sanitizeCep } from "../lib/cep";
-import { fetchNominatimByAddress, fetchNominatimByCep } from "../lib/nominatim";
 import {
   extractOdontoartPlanoValores,
   fetchEmpresaByEmpresaId,
@@ -218,7 +216,6 @@ const normalizeHeader = (value: string) =>
 
 const IMPORT_NUMERIC_FIELDS = new Set(["corte", "venc"]);
 const IMPORT_BATCH_SIZE = 80;
-const BAIRRO_LOOKUP_DELAY_MS = 450;
 const CLIENTES_PER_PAGE = 50;
 const CLIENTE_API_AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const CLIENTES_VIEW_STATE_KEY = "clientesViewStateV2";
@@ -502,24 +499,6 @@ const pickChangedApiFields = (cliente: ClienteRow, apiPayload: ClienteApiSyncPay
 const enrichFormDataCepByAddress = async (
   formData: ReturnType<typeof mapEmpresaApiToClienteForm>,
 ) => {
-  if (sanitizeCep(formData.cep).length === 8) return formData;
-  const endereco = formData.endereco.trim();
-  const cidade = formData.cidade.trim();
-  const uf = formData.uf.trim();
-  if (!endereco || !cidade || !uf) return formData;
-
-  try {
-    const mapped = await fetchNominatimByAddress(endereco, cidade, uf);
-    if (mapped?.cep) {
-      return {
-        ...formData,
-        cep: formatCep(mapped.cep),
-      };
-    }
-  } catch {
-    // Ignore fallback errors; this enrichment is best-effort only.
-  }
-
   return formData;
 };
 
@@ -765,14 +744,10 @@ export default function Clientes() {
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [cepLoading, setCepLoading] = useState(false);
-  const [cepError, setCepError] = useState<string | null>(null);
   const [codigoLoading, setCodigoLoading] = useState(false);
   const [codigoError, setCodigoError] = useState<string | null>(null);
   const [cnpjLoading, setCnpjLoading] = useState(false);
   const [cnpjError, setCnpjError] = useState<string | null>(null);
-  const [cepLoadingEdit, setCepLoadingEdit] = useState(false);
-  const [cepErrorEdit, setCepErrorEdit] = useState<string | null>(null);
   const [cnpjLoadingEdit, setCnpjLoadingEdit] = useState(false);
   const [cnpjErrorEdit, setCnpjErrorEdit] = useState<string | null>(null);
   const [importProgress, setImportProgress] = useState(0);
@@ -782,10 +757,6 @@ export default function Clientes() {
   const [importStartedAt, setImportStartedAt] = useState<number | null>(null);
   const [importTick, setImportTick] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const [addressLookupLoading, setAddressLookupLoading] = useState(false);
-  const [addressLookupError, setAddressLookupError] = useState<string | null>(null);
-  const [addressLookupLoadingEdit, setAddressLookupLoadingEdit] = useState(false);
-  const [addressLookupErrorEdit, setAddressLookupErrorEdit] = useState<string | null>(null);
   const [duplicateModal, setDuplicateModal] = useState<DuplicateEntry | null>(null);
   const [duplicateQueue, setDuplicateQueue] = useState<DuplicateEntry[]>([]);
   const [duplicateResolving, setDuplicateResolving] = useState(false);
@@ -863,7 +834,6 @@ export default function Clientes() {
 
           try {
             const updated = await updateCliente(cliente.id, updatePayload);
-            await syncAgendaForCliente(updated);
             updatesById.set(updated.id, updated);
             const previousKey = buildClientesDedupeKey(cliente.empresa, cliente.nome_fantasia);
             const nextKey = buildClientesDedupeKey(updated.empresa, updated.nome_fantasia);
@@ -892,7 +862,6 @@ export default function Clientes() {
               if (Object.keys(retryPayload).length > 0) {
                 try {
                   const updated = await updateCliente(cliente.id, retryPayload);
-                  await syncAgendaForCliente(updated);
                   updatesById.set(updated.id, updated);
                   const previousKey = buildClientesDedupeKey(cliente.empresa, cliente.nome_fantasia);
                   const nextKey = buildClientesDedupeKey(updated.empresa, updated.nome_fantasia);
@@ -1663,7 +1632,6 @@ export default function Clientes() {
         const updated = await Promise.all(
           duplicateModal.existing.map((item) => updateCliente(item.id, updatePayload)),
         );
-        await Promise.all(updated.map((item) => syncAgendaForCliente(item)));
         setClientes((prev) =>
           prev.map((item) => updated.find((entry) => entry.id === item.id) ?? item),
         );
@@ -1678,7 +1646,6 @@ export default function Clientes() {
         const updatedNew = await updateCliente(duplicateModal.newCliente.id, {
           complemento: duplicateComplemento.trim() || null,
         });
-        await syncAgendaForCliente(updatedNew);
         setClientes((prev) =>
           prev.map((item) => (item.id === updatedNew.id ? updatedNew : item)),
         );
@@ -1703,13 +1670,11 @@ export default function Clientes() {
             complemento: duplicateComplemento,
           }),
         );
-        await syncAgendaForCliente(created);
         setClientes((prev) => [created, ...prev]);
       } else {
         const updated = await updateCliente(duplicateModal.newCliente.id, {
           complemento: duplicateComplemento.trim() || null,
         });
-        await syncAgendaForCliente(updated);
         setClientes((prev) =>
           prev.map((item) => (item.id === updated.id ? updated : item)),
         );
@@ -1719,33 +1684,6 @@ export default function Clientes() {
     } finally {
       setDuplicateResolving(false);
       setDuplicateModal(null);
-    }
-  };
-
-  const handleAddressLookup = async () => {
-    const road = form.endereco.trim();
-    const city = form.cidade.trim();
-    const state = form.uf.trim();
-    if (!road || !city || !state) {
-      setAddressLookupError("Informe endereco, cidade e UF.");
-      return;
-    }
-    setAddressLookupLoading(true);
-    setAddressLookupError(null);
-    try {
-      const mapped = await fetchNominatimByAddress(road, city, state);
-      if (!mapped) {
-        throw new Error("Endereco nao encontrado.");
-      }
-      setForm((prev) => ({
-        ...prev,
-        bairro: mapped.bairro ?? prev.bairro,
-        cep: mapped.cep ? formatCep(mapped.cep) : prev.cep,
-      }));
-    } catch {
-      setAddressLookupError("Endereco nao encontrado ou API indisponivel.");
-    } finally {
-      setAddressLookupLoading(false);
     }
   };
 
@@ -1777,8 +1715,6 @@ export default function Clientes() {
       setForm(formData);
       setCreatePlanoValores(planoValores);
       setPerfilCreate(buildPerfilState(null));
-      setCepError(null);
-      setAddressLookupError(null);
     } catch (err) {
       setCodigoError(err instanceof Error ? err.message : "Erro ao buscar codigo na API.");
     } finally {
@@ -1812,33 +1748,6 @@ export default function Clientes() {
       setCnpjError(err instanceof Error ? err.message : "Erro ao buscar CNPJ na API.");
     } finally {
       setCnpjLoading(false);
-    }
-  };
-
-  const handleCepLookup = async () => {
-    const digits = sanitizeCep(form.cep);
-    if (digits.length !== 8) {
-      setCepError("Informe um CEP valido.");
-      return;
-    }
-    setCepLoading(true);
-    setCepError(null);
-    try {
-      const mapped = await fetchNominatimByCep(digits);
-      if (!mapped) {
-        throw new Error("CEP nao encontrado.");
-      }
-      setForm((prev) => ({
-        ...prev,
-        endereco: mapped.endereco ?? prev.endereco,
-        bairro: mapped.bairro ?? prev.bairro,
-        cidade: mapped.cidade ?? prev.cidade,
-        uf: mapped.uf ?? prev.uf,
-      }));
-    } catch {
-      setCepError("CEP nao encontrado ou API indisponivel.");
-    } finally {
-      setCepLoading(false);
     }
   };
 
@@ -1903,7 +1812,6 @@ export default function Clientes() {
         cidade: editForm.cidade.trim() || null,
         uf: editForm.uf.trim() || null,
       });
-      await syncAgendaForCliente(updated);
       await syncVisitsForCliente(updated);
       setClientes((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       setSelected(updated);
@@ -1953,34 +1861,6 @@ export default function Clientes() {
     }
   };
 
-  const handleCepLookupEdit = async () => {
-    const digits = sanitizeCep(editForm.cep);
-    if (digits.length !== 8) {
-      setCepErrorEdit("Informe um CEP valido.");
-      return;
-    }
-    setCepLoadingEdit(true);
-    setCepErrorEdit(null);
-    try {
-      const mapped = await fetchNominatimByCep(digits);
-      if (!mapped) {
-        throw new Error("CEP nao encontrado.");
-      }
-      setEditForm((prev) => ({
-        ...prev,
-        endereco: mapped.endereco ?? prev.endereco,
-        complemento: mapped.complemento ?? prev.complemento,
-        bairro: mapped.bairro ?? prev.bairro,
-        cidade: mapped.cidade ?? prev.cidade,
-        uf: mapped.uf ?? prev.uf,
-      }));
-    } catch {
-      setCepErrorEdit("CEP nao encontrado ou API indisponivel.");
-    } finally {
-      setCepLoadingEdit(false);
-    }
-  };
-
   const handleCnpjLookupEdit = async () => {
     const cnpj = sanitizeCnpjDigits(editForm.cnpj);
     if (cnpj.length !== 14) {
@@ -2007,33 +1887,6 @@ export default function Clientes() {
       setCnpjErrorEdit(err instanceof Error ? err.message : "Erro ao buscar CNPJ na API.");
     } finally {
       setCnpjLoadingEdit(false);
-    }
-  };
-
-  const handleAddressLookupEdit = async () => {
-    const road = editForm.endereco.trim();
-    const city = editForm.cidade.trim();
-    const state = editForm.uf.trim();
-    if (!road || !city || !state) {
-      setAddressLookupErrorEdit("Informe endereco, cidade e UF.");
-      return;
-    }
-    setAddressLookupLoadingEdit(true);
-    setAddressLookupErrorEdit(null);
-    try {
-      const mapped = await fetchNominatimByAddress(road, city, state);
-      if (!mapped) {
-        throw new Error("Endereco nao encontrado.");
-      }
-      setEditForm((prev) => ({
-        ...prev,
-        bairro: mapped.bairro ?? prev.bairro,
-        cep: mapped.cep ? formatCep(mapped.cep) : prev.cep,
-      }));
-    } catch {
-      setAddressLookupErrorEdit("Endereco nao encontrado ou API indisponivel.");
-    } finally {
-      setAddressLookupLoadingEdit(false);
     }
   };
 
@@ -2231,73 +2084,9 @@ export default function Clientes() {
         }
       });
 
-      const checkable = payloads.filter((item) => {
-        const hasBairro = Boolean(item.bairro?.trim());
-        if (hasBairro) return false;
-        const cepDigits = sanitizeCep(item.cep ?? "");
-        const hasCep = cepDigits.length === 8;
-        const road = item.endereco?.trim() ?? "";
-        const city = item.cidade?.trim() ?? "";
-        const state = item.uf?.trim() ?? "";
-        const canCheckAddress = Boolean(road && city && state);
-        return canCheckAddress || hasCep;
-      });
-
       setImportTotal(payloads.length);
       setImportProgress(0);
       setImportInserted(0);
-
-      if (checkable.length > 0) {
-        setImportStageLabel("Checando bairros");
-        setImportMessage(`Checando bairros via API... 0/${checkable.length}`);
-        let processed = 0;
-        const lastRequestAt = { current: 0 };
-        for (const item of checkable) {
-          const cepDigits = sanitizeCep(item.cep ?? "");
-          const hasCep = cepDigits.length === 8;
-          const road = item.endereco?.trim() ?? "";
-          const city = item.cidade?.trim() ?? "";
-          const state = item.uf?.trim() ?? "";
-          const canCheckAddress = Boolean(road && city && state);
-
-          const now = Date.now();
-          const wait = Math.max(0, BAIRRO_LOOKUP_DELAY_MS - (now - lastRequestAt.current));
-          if (wait) {
-            await delay(wait);
-          }
-          lastRequestAt.current = Date.now();
-
-          try {
-            if (canCheckAddress) {
-              const mapped = await fetchNominatimByAddress(road, city, state);
-              if (mapped?.bairro) {
-                item.bairro = mapped.bairro;
-              }
-              if (mapped?.cep && sanitizeCep(item.cep ?? "").length !== 8) {
-                item.cep = formatCep(mapped.cep);
-              }
-              if (!item.bairro && hasCep) {
-                const mappedByCep = await fetchNominatimByCep(cepDigits);
-                if (mappedByCep?.bairro) {
-                  item.bairro = mappedByCep.bairro;
-                }
-              }
-            } else if (hasCep) {
-              const mapped = await fetchNominatimByCep(cepDigits);
-              if (mapped?.bairro) {
-                item.bairro = mapped.bairro;
-              }
-            }
-          } catch {
-            // ignore individual lookup errors, keep import running
-          } finally {
-            processed += 1;
-            if (processed % 10 === 0 || processed === checkable.length) {
-              setImportMessage(`Checando bairros via API... ${processed}/${checkable.length}`);
-            }
-          }
-        }
-      }
 
       setImportStageLabel("Importando registros");
       setImportMessage("Importando registros...");
@@ -2408,9 +2197,7 @@ export default function Clientes() {
   };
 
   const canEditEndereco = Boolean(form.cidade.trim() && form.uf.trim());
-  const canSearchEndereco = Boolean(form.endereco.trim() && canEditEndereco);
   const canEditEnderecoEdit = Boolean(editForm.cidade.trim() && editForm.uf.trim());
-  const canSearchEnderecoEdit = Boolean(editForm.endereco.trim() && canEditEnderecoEdit);
   const hasPlanoValores = (valores: OdontoartPlanoValor[]) =>
     valores.some((plano) => plano.valorTitular !== null || plano.valorDependente !== null);
 
@@ -2913,23 +2700,7 @@ export default function Clientes() {
                   disabled={!canEditEndereco}
                   className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                 />
-                <button
-                  type="button"
-                  onClick={handleAddressLookup}
-                  disabled={!canSearchEndereco || addressLookupLoading}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
-                  title={addressLookupLoading ? "Buscando endereco..." : "Cadastrar via endereco"}
-                  aria-label={addressLookupLoading ? "Buscando endereco..." : "Cadastrar via endereco"}
-              >
-                <MapPin size={15} className={addressLookupLoading ? "animate-pulse" : ""} />
-              </button>
-            </div>
-            {addressLookupLoading && (
-              <span className="text-[11px] font-normal text-ink/60">Consultando endereco...</span>
-            )}
-            {addressLookupError && (
-              <span className="text-[11px] font-normal text-red-600">{addressLookupError}</span>
-            )}
+              </div>
             </label>
           </div>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
@@ -2959,21 +2730,7 @@ export default function Clientes() {
                 placeholder="00000-000"
                 className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
               />
-              <button
-                type="button"
-                onClick={handleCepLookup}
-                disabled={cepLoading || sanitizeCep(form.cep).length !== 8}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
-                title={cepLoading ? "Buscando CEP..." : "Buscar CEP"}
-                aria-label={cepLoading ? "Buscando CEP..." : "Buscar CEP"}
-              >
-                <Search size={15} className={cepLoading ? "animate-pulse" : ""} />
-              </button>
             </div>
-            {cepLoading && (
-              <span className="text-[11px] text-ink/60">Consultando CEP...</span>
-            )}
-            {cepError && <span className="text-[11px] text-red-600">{cepError}</span>}
           </label>
           <div className="flex items-end md:col-span-2">
             <button
@@ -3567,23 +3324,7 @@ export default function Clientes() {
                         disabled={!canEditEnderecoEdit}
                         className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                       />
-                      <button
-                        type="button"
-                        onClick={handleAddressLookupEdit}
-                        disabled={!canSearchEnderecoEdit || addressLookupLoadingEdit}
-                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
-                        title={addressLookupLoadingEdit ? "Buscando bairro..." : "Buscar bairro por endereco"}
-                        aria-label={addressLookupLoadingEdit ? "Buscando bairro..." : "Buscar bairro por endereco"}
-                      >
-                        <MapPin size={15} className={addressLookupLoadingEdit ? "animate-pulse" : ""} />
-                      </button>
                     </div>
-                    {addressLookupLoadingEdit && (
-                      <span className="text-[11px] font-normal text-ink/60">Consultando endereco...</span>
-                    )}
-                    {addressLookupErrorEdit && (
-                      <span className="text-[11px] font-normal text-red-600">{addressLookupErrorEdit}</span>
-                    )}
                   </label>
                 </div>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
@@ -3606,16 +3347,6 @@ export default function Clientes() {
                       }
                       className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                     />
-                    <button
-                      type="button"
-                      onClick={handleAddressLookupEdit}
-                      disabled={!canSearchEnderecoEdit || addressLookupLoadingEdit}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
-                      title={addressLookupLoadingEdit ? "Buscando bairro..." : "Buscar bairro por endereco"}
-                      aria-label={addressLookupLoadingEdit ? "Buscando bairro..." : "Buscar bairro por endereco"}
-                    >
-                      <MapPin size={15} className={addressLookupLoadingEdit ? "animate-pulse" : ""} />
-                    </button>
                   </div>
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
@@ -3629,21 +3360,7 @@ export default function Clientes() {
                       placeholder="00000-000"
                       className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                     />
-                    <button
-                      type="button"
-                      onClick={handleCepLookupEdit}
-                      disabled={cepLoadingEdit || sanitizeCep(editForm.cep).length !== 8}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
-                      title={cepLoadingEdit ? "Buscando CEP..." : "Buscar CEP"}
-                      aria-label={cepLoadingEdit ? "Buscando CEP..." : "Buscar CEP"}
-                    >
-                      <Search size={15} className={cepLoadingEdit ? "animate-pulse" : ""} />
-                    </button>
                   </div>
-                  {cepLoadingEdit && (
-                    <span className="text-[11px] text-ink/60">Consultando CEP...</span>
-                  )}
-                  {cepErrorEdit && <span className="text-[11px] text-red-600">{cepErrorEdit}</span>}
                 </label>
               </div>
             ) : (

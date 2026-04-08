@@ -179,6 +179,7 @@ const NO_VISIT_REASONS = [
   "ENDERECO NAO LOCALIZADO",
   "AUSENTE NO DIA",
 ];
+const SHOW_VENDOR_LOCK_ICON = false;
 
 const isMobileDevice = () => {
   if (typeof navigator === "undefined") return false;
@@ -2023,7 +2024,7 @@ export default function Visitas() {
                           >
                             {seller}
                           </button>
-                          {canManage && sellerVendor ? (
+                          {SHOW_VENDOR_LOCK_ICON && canManage && sellerVendor ? (
                             <button
                               type="button"
                               onClick={() => {

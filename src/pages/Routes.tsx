@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, LoaderCircle, Map, MapPin, Plus, Trash } from "lucide-react";
+import { ExternalLink, Map, Plus, Trash } from "lucide-react";
 import L from "leaflet";
 import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import { useAuth } from "../context/AuthContext";
@@ -13,9 +13,7 @@ import {
   fetchRouteStops,
   fetchRoutes,
   type EmpresaLookupRow,
-  updateEmpresaCoordinates,
 } from "../lib/routesApi";
-import { fetchNominatimCoordinatesByAddress } from "../lib/nominatim";
 import { onProfilesUpdated } from "../lib/profileEvents";
 import type { Route, RouteStop } from "../types/routes";
 import { formatDateBr } from "../lib/dateFormat";
@@ -142,8 +140,6 @@ export default function Routes() {
   const [newRoute, setNewRoute] = useState({ name: "", date: "", assigned_to_user_id: "" });
   const [newStop, setNewStop] = useState({ cliente_id: "", stop_order: "", notes: "" });
   const [mapAddingEmpresaId, setMapAddingEmpresaId] = useState<string | null>(null);
-  const [geocoding, setGeocoding] = useState(false);
-  const [geocodeMessage, setGeocodeMessage] = useState<string | null>(null);
   const [draftSummary, setDraftSummary] = useState(() => readRoutesModuleDraft());
 
   const canEdit = role === "SUPERVISOR" || role === "ASSISTENTE";
@@ -339,57 +335,6 @@ export default function Routes() {
     setStops((prev) => prev.filter((stop) => stop.id !== stopId));
   };
 
-  const handleGeocodeFortaleza = async () => {
-    if (geocoding || missingCoordinatesRows.length === 0) return;
-    setGeocoding(true);
-    setGeocodeMessage("Geocodificando empresas de Fortaleza...");
-
-    let updated = 0;
-    let skipped = 0;
-    let failed = 0;
-
-    const nextOptions = [...empresaOptions];
-
-    for (const row of missingCoordinatesRows) {
-      const road = [row.endereco, row.bairro].filter(Boolean).join(", ").trim();
-      if (!road) {
-        skipped += 1;
-        continue;
-      }
-
-      try {
-        const result = await fetchNominatimCoordinatesByAddress(road, "Fortaleza", "CE");
-        if (!result) {
-          failed += 1;
-          continue;
-        }
-
-        await updateEmpresaCoordinates({
-          id: row.id,
-          latitude: result.latitude,
-          longitude: result.longitude,
-          geocode_source: "nominatim",
-        });
-
-        const index = nextOptions.findIndex((item) => item.id === row.id);
-        if (index >= 0) {
-          nextOptions[index] = {
-            ...nextOptions[index],
-            latitude: result.latitude,
-            longitude: result.longitude,
-          };
-        }
-        updated += 1;
-      } catch {
-        failed += 1;
-      }
-    }
-
-    setEmpresaOptions(nextOptions);
-    setGeocoding(false);
-    setGeocodeMessage(`Geocodificacao concluida. Atualizadas: ${updated}, sem endereco: ${skipped}, falhas: ${failed}.`);
-  };
-
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -549,17 +494,6 @@ export default function Routes() {
                       Empresas em Fortaleza com coordenadas reais para montar a rota por pin.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleGeocodeFortaleza}
-                    disabled={geocoding || missingCoordinatesRows.length === 0}
-                    className="inline-flex items-center gap-2 rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink hover:border-sea disabled:opacity-60"
-                  >
-                    {geocoding ? <LoaderCircle size={14} className="animate-spin" /> : <MapPin size={14} />}
-                    {geocoding
-                      ? "Geocodificando..."
-                      : `Geocodificar faltantes (${missingCoordinatesRows.length})`}
-                  </button>
                 </div>
 
                 <div className="mt-3 text-xs text-ink/70">
@@ -569,8 +503,6 @@ export default function Routes() {
                   <span className="mx-2">•</span>
                   <span>Sem coordenadas: {missingCoordinatesRows.length}</span>
                 </div>
-                {geocodeMessage ? <p className="mt-2 text-xs text-ink/60">{geocodeMessage}</p> : null}
-
                 <div className="mt-3 overflow-hidden rounded-xl border border-sea/15">
                   <MapContainer center={FORTALEZA_CENTER} zoom={11} className="h-[460px] w-full">
                     <TileLayer

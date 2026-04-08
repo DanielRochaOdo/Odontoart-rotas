@@ -5,22 +5,6 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
-  server: {
-    proxy: {
-      "/api/nominatim": {
-        target: "https://nominatim.openstreetmap.org",
-        changeOrigin: true,
-        secure: true,
-        rewrite: (path) => path.replace(/^\/api\/nominatim/, ""),
-        configure: (proxy) => {
-          proxy.on("proxyReq", (proxyReq) => {
-            proxyReq.setHeader("Accept-Language", "pt-BR");
-            proxyReq.setHeader("User-Agent", "Odontoart-rotas/1.0 (+https://odontoart.com.br)");
-          });
-        },
-      },
-    },
-  },
   plugins: [
     tailwindcss(),
     react(),

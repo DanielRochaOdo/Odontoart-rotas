@@ -13,9 +13,6 @@ import {
   type ManagedProfile,
 } from "../lib/settingsApi";
 import { emitProfilesUpdated } from "../lib/profileEvents";
-import type { CepMapped } from "../lib/cep";
-import { formatCep, sanitizeCep } from "../lib/cep";
-import { fetchNominatimByCep } from "../lib/nominatim";
 import { normalizeSearchText } from "../lib/textNormalize";
 
 type TabKey = "SUPERVISORES" | "VENDEDORES" | "ASSISTENTES";
@@ -51,10 +48,6 @@ export default function Settings() {
   const [searchTerm, setSearchTerm] = useState("");
   const [profiles, setProfiles] = useState<ManagedProfile[]>([]);
   const [userEmailsByUserId, setUserEmailsByUserId] = useState<Record<string, string>>({});
-  const [cep, setCep] = useState("");
-  const [cepResult, setCepResult] = useState<CepMapped | null>(null);
-  const [cepLoading, setCepLoading] = useState(false);
-  const [cepError, setCepError] = useState<string | null>(null);
 
   const [creatingSupervisor, setCreatingSupervisor] = useState(false);
   const [creatingVendor, setCreatingVendor] = useState(false);
@@ -162,39 +155,6 @@ export default function Settings() {
     if (authLoading || !isSupervisor || !session?.access_token) return;
     loadProfiles();
   }, [authLoading, isSupervisor, session?.access_token]);
-
-  useEffect(() => {
-    if (!isSupervisor) return;
-    const sanitized = sanitizeCep(cep);
-    if (sanitized.length !== 8) {
-      setCepResult(null);
-      setCepError(null);
-      return;
-    }
-    const controller = new AbortController();
-    const handler = window.setTimeout(async () => {
-      setCepLoading(true);
-      setCepError(null);
-      try {
-        const mapped = await fetchNominatimByCep(sanitized, controller.signal);
-        if (!mapped) {
-          throw new Error("CEP nao encontrado.");
-        }
-        setCepResult(mapped);
-      } catch (err) {
-        if ((err as Error).name !== "AbortError") {
-          setCepError("CEP nao encontrado ou API indisponivel.");
-          setCepResult(null);
-        }
-      } finally {
-        setCepLoading(false);
-      }
-    }, 400);
-    return () => {
-      window.clearTimeout(handler);
-      controller.abort();
-    };
-  }, [cep, isSupervisor]);
 
   const resetEdits = () => {
     setEditingSupervisorId(null);
@@ -526,70 +486,6 @@ export default function Settings() {
           Cadastre supervisores, vendedores e assistentes.
         </p>
       </header>
-
-      <section className="rounded-2xl border border-sea/20 bg-sand/20 p-4">
-        <h3 className="font-display text-lg text-ink">Consulta CEP</h3>
-        <p className="mt-1 text-xs text-ink/60">
-          Digite o CEP para buscar endereco automaticamente.
-        </p>
-        <div className="mt-4 grid gap-3 md:grid-cols-4">
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            CEP
-            <input
-              value={cep}
-              onChange={(event) => setCep(formatCep(event.target.value))}
-              placeholder="00000-000"
-              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-            Endereco
-            <input
-              value={cepResult?.endereco ?? ""}
-              readOnly
-              className="rounded-lg border border-sea/20 bg-white/80 px-3 py-2 text-sm text-ink outline-none"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            Bairro
-            <input
-              value={cepResult?.bairro ?? ""}
-              readOnly
-              className="rounded-lg border border-sea/20 bg-white/80 px-3 py-2 text-sm text-ink outline-none"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            Cidade
-            <input
-              value={cepResult?.cidade ?? ""}
-              readOnly
-              className="rounded-lg border border-sea/20 bg-white/80 px-3 py-2 text-sm text-ink outline-none"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-            UF
-            <input
-              value={cepResult?.uf ?? ""}
-              readOnly
-              className="rounded-lg border border-sea/20 bg-white/80 px-3 py-2 text-sm text-ink outline-none"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
-            Complemento
-            <input
-              value={cepResult?.complemento ?? ""}
-              readOnly
-              className="rounded-lg border border-sea/20 bg-white/80 px-3 py-2 text-sm text-ink outline-none"
-            />
-          </label>
-        </div>
-        {cepLoading && (
-          <p className="mt-3 text-xs text-ink/60">Consultando CEP...</p>
-        )}
-        {cepError && (
-          <p className="mt-3 text-xs text-red-600">{cepError}</p>
-        )}
-      </section>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">

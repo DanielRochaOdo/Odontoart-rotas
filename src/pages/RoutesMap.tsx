@@ -2,10 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ExternalLink,
-  LoaderCircle,
   MapPin,
   Plus,
-  RefreshCw,
   SquareCenterlineDashedHorizontal,
   X,
 } from "lucide-react";
@@ -28,12 +26,7 @@ import {
   fetchEmpresasLookup,
   type EmpresaScheduledVisit,
   type EmpresaLookupRow,
-  updateEmpresaCoordinatesBatch,
 } from "../lib/routesApi";
-import {
-  fetchNominatimCoordinatesByAddress,
-  fetchNominatimCoordinatesByQuery,
-} from "../lib/nominatim";
 import { onProfilesUpdated } from "../lib/profileEvents";
 import { useAgendaFilters } from "../hooks/useAgendaFilters";
 import {
@@ -63,7 +56,6 @@ const CEARA_BOUNDS: [[number, number], [number, number]] = [
 const CEARA_CITIES_GEOJSON = JSON.parse(cearaCitiesRaw) as GeoJsonObject;
 const FORTALEZA_BAIRROS_GEOJSON = JSON.parse(fortalezaBairrosRaw) as GeoJsonObject;
 const LIGHT_MODE_POINT_LIMIT = 3000;
-const MAX_GEOCODE_UNIQUE_ADDRESSES_PER_RUN = 40;
 const COMPANY_LIST_MIN_HEIGHT = 200;
 const COMPANY_LIST_MAX_HEIGHT = 680;
 
@@ -352,9 +344,7 @@ export default function RoutesMap() {
   const [showGenerateModal, setShowGenerateModal] = useState(false);
 
   const [message, setMessage] = useState<string | null>(null);
-  const [geocoding, setGeocoding] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [showGeocodeConfirm, setShowGeocodeConfirm] = useState(false);
 
   // ====== SELECAO POR RAIO (AGORA COM 1KM) ======
   const [radiusKm, setRadiusKm] = useState<0.5 | 1 | 3 | 5 | 10>(1);
@@ -665,7 +655,6 @@ export default function RoutesMap() {
     });
   }, [rowsMatchingFilters]);
 
-  const missingAll = useMemo(() => dedupedEmpresaRows.filter((r) => !hasRealCoordinates(r)), [dedupedEmpresaRows]);
   const missingFromFiltersCount = useMemo(
     () => rowsMatchingFilters.filter((r) => !hasRealCoordinates(r)).length,
     [rowsMatchingFilters],
@@ -987,117 +976,6 @@ export default function RoutesMap() {
     document.body.style.userSelect = "none";
     window.addEventListener("mousemove", handlePointerMove);
     window.addEventListener("mouseup", stopResize);
-  };
-
-  const handleGeocode = async () => {
-    if (geocoding || missingAll.length === 0) return;
-
-    setGeocoding(true);
-    setMessage("Geocodificando empresas sem coordenadas...");
-
-    const next = [...empresaRows];
-    const nextById = new Map(next.map((row, index) => [row.id, index] as const));
-    let ok = 0,
-      skip = 0,
-      fail = 0;
-    const failReasons: string[] = [];
-    const grouped = new Map<
-      string,
-      {
-        rows: EmpresaLookupRow[];
-        city: string;
-        uf: string;
-        bairro: string;
-        roads: string[];
-      }
-    >();
-
-    for (const r of missingAll) {
-      const city = compact(r.cidade);
-      const uf = compact(r.uf);
-      const bairro = compact(r.bairro);
-      const roadPrimary = compact([r.endereco, r.complemento].filter(Boolean).join(", "));
-      const roadSecondary = compact(r.endereco);
-      const roads = Array.from(new Set([roadPrimary, roadSecondary].filter(Boolean)));
-
-      if (!city || !uf || roads.length === 0) {
-        skip += 1;
-        continue;
-      }
-
-      const key = `${normalize(roads[0])}|${normalize(city)}|${normalize(uf)}`;
-      const existing = grouped.get(key);
-      if (existing) {
-        existing.rows.push(r);
-        roads.forEach((road) => {
-          if (!existing.roads.includes(road)) existing.roads.push(road);
-        });
-      } else {
-        grouped.set(key, { rows: [r], city, uf, bairro, roads });
-      }
-    }
-
-    const uniqueGroups = Array.from(grouped.values());
-    const processGroups = uniqueGroups.slice(0, MAX_GEOCODE_UNIQUE_ADDRESSES_PER_RUN);
-    const postponed = uniqueGroups.length - processGroups.length;
-
-    for (const group of processGroups) {
-      try {
-        let g = null as Awaited<ReturnType<typeof fetchNominatimCoordinatesByAddress>>;
-        for (const road of group.roads) {
-          g = await fetchNominatimCoordinatesByAddress(road, group.city, group.uf);
-          if (g) break;
-        }
-
-        if (!g && group.bairro) {
-          g = await fetchNominatimCoordinatesByQuery(`${group.bairro}, ${group.city}, ${group.uf}, Brasil`);
-        }
-
-        if (!g) {
-          fail += group.rows.length;
-          if (failReasons.length < 4) {
-            const sample = group.rows[0];
-            const label = (sample?.empresa ?? sample?.nome_fantasia ?? sample?.id ?? "endereco").slice(0, 45);
-            failReasons.push(`${label}: sem retorno do geocodificador`);
-          }
-          continue;
-        }
-
-        const ids = group.rows.map((row) => row.id);
-        await updateEmpresaCoordinatesBatch({
-          ids,
-          latitude: g.latitude,
-          longitude: g.longitude,
-          geocode_source: "nominatim",
-        });
-
-        ids.forEach((id) => {
-          const idx = nextById.get(id);
-          if (idx === undefined) return;
-          next[idx] = { ...next[idx], latitude: g.latitude, longitude: g.longitude };
-        });
-        ok += ids.length;
-      } catch (e) {
-        fail += group.rows.length;
-        if (failReasons.length < 4) {
-          const sample = group.rows[0];
-          const label = (sample?.empresa ?? sample?.nome_fantasia ?? sample?.id ?? "endereco").slice(0, 45);
-          failReasons.push(`${label}: ${e instanceof Error ? e.message : "falha desconhecida"}`);
-        }
-      }
-    }
-
-    setEmpresaRows(next);
-    setGeocoding(false);
-
-    const postponedText =
-      postponed > 0
-        ? ` Restam ${postponed} endereco(s) unico(s) para o proximo lote.`
-        : "";
-    const reasonText = failReasons.length ? ` Erros: ${failReasons.join(" | ")}` : "";
-    setMessage(
-      `Geocodificacao concluida. Atualizadas: ${ok}, sem endereco: ${skip}, falhas: ${fail}.${postponedText}${reasonText}`,
-    );
   };
 
   const handleGenerate = async () => {
@@ -1601,17 +1479,6 @@ export default function RoutesMap() {
 
               <button
                 type="button"
-                onClick={() => setShowGeocodeConfirm(true)}
-                disabled={geocoding || missingAll.length === 0}
-                title={geocoding ? "Geocodificando..." : `Geocodificar sem ponto (${missingAll.length})`}
-                aria-label={geocoding ? "Geocodificando sem ponto" : `Geocodificar sem ponto (${missingAll.length})`}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-sea/30 bg-white/80 text-ink/70 hover:border-sea hover:text-sea disabled:opacity-60"
-              >
-                {geocoding ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-              </button>
-
-              <button
-                type="button"
                 onClick={() => {
                   clearFilters();
                   setCompanyNameQuery("");
@@ -2062,45 +1929,6 @@ export default function RoutesMap() {
                 className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
                 {generating ? "Gerando..." : `Confirmar (${effectiveSelectedEmpresaIds.length})`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL CONFIRMAR GEOCODE */}
-      {showGeocodeConfirm && (
-        <div className="fixed inset-0 z-[3000] flex items-center justify-center px-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-ink/30"
-            onClick={() => (geocoding ? null : setShowGeocodeConfirm(false))}
-          />
-          <div className="relative w-full max-w-md rounded-2xl border border-sea/20 bg-white p-5 shadow-card">
-            <h3 className="font-display text-lg text-ink">Sincronizar coordenadas</h3>
-            <p className="mt-2 text-xs text-ink/70">Esta sincronizacao deve ser feita apenas se houver necessidade.</p>
-            <p className="mt-2 text-xs text-ink/60">Empresas sem ponto atualmente: {missingAll.length}</p>
-
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowGeocodeConfirm(false)}
-                disabled={geocoding}
-                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-60"
-              >
-                Cancelar
-              </button>
-
-              <button
-                type="button"
-                onClick={async () => {
-                  setShowGeocodeConfirm(false);
-                  await handleGeocode();
-                }}
-                disabled={geocoding || missingAll.length === 0}
-                className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
-              >
-                Confirmar
               </button>
             </div>
           </div>
