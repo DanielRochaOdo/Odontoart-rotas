@@ -590,6 +590,7 @@ export const fetchAgenda = async (
   const hasGlobalFilter = Boolean(effectiveFilters.global?.trim());
   const hasSearchFilters = Boolean(companyName || companyCode || hasGlobalFilter);
   const shouldUseExactCount = !hasColumnFilters && !hasDateFilters && !hasSearchFilters && !restrictedAgendaIds;
+  const shouldSkipCountQuery = !shouldUseExactCount;
 
   const runCountQuery = async (mode: "exact" | "planned") => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -632,18 +633,20 @@ export const fetchAgenda = async (
 
   if (error) throw new Error(error.message);
   let count: number | null = null;
-  try {
-    count = await runCountQuery(shouldUseExactCount ? "exact" : "planned");
-  } catch (countError) {
-    const message = countError instanceof Error ? countError.message : String(countError ?? "");
-    if (shouldUseExactCount && isStatementTimeoutError(message)) {
-      try {
-        count = await runCountQuery("planned");
-      } catch (plannedError) {
-        console.warn("fetchAgenda count fallback failed:", plannedError);
+  if (!shouldSkipCountQuery) {
+    try {
+      count = await runCountQuery("exact");
+    } catch (countError) {
+      const message = countError instanceof Error ? countError.message : String(countError ?? "");
+      if (isStatementTimeoutError(message)) {
+        try {
+          count = await runCountQuery("planned");
+        } catch (plannedError) {
+          console.warn("fetchAgenda count fallback failed:", plannedError);
+        }
+      } else {
+        console.warn("fetchAgenda count query failed:", countError);
       }
-    } else {
-      console.warn("fetchAgenda count query failed:", countError);
     }
   }
   if (count === null) {

@@ -2,8 +2,75 @@ import { supabase } from "./supabase";
 import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import { extractCustomTimes } from "./perfilVisita";
 const DEFAULT_SITUACAO = "Ativo";
+const CLIENTES_LIST_SELECT_COLUMNS =
+  "id, codigo, empresa, pessoa, contato, grupo, obs_comercial, obs, perfil_visita, situacao, cep, cidade, uf, created_at";
 const CLIENTES_SELECT_COLUMNS =
   "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf, latitude, longitude, geocode_source, geocode_updated_at, created_at";
+const MAX_CLIENTES_PAGE_SIZE = 100;
+
+export type ClienteListRow = Pick<
+  ClienteRow,
+  "id" | "codigo" | "empresa" | "pessoa" | "contato" | "grupo" | "obs_comercial" | "obs" | "perfil_visita" | "situacao" | "cep" | "cidade" | "uf" | "created_at"
+>;
+
+const clampPageSize = (value: number) => {
+  if (!Number.isFinite(value)) return 50;
+  const normalized = Math.floor(value);
+  if (normalized < 1) return 1;
+  if (normalized > MAX_CLIENTES_PAGE_SIZE) return MAX_CLIENTES_PAGE_SIZE;
+  return normalized;
+};
+
+const sanitizeSearchTerm = (value: string | null | undefined) =>
+  (value ?? "").replace(/%/g, "").trim();
+
+const applyClientesListFilters = <T,>(
+  query: T,
+  params: {
+    search?: string;
+    searchMode?: "codigo" | "empresa" | "geral";
+    situacao?: "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado";
+  },
+): T => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let next: any = query;
+  const searchTerm = sanitizeSearchTerm(params.search);
+  const mode = params.searchMode ?? "codigo";
+
+  if (params.situacao) {
+    next = next.eq("situacao", params.situacao);
+  }
+
+  if (!searchTerm) return next as T;
+
+  if (mode === "codigo") {
+    next = next.eq("codigo", searchTerm);
+    return next as T;
+  }
+
+  if (mode === "empresa") {
+    next = next.ilike("empresa", `%${searchTerm}%`);
+    return next as T;
+  }
+
+  const conditions = [
+    `codigo.ilike.%${searchTerm}%`,
+    `cep.ilike.%${searchTerm}%`,
+    `empresa.ilike.%${searchTerm}%`,
+    `nome_fantasia.ilike.%${searchTerm}%`,
+    `pessoa.ilike.%${searchTerm}%`,
+    `contato.ilike.%${searchTerm}%`,
+    `grupo.ilike.%${searchTerm}%`,
+    `obs_comercial.ilike.%${searchTerm}%`,
+    `obs.ilike.%${searchTerm}%`,
+    `situacao.ilike.%${searchTerm}%`,
+    `cidade.ilike.%${searchTerm}%`,
+    `uf.ilike.%${searchTerm}%`,
+    `bairro.ilike.%${searchTerm}%`,
+  ];
+  next = next.or(conditions.join(","));
+  return next as T;
+};
 
 const normalizePerfilTimes = (value: string | null) => {
   if (!value) return { perfil: null as string | null, opcoes: null as string | null };
@@ -15,47 +82,66 @@ const normalizePerfilTimes = (value: string | null) => {
   };
 };
 
-export const fetchClientes = async () => {
-  const PAGE_SIZE = 1000;
-  const CONCURRENCY = 4;
-  const rowsById = new Map<string, ClienteRow>();
-  const { count, error: countError } = await supabase
+export const fetchClientesPage = async (params: {
+  page: number;
+  pageSize?: number;
+  search?: string;
+  searchMode?: "codigo" | "empresa" | "geral";
+  situacao?: "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado";
+}) => {
+  const page = Number.isFinite(params.page) && params.page > 0 ? Math.floor(params.page) : 1;
+  const pageSize = clampPageSize(params.pageSize ?? 50);
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  let query = supabase
     .from("clientes")
-    .select("id", { count: "exact", head: true });
-  if (countError) throw new Error(countError.message);
-  const total = count ?? 0;
-  if (total === 0) return [] as ClienteRow[];
+    .select(CLIENTES_LIST_SELECT_COLUMNS)
+    .order("empresa", { ascending: true, nullsFirst: false })
+    .order("id", { ascending: true })
+    .range(from, to);
 
-  const fetchRange = async (from: number, to: number) => {
-    const { data, error } = await supabase
-      .from("clientes")
-      .select(CLIENTES_SELECT_COLUMNS)
-      // Stable ordering avoids duplicates/missing rows across paginated ranges.
-      .order("id", { ascending: true })
-      .range(from, to);
-    if (error) throw new Error(error.message);
-    return (data ?? []) as ClienteRow[];
-  };
+  query = applyClientesListFilters(query, {
+    search: params.search,
+    searchMode: params.searchMode,
+    situacao: params.situacao,
+  });
 
-  const starts = Array.from(
-    { length: Math.ceil(total / PAGE_SIZE) },
-    (_, index) => index * PAGE_SIZE,
-  );
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ClienteListRow[];
+};
 
-  for (let index = 0; index < starts.length; index += CONCURRENCY) {
-    const chunk = starts.slice(index, index + CONCURRENCY);
-    const batches = await Promise.all(
-      chunk.map((start) => fetchRange(start, start + PAGE_SIZE - 1)),
-    );
-    batches.forEach((batch) => {
-      batch.forEach((row) => {
-        if (!row.id) return;
-        rowsById.set(row.id, row);
-      });
-    });
-  }
+export const fetchClientesCount = async (params: {
+  search?: string;
+  searchMode?: "codigo" | "empresa" | "geral";
+  situacao?: "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado";
+}) => {
+  let query = supabase
+    .from("clientes")
+    .select("id", { count: "planned", head: true });
 
-  return Array.from(rowsById.values());
+  query = applyClientesListFilters(query, {
+    search: params.search,
+    searchMode: params.searchMode,
+    situacao: params.situacao,
+  });
+
+  const { count, error } = await query;
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+};
+
+export const fetchClienteById = async (id: string) => {
+  const { data, error } = await supabase
+    .from("clientes")
+    .select(CLIENTES_SELECT_COLUMNS)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error(`Cliente ${id} nao encontrado.`);
+  return data as ClienteRow;
 };
 
 export const fetchClientesByCodigoExact = async (codigo: string) => {
@@ -68,6 +154,34 @@ export const fetchClientesByCodigoExact = async (codigo: string) => {
     .eq("codigo", normalized)
     .order("created_at", { ascending: false });
 
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ClienteRow[];
+};
+
+export const fetchClientesByEnderecoExact = async (params: {
+  endereco: string;
+  excludeId?: string | null;
+  limit?: number;
+}) => {
+  const normalized = params.endereco.replace(/[%*]/g, "").trim();
+  if (!normalized) return [] as ClienteRow[];
+  const limit =
+    Number.isFinite(params.limit) && (params.limit ?? 0) > 0
+      ? Math.min(Math.floor(params.limit ?? 0), 500)
+      : 200;
+
+  let query = supabase
+    .from("clientes")
+    .select(CLIENTES_SELECT_COLUMNS)
+    .ilike("endereco", normalized)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (params.excludeId) {
+    query = query.neq("id", params.excludeId);
+  }
+
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return (data ?? []) as ClienteRow[];
 };

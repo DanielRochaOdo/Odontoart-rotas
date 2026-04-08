@@ -360,12 +360,43 @@ const writeAgendaPageCache = (entry: AgendaPageCacheEntry) => {
   }
 };
 
+const buildEmptyAgendaFilters = () => ({
+  global: "",
+  columns: {
+    supervisor: [],
+    vendedor: [],
+    cod_1: [],
+    bairro: [],
+    cidade: [],
+    uf: [],
+    grupo: [],
+    perfil_visita: [],
+    empresa_nome: [],
+    situacao: [],
+    categoria: [],
+  },
+  dateRanges: {
+    data_da_ultima_visita: {},
+  },
+  ranges: {
+    vidas_ultima_visita: {},
+  },
+});
+
 export default function Agenda() {
   const { role, session } = useAuth();
   const canAccess = role === "SUPERVISOR" || role === "ASSISTENTE";
-  const { filters, setFilters, clearFilters } = useAgendaFilters("routesTableFiltersV2");
+  const {
+    filters: appliedFilters,
+    setFilters: setAppliedFilters,
+  } = useAgendaFilters("routesTableFiltersV2");
+  const [filters, setDraftFilters] = useState(() => appliedFilters);
+  const setFilters = setDraftFilters;
   const [companyNameQuery, setCompanyNameQuery] = useState("");
   const [companyCodeQuery, setCompanyCodeQuery] = useState("");
+  const [appliedCompanyNameQuery, setAppliedCompanyNameQuery] = useState("");
+  const [appliedCompanyCodeQuery, setAppliedCompanyCodeQuery] = useState("");
+  const [hasSearched, setHasSearched] = useState(true);
   const [data, setData] = useState<AgendaRow[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -580,37 +611,25 @@ export default function Agenda() {
   const canManageInstruction = role === "SUPERVISOR";
 
   useEffect(() => {
+    setDraftFilters(appliedFilters);
+  }, [appliedFilters]);
+
+  useEffect(() => {
     if (restoredRoutesDraftRef.current) return;
     restoredRoutesDraftRef.current = true;
     const draft = readRoutesModuleDraft();
     if (typeof draft.companyNameQuery === "string") {
       setCompanyNameQuery(draft.companyNameQuery);
+      setAppliedCompanyNameQuery(draft.companyNameQuery);
     }
     if (typeof draft.companyCodeQuery === "string") {
       setCompanyCodeQuery(draft.companyCodeQuery);
+      setAppliedCompanyCodeQuery(draft.companyCodeQuery);
     }
     if (Array.isArray(draft.selectedAgendaIds)) {
       setSelectedAgendaIds(Array.from(new Set(draft.selectedAgendaIds.filter(Boolean))));
     }
   }, []);
-
-  useEffect(() => {
-    const situacoes = filters.columns.situacao ?? [];
-    if (situacoes.length !== 1) return;
-    if (normalizeText(situacoes[0], { letterCase: "upper" }) !== "ATIVO") return;
-    setFilters((prev) => ({
-      ...prev,
-      columns: {
-        ...prev.columns,
-        situacao: [],
-      },
-    }));
-  }, [filters.columns.situacao, setFilters]);
-
-  useEffect(() => {
-    if (!filters.global) return;
-    setFilters((prev) => (prev.global ? { ...prev, global: "" } : prev));
-  }, [filters.global, setFilters]);
 
   const vendorOptions = useMemo(
     () =>
@@ -771,7 +790,7 @@ export default function Agenda() {
 
   useEffect(() => {
     setPageIndex(0);
-  }, [companyCodeQuery, companyNameQuery, filters, sorting]);
+  }, [appliedCompanyCodeQuery, appliedCompanyNameQuery, appliedFilters, sorting]);
 
   useEffect(() => {
     if (!restoredRoutesDraftRef.current) return;
@@ -850,9 +869,9 @@ export default function Agenda() {
       pageIndex,
       pageSize,
       sorting,
-      filters,
-      companyNameQuery: companyNameQuery.trim(),
-      companyCodeQuery: companyCodeQuery.trim(),
+      filters: appliedFilters,
+      companyNameQuery: appliedCompanyNameQuery.trim(),
+      companyCodeQuery: appliedCompanyCodeQuery.trim(),
     });
     const cached = readAgendaPageCache(requestKey);
 
@@ -866,11 +885,21 @@ export default function Agenda() {
       setError(null);
     }
 
+    if (!hasSearched) {
+      setData([]);
+      setTotalCount(0);
+      setError(null);
+      setLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
     const load = async () => {
       try {
-        const result = await fetchAgenda(pageIndex, pageSize, sorting, filters, {
-          companyName: companyNameQuery,
-          companyCode: companyCodeQuery,
+        const result = await fetchAgenda(pageIndex, pageSize, sorting, appliedFilters, {
+          companyName: appliedCompanyNameQuery,
+          companyCode: appliedCompanyCodeQuery,
         });
         if (!active) return;
         setData(result.data);
@@ -902,7 +931,16 @@ export default function Agenda() {
     return () => {
       active = false;
     };
-  }, [companyCodeQuery, companyNameQuery, filters, pageIndex, pageSize, refreshKey, sorting]);
+  }, [
+    appliedCompanyCodeQuery,
+    appliedCompanyNameQuery,
+    appliedFilters,
+    hasSearched,
+    pageIndex,
+    pageSize,
+    refreshKey,
+    sorting,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -1058,7 +1096,7 @@ export default function Agenda() {
     setGenerateMessage(null);
 
     try {
-      const rows = await fetchAgendaForGeneration(filters, selectedAgendaIds);
+      const rows = await fetchAgendaForGeneration(appliedFilters, selectedAgendaIds);
       if (rows.length === 0) {
         setGenerateMessage("Nenhum registro encontrado para gerar visitas.");
         return;
@@ -2199,9 +2237,9 @@ export default function Agenda() {
 
   const hasActiveCompanySearch = useMemo(
     () =>
-      Boolean(normalizeSearchText(companyNameQuery)) ||
-      Boolean(normalizeSearchText(companyCodeQuery)),
-    [companyCodeQuery, companyNameQuery],
+      Boolean(normalizeSearchText(appliedCompanyNameQuery)) ||
+      Boolean(normalizeSearchText(appliedCompanyCodeQuery)),
+    [appliedCompanyCodeQuery, appliedCompanyNameQuery],
   );
 
   const impactedCompaniesPreview = useMemo<ImpactedCompanyPreview[]>(() => {
@@ -2355,6 +2393,31 @@ export default function Agenda() {
       setSelectedRowId((prev) => (prev && removeSet.has(prev) ? null : prev));
     }
     setColumnChipRemovalModal(null);
+  };
+
+  const handleApplySearch = () => {
+    setAppliedFilters(filters);
+    setAppliedCompanyNameQuery(companyNameQuery.trim());
+    setAppliedCompanyCodeQuery(companyCodeQuery.trim());
+    setExcludedAgendaIds([]);
+    setPageIndex(0);
+    setHasSearched(true);
+  };
+
+  const handleClearFilters = () => {
+    const emptyFilters = buildEmptyAgendaFilters();
+    setDraftFilters(emptyFilters);
+    setAppliedFilters(emptyFilters);
+    setCompanyNameQuery("");
+    setCompanyCodeQuery("");
+    setAppliedCompanyNameQuery("");
+    setAppliedCompanyCodeQuery("");
+    setExcludedAgendaIds([]);
+    setSelectedAgendaIds([]);
+    setSelectedRow(null);
+    setSelectedRowId(null);
+    setPageIndex(0);
+    setHasSearched(true);
   };
 
   if (!canAccess) {
@@ -2671,12 +2734,14 @@ export default function Agenda() {
                 <div className="ml-auto flex items-center gap-3 self-end">
                   <button
                     type="button"
-                    onClick={() => {
-                      clearFilters();
-                      setCompanyNameQuery("");
-                      setCompanyCodeQuery("");
-                      setExcludedAgendaIds([]);
-                    }}
+                    onClick={handleApplySearch}
+                    className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight"
+                  >
+                    Buscar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearFilters}
                     className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
                   >
                     Limpar filtros
@@ -3474,7 +3539,11 @@ export default function Agenda() {
 
       <div className="rounded-2xl border border-sea/15 bg-white/90">
         <div className="md:hidden">
-          {loading ? (
+          {!hasSearched ? (
+            <div className="px-4 py-6 text-center text-sm text-ink/60">
+              Ajuste os filtros e clique em Buscar.
+            </div>
+          ) : loading ? (
             <div className="px-4 py-6 text-center text-sm text-ink/60">Carregando agenda...</div>
           ) : error ? (
             <div className="px-4 py-6 text-center text-sm text-red-500">{error}</div>
@@ -3695,6 +3764,12 @@ export default function Agenda() {
                   <tr>
                     <td colSpan={columns.length} className="px-4 py-6 text-center text-sm text-ink/60">
                       Carregando agenda...
+                    </td>
+                  </tr>
+                ) : !hasSearched ? (
+                  <tr>
+                    <td colSpan={columns.length} className="px-4 py-6 text-center text-sm text-ink/60">
+                      Ajuste os filtros e clique em Buscar.
                     </td>
                   </tr>
                 ) : error ? (
