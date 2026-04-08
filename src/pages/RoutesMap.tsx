@@ -30,6 +30,7 @@ import {
 import { onProfilesUpdated } from "../lib/profileEvents";
 import { useAgendaFilters } from "../hooks/useAgendaFilters";
 import {
+  fetchDistinctOptions,
   fetchSupervisores,
   fetchVendedores,
 } from "../lib/agendaApi";
@@ -40,12 +41,13 @@ import {
   readRoutesModuleDraft,
   writeRoutesModuleDraft,
 } from "../lib/routesModuleDraft";
-import { normalizeSearchText, normalizeSearchTokenText, normalizeText } from "../lib/textNormalize";
+import { normalizeSearchText, normalizeText } from "../lib/textNormalize";
 import MultiSelectFilter from "../components/agenda/MultiSelectFilter";
 import CategoriaLegendPopover from "../components/agenda/CategoriaLegendPopover";
 import cearaCitiesRaw from "../data/ceara_municipios.geojson?raw";
 import fortalezaBairrosRaw from "../data/fortaleza_bairros.geojson?raw";
 import { CATEGORIA_OPTIONS } from "../lib/categorias";
+import type { AgendaFilters } from "../types/agenda";
 
 const RMF_CENTER: [number, number] = [-3.86, -38.62];
 const CEARA_BOUNDS: [[number, number], [number, number]] = [
@@ -99,19 +101,7 @@ const FILTER_LABELS: Record<string, string> = {
 const normalize = (v: string | null | undefined) =>
   normalizeText(v, { letterCase: "upper" });
 
-const normalizeTokenText = (v: string | null | undefined) =>
-  normalizeSearchTokenText(v);
-
-const containsExactTerm = (source: string | null | undefined, term: string) => {
-  const normalizedTerm = normalizeTokenText(term);
-  if (!normalizedTerm) return true;
-  const normalizedSource = normalizeTokenText(source);
-  if (!normalizedSource) return false;
-  return ` ${normalizedSource} `.includes(` ${normalizedTerm} `);
-};
-
 const normalizeNumberInput = (v: string) => v.replace(/\D/g, "");
-const toDateKey = (v: string | null | undefined) => (v ?? "").slice(0, 10);
 const compact = (v: string | null | undefined) => (v ?? "").replace(/\s+/g, " ").trim();
 
 const fmtDate = (v: string | null) => formatDateBr(v);
@@ -317,13 +307,45 @@ const writeRoutesMapLookupCache = (entry: RoutesMapLookupCache) => {
   }
 };
 
+const buildEmptyAgendaFilters = (): AgendaFilters => ({
+  global: "",
+  columns: {
+    supervisor: [],
+    vendedor: [],
+    cod_1: [],
+    bairro: [],
+    cidade: [],
+    uf: [],
+    grupo: [],
+    perfil_visita: [],
+    empresa_nome: [],
+    situacao: [],
+    categoria: [],
+  },
+  dateRanges: {
+    data_da_ultima_visita: {},
+  },
+  ranges: {
+    vidas_ultima_visita: {},
+  },
+});
+
 export default function RoutesMap() {
   const { role, session } = useAuth();
   const canGenerate = role === "SUPERVISOR" || role === "ASSISTENTE";
 
-  const { filters, setFilters, clearFilters } = useAgendaFilters("routesMapFilters");
+  const {
+    filters: appliedFilters,
+    setFilters: setAppliedFilters,
+  } = useAgendaFilters("routesMapFilters");
+  const [filters, setDraftFilters] = useState<AgendaFilters>(() => appliedFilters);
+  const setFilters = setDraftFilters;
   const [companyNameQuery, setCompanyNameQuery] = useState("");
   const [companyCodeQuery, setCompanyCodeQuery] = useState("");
+  const [appliedCompanyNameQuery, setAppliedCompanyNameQuery] = useState("");
+  const [appliedCompanyCodeQuery, setAppliedCompanyCodeQuery] = useState("");
+  const [hasSearched, setHasSearched] = useState(true);
+  const [loadingEmpresas, setLoadingEmpresas] = useState(false);
   const restoredDraftRef = useRef(false);
 
   const [empresaRows, setEmpresaRows] = useState<EmpresaLookupRow[]>([]);
@@ -332,6 +354,7 @@ export default function RoutesMap() {
   >({});
   const [vendedores, setVendedores] = useState<VendedorLookup[]>([]);
   const [supervisores, setSupervisores] = useState<SupervisorLookup[]>([]);
+  const [filterOptions, setFilterOptions] = useState<Record<string, string[]>>({});
 
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("RAIO");
   const [selectedEmpresaIds, setSelectedEmpresaIds] = useState<string[]>([]);
@@ -359,11 +382,17 @@ export default function RoutesMap() {
   // ==============================================
 
   useEffect(() => {
+    setDraftFilters(appliedFilters);
+  }, [appliedFilters]);
+
+  useEffect(() => {
     if (restoredDraftRef.current) return;
     restoredDraftRef.current = true;
     const parsed = readRoutesModuleDraft();
     setCompanyNameQuery(parsed.companyNameQuery ?? "");
     setCompanyCodeQuery(parsed.companyCodeQuery ?? "");
+    setAppliedCompanyNameQuery(parsed.companyNameQuery ?? "");
+    setAppliedCompanyCodeQuery(parsed.companyCodeQuery ?? "");
     if (Array.isArray(parsed.selectedEmpresaIds)) {
       setSelectedEmpresaIds(Array.from(new Set(parsed.selectedEmpresaIds.filter(Boolean))));
     }
@@ -402,21 +431,16 @@ export default function RoutesMap() {
 
     const cached = readRoutesMapLookupCache();
     if (cached) {
-      setEmpresaRows(cached.empresaRows);
       setVendedores(cached.vendedores);
       setSupervisores(cached.supervisores);
     }
 
     const load = async () => {
       try {
-        const [empresas, vends, sups] = await Promise.all([
-          fetchEmpresasLookup(),
-          fetchVendedores(),
-          fetchSupervisores(),
-        ]);
+        const [vends, sups] = await Promise.all([fetchVendedores(), fetchSupervisores()]);
         if (!active) return;
         const nextCache: RoutesMapLookupCache = {
-          empresaRows: empresas,
+          empresaRows: cached?.empresaRows ?? [],
           vendedores: vends as VendedorLookup[],
           supervisores: sups as SupervisorLookup[],
           cachedAt: Date.now(),
@@ -442,6 +466,76 @@ export default function RoutesMap() {
       unsub();
     };
   }, [canGenerate]);
+
+  useEffect(() => {
+    if (!canGenerate) return;
+    let active = true;
+
+    const loadOptions = async () => {
+      const entries: Array<readonly [string, string[]]> = [];
+      for (const [key, sources] of Object.entries(FILTER_SOURCES)) {
+        if (!active) return;
+        try {
+          const options = await fetchDistinctOptions(key, sources);
+          entries.push([key, options] as const);
+        } catch (error) {
+          console.error(`Falha ao carregar opcoes do filtro "${key}" no mapa.`, error);
+          entries.push([key, []] as const);
+        }
+      }
+      if (!active) return;
+      setFilterOptions(Object.fromEntries(entries));
+    };
+
+    void loadOptions();
+    return () => {
+      active = false;
+    };
+  }, [canGenerate]);
+
+  useEffect(() => {
+    if (!canGenerate || !hasSearched) {
+      setEmpresaRows([]);
+      setScheduledVisitsByEmpresa({});
+      setLoadingEmpresas(false);
+      return;
+    }
+
+    let active = true;
+    setLoadingEmpresas(true);
+    setMessage(null);
+
+    const loadCompanies = async () => {
+      try {
+        const empresas = await fetchEmpresasLookup({
+          filters: appliedFilters,
+          search: {
+            companyName: appliedCompanyNameQuery,
+            companyCode: appliedCompanyCodeQuery,
+          },
+        });
+        if (!active) return;
+        setEmpresaRows(empresas);
+      } catch (error) {
+        if (!active) return;
+        setEmpresaRows([]);
+        setMessage(error instanceof Error ? error.message : "Erro ao buscar empresas.");
+      } finally {
+        if (active) setLoadingEmpresas(false);
+      }
+    };
+
+    void loadCompanies();
+    return () => {
+      active = false;
+    };
+  }, [
+    appliedCompanyCodeQuery,
+    appliedCompanyNameQuery,
+    appliedFilters,
+    canGenerate,
+    hasSearched,
+  ]);
 
   const supById = useMemo(
     () => new Map(supervisores.map((s) => [s.user_id, s.display_name ?? s.user_id])),
@@ -499,116 +593,23 @@ export default function RoutesMap() {
     };
   }, [dedupedEmpresaRows]);
 
-  const filterOptions = useMemo<Record<string, string[]>>(() => {
-    const options = Object.fromEntries(
-      Object.keys(FILTER_SOURCES).map((key) => [key, new Set<string>()]),
-    ) as Record<string, Set<string>>;
-
-    dedupedEmpresaRows.forEach((row) => {
-      const valuesByKey: Record<string, string | null | undefined> = {
-        cod_1: row.codigo,
-        empresa_nome: row.empresa ?? row.nome_fantasia,
-        bairro: row.bairro,
-        cidade: row.cidade,
-        vendedor: row.vendedor,
-        grupo: row.grupo,
-        perfil_visita: row.perfil_visita,
-        categoria: row.categoria,
-      };
-
-      Object.entries(valuesByKey).forEach(([key, value]) => {
-        const normalized = (value ?? "").trim();
-        if (!normalized) return;
-        options[key]?.add(normalized);
-      });
-    });
-
-    return Object.fromEntries(
-      Object.entries(options).map(([key, set]) => [key, Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"))]),
-    );
-  }, [dedupedEmpresaRows]);
-
-  const rowsMatchingFilters = useMemo(() => {
-    const companyNameTerm = companyNameQuery.trim();
-    const companyCodeTerm = normalize(companyCodeQuery);
-    const d = filters.dateRanges.data_da_ultima_visita;
-    const vr = filters.ranges.vidas_ultima_visita;
-
-    return dedupedEmpresaRows.filter((r) => {
-      if (companyNameTerm) {
-        if (!containsExactTerm(r.empresa, companyNameTerm)) return false;
-      }
-
-      if (companyCodeTerm) {
-        const code = normalize(r.codigo);
-        if (code !== companyCodeTerm) return false;
-      }
-
-      const ck: Record<string, string> = {
-        cod_1: r.codigo ?? "",
-        empresa_nome: r.empresa ?? r.nome_fantasia ?? "",
-        bairro: r.bairro ?? "",
-        cidade: r.cidade ?? "",
-        vendedor: r.vendedor ?? "",
-        grupo: r.grupo ?? "",
-        perfil_visita: r.perfil_visita ?? "",
-        categoria: r.categoria ?? "",
-      };
-
-      for (const k of Object.keys(FILTER_SOURCES)) {
-        const vals = filters.columns[k] ?? [];
-        if (!vals?.length) continue;
-        if (!vals.map((v) => normalize(v)).includes(normalize(ck[k]))) return false;
-      }
-
-      const date = toDateKey(r.data_da_ultima_visita);
-      const hasMonthYear = Boolean(d.month || d.year);
-
-      if (!hasMonthYear) {
-        if (d.from || d.to) {
-          if (d.invert) {
-            if (!date) return false;
-            if (d.from && date < d.from) return false;
-            if (d.to && date > d.to) return false;
-          } else {
-            const inside = Boolean(date && (!d.from || date >= d.from) && (!d.to || date <= d.to));
-            if (inside) return false;
-          }
-        }
-      } else {
-        const yy = Number(d.year || (d.month ? String(new Date().getFullYear()) : ""));
-        if (!Number.isNaN(yy) && yy > 0) {
-          const st = d.month ? new Date(yy, Number(d.month) - 1, 1) : new Date(yy, 0, 1);
-          const en = d.month ? new Date(yy, Number(d.month), 0) : new Date(yy, 11, 31);
-          const s = st.toISOString().slice(0, 10);
-          const e = en.toISOString().slice(0, 10);
-          const inside = Boolean(date && date >= s && date <= e);
-          if (d.invert ? !inside : inside) return false;
-        }
-      }
-
-      const from = vr.from ? Number(vr.from) : null;
-      const to = vr.to ? Number(vr.to) : null;
-
-      if (from !== null || to !== null) {
-        if (r.visit_completed_vidas === null || r.visit_completed_vidas === undefined) return false;
-        if (from !== null && r.visit_completed_vidas < from) return false;
-        if (to !== null && r.visit_completed_vidas > to) return false;
-      }
-
-      return true;
-    });
-  }, [companyCodeQuery, companyNameQuery, dedupedEmpresaRows, filters]);
+  const rowsMatchingFilters = useMemo(() => dedupedEmpresaRows, [dedupedEmpresaRows]);
 
   const hasActiveRowsFilter = useMemo(() => {
-    if (normalizeSearchText(companyNameQuery) || normalizeSearchText(companyCodeQuery)) return true;
-    if (Object.keys(FILTER_SOURCES).some((key) => (filters.columns[key] ?? []).length > 0)) return true;
-    const dateRange = filters.dateRanges.data_da_ultima_visita;
+    if (normalizeSearchText(appliedCompanyNameQuery) || normalizeSearchText(appliedCompanyCodeQuery)) return true;
+    if (Object.keys(FILTER_SOURCES).some((key) => (appliedFilters.columns[key] ?? []).length > 0)) return true;
+    const dateRange = appliedFilters.dateRanges.data_da_ultima_visita;
     if (dateRange.from || dateRange.to || dateRange.month || dateRange.year || dateRange.invert) return true;
-    const vidasRange = filters.ranges.vidas_ultima_visita;
+    const vidasRange = appliedFilters.ranges.vidas_ultima_visita;
     if (vidasRange.from || vidasRange.to) return true;
     return false;
-  }, [companyCodeQuery, companyNameQuery, filters.columns, filters.dateRanges.data_da_ultima_visita, filters.ranges.vidas_ultima_visita]);
+  }, [
+    appliedCompanyCodeQuery,
+    appliedCompanyNameQuery,
+    appliedFilters.columns,
+    appliedFilters.dateRanges.data_da_ultima_visita,
+    appliedFilters.ranges.vidas_ultima_visita,
+  ]);
 
   const resolveMapObs = useCallback((empresaId: string) => {
     const visits = scheduledVisitsByEmpresa[empresaId] ?? [];
@@ -1093,6 +1094,34 @@ export default function RoutesMap() {
     }
   };
 
+  const handleApplySearch = () => {
+    setAppliedFilters(filters);
+    setAppliedCompanyNameQuery(companyNameQuery.trim());
+    setAppliedCompanyCodeQuery(companyCodeQuery.trim());
+    setSelectedEmpresaIds([]);
+    setSelectedBairroKeys([]);
+    setExcludedBairroEmpresaIds([]);
+    setRadiusResultIds([]);
+    setHasSearched(true);
+  };
+
+  const handleClearFilters = () => {
+    const emptyFilters = buildEmptyAgendaFilters();
+    setDraftFilters(emptyFilters);
+    setAppliedFilters(emptyFilters);
+    setCompanyNameQuery("");
+    setCompanyCodeQuery("");
+    setAppliedCompanyNameQuery("");
+    setAppliedCompanyCodeQuery("");
+    setSelectedEmpresaIds([]);
+    setSelectedBairroKeys([]);
+    setExcludedBairroEmpresaIds([]);
+    setRadiusResultIds([]);
+    setRadiusCenter(null);
+    setHasSearched(true);
+    setMessage(null);
+  };
+
   return (
     <div className="space-y-5">
       <header className="rounded-3xl border border-sea/15 bg-white/95 p-4 shadow-card sm:p-5">
@@ -1466,6 +1495,14 @@ export default function RoutesMap() {
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
+                onClick={handleApplySearch}
+                className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight"
+              >
+                Buscar
+              </button>
+
+              <button
+                type="button"
                 onClick={() => {
                   setMessage(null);
                   setShowGenerateModal(true);
@@ -1479,11 +1516,7 @@ export default function RoutesMap() {
 
               <button
                 type="button"
-                onClick={() => {
-                  clearFilters();
-                  setCompanyNameQuery("");
-                  setCompanyCodeQuery("");
-                }}
+                onClick={handleClearFilters}
                 className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
               >
                 Limpar filtros
@@ -1507,7 +1540,15 @@ export default function RoutesMap() {
                 </div>
               </div>
             </div>
-            {rowsMatchingFilters.length === 0 && (
+            {!hasSearched ? (
+              <div className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink/70">
+                Ajuste os filtros e clique em Buscar.
+              </div>
+            ) : loadingEmpresas ? (
+              <div className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink/70">
+                Buscando empresas...
+              </div>
+            ) : rowsMatchingFilters.length === 0 && (
               <div className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink/70">
                 {hasActiveRowsFilter ? "Termo nao encontrado." : "Nenhum registro encontrado."}
               </div>

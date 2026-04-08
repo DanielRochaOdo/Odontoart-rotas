@@ -18,6 +18,7 @@ import {
 import { useAuth } from "../context/AuthContext";
 import { ROLE_LABELS } from "../types/roles";
 import PwaInstallHint from "../components/PwaInstallHint";
+import { useAutoFormDraftPersistence } from "../hooks/useAutoFormDraftPersistence";
 
 type NavItem = {
   label: string;
@@ -46,6 +47,7 @@ const navItems: NavItem[] = [
 
 export default function AppLayout() {
   const { profile, role, signOut } = useAuth();
+  useAutoFormDraftPersistence();
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     try {
@@ -331,6 +333,7 @@ export default function AppLayout() {
         </aside>
 
         <main
+          id="app-content-root"
           className={[
             "min-w-0 flex-1 rounded-2xl border border-sea/15 bg-white/95 p-4 shadow-card transition-[margin] duration-200 md:mr-6 md:rounded-3xl md:p-6",
             collapsed ? "md:ml-[96px]" : "md:ml-[288px]",

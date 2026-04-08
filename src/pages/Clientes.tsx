@@ -6,9 +6,12 @@ import { useAuth } from "../context/AuthContext";
 import {
   createCliente,
   deleteCliente,
+  fetchClienteById,
+  fetchClientesCount,
   fetchClientesByCodigoExact,
+  fetchClientesByEnderecoExact,
+  fetchClientesPage,
   fetchClienteHistory,
-  fetchClientes,
   updateCliente,
   syncVisitsForCliente,
   upsertClientes,
@@ -216,10 +219,8 @@ const normalizeHeader = (value: string) =>
 
 const IMPORT_NUMERIC_FIELDS = new Set(["corte", "venc"]);
 const IMPORT_BATCH_SIZE = 80;
-const CLIENTES_PER_PAGE = 50;
-const CLIENTE_API_AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const CLIENTES_DEFAULT_PAGE_SIZE = 50;
 const CLIENTES_VIEW_STATE_KEY = "clientesViewStateV2";
-let clientesMemoryCache: ClienteRow[] | null = null;
 const sanitizeDigits = (value: string) => value.replace(/\D/g, "");
 const sanitizeCnpjDigits = (value: string) => sanitizeDigits(value).slice(0, 14);
 const formatCnpjInput = (value: string) => {
@@ -376,27 +377,10 @@ const normalizeCodigoValue = (value: string | null | undefined) => (value ?? "")
 const normalizeObsValue = (value: string | null | undefined) =>
   normalizeSearchText(value);
 
-const isClientesDedupeConflictError = (error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return message.includes("clientes_dedupe_key_unique");
-};
-const isClienteSyncNoResultError = (error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return (
-    message.includes("Cannot coerce the result to a single JSON object") ||
-    message.includes("nao encontrado")
-  );
-};
-const buildClientesDedupeKey = (
-  empresa: string | null | undefined,
-  nomeFantasia: string | null | undefined,
-) => `${(empresa ?? "").toLowerCase()}|${(nomeFantasia ?? "").toLowerCase()}`;
 const normalizeNullableText = (value: string | null | undefined) => {
   const cleaned = (value ?? "").trim();
   return cleaned ? cleaned : null;
 };
-const normalizeNullableNumber = (value: number | null | undefined) =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
 
 type ClienteApiSyncPayload = Partial<
   Pick<
@@ -459,41 +443,6 @@ const mapEmpresaApiToClienteSyncPayload = async (
     cidade: normalizeNullableText(empresa.MunicipioNome ?? null),
     uf: normalizeNullableText(empresa.UfNome ?? null),
   };
-};
-
-const pickChangedApiFields = (cliente: ClienteRow, apiPayload: ClienteApiSyncPayload): ClienteApiSyncPayload => {
-  const changes: ClienteApiSyncPayload = {};
-
-  const textFields = [
-    "codigo",
-    "cnpj",
-    "cep",
-    "empresa",
-    "obs_comercial",
-    "situacao",
-    "endereco",
-    "bairro",
-    "cidade",
-    "uf",
-  ] as const;
-  textFields.forEach((field) => {
-    const current = normalizeNullableText(cliente[field]);
-    const incoming = normalizeNullableText(apiPayload[field] ?? null);
-    if (current !== incoming) {
-      changes[field] = incoming;
-    }
-  });
-
-  const numberFields = ["corte", "venc", "valor"] as const;
-  numberFields.forEach((field) => {
-    const current = normalizeNullableNumber(cliente[field]);
-    const incoming = normalizeNullableNumber(apiPayload[field] ?? null);
-    if (current !== incoming) {
-      changes[field] = incoming;
-    }
-  });
-
-  return changes;
 };
 
 const enrichFormDataCepByAddress = async (
@@ -639,6 +588,7 @@ export default function Clientes() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [clientes, setClientes] = useState<ClienteRow[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [search, setSearch] = useState("");
   const [searchMode, setSearchMode] = useState<ClienteSearchMode>("codigo");
   const [situacaoFilter, setSituacaoFilter] = useState<"" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado">("");
@@ -767,242 +717,108 @@ export default function Clientes() {
     obs: string;
     origem: CodigoDuplicadoOrigem;
   } | null>(null);
-  const [codigoSearchResults, setCodigoSearchResults] = useState<ClienteRow[] | null>(null);
-  const clientesRef = useRef<ClienteRow[]>([]);
-  const apiSyncInFlightRef = useRef(false);
-  const searchRefreshKeyRef = useRef("");
 
-  const syncClienteApiFields = async (baseClientes: ClienteRow[] = clientesRef.current) => {
-    if (!canEdit || apiSyncInFlightRef.current) return;
-
-    const candidates = baseClientes.filter((cliente) => Boolean(normalizeCodigoValue(cliente.codigo)));
-    if (candidates.length === 0) return;
-
-    const codigos = Array.from(
-      new Set(
-        candidates
-          .map((cliente) => normalizeCodigoValue(cliente.codigo))
-          .filter(Boolean),
-      ),
-    );
-    if (codigos.length === 0) return;
-
-    apiSyncInFlightRef.current = true;
-    try {
-      const updatesById = new Map<string, ClienteRow>();
-      const dedupeOwnersByKey = new Map<string, Set<string>>();
-
-      candidates.forEach((cliente) => {
-        const key = buildClientesDedupeKey(cliente.empresa, cliente.nome_fantasia);
-        const owners = dedupeOwnersByKey.get(key);
-        if (owners) {
-          owners.add(cliente.id);
-          return;
-        }
-        dedupeOwnersByKey.set(key, new Set([cliente.id]));
-      });
-
-      for (const codigo of codigos) {
-        let empresaApi: OdontoartEmpresaResponseRow | null = null;
-        try {
-          empresaApi = await fetchEmpresaByEmpresaId(codigo);
-        } catch (err) {
-          console.error(`Erro ao sincronizar dados da API para o codigo ${codigo}.`, err);
-          continue;
-        }
-        if (!empresaApi) continue;
-
-        const apiPayload = await mapEmpresaApiToClienteSyncPayload(empresaApi, codigo);
-
-        const matches = candidates.filter(
-          (cliente) => normalizeCodigoValue(cliente.codigo) === codigo,
-        );
-        for (const cliente of matches) {
-          const updatePayload = pickChangedApiFields(cliente, apiPayload);
-          if (updatePayload.empresa !== undefined) {
-            const targetKey = buildClientesDedupeKey(updatePayload.empresa, cliente.nome_fantasia);
-            const targetOwners = dedupeOwnersByKey.get(targetKey);
-            const hasOtherOwner = Boolean(
-              targetOwners &&
-                Array.from(targetOwners).some((ownerId) => ownerId !== cliente.id),
-            );
-            if (hasOtherOwner) {
-              delete updatePayload.empresa;
-            }
-          }
-          if (Object.keys(updatePayload).length === 0) continue;
-
-          try {
-            const updated = await updateCliente(cliente.id, updatePayload);
-            updatesById.set(updated.id, updated);
-            const previousKey = buildClientesDedupeKey(cliente.empresa, cliente.nome_fantasia);
-            const nextKey = buildClientesDedupeKey(updated.empresa, updated.nome_fantasia);
-            if (previousKey !== nextKey) {
-              const previousOwners = dedupeOwnersByKey.get(previousKey);
-              if (previousOwners) {
-                previousOwners.delete(cliente.id);
-                if (previousOwners.size === 0) {
-                  dedupeOwnersByKey.delete(previousKey);
-                }
-              }
-              const nextOwners = dedupeOwnersByKey.get(nextKey);
-              if (nextOwners) {
-                nextOwners.add(updated.id);
-              } else {
-                dedupeOwnersByKey.set(nextKey, new Set([updated.id]));
-              }
-            }
-          } catch (err) {
-            if (isClientesDedupeConflictError(err)) {
-              if (updatePayload.empresa === undefined) {
-                continue;
-              }
-              const retryPayload: Partial<ClienteRow> = { ...updatePayload };
-              delete retryPayload.empresa;
-              if (Object.keys(retryPayload).length > 0) {
-                try {
-                  const updated = await updateCliente(cliente.id, retryPayload);
-                  updatesById.set(updated.id, updated);
-                  const previousKey = buildClientesDedupeKey(cliente.empresa, cliente.nome_fantasia);
-                  const nextKey = buildClientesDedupeKey(updated.empresa, updated.nome_fantasia);
-                  if (previousKey !== nextKey) {
-                    const previousOwners = dedupeOwnersByKey.get(previousKey);
-                    if (previousOwners) {
-                      previousOwners.delete(cliente.id);
-                      if (previousOwners.size === 0) {
-                        dedupeOwnersByKey.delete(previousKey);
-                      }
-                    }
-                    const nextOwners = dedupeOwnersByKey.get(nextKey);
-                    if (nextOwners) {
-                      nextOwners.add(updated.id);
-                    } else {
-                      dedupeOwnersByKey.set(nextKey, new Set([updated.id]));
-                    }
-                  }
-                  continue;
-                } catch (retryError) {
-                  if (
-                    !isClientesDedupeConflictError(retryError) &&
-                    !isClienteSyncNoResultError(retryError)
-                  ) {
-                    console.error(
-                      `Erro ao atualizar dados da API para o cliente ${cliente.id} apos retry sem nome.`,
-                      retryError,
-                    );
-                  }
-                  continue;
-                }
-              }
-              continue;
-            }
-            if (isClienteSyncNoResultError(err)) {
-              continue;
-            }
-            console.error(`Erro ao atualizar dados da API para o cliente ${cliente.id}.`, err);
-          }
-        }
-      }
-
-      if (updatesById.size > 0) {
-        setClientes((prev) => prev.map((cliente) => updatesById.get(cliente.id) ?? cliente));
-        setSelected((prev) => (prev ? updatesById.get(prev.id) ?? prev : prev));
-      }
-    } finally {
-      apiSyncInFlightRef.current = false;
-    }
-  };
-
-  const loadClientes = async () => {
-    const cached = clientesMemoryCache;
-    if (cached && cached.length > 0) {
-      setClientes(cached);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
+  const loadClientesPage = async (showLoading = true) => {
+    if (!canView) return;
+    if (showLoading) setLoading(true);
     setError(null);
     try {
-      const data = await fetchClientes();
-      clientesMemoryCache = data;
-      setClientes(data);
-      if (canEdit) {
-        void syncClienteApiFields(data);
-      }
+      const pageData = await fetchClientesPage({
+        page: currentPage,
+        pageSize: CLIENTES_DEFAULT_PAGE_SIZE,
+        search,
+        searchMode,
+        situacao: situacaoFilter,
+      });
+      setClientes(pageData as unknown as ClienteRow[]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar empresas.");
+      setClientes([]);
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
 
-  const refreshClientesSilently = async () => {
+  const loadClientesCount = async () => {
+    if (!canView) return;
     try {
-      const data = await fetchClientes();
-      clientesMemoryCache = data;
-      setClientes(data);
+      const count = await fetchClientesCount({
+        search,
+        searchMode,
+        situacao: situacaoFilter,
+      });
+      setTotalCount(count);
     } catch (err) {
-      console.error(err);
+      console.warn("Falha ao contar empresas:", err);
     }
+  };
+
+  const refreshClientesData = async () => {
+    await Promise.all([loadClientesPage(false), loadClientesCount()]);
   };
 
   useEffect(() => {
     if (!canView) return;
-    loadClientes();
-  }, [canView]);
-
-  useEffect(() => {
-    if (!canView) return;
-    const handleFocus = () => {
-      void refreshClientesSilently();
-    };
-    window.addEventListener("focus", handleFocus);
-    return () => {
-      window.removeEventListener("focus", handleFocus);
-    };
-  }, [canView]);
-
-  useEffect(() => {
-    const mode: ClienteSearchMode =
-      searchMode === "empresa" || searchMode === "geral" ? searchMode : "codigo";
-    const term = normalizeCodigoValue(search);
-    if (!canView || mode !== "codigo" || !term) {
-      setCodigoSearchResults(null);
-      return;
-    }
-
     let active = true;
-    setCodigoSearchResults([]);
-    fetchClientesByCodigoExact(term)
-      .then((data) => {
+    setLoading(true);
+    setError(null);
+
+    fetchClientesPage({
+      page: currentPage,
+      pageSize: CLIENTES_DEFAULT_PAGE_SIZE,
+      search,
+      searchMode,
+      situacao: situacaoFilter,
+    })
+      .then((pageData) => {
         if (!active) return;
-        setCodigoSearchResults(data);
+        setClientes(pageData as unknown as ClienteRow[]);
       })
       .catch((err) => {
-        console.error(err);
         if (!active) return;
-        setCodigoSearchResults([]);
+        setError(err instanceof Error ? err.message : "Erro ao carregar empresas.");
+        setClientes([]);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
 
     return () => {
       active = false;
     };
-  }, [canView, search, searchMode]);
+  }, [canView, currentPage, search, searchMode, situacaoFilter]);
 
   useEffect(() => {
-    clientesRef.current = clientes;
-    clientesMemoryCache = clientes;
-  }, [clientes]);
-
-  useEffect(() => {
-    if (!canEdit) return;
-    const intervalId = window.setInterval(() => {
-      void syncClienteApiFields();
-    }, CLIENTE_API_AUTO_SYNC_INTERVAL_MS);
+    if (!canView) return;
+    let active = true;
+    fetchClientesCount({
+      search,
+      searchMode,
+      situacao: situacaoFilter,
+    })
+      .then((count) => {
+        if (!active) return;
+        setTotalCount(count);
+      })
+      .catch((err) => {
+        if (!active) return;
+        console.warn("Falha ao contar empresas:", err);
+      });
     return () => {
-      window.clearInterval(intervalId);
+      active = false;
     };
-  }, [canEdit]);
+  }, [canView, search, searchMode, situacaoFilter]);
+
+  useEffect(() => {
+    if (!canView) return;
+    const handleFocus = () => {
+      void loadClientesPage(false);
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [canView, currentPage, search, searchMode, situacaoFilter]);
 
   useEffect(() => {
     if (restoredViewRef.current) return;
@@ -1016,6 +832,7 @@ export default function Clientes() {
         search: string;
         searchMode: ClienteSearchMode;
         situacaoFilter: "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado";
+        currentPage: number;
         selectedId: string | null;
         isEditing: boolean;
         historySupervisorId: string;
@@ -1027,6 +844,9 @@ export default function Clientes() {
         setSearchMode(parsed.searchMode);
       }
       if (parsed.situacaoFilter) setSituacaoFilter(parsed.situacaoFilter);
+      if (typeof parsed.currentPage === "number" && parsed.currentPage > 0) {
+        setCurrentPage(Math.floor(parsed.currentPage));
+      }
       if (typeof parsed.selectedId === "string") setSelectedId(parsed.selectedId);
       if (typeof parsed.historySupervisorId === "string") {
         setHistorySupervisorId(parsed.historySupervisorId);
@@ -1070,6 +890,7 @@ export default function Clientes() {
       search,
       searchMode,
       situacaoFilter,
+      currentPage,
       selectedId,
       isEditing,
       historySupervisorId,
@@ -1081,7 +902,7 @@ export default function Clientes() {
     } catch {
       // ignore
     }
-  }, [historyDateFrom, historyDateTo, historySupervisorId, isEditing, search, searchMode, selectedId, situacaoFilter]);
+  }, [currentPage, historyDateFrom, historyDateTo, historySupervisorId, isEditing, search, searchMode, selectedId, situacaoFilter]);
 
   useEffect(() => {
     if (!canView) return;
@@ -1138,16 +959,30 @@ export default function Clientes() {
   }, [selected]);
 
   useEffect(() => {
-    if (!selectedId || selected) return;
-    const found = clientes.find((cliente) => cliente.id === selectedId);
-    if (found) {
-      setSelected(found);
-      if (pendingEditRestoreRef.current !== null) {
-        setIsEditing(pendingEditRestoreRef.current);
-        pendingEditRestoreRef.current = null;
-      }
+    if (!selectedId) {
+      setSelected(null);
+      return;
     }
-  }, [clientes, selected, selectedId]);
+    if (selected?.id === selectedId) return;
+
+    let active = true;
+    fetchClienteById(selectedId)
+      .then((cliente) => {
+        if (!active) return;
+        setSelected(cliente);
+        if (pendingEditRestoreRef.current !== null) {
+          setIsEditing(pendingEditRestoreRef.current);
+          pendingEditRestoreRef.current = null;
+        }
+      })
+      .catch((err) => {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : "Erro ao carregar empresa selecionada.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [selected?.id, selectedId]);
 
   useEffect(() => {
     if (!codigoDuplicadoAprovado || codigoDuplicadoAprovado.origem !== "create") return;
@@ -1195,104 +1030,10 @@ export default function Clientes() {
     });
   }, [history, historyDateFrom, historyDateTo, historySupervisorId, historySupervisores]);
 
-  const effectiveSearchMode: ClienteSearchMode =
-    searchMode === "empresa" || searchMode === "geral" ? searchMode : "codigo";
-  const normalizedSearchTerm = normalizeCodigoValue(search);
-  const isSearching = Boolean(normalizedSearchTerm);
-  const sourceClientes =
-    effectiveSearchMode === "codigo" && isSearching && codigoSearchResults !== null
-      ? codigoSearchResults
-      : clientes;
-
-  const filteredClientes = useMemo(() => {
-    const base = isSearching
-      ? sourceClientes.filter((cliente) => {
-          if (effectiveSearchMode === "codigo") {
-            return normalizeCodigoValue(cliente.codigo) === normalizedSearchTerm;
-          }
-          const term = normalizeSearchText(normalizedSearchTerm);
-          if (effectiveSearchMode === "empresa") {
-            return normalizeSearchText(cliente.empresa).includes(term);
-          }
-          const fields = normalizeSearchText(
-            [
-            cliente.codigo,
-            cliente.cep,
-            cliente.empresa,
-            cliente.nome_fantasia,
-            cliente.pessoa,
-            cliente.contato,
-            cliente.grupo,
-            cliente.obs_comercial,
-            cliente.obs,
-            cliente.situacao,
-            cliente.cidade,
-            cliente.uf,
-            cliente.bairro,
-          ]
-              .filter(Boolean)
-              .join(" "),
-          );
-          return fields.includes(term);
-        })
-      : sourceClientes;
-
-    const filteredByStatus = situacaoFilter
-      ? base.filter((cliente) => {
-          const normalized = normalizeStatus(cliente.situacao ?? "Ativo") ?? "Ativo";
-          return normalized === situacaoFilter;
-        })
-      : base;
-
-    const uniqueById = new Map<string, ClienteRow>();
-    filteredByStatus.forEach((cliente) => {
-      if (!uniqueById.has(cliente.id)) {
-        uniqueById.set(cliente.id, cliente);
-      }
-    });
-
-    return [...uniqueById.values()].sort((a, b) => {
-      const nameA = (a.empresa ?? "").toLocaleLowerCase("pt-BR");
-      const nameB = (b.empresa ?? "").toLocaleLowerCase("pt-BR");
-      return nameA.localeCompare(nameB, "pt-BR");
-    });
-  }, [effectiveSearchMode, isSearching, normalizedSearchTerm, situacaoFilter, sourceClientes]);
-
-  useEffect(() => {
-    if (!canView || loading) return;
-    if (effectiveSearchMode === "codigo" && isSearching) return;
-    if (!normalizedSearchTerm) {
-      searchRefreshKeyRef.current = "";
-      return;
-    }
-    if (filteredClientes.length > 0) return;
-
-    const key = `${effectiveSearchMode}|${situacaoFilter}|${normalizeSearchText(normalizedSearchTerm)}`;
-    if (searchRefreshKeyRef.current === key) return;
-    searchRefreshKeyRef.current = key;
-
-    const timer = window.setTimeout(() => {
-      void refreshClientesSilently();
-    }, 250);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [canView, effectiveSearchMode, filteredClientes.length, isSearching, loading, normalizedSearchTerm, situacaoFilter]);
-  const totalPages = Math.max(1, Math.ceil(filteredClientes.length / CLIENTES_PER_PAGE));
-  const paginatedClientes = useMemo(() => {
-    const start = (currentPage - 1) * CLIENTES_PER_PAGE;
-    return filteredClientes.slice(start, start + CLIENTES_PER_PAGE);
-  }, [filteredClientes, currentPage]);
-  const displayClientes = useMemo(() => {
-    if (!isSearching) return paginatedClientes;
-    if (effectiveSearchMode === "codigo") {
-      return filteredClientes.filter(
-        (cliente) => normalizeCodigoValue(cliente.codigo) === normalizedSearchTerm,
-      );
-    }
-    return filteredClientes;
-  }, [effectiveSearchMode, filteredClientes, isSearching, normalizedSearchTerm, paginatedClientes]);
-  const resultCount = isSearching ? displayClientes.length : filteredClientes.length;
+  const isSearching = Boolean(search.trim());
+  const displayClientes = clientes;
+  const resultCount = totalCount;
+  const totalPages = Math.max(1, Math.ceil(totalCount / CLIENTES_DEFAULT_PAGE_SIZE));
 
   useEffect(() => {
     setCurrentPage(1);
@@ -1304,24 +1045,58 @@ export default function Clientes() {
     }
   }, [currentPage, totalPages]);
 
-  const findClientesByCodigo = (codigo: string, excludeId?: string | null) => {
+  const findClientesByCodigo = async (codigo: string, excludeId?: string | null) => {
     const normalized = normalizeCodigoValue(codigo);
     if (!normalized) return [] as ClienteRow[];
-    return clientes.filter((cliente) => {
+    const fetched = await fetchClientesByCodigoExact(normalized);
+    return fetched.filter((cliente) => {
       if (excludeId && cliente.id === excludeId) return false;
       return normalizeCodigoValue(cliente.codigo) === normalized;
     });
   };
 
-  const hasObsConflictForCodigo = (codigo: string, obs: string, excludeId?: string | null) => {
+  const findClientesByAddress = async ({
+    endereco,
+    cidade,
+    uf,
+    complemento,
+    excludeId,
+  }: {
+    endereco?: string | null;
+    cidade?: string | null;
+    uf?: string | null;
+    complemento?: string | null;
+    excludeId?: string | null;
+  }) => {
+    const normalizedAddress = normalizeAddressValue(endereco);
+    if (!normalizedAddress) return [] as ClienteRow[];
+    const fetched = await fetchClientesByEnderecoExact({
+      endereco: endereco?.trim() ?? "",
+      excludeId,
+    });
+    return fetched.filter((cliente) =>
+      isSameAddress(
+        {
+          endereco,
+          cidade,
+          uf,
+          complemento,
+        },
+        cliente,
+      ),
+    );
+  };
+
+  const hasObsConflictForCodigo = async (codigo: string, obs: string, excludeId?: string | null) => {
     const normalizedObs = normalizeObsValue(obs);
     if (!normalizedObs) return false;
-    return findClientesByCodigo(codigo, excludeId).some(
+    const matches = await findClientesByCodigo(codigo, excludeId);
+    return matches.some(
       (cliente) => normalizeObsValue(cliente.obs) === normalizedObs,
     );
   };
 
-  const openCodigoDuplicadoModal = ({
+  const openCodigoDuplicadoModal = async ({
     codigo,
     origem,
     excludeId,
@@ -1332,7 +1107,7 @@ export default function Clientes() {
     excludeId?: string | null;
     obsAtual: string;
   }) => {
-    const matches = findClientesByCodigo(codigo, excludeId);
+    const matches = await findClientesByCodigo(codigo, excludeId);
     if (!matches.length) return;
     const existingObs = Array.from(
       new Set(
@@ -1368,7 +1143,7 @@ export default function Clientes() {
     }
 
     const excludeId = modalState.origem === "edit" ? selected?.id ?? null : null;
-    if (hasObsConflictForCodigo(modalState.codigo, obsValue, excludeId)) {
+    if (await hasObsConflictForCodigo(modalState.codigo, obsValue, excludeId)) {
       setCodigoDuplicadoModal((prev) =>
         prev
           ? {
@@ -1482,16 +1257,16 @@ export default function Clientes() {
     if (!canCreate) return;
     const codigoInformado = form.codigo.trim();
     if (codigoInformado) {
-      const matchesByCode = findClientesByCodigo(codigoInformado);
+      const matchesByCode = await findClientesByCodigo(codigoInformado);
       if (matchesByCode.length > 0) {
         const obsInformada = form.obs.trim();
         const alreadyApproved =
           codigoDuplicadoAprovado?.origem === "create" &&
           normalizeCodigoValue(codigoDuplicadoAprovado.codigo) === normalizeCodigoValue(codigoInformado) &&
           normalizeObsValue(codigoDuplicadoAprovado.obs) === normalizeObsValue(obsInformada);
-        const hasConflict = hasObsConflictForCodigo(codigoInformado, obsInformada);
+        const hasConflict = await hasObsConflictForCodigo(codigoInformado, obsInformada);
         if (!alreadyApproved || !obsInformada || hasConflict) {
-          openCodigoDuplicadoModal({
+          await openCodigoDuplicadoModal({
             codigo: codigoInformado,
             origem: "create",
             obsAtual: obsInformada,
@@ -1518,22 +1293,12 @@ export default function Clientes() {
     setCreating(true);
     setError(null);
     try {
-      const existingMatches = clientes.filter((cliente) =>
-        isSameAddress(
-          {
-            endereco: form.endereco,
-            cidade: form.cidade,
-            uf: form.uf,
-            complemento: form.complemento,
-          },
-          {
-            endereco: cliente.endereco,
-            cidade: cliente.cidade,
-            uf: cliente.uf,
-            complemento: cliente.complemento,
-          },
-        ),
-      );
+      const existingMatches = await findClientesByAddress({
+        endereco: form.endereco,
+        cidade: form.cidade,
+        uf: form.uf,
+        complemento: form.complemento,
+      });
       const corteValue = form.corte ? Number(form.corte) : null;
       const vencValue = form.venc ? Number(form.venc) : null;
       const parsedCorte = Number.isFinite(corteValue ?? NaN) ? corteValue : null;
@@ -1562,7 +1327,6 @@ export default function Clientes() {
         cidade: form.cidade.trim() || null,
         uf: form.uf.trim() || null,
       });
-      setClientes((prev) => [created, ...prev]);
       if (existingMatches.length > 0) {
         setDuplicateModal({ newCliente: created, existing: existingMatches });
       }
@@ -1591,6 +1355,7 @@ export default function Clientes() {
       setCreatePlanoValores([]);
       setCodigoDuplicadoAprovado(null);
       setPerfilCreate(buildPerfilState(null));
+      await refreshClientesData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao criar cliente.");
     } finally {
@@ -1605,12 +1370,12 @@ export default function Clientes() {
     try {
       if (!duplicateModal.isTemp) {
         await deleteCliente(duplicateModal.newCliente.id);
-        setClientes((prev) => prev.filter((item) => item.id !== duplicateModal.newCliente.id));
         if (selectedId === duplicateModal.newCliente.id) {
           setSelected(null);
           setSelectedId(null);
         }
       }
+      await refreshClientesData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao remover cliente duplicado.");
     } finally {
@@ -1629,27 +1394,21 @@ export default function Clientes() {
           ...duplicateModal.payload,
           complemento: duplicateComplemento,
         });
-        const updated = await Promise.all(
+        await Promise.all(
           duplicateModal.existing.map((item) => updateCliente(item.id, updatePayload)),
-        );
-        setClientes((prev) =>
-          prev.map((item) => updated.find((entry) => entry.id === item.id) ?? item),
         );
       } else {
         const oldIds = duplicateModal.existing.map((item) => item.id);
         await Promise.all(oldIds.map((id) => deleteCliente(id)));
-        setClientes((prev) => prev.filter((item) => !oldIds.includes(item.id)));
         if (selectedId && oldIds.includes(selectedId)) {
           setSelected(null);
           setSelectedId(null);
         }
-        const updatedNew = await updateCliente(duplicateModal.newCliente.id, {
+        await updateCliente(duplicateModal.newCliente.id, {
           complemento: duplicateComplemento.trim() || null,
         });
-        setClientes((prev) =>
-          prev.map((item) => (item.id === updatedNew.id ? updatedNew : item)),
-        );
       }
+      await refreshClientesData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao substituir cliente.");
     } finally {
@@ -1664,21 +1423,18 @@ export default function Clientes() {
     setError(null);
     try {
       if (duplicateModal.isTemp && duplicateModal.payload) {
-        const created = await createCliente(
+        await createCliente(
           buildClientePayloadFromImport({
             ...duplicateModal.payload,
             complemento: duplicateComplemento,
           }),
         );
-        setClientes((prev) => [created, ...prev]);
       } else {
-        const updated = await updateCliente(duplicateModal.newCliente.id, {
+        await updateCliente(duplicateModal.newCliente.id, {
           complemento: duplicateComplemento.trim() || null,
         });
-        setClientes((prev) =>
-          prev.map((item) => (item.id === updated.id ? updated : item)),
-        );
       }
+      await refreshClientesData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao manter as duas empresas.");
     } finally {
@@ -1693,8 +1449,8 @@ export default function Clientes() {
       setCodigoError("Informe o codigo da empresa.");
       return;
     }
-    if (findClientesByCodigo(empresaId).length > 0) {
-      openCodigoDuplicadoModal({
+    if ((await findClientesByCodigo(empresaId)).length > 0) {
+      await openCodigoDuplicadoModal({
         codigo: empresaId,
         origem: "create",
         obsAtual: form.obs,
@@ -1755,16 +1511,16 @@ export default function Clientes() {
     if (!selected || !canEdit) return;
     const codigoInformado = editForm.codigo.trim();
     if (codigoInformado) {
-      const matchesByCode = findClientesByCodigo(codigoInformado, selected.id);
+      const matchesByCode = await findClientesByCodigo(codigoInformado, selected.id);
       if (matchesByCode.length > 0) {
         const obsInformada = editForm.obs.trim();
         const alreadyApproved =
           codigoDuplicadoAprovado?.origem === "edit" &&
           normalizeCodigoValue(codigoDuplicadoAprovado.codigo) === normalizeCodigoValue(codigoInformado) &&
           normalizeObsValue(codigoDuplicadoAprovado.obs) === normalizeObsValue(obsInformada);
-        const hasConflict = hasObsConflictForCodigo(codigoInformado, obsInformada, selected.id);
+        const hasConflict = await hasObsConflictForCodigo(codigoInformado, obsInformada, selected.id);
         if (!alreadyApproved || !obsInformada || hasConflict) {
-          openCodigoDuplicadoModal({
+          await openCodigoDuplicadoModal({
             codigo: codigoInformado,
             origem: "edit",
             excludeId: selected.id,
@@ -1813,10 +1569,10 @@ export default function Clientes() {
         uf: editForm.uf.trim() || null,
       });
       await syncVisitsForCliente(updated);
-      setClientes((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       setSelected(updated);
       setCodigoDuplicadoAprovado(null);
       setIsEditing(false);
+      await refreshClientesData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao atualizar cliente.");
     } finally {
@@ -1849,11 +1605,11 @@ export default function Clientes() {
       }
 
       await deleteCliente(selected.id);
-      setClientes((prev) => prev.filter((item) => item.id !== selected.id));
       setSelected(null);
       setSelectedId(null);
       setIsEditing(false);
       setDeletePasswordEdit("");
+      await refreshClientesData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao excluir empresa.");
     } finally {
@@ -1969,7 +1725,6 @@ export default function Clientes() {
   const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const existingSnapshot = clientes.length ? [...clientes] : await fetchClientes();
     setImporting(true);
     setImportMessage(null);
     setImportStageLabel("Lendo arquivo...");
@@ -2042,48 +1797,6 @@ export default function Clientes() {
         return;
       }
 
-      const duplicateCandidates: DuplicateEntry[] = [];
-      payloads.forEach((payload, index) => {
-        const matches = existingSnapshot.filter((item) => isSameAddress(payload, item));
-        if (matches.length) {
-          duplicateCandidates.push({
-            newCliente: {
-              id: `import-${index}`,
-              codigo: payload.codigo ?? null,
-              cnpj: payload.cnpj ?? null,
-              corte: payload.corte ?? null,
-              venc: payload.venc ?? null,
-              valor: payload.valor ?? null,
-              data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
-              cep: payload.cep ?? null,
-              empresa: payload.empresa ?? null,
-              pessoa: payload.pessoa ?? null,
-              contato: payload.contato ?? null,
-              grupo: payload.grupo ?? null,
-              obs_comercial: payload.obs_comercial ?? null,
-              obs: payload.obs ?? null,
-              nome_fantasia: null,
-              complemento: payload.complemento ?? null,
-              perfil_visita: payload.perfil_visita ?? null,
-              situacao: "Ativo",
-              categoria: payload.categoria ?? null,
-              endereco: payload.endereco ?? null,
-              bairro: payload.bairro ?? null,
-              cidade: payload.cidade ?? null,
-              uf: payload.uf ?? null,
-              latitude: null,
-              longitude: null,
-              geocode_source: null,
-              geocode_updated_at: null,
-              created_at: null,
-            },
-            existing: matches,
-            isTemp: true,
-            payload,
-          });
-        }
-      });
-
       setImportTotal(payloads.length);
       setImportProgress(0);
       setImportInserted(0);
@@ -2144,7 +1857,7 @@ export default function Clientes() {
 
       const duplicatesFromCreated: DuplicateEntry[] = [];
       if (created.length > 0) {
-        const seen: ClienteRow[] = [...existingSnapshot];
+        const seen: ClienteRow[] = [];
         created.forEach((cliente) => {
           const matches = seen.filter((item) => isSameAddress(item, cliente));
           if (matches.length) {
@@ -2152,24 +1865,28 @@ export default function Clientes() {
           }
           seen.push(cliente);
         });
+
+        const existingMatchesFromDb = await Promise.all(
+          created.map(async (cliente) => {
+            const matches = await findClientesByAddress({
+              endereco: cliente.endereco,
+              cidade: cliente.cidade,
+              uf: cliente.uf,
+              complemento: cliente.complemento,
+              excludeId: cliente.id,
+            });
+            return { cliente, matches };
+          }),
+        );
+        existingMatchesFromDb.forEach(({ cliente, matches }) => {
+          if (!matches.length) return;
+          duplicatesFromCreated.push({ newCliente: cliente, existing: matches });
+        });
       }
 
       let mergedDuplicates: DuplicateEntry[] = [];
-      if (duplicateCandidates.length || duplicatesFromCreated.length) {
-        const createdByKey = new Map<string, ClienteRow>();
-        created.forEach((cliente) => createdByKey.set(buildImportKey(cliente), cliente));
-        const resolvedCandidates = duplicateCandidates.map((entry) => {
-          const key = buildImportKey(entry.newCliente);
-          const createdMatch = createdByKey.get(key);
-          if (!createdMatch) return entry;
-          return {
-            ...entry,
-            newCliente: createdMatch,
-            isTemp: false,
-          };
-        });
+      if (duplicatesFromCreated.length) {
         const merged = new Map<string, DuplicateEntry>();
-        resolvedCandidates.forEach((entry) => merged.set(buildImportKey(entry.newCliente), entry));
         duplicatesFromCreated.forEach((entry) => {
           const key = buildImportKey(entry.newCliente);
           if (!merged.has(key)) {
@@ -2179,7 +1896,7 @@ export default function Clientes() {
         mergedDuplicates = Array.from(merged.values());
         setDuplicateQueue((prev) => [...prev, ...mergedDuplicates]);
       }
-      await loadClientes();
+      await refreshClientesData();
       if (mergedDuplicates.length > 0) {
         setImportMessage("Existem duplicidades. Escolha o que fazer.");
       } else if (created.length > 0) {
@@ -2749,7 +2466,7 @@ export default function Clientes() {
         <div>
           <h3 className="font-display text-lg text-ink">Empresas cadastradas</h3>
           <p className="text-xs text-ink/60">
-            {resultCount} empresa(s){search.trim() ? ` de ${clientes.length}` : ""}.
+            {resultCount} empresa(s).
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -2822,7 +2539,7 @@ export default function Clientes() {
                   key={cliente.id}
                   type="button"
                   onClick={() => {
-                    setSelected(cliente);
+                    setSelected(null);
                     setSelectedId(cliente.id);
                   }}
                   className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left text-sm hover:bg-sand/40"
@@ -2872,7 +2589,7 @@ export default function Clientes() {
               ))
             )}
           </div>
-          {!isSearching && filteredClientes.length > 0 && (
+          {displayClientes.length > 0 && (
             <div className="flex items-center justify-between border-t border-sea/10 px-4 py-3 text-xs text-ink/60">
               <span>
                 Pagina {currentPage} de {totalPages}

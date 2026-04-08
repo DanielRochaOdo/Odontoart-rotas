@@ -37,15 +37,33 @@ const sortByName = (items: ManagedProfile[]) =>
   [...items].sort((a, b) => (a.nome ?? a.display_name ?? "").localeCompare(b.nome ?? b.display_name ?? ""));
 
 const normalizeSearch = (value: string) => normalizeSearchText(value);
+const SETTINGS_VIEW_STATE_KEY = "settingsViewStateV1";
+
+const isValidTabKey = (value: unknown): value is TabKey =>
+  value === "SUPERVISORES" || value === "VENDEDORES" || value === "ASSISTENTES";
+
+const readSettingsViewState = () => {
+  try {
+    const raw = sessionStorage.getItem(SETTINGS_VIEW_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<{ activeTab: TabKey; searchTerm: string }>;
+    return {
+      activeTab: isValidTabKey(parsed.activeTab) ? parsed.activeTab : "SUPERVISORES",
+      searchTerm: typeof parsed.searchTerm === "string" ? parsed.searchTerm : "",
+    };
+  } catch {
+    return null;
+  }
+};
 
 export default function Settings() {
   const { role, session, loading: authLoading } = useAuth();
   const isSupervisor = role === "SUPERVISOR";
 
-  const [activeTab, setActiveTab] = useState<TabKey>("SUPERVISORES");
+  const [activeTab, setActiveTab] = useState<TabKey>(() => readSettingsViewState()?.activeTab ?? "SUPERVISORES");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(() => readSettingsViewState()?.searchTerm ?? "");
   const [profiles, setProfiles] = useState<ManagedProfile[]>([]);
   const [userEmailsByUserId, setUserEmailsByUserId] = useState<Record<string, string>>({});
 
@@ -148,6 +166,9 @@ export default function Settings() {
 
   const getCurrentEmail = (profile: ManagedProfile) => {
     if (!profile.user_id) return "Sem usuario vinculado";
+    if (session?.user.id === profile.user_id && session.user.email) {
+      return session.user.email;
+    }
     return userEmailsByUserId[profile.user_id] || "Nao disponivel";
   };
 
@@ -155,6 +176,20 @@ export default function Settings() {
     if (authLoading || !isSupervisor || !session?.access_token) return;
     loadProfiles();
   }, [authLoading, isSupervisor, session?.access_token]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(
+        SETTINGS_VIEW_STATE_KEY,
+        JSON.stringify({
+          activeTab,
+          searchTerm,
+        }),
+      );
+    } catch {
+      // ignore storage failures
+    }
+  }, [activeTab, searchTerm]);
 
   const resetEdits = () => {
     setEditingSupervisorId(null);

@@ -167,6 +167,22 @@ const formatDate = (value: string | null) => {
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("pt-BR").format(date);
 };
 
+const PRE_CADASTRO_VIEW_STATE_KEY = "preCadastroViewStateV1";
+
+const readPreCadastroActiveTab = () => {
+  try {
+    const raw = sessionStorage.getItem(PRE_CADASTRO_VIEW_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<{ activeTab: "cadastro" | "status" | "aprovacoes" }>;
+    if (parsed.activeTab === "cadastro" || parsed.activeTab === "status" || parsed.activeTab === "aprovacoes") {
+      return parsed.activeTab;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
 export default function PreCadastro() {
   const { role, session, profile } = useAuth();
   const isVendor = role === "VENDEDOR";
@@ -174,9 +190,11 @@ export default function PreCadastro() {
   const canReview = role === "ASSISTENTE" || role === "SUPERVISOR";
   const canAccess = vendorHasPreCadastroAccess || canReview;
 
-  const [activeTab, setActiveTab] = useState<"cadastro" | "status" | "aprovacoes">(
-    vendorHasPreCadastroAccess ? "cadastro" : "aprovacoes",
-  );
+  const [activeTab, setActiveTab] = useState<"cadastro" | "status" | "aprovacoes">(() => {
+    const stored = readPreCadastroActiveTab();
+    if (stored) return stored;
+    return "aprovacoes";
+  });
   const [form, setForm] = useState(buildInitialForm);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -197,8 +215,22 @@ export default function PreCadastro() {
   const [actingId, setActingId] = useState<string | null>(null);
 
   useEffect(() => {
-    setActiveTab(vendorHasPreCadastroAccess ? "cadastro" : "aprovacoes");
-  }, [vendorHasPreCadastroAccess]);
+    if ((activeTab === "cadastro" || activeTab === "status") && !vendorHasPreCadastroAccess) {
+      setActiveTab("aprovacoes");
+      return;
+    }
+    if (activeTab === "aprovacoes" && !canReview && vendorHasPreCadastroAccess) {
+      setActiveTab("cadastro");
+    }
+  }, [activeTab, canReview, vendorHasPreCadastroAccess]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(PRE_CADASTRO_VIEW_STATE_KEY, JSON.stringify({ activeTab }));
+    } catch {
+      // ignore storage failures
+    }
+  }, [activeTab]);
 
   const loadVendorStatus = useCallback(async () => {
     if (!session?.user.id) return;

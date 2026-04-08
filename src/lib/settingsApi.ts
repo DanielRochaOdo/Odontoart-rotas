@@ -18,6 +18,11 @@ export type ManagedProfile = {
 const EMAIL_LOOKUP_COOLDOWN_MS = 60_000;
 let emailLookupBlockedUntil = 0;
 
+type ProfileEmailLookupRow = {
+  user_id: string | null;
+  email: string | null;
+};
+
 const invokeManageUsers = async (body: {
   action: "create" | "delete" | "update" | "list-emails";
   payload: Record<string, unknown>;
@@ -162,8 +167,41 @@ export const updateManagedUserCredentials = async (payload: {
 export const fetchManagedUserEmails = async (userIds: string[]) => {
   const uniqueIds = [...new Set(userIds.filter(Boolean))];
   if (uniqueIds.length === 0) return {} as Record<string, string>;
+
+  const fetchViaRpc = async (ids: string[]) => {
+    const { data, error } = await supabase.rpc("list_profile_emails", {
+      p_user_ids: ids,
+    });
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as ProfileEmailLookupRow[];
+    const map: Record<string, string> = {};
+    rows.forEach((row) => {
+      if (!row.user_id || !row.email) return;
+      map[row.user_id] = row.email;
+    });
+    return map;
+  };
+
+  const rpcResultByUserId: Record<string, string> = {};
+  try {
+    const fetched = await fetchViaRpc(uniqueIds);
+    Object.assign(rpcResultByUserId, fetched);
+    const missingAfterRpc = uniqueIds.filter((id) => !fetched[id]);
+    if (missingAfterRpc.length === 0) {
+      return rpcResultByUserId;
+    }
+  } catch (rpcError) {
+    console.warn(
+      "list_profile_emails unavailable, using edge fallback:",
+      rpcError instanceof Error ? rpcError.message : "unknown error",
+    );
+  }
+
+  const pendingIds = uniqueIds.filter((id) => !rpcResultByUserId[id]);
+  if (pendingIds.length === 0) return rpcResultByUserId;
+
   if (Date.now() < emailLookupBlockedUntil) {
-    return {} as Record<string, string>;
+    return rpcResultByUserId;
   }
 
   let lastError: Error | null = null;
@@ -173,7 +211,7 @@ export const fetchManagedUserEmails = async (userIds: string[]) => {
     try {
       const response = await invokeManageUsers({
         action: "list-emails",
-        payload: { user_ids: uniqueIds },
+        payload: { user_ids: pendingIds },
       });
       data = (response.data ?? null) as { emails?: Record<string, string>; missing_user_ids?: string[] } | null;
       error = response.error ? new Error(response.error.message) : null;
@@ -188,7 +226,10 @@ export const fetchManagedUserEmails = async (userIds: string[]) => {
       if (missingUserIds.length > 0) {
         console.warn(`manage-users list-emails missing ${missingUserIds.length} user(s).`);
       }
-      return (data?.emails ?? {}) as Record<string, string>;
+      return {
+        ...rpcResultByUserId,
+        ...((data?.emails ?? {}) as Record<string, string>),
+      };
     }
 
     lastError = new Error(error.message);
@@ -200,7 +241,7 @@ export const fetchManagedUserEmails = async (userIds: string[]) => {
 
   emailLookupBlockedUntil = Date.now() + EMAIL_LOOKUP_COOLDOWN_MS;
   console.warn("manage-users list-emails unavailable:", lastError?.message ?? "unknown error");
-  return {} as Record<string, string>;
+  return rpcResultByUserId;
 };
 
 export const deleteProfileOnly = async (id: string) => {
