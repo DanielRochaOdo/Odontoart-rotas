@@ -1153,7 +1153,7 @@ export default function Visitas() {
         visit_date: state.date,
         perfil_visita: visit.perfil_visita ?? null,
         perfil_visita_opcoes: visit.perfil_visita_opcoes ?? null,
-        instructions: visit.instructions ?? null,
+        instructions: null,
         route_id: routeId,
         created_by: session?.user.id ?? null,
       });
@@ -1519,7 +1519,7 @@ export default function Visitas() {
   const openDetailsModal = (item: VisitRow) => {
     setDetailsObsExpanded(false);
     setDetailsVisit(item);
-    setDetailsInstructionDraft(item.instructions ?? "");
+    setDetailsInstructionDraft("");
     setDetailsInstructionMessage(null);
     const fallbackObs = item.agenda?.obs_contrato_1?.trim() ?? "";
     setDetailsObsText(fallbackObs);
@@ -1533,6 +1533,37 @@ export default function Visitas() {
       .catch((err) => {
         console.error(err);
       });
+
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("visits")
+          .select("id, instructions")
+          .eq("id", item.id)
+          .maybeSingle<{ id: string; instructions: string | null }>();
+
+        if (detailsObsRequestRef.current !== requestId) return;
+        if (error) {
+          console.error(error);
+          setDetailsInstructionDraft(item.instructions ?? "");
+          return;
+        }
+        const nextInstructions = data?.instructions ?? item.instructions ?? "";
+        setDetailsInstructionDraft(nextInstructions);
+        setDetailsVisit((prev) =>
+          prev && prev.id === item.id
+            ? {
+                ...prev,
+                instructions: data?.instructions ?? prev.instructions,
+              }
+            : prev,
+        );
+      } catch (err) {
+        if (detailsObsRequestRef.current !== requestId) return;
+        console.error(err);
+        setDetailsInstructionDraft(item.instructions ?? "");
+      }
+    })();
 
     if (item.agenda) {
       fetchAgendaCanonicalFromClientes(item)
@@ -1641,27 +1672,45 @@ export default function Visitas() {
     });
   }, [detailsVisit, visits]);
 
+  useEffect(() => {
+    if (!detailsVisit) {
+      setDetailsInstructionDraft("");
+      return;
+    }
+    setDetailsInstructionDraft(detailsVisit.instructions ?? "");
+    setDetailsInstructionMessage(null);
+  }, [detailsVisit?.id]);
+
   const handleSaveDetailsInstruction = async () => {
     if (!detailsVisit || !canManageInstruction) return;
 
     const nextInstructions = detailsInstructionDraft.trim() || null;
     const visitId = detailsVisit.id;
+    const clienteId = detailsVisit.cliente_id ?? null;
 
     setDetailsInstructionSaving(true);
     setDetailsInstructionMessage(null);
     try {
-      const { error: visitsError } = await supabase
+      let updateQuery = supabase
         .from("visits")
         .update({ instructions: nextInstructions })
         .eq("id", visitId);
+      if (clienteId) {
+        updateQuery = updateQuery.eq("cliente_id", clienteId);
+      }
+      const { data: updatedVisit, error: visitsError } = await updateQuery
+        .select("id, instructions")
+        .single<{ id: string; instructions: string | null }>();
       if (visitsError) throw new Error(visitsError.message);
+
+      const savedInstructions = updatedVisit?.instructions ?? nextInstructions;
 
       setVisits((prev) =>
         prev.map((item) =>
           item.id === visitId
             ? {
                 ...item,
-                instructions: nextInstructions,
+                instructions: savedInstructions,
               }
             : item,
         ),
@@ -1670,12 +1719,12 @@ export default function Visitas() {
         prev && prev.id === visitId
           ? {
               ...prev,
-              instructions: nextInstructions,
+              instructions: savedInstructions,
             }
           : prev,
       );
       setCompleteVisit((prev) =>
-        prev && prev.id === visitId ? { ...prev, instructions: nextInstructions ?? "" } : prev,
+        prev && prev.id === visitId ? { ...prev, instructions: savedInstructions ?? "" } : prev,
       );
       setDetailsInstructionMessage("Instrucoes salvas.");
     } catch (err) {

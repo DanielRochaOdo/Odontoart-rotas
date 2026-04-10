@@ -763,7 +763,7 @@ export default function Agenda() {
     return formatDate(fallback ?? null);
   };
 
-  const resolveScheduledObsVisit = (agendaId: string, rowInstructions?: string | null) => {
+  const resolveScheduledObsVisit = (agendaId: string) => {
     const visits = scheduledVisitsByAgenda[agendaId] ?? [];
     if (visits.length === 0) return null;
 
@@ -776,11 +776,7 @@ export default function Agenda() {
       return latest;
     }, null);
 
-    const instructions =
-      rowInstructions?.trim() ||
-      latestVisit?.instructions?.trim() ||
-      visits.find((visit) => visit.instructions?.trim())?.instructions?.trim() ||
-      "";
+    const instructions = latestVisit?.instructions?.trim() || "";
 
     return {
       visitDate: latestVisit?.visit_date ?? null,
@@ -1016,10 +1012,10 @@ export default function Agenda() {
             const descending = primarySort?.desc ?? true;
             return [...data].sort((left, right) => {
               const leftObsTimestamp = toSortableTimestamp(
-                resolveScheduledObsVisit(left.id, left.instructions)?.visitDate,
+                resolveScheduledObsVisit(left.id)?.visitDate,
               );
               const rightObsTimestamp = toSortableTimestamp(
-                resolveScheduledObsVisit(right.id, right.instructions)?.visitDate,
+                resolveScheduledObsVisit(right.id)?.visitDate,
               );
               const obsComparison = compareNullableTimestamps(leftObsTimestamp, rightObsTimestamp, descending);
               if (obsComparison !== 0) return obsComparison;
@@ -1162,7 +1158,7 @@ export default function Agenda() {
           assigned_to_name: vendor.display_name ?? vendor.user_id,
           visit_date: routeDate,
           perfil_visita: row.perfil_visita ?? null,
-          instructions: row.instructions?.trim() || null,
+          instructions: null,
           route_id: route.id,
           created_by: session?.user.id ?? null,
         }));
@@ -1328,7 +1324,23 @@ export default function Agenda() {
   const handleSaveDetailsInstruction = async () => {
     if (!detailsModalRow || !canManageInstruction) return;
     const rowId = detailsModalRow.id;
-    const previousInstructions = detailsModalRow.instructions ?? null;
+    const visitsForCompany = scheduledVisitsByAgenda[rowId] ?? [];
+    const targetVisit = visitsForCompany.reduce<AgendaScheduledVisit | null>((latest, visit) => {
+      if (!latest) return visit;
+      const latestTimestamp = toSortableTimestamp(latest.visit_date);
+      const visitTimestamp = toSortableTimestamp(visit.visit_date);
+      if (visitTimestamp === null) return latest;
+      if (latestTimestamp === null || visitTimestamp > latestTimestamp) return visit;
+      return latest;
+    }, null);
+    const targetVisitId = targetVisit?.id ?? null;
+
+    if (!targetVisitId) {
+      setDetailsInstructionMessage("Sem visita agendada para aplicar instrucoes.");
+      return;
+    }
+
+    const previousInstructions = targetVisit?.instructions?.trim() ?? null;
     const nextInstructions = detailsInstructionDraft.trim() || null;
 
     if ((previousInstructions ?? null) === (nextInstructions ?? null)) {
@@ -1356,7 +1368,9 @@ export default function Agenda() {
         if (!visits || visits.length === 0) return prev;
         return {
           ...prev,
-          [rowId]: visits.map((visit) => ({ ...visit, instructions: value })),
+          [rowId]: visits.map((visit) =>
+            visit.id === targetVisitId ? { ...visit, instructions: value } : visit,
+          ),
         };
       });
     };
@@ -1364,27 +1378,13 @@ export default function Agenda() {
     applyLocalInstruction(nextInstructions);
 
     try {
-      const { error: updateAgendaError } = await supabase
-        .from("clientes")
-        .update({ instructions: nextInstructions })
-        .eq("id", rowId);
-      if (updateAgendaError) throw new Error(updateAgendaError.message);
-
-      setDetailsInstructionMessage("Instrucoes atualizadas.");
-
-      void supabase
+      const { error: updateVisitsError } = await supabase
         .from("visits")
         .update({ instructions: nextInstructions })
-        .eq("cliente_id", rowId)
-        .is("completed_at", null)
-        .then(({ error: updateVisitsError }) => {
-          if (updateVisitsError) {
-            console.error(updateVisitsError);
-            setDetailsInstructionMessage(
-              "Instrucao salva. Houve atraso ao sincronizar visitas abertas.",
-            );
-          }
-        });
+        .eq("id", targetVisitId);
+      if (updateVisitsError) throw new Error(updateVisitsError.message);
+
+      setDetailsInstructionMessage("Instrucoes atualizadas.");
     } catch (err) {
       applyLocalInstruction(previousInstructions);
       setDetailsInstructionMessage(err instanceof Error ? err.message : "Erro ao salvar instrucoes.");
@@ -1577,7 +1577,7 @@ export default function Agenda() {
               visit_date: draft.date,
               perfil_visita: perfilPayload.perfil_visita,
               perfil_visita_opcoes: perfilPayload.perfil_visita_opcoes,
-              instructions: scheduleModalRow.instructions?.trim() || null,
+              instructions: null,
               route_id: routeId,
               created_by: session?.user.id ?? null,
             })
@@ -1611,7 +1611,7 @@ export default function Agenda() {
               visit_date: draft.date,
               perfil_visita: perfilPayload.perfil_visita,
               perfil_visita_opcoes: perfilPayload.perfil_visita_opcoes,
-              instructions: scheduleModalRow.instructions?.trim() || null,
+              instructions: dateChanged ? null : (original.instructions?.trim() || null),
               route_id: routeId,
             })
             .eq("id", draft.id);
@@ -1798,7 +1798,7 @@ export default function Agenda() {
         header: ({ column }) => renderSortLabel(column, "Obs"),
         cell: (info) => {
           const row = info.row.original;
-          const scheduledObs = resolveScheduledObsVisit(row.id, row.instructions);
+          const scheduledObs = resolveScheduledObsVisit(row.id);
           if (!scheduledObs) return null;
           const firstInstructions = scheduledObs.instructions ?? "";
           const buttonLabel = scheduledObs.visitDate ? formatDate(scheduledObs.visitDate) : "Ver";
@@ -3627,7 +3627,7 @@ export default function Agenda() {
                       </div>
 
                       {(() => {
-                        const scheduledObs = resolveScheduledObsVisit(row.id, row.instructions);
+                        const scheduledObs = resolveScheduledObsVisit(row.id);
                         const hasAnyHistoryDate = recentVendors.some((item) => Boolean(item.visitDate));
                         if (!scheduledObs && !hasAnyHistoryDate) return null;
                         const visitDate = scheduledObs?.visitDate ?? null;
