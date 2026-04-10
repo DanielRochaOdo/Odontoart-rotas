@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DollarSign, LoaderCircle } from "lucide-react";
 import type { AgendaRow } from "../../types/agenda";
 import { supabase } from "../../lib/supabase";
@@ -91,6 +91,11 @@ type PlanoValoresModalState = {
 
 const hasPlanoValores = (planos: OdontoartPlanoValor[]) =>
   planos.some((plano) => plano.valorTitular !== null || plano.valorDependente !== null);
+
+const normalizeInstruction = (value: string | null | undefined) => {
+  const normalized = (value ?? "").trim();
+  return normalized || null;
+};
 
 const FIELDS = [
   { key: "data_da_ultima_visita", label: "Data da ultima visita", type: "date" },
@@ -186,6 +191,10 @@ export default function AgendaDrawer({
   );
   const [perfilSingleTimeBase, setPerfilSingleTimeBase] = useState<string>(initialSingleTimeBase ?? "");
   const [perfilSingleTimeValue, setPerfilSingleTimeValue] = useState<string>(initialSingleTimeValue);
+  const [instructionScopeVisitId, setInstructionScopeVisitId] = useState<string | null>(null);
+  const [scopedInstruction, setScopedInstruction] = useState<string | null>(
+    normalizeInstruction(initialFormState?.instructions),
+  );
 
   const applyCustomTimes = (times: string[]) => {
     setPerfilSingleTimeBase("");
@@ -243,6 +252,45 @@ export default function AgendaDrawer({
     }
     return values;
   }, [supervisorOptions, formState?.supervisor]);
+  const rowId = row?.id ?? null;
+
+  useEffect(() => {
+    if (!rowId) return;
+    let active = true;
+
+    const loadScopedInstruction = async () => {
+      const { data, error } = await supabase
+        .from("visits")
+        .select("id, visit_date, instructions")
+        .eq("cliente_id", rowId)
+        .is("completed_at", null)
+        .order("visit_date", { ascending: false })
+        .limit(1);
+
+      if (!active) return;
+      if (error) {
+        console.error(error);
+        setInstructionScopeVisitId(null);
+        setScopedInstruction(null);
+        setFormState((prev) => (prev ? { ...prev, instructions: "" } : prev));
+        return;
+      }
+
+      const latest = (
+        data?.[0] as { id?: string | null; visit_date?: string | null; instructions?: string | null } | undefined
+      ) ?? null;
+      const nextInstruction = normalizeInstruction(latest?.instructions ?? null);
+      setInstructionScopeVisitId(latest?.id ?? null);
+      setScopedInstruction(nextInstruction);
+      setFormState((prev) => (prev ? { ...prev, instructions: nextInstruction ?? "" } : prev));
+    };
+
+    void loadScopedInstruction();
+
+    return () => {
+      active = false;
+    };
+  }, [rowId]);
 
   if (!row || !formState) return null;
 
@@ -333,7 +381,7 @@ export default function AgendaDrawer({
         situacao: formState.situacao.trim() || null,
         categoria: formState.categoria.trim() || null,
         obs_comercial: formState.obs_contrato_1.trim() || null,
-        instructions: canManageInstruction ? formState.instructions.trim() || null : row.instructions ?? null,
+        instructions: canManageInstruction ? null : row.instructions ?? null,
       };
 
       const { data, error } = await supabase
@@ -350,21 +398,23 @@ export default function AgendaDrawer({
       }
 
       const updatedRow = data as AgendaRow;
-      const instructionsChanged =
-        canManageInstruction && (updatedRow.instructions ?? null) !== (row.instructions ?? null);
+      const nextInstruction = canManageInstruction
+        ? normalizeInstruction(formState.instructions)
+        : scopedInstruction;
+      const instructionsChanged = canManageInstruction && nextInstruction !== scopedInstruction;
+      let instructionWarning: string | null = null;
 
       if (instructionsChanged) {
-        void supabase
-          .from("visits")
-          .update({ instructions: updatedRow.instructions ?? null })
-          .eq("cliente_id", row.id)
-          .is("completed_at", null)
-          .then(({ error: visitInstructionsError }) => {
-            if (visitInstructionsError) {
-              console.error(visitInstructionsError);
-              setStatus("Instrucao salva. Houve atraso na sincronizacao das visitas abertas.");
-            }
-          });
+        if (!instructionScopeVisitId) {
+          instructionWarning = "Instrucao nao aplicada: sem visita agendada para esta empresa.";
+        } else {
+          const { error: visitInstructionsError } = await supabase
+            .from("visits")
+            .update({ instructions: nextInstruction })
+            .eq("id", instructionScopeVisitId);
+          if (visitInstructionsError) throw new Error(visitInstructionsError.message);
+          setScopedInstruction(nextInstruction);
+        }
       }
 
       const hasChanged = (nextValue: unknown, prevValue: unknown) => (nextValue ?? null) !== (prevValue ?? null);
@@ -416,13 +466,19 @@ export default function AgendaDrawer({
         });
       }
 
-      setFormState(buildFormState(updatedRow));
-      syncPerfilState(updatedRow.perfil_visita ?? "");
+      const updatedRowWithScopedInstruction = {
+        ...updatedRow,
+        instructions:
+          instructionsChanged && instructionScopeVisitId
+            ? nextInstruction
+            : scopedInstruction,
+      } as AgendaRow;
+
+      setFormState(buildFormState(updatedRowWithScopedInstruction));
+      syncPerfilState(updatedRowWithScopedInstruction.perfil_visita ?? "");
       setIsEditing(false);
-      setStatus(
-        instructionsChanged && !shouldSyncModules ? "Instrucoes atualizadas." : "Dados atualizados.",
-      );
-      onUpdated?.(updatedRow);
+      setStatus(instructionWarning ?? (instructionsChanged && !shouldSyncModules ? "Instrucoes atualizadas." : "Dados atualizados."));
+      onUpdated?.(updatedRowWithScopedInstruction);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Erro ao salvar dados.");
     } finally {
@@ -850,6 +906,8 @@ export default function AgendaDrawer({
                   <span className="text-sm text-ink">
                     {field.type === "date"
                       ? formatDate(row[field.key] as string | null)
+                      : field.key === "instructions"
+                        ? formatValue(scopedInstruction)
                       : field.key === "perfil_visita"
                         ? formatPerfilDisplay(row[field.key] as string | null)
                         : formatValue(row[field.key] as string | number | null)}
@@ -875,7 +933,10 @@ export default function AgendaDrawer({
                 <button
                   type="button"
                   onClick={() => {
-                    setFormState(buildFormState(row));
+                    setFormState({
+                      ...buildFormState(row),
+                      instructions: scopedInstruction ?? "",
+                    });
                     syncPerfilState(row.perfil_visita ?? "");
                     setIsEditing(false);
                     setStatus(null);

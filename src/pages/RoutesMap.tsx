@@ -1041,7 +1041,7 @@ export default function RoutesMap() {
           assigned_to_name: v.display_name ?? v.user_id,
           visit_date: visitDate,
           perfil_visita: item.perfil_visita ?? null,
-          instructions: item.instructions?.trim() || null,
+          instructions: null,
           route_id: route.id,
           created_by: session?.user.id ?? null,
         }));
