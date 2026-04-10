@@ -255,6 +255,7 @@ export default function Visitas() {
     { id: string; user_id: string | null; display_name: string | null }[]
   >([]);
   const [selectedSupervisorId, setSelectedSupervisorId] = useState<string>("all");
+  const [selectedVendorId, setSelectedVendorId] = useState<string>("all");
   const restoredViewRef = useRef(false);
   const pendingModalRestoreRef = useRef<{
     confirmVisitId: string | null;
@@ -288,11 +289,13 @@ export default function Visitas() {
         selectedDate: string | null;
         expandedVendor: string | null;
         selectedSupervisorId: string;
+        selectedVendorId: string;
       }>;
       if (parsed.currentMonth) setCurrentMonth(new Date(parsed.currentMonth));
       if (parsed.selectedDate) setSelectedDate(new Date(parsed.selectedDate));
       if (parsed.expandedVendor) setExpandedVendor(parsed.expandedVendor);
       if (parsed.selectedSupervisorId) setSelectedSupervisorId(parsed.selectedSupervisorId);
+      if (parsed.selectedVendorId) setSelectedVendorId(parsed.selectedVendorId);
       restoredViewRef.current = true;
     } catch {
       restoredViewRef.current = true;
@@ -306,13 +309,14 @@ export default function Visitas() {
       selectedDate: selectedDate ? selectedDate.toISOString() : null,
       expandedVendor,
       selectedSupervisorId,
+      selectedVendorId,
     };
     try {
       sessionStorage.setItem("visitasViewState", JSON.stringify(payload));
     } catch {
       // ignore
     }
-  }, [currentMonth, expandedVendor, selectedDate, selectedSupervisorId]);
+  }, [currentMonth, expandedVendor, selectedDate, selectedSupervisorId, selectedVendorId]);
 
   useEffect(() => {
     try {
@@ -680,36 +684,80 @@ export default function Visitas() {
     return cells;
   }, [currentMonth]);
 
-  const filteredVisits = useMemo(() => {
-    if (!canManage || !canFilterBySupervisor || selectedSupervisorId === "all") return visits;
+  const selectableVendors = useMemo(() => {
+    if (!canFilterBySupervisor || selectedSupervisorId === "all") return vendors;
     const supervisor = supervisores.find(
       (item) => item.id === selectedSupervisorId || item.user_id === selectedSupervisorId,
     );
-    const supervisorName = supervisor?.display_name ? normalize(supervisor.display_name) : "";
     const supervisorIds = new Set<string>();
     if (supervisor?.id) supervisorIds.add(supervisor.id);
     if (supervisor?.user_id) supervisorIds.add(supervisor.user_id);
-    const vendorIds = vendors
-      .filter((vendor) => (vendor.supervisor_id ? supervisorIds.has(vendor.supervisor_id) : false))
-      .map((vendor) => vendor.user_id)
-      .filter(Boolean);
-    const vendorNames = vendors
-      .filter((vendor) => (vendor.supervisor_id ? supervisorIds.has(vendor.supervisor_id) : false))
-      .map((vendor) => vendor.display_name)
-      .filter((value): value is string => Boolean(value))
-      .map((value) => normalize(value));
-    const vendorIdSet = new Set(vendorIds);
-    const vendorNameSet = new Set(vendorNames);
-    if (vendorIdSet.size === 0 && vendorNameSet.size === 0) return [];
-    return visits.filter((visit) => {
-      if (visit.assigned_to_user_id && vendorIdSet.has(visit.assigned_to_user_id)) return true;
-      if (visit.assigned_to_name && vendorNameSet.has(normalize(visit.assigned_to_name))) return true;
-      if (supervisorName && visit.agenda?.supervisor) {
-        return normalize(visit.agenda.supervisor) === supervisorName;
+    if (supervisorIds.size === 0) return [];
+    return vendors.filter((vendor) =>
+      vendor.supervisor_id ? supervisorIds.has(vendor.supervisor_id) : false,
+    );
+  }, [canFilterBySupervisor, selectedSupervisorId, supervisores, vendors]);
+
+  useEffect(() => {
+    if (!canFilterBySupervisor) return;
+    setSelectedVendorId((prev) =>
+      prev !== "all" && selectableVendors.some((vendor) => vendor.user_id === prev) ? prev : "all",
+    );
+  }, [canFilterBySupervisor, selectableVendors]);
+
+  const filteredVisits = useMemo(() => {
+    let scopedVisits = visits;
+
+    if (canManage && canFilterBySupervisor && selectedSupervisorId !== "all") {
+      const supervisor = supervisores.find(
+        (item) => item.id === selectedSupervisorId || item.user_id === selectedSupervisorId,
+      );
+      const supervisorName = supervisor?.display_name ? normalize(supervisor.display_name) : "";
+      const vendorIdSet = new Set(selectableVendors.map((vendor) => vendor.user_id).filter(Boolean));
+      const vendorNameSet = new Set(
+        selectableVendors
+          .map((vendor) => vendor.display_name)
+          .filter((value): value is string => Boolean(value))
+          .map((value) => normalize(value)),
+      );
+
+      if (vendorIdSet.size === 0 && vendorNameSet.size === 0) {
+        return [];
       }
-      return false;
-    });
-  }, [canManage, canFilterBySupervisor, selectedSupervisorId, supervisores, vendors, visits]);
+
+      scopedVisits = scopedVisits.filter((visit) => {
+        if (visit.assigned_to_user_id && vendorIdSet.has(visit.assigned_to_user_id)) return true;
+        if (visit.assigned_to_name && vendorNameSet.has(normalize(visit.assigned_to_name))) return true;
+        if (supervisorName && visit.agenda?.supervisor) {
+          return normalize(visit.agenda.supervisor) === supervisorName;
+        }
+        return false;
+      });
+    }
+
+    if (canManage && canFilterBySupervisor && selectedVendorId !== "all") {
+      const selectedVendor = vendors.find((vendor) => vendor.user_id === selectedVendorId);
+      const selectedVendorName = selectedVendor?.display_name ? normalize(selectedVendor.display_name) : "";
+      scopedVisits = scopedVisits.filter((visit) => {
+        if (visit.assigned_to_user_id && visit.assigned_to_user_id === selectedVendorId) return true;
+        if (selectedVendorName && visit.assigned_to_name) {
+          return normalize(visit.assigned_to_name) === selectedVendorName;
+        }
+        return false;
+      });
+    }
+
+    return scopedVisits;
+  }, [
+    canManage,
+    canFilterBySupervisor,
+    selectedSupervisorId,
+    selectedVendorId,
+    selectableVendors,
+    supervisores,
+    vendors,
+    visits,
+  ]);
 
   const visitsByDate = useMemo(() => {
     const map = new Map<string, VisitRow[]>();
@@ -1928,27 +1976,50 @@ export default function Visitas() {
             </p>
           </div>
           {canFilterBySupervisor && (
-            <label className="flex min-w-[220px] flex-col gap-1 text-xs font-semibold text-ink/70">
-              Supervisor
-              <select
-                id="visitas-supervisor-select"
-                name="visitasSupervisorSelect"
-                value={selectedSupervisorId}
-                onChange={(event) => setSelectedSupervisorId(event.target.value || "all")}
-                className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
-              >
-                <option value="all">Todos</option>
-                {supervisores.length === 0 ? (
-                  <option value="all">Nenhum supervisor</option>
-                ) : (
-                  supervisores.map((supervisor) => (
-                    <option key={supervisor.id} value={supervisor.id}>
-                      {supervisor.display_name ?? "Supervisor"}
-                    </option>
-                  ))
-                )}
-              </select>
-            </label>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex min-w-[220px] flex-col gap-1 text-xs font-semibold text-ink/70">
+                Supervisor
+                <select
+                  id="visitas-supervisor-select"
+                  name="visitasSupervisorSelect"
+                  value={selectedSupervisorId}
+                  onChange={(event) => setSelectedSupervisorId(event.target.value || "all")}
+                  className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
+                >
+                  <option value="all">Todos</option>
+                  {supervisores.length === 0 ? (
+                    <option value="all">Nenhum supervisor</option>
+                  ) : (
+                    supervisores.map((supervisor) => (
+                      <option key={supervisor.id} value={supervisor.id}>
+                        {supervisor.display_name ?? "Supervisor"}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+              <label className="flex min-w-[220px] flex-col gap-1 text-xs font-semibold text-ink/70">
+                Vendedor
+                <select
+                  id="visitas-vendor-select"
+                  name="visitasVendorSelect"
+                  value={selectedVendorId}
+                  onChange={(event) => setSelectedVendorId(event.target.value || "all")}
+                  className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
+                >
+                  <option value="all">Todos</option>
+                  {selectableVendors.length === 0 ? (
+                    <option value="all">Nenhum vendedor</option>
+                  ) : (
+                    selectableVendors.map((vendor) => (
+                      <option key={vendor.user_id} value={vendor.user_id}>
+                        {vendor.display_name ?? "Vendedor"}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+            </div>
           )}
         </div>
       </header>
@@ -2060,6 +2131,9 @@ export default function Visitas() {
               <div className="mt-4 space-y-4">
                 {groupedBySeller.map(([seller, items]) => {
                   const isExpanded = expandedVendor === seller;
+                  const completedCompanies = items.filter((item) => Boolean(item.completed_at)).length;
+                  const totalCompanies = items.length;
+                  const allCompleted = totalCompanies > 0 && completedCompanies === totalCompanies;
                   const sellerVendor = resolveSellerVendor(seller, items);
                   const canAccessNextRouteDashboard = Boolean(
                     sellerVendor && releasedVendorIdSet.has(sellerVendor.user_id),
@@ -2105,9 +2179,12 @@ export default function Visitas() {
                         <button
                           type="button"
                           onClick={() => setExpandedVendor(isExpanded ? null : seller)}
-                          className="text-xs text-ink/60"
+                          className={[
+                            "text-xs font-semibold",
+                            allCompleted ? "text-emerald-600" : "text-red-600",
+                          ].join(" ")}
                         >
-                          {items.length} empresa(s)
+                          {completedCompanies}/{totalCompanies} empresa(s)
                         </button>
                       </div>
 

@@ -65,6 +65,11 @@ type DigitalSummary = {
   weekRegistered: number;
   pendingToday: string[];
   pendingWeek: string[];
+  pendingByVendor: Array<{
+    name: string;
+    pendingToday: boolean;
+    pendingWeek: boolean;
+  }>;
   hasAnyEntries: boolean;
 };
 
@@ -79,6 +84,10 @@ type VendorNextRoutePreview = {
 type NeighborhoodVidasRow = {
   bairro: string;
   vidas: number;
+};
+type ScheduledProgress = {
+  scheduled: number;
+  completed: number;
 };
 
 const computeVisitStats = (
@@ -211,10 +220,15 @@ export default function Dashboard() {
   const [digitalLoading, setDigitalLoading] = useState(false);
   const [digitalError, setDigitalError] = useState<string | null>(null);
   const [showVendorVisitsModal, setShowVendorVisitsModal] = useState(false);
-  const [scheduledCounts, setScheduledCounts] = useState<{ today: number; week: number; month: number }>({
-    today: 0,
-    week: 0,
-    month: 0,
+  const [showPendingModal, setShowPendingModal] = useState(false);
+  const [scheduledCounts, setScheduledCounts] = useState<{
+    today: ScheduledProgress;
+    week: ScheduledProgress;
+    month: ScheduledProgress;
+  }>({
+    today: { scheduled: 0, completed: 0 },
+    week: { scheduled: 0, completed: 0 },
+    month: { scheduled: 0, completed: 0 },
   });
   const [scheduledCountsError, setScheduledCountsError] = useState<string | null>(null);
   const [vendorNextRouteAccessAllowed, setVendorNextRouteAccessAllowed] = useState(false);
@@ -340,7 +354,11 @@ export default function Dashboard() {
       setScheduledCountsError(null);
       try {
         if (!globalFrom || !globalTo) {
-          setScheduledCounts({ today: 0, week: 0, month: 0 });
+          setScheduledCounts({
+            today: { scheduled: 0, completed: 0 },
+            week: { scheduled: 0, completed: 0 },
+            month: { scheduled: 0, completed: 0 },
+          });
           return;
         }
         if (globalFrom > globalTo) {
@@ -368,7 +386,7 @@ export default function Dashboard() {
 
         let baseQuery = supabase
           .from("visits")
-          .select("visit_date, assigned_to_user_id, assigned_to_name")
+          .select("visit_date, assigned_to_user_id, assigned_to_name, completed_at, no_visit_reason")
           .gte("visit_date", startKey)
           .lte("visit_date", endKey);
 
@@ -409,7 +427,13 @@ export default function Dashboard() {
             .filter((value): value is string => Boolean(value));
 
           if (vendorIds.length === 0 && vendorNames.length === 0) {
-            if (active) setScheduledCounts({ today: 0, week: 0, month: 0 });
+            if (active) {
+              setScheduledCounts({
+                today: { scheduled: 0, completed: 0 },
+                week: { scheduled: 0, completed: 0 },
+                month: { scheduled: 0, completed: 0 },
+              });
+            }
             return;
           }
 
@@ -431,21 +455,42 @@ export default function Dashboard() {
         let todayCount = 0;
         let weekCount = 0;
         let monthCount = 0;
+        let todayCompleted = 0;
+        let weekCompleted = 0;
+        let monthCompleted = 0;
 
         (visitsData ?? []).forEach((visit) => {
           const key = (visit.visit_date ?? "").slice(0, 10);
           if (!key) return;
-          if (key === todayKey) todayCount += 1;
-          if (key >= weekStartKeyLocal && key <= weekEndKeyLocal) weekCount += 1;
-          if (key >= monthStartKeyLocal && key <= monthEndKeyLocal) monthCount += 1;
+          const isCompleted = Boolean(visit.completed_at) && !visit.no_visit_reason;
+          if (key === todayKey) {
+            todayCount += 1;
+            if (isCompleted) todayCompleted += 1;
+          }
+          if (key >= weekStartKeyLocal && key <= weekEndKeyLocal) {
+            weekCount += 1;
+            if (isCompleted) weekCompleted += 1;
+          }
+          if (key >= monthStartKeyLocal && key <= monthEndKeyLocal) {
+            monthCount += 1;
+            if (isCompleted) monthCompleted += 1;
+          }
         });
 
         if (!active) return;
-        setScheduledCounts({ today: todayCount, week: weekCount, month: monthCount });
+        setScheduledCounts({
+          today: { scheduled: todayCount, completed: todayCompleted },
+          week: { scheduled: weekCount, completed: weekCompleted },
+          month: { scheduled: monthCount, completed: monthCompleted },
+        });
       } catch (err) {
         if (!active) return;
         setScheduledCountsError(err instanceof Error ? err.message : "Erro ao carregar visitas marcadas.");
-        setScheduledCounts({ today: 0, week: 0, month: 0 });
+        setScheduledCounts({
+          today: { scheduled: 0, completed: 0 },
+          week: { scheduled: 0, completed: 0 },
+          month: { scheduled: 0, completed: 0 },
+        });
       }
     };
 
@@ -1122,11 +1167,53 @@ export default function Dashboard() {
             weekRegistered: 0,
             pendingToday: [],
             pendingWeek: [],
+            pendingByVendor: [],
             hasAnyEntries: false,
           });
           setDigitalLoading(false);
           return;
         }
+
+        const buildScheduledVisitsQuery = () =>
+          supabase
+            .from("visits")
+            .select("assigned_to_user_id, assigned_to_name")
+            .gte("visit_date", globalFrom)
+            .lte("visit_date", globalTo);
+
+        const applyScheduledVendorFilter = (query: ReturnType<typeof buildScheduledVisitsQuery>) => {
+          if (vendorIds.length && vendorNames.length) {
+            return query.or(
+              `assigned_to_user_id.in.(${formatOrValues(vendorIds)}),assigned_to_name.in.(${formatOrValues(vendorNames)})`,
+            );
+          }
+          if (vendorIds.length) return query.in("assigned_to_user_id", vendorIds);
+          if (vendorNames.length) return query.in("assigned_to_name", vendorNames);
+          return query;
+        };
+
+        const { data: scheduledRows, error: scheduledError } = await applyScheduledVendorFilter(
+          buildScheduledVisitsQuery(),
+        );
+        if (!active) return;
+        if (scheduledError) throw new Error(scheduledError.message);
+
+        const scheduledVendorIds = new Set(
+          (scheduledRows ?? [])
+            .map((row) => row.assigned_to_user_id)
+            .filter((value): value is string => Boolean(value)),
+        );
+        const scheduledVendorNames = new Set(
+          (scheduledRows ?? [])
+            .map((row) => row.assigned_to_name)
+            .filter((value): value is string => Boolean(value))
+            .map((name) => normalizeKey(name)),
+        );
+        const pendingScopeVendors = scopedVendors.filter((vendor) => {
+          const byId = Boolean(vendor.user_id && scheduledVendorIds.has(vendor.user_id));
+          const byName = Boolean(vendor.display_name && scheduledVendorNames.has(normalizeKey(vendor.display_name)));
+          return byId || byName;
+        });
 
         const buildAceiteQuery = () =>
           supabase
@@ -1211,12 +1298,16 @@ export default function Dashboard() {
 
         const pendingToday: string[] = [];
         const pendingWeek: string[] = [];
+        const pendingByVendorMap = new Map<
+          string,
+          { name: string; pendingToday: boolean; pendingWeek: boolean }
+        >();
         let todayRegistered = 0;
         let weekRegistered = 0;
         let periodRegistered = 0;
-        const hasAnyEntries = (weekRows ?? []).length > 0;
+        const hasAnyEntries = pendingScopeVendors.length > 0;
 
-        scopedVendors.forEach((vendor) => {
+        pendingScopeVendors.forEach((vendor) => {
           const name = vendor.display_name ?? vendor.user_id ?? "Vendedor";
           const nameKey = vendor.display_name ? normalizeKey(vendor.display_name) : "";
           const isToday =
@@ -1234,12 +1325,29 @@ export default function Dashboard() {
           if (isPeriod) periodRegistered += 1;
           if (!isToday) pendingToday.push(name);
           if (!isWeek) pendingWeek.push(name);
+          if (!isToday || !isWeek) {
+            const normalizedName = normalizeKey(name);
+            const existing = pendingByVendorMap.get(normalizedName);
+            if (existing) {
+              existing.pendingToday = existing.pendingToday || !isToday;
+              existing.pendingWeek = existing.pendingWeek || !isWeek;
+            } else {
+              pendingByVendorMap.set(normalizedName, {
+                name,
+                pendingToday: !isToday,
+                pendingWeek: !isWeek,
+              });
+            }
+          }
         });
 
         const normalizePendingList = (list: string[]) =>
           Array.from(new Set(list.map((name) => name.trim()).filter(Boolean)));
         const pendingTodayList = normalizePendingList(pendingToday);
         const pendingWeekList = normalizePendingList(pendingWeek);
+        const pendingByVendorList = Array.from(pendingByVendorMap.values()).sort((a, b) =>
+          a.name.localeCompare(b.name, "pt-BR"),
+        );
 
         if (!active) return;
         setDigitalSummary({
@@ -1253,6 +1361,7 @@ export default function Dashboard() {
           weekRegistered,
           pendingToday: pendingTodayList,
           pendingWeek: pendingWeekList,
+          pendingByVendor: pendingByVendorList,
           hasAnyEntries,
         });
       } catch (err) {
@@ -1458,6 +1567,12 @@ export default function Dashboard() {
     const extra = names.length - slice.length;
     return `${slice.join(", ")}${extra > 0 ? ` e mais ${extra}` : ""}`;
   };
+  const formatVendorPending = (item: { pendingToday: boolean; pendingWeek: boolean }) => {
+    if (item.pendingToday && item.pendingWeek) return "Hoje e Semana";
+    if (item.pendingToday) return "Hoje";
+    if (item.pendingWeek) return "Semana";
+    return "-";
+  };
 
   return (
     <div id="dashboard-export-root" className="space-y-6">
@@ -1564,23 +1679,35 @@ export default function Dashboard() {
             <div className="rounded-2xl border border-sea/20 bg-sand/40 p-5">
               <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Hoje</p>
               <p className="mt-2 font-display text-3xl text-ink">
-                {formatNumber(scheduledCounts.today)}
+                {formatNumber(scheduledCounts.today.scheduled)}
               </p>
               <p className="text-xs text-ink/60">Visitas marcadas para hoje</p>
+              <p className="mt-1 text-[11px] font-semibold text-ink/70">
+                Efetuadas: {formatNumber(scheduledCounts.today.completed)}/
+                {formatNumber(scheduledCounts.today.scheduled)}
+              </p>
             </div>
             <div className="rounded-2xl border border-sea/20 bg-sand/40 p-5">
               <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Semana</p>
               <p className="mt-2 font-display text-3xl text-ink">
-                {formatNumber(scheduledCounts.week)}
+                {formatNumber(scheduledCounts.week.scheduled)}
               </p>
               <p className="text-xs text-ink/60">Visitas marcadas para a semana</p>
+              <p className="mt-1 text-[11px] font-semibold text-ink/70">
+                Efetuadas: {formatNumber(scheduledCounts.week.completed)}/
+                {formatNumber(scheduledCounts.week.scheduled)}
+              </p>
             </div>
             <div className="rounded-2xl border border-sea/20 bg-sand/40 p-5">
               <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Mes</p>
               <p className="mt-2 font-display text-3xl text-ink">
-                {formatNumber(scheduledCounts.month)}
+                {formatNumber(scheduledCounts.month.scheduled)}
               </p>
               <p className="text-xs text-ink/60">Visitas marcadas para o mes</p>
+              <p className="mt-1 text-[11px] font-semibold text-ink/70">
+                Efetuadas: {formatNumber(scheduledCounts.month.completed)}/
+                {formatNumber(scheduledCounts.month.scheduled)}
+              </p>
             </div>
             {SHOW_NEXT_ROUTE_BLOCK && isVendor && (
               <button
@@ -1678,7 +1805,11 @@ export default function Dashboard() {
                       {digitalSummary.weekRegistered} vendedor(es) registraram
                     </p>
                   </div>
-                  <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 md:col-span-5">
+                  <button
+                    type="button"
+                    onClick={() => setShowPendingModal(true)}
+                    className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 text-left transition hover:border-amber-300 md:col-span-5"
+                  >
                     <p className="text-xs uppercase tracking-[0.2em] text-amber-700">Pendencias</p>
                     {!digitalSummary.hasAnyEntries ||
                       (digitalSummary.pendingWeek.length === 0 &&
@@ -1700,9 +1831,10 @@ export default function Dashboard() {
                         <p className="text-[11px] text-amber-700">
                           {formatPendingList(digitalSummary.pendingToday)}
                         </p>
+                        <p className="mt-2 text-[11px] text-amber-700">Clique para ver por vendedor.</p>
                       </>
                     )}
-                  </div>
+                  </button>
                 </div>
               ) : (
                 <p className="mt-3 text-xs text-ink/60">Sem dados de aceite digital.</p>
@@ -2020,6 +2152,49 @@ export default function Dashboard() {
                         {index + 1}. {item.label}
                       </span>
                       <span className="font-semibold text-sea">{formatNumber(item.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPendingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setShowPendingModal(false)}
+            aria-label="Fechar modal de pendencias"
+          />
+          <div className="relative w-full max-w-2xl rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-display text-lg text-ink">Pendencias por vendedor</h3>
+                <p className="mt-1 text-xs text-ink/60">Resumo rapido do que falta registrar.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPendingModal(false)}
+                className="rounded-full border border-sea/30 bg-white px-3 py-1 text-xs text-ink/70 hover:border-sea"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="mt-4 max-h-[60vh] overflow-y-auto rounded-2xl border border-sea/15 bg-sand/20">
+              {!digitalSummary || digitalSummary.pendingByVendor.length === 0 ? (
+                <div className="px-4 py-6 text-sm text-ink/60">Sem pendencias.</div>
+              ) : (
+                <div className="divide-y divide-sea/10">
+                  {digitalSummary.pendingByVendor.map((item, index) => (
+                    <div key={`${item.name}-${index}`} className="flex items-center justify-between px-4 py-3 text-sm">
+                      <span className="text-ink">
+                        {index + 1}. {item.name}
+                      </span>
+                      <span className="font-semibold text-amber-700">{formatVendorPending(item)}</span>
                     </div>
                   ))}
                 </div>
