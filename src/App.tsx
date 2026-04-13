@@ -14,6 +14,7 @@ const Clientes = lazy(() => import("./pages/Clientes"));
 const PreCadastro = lazy(() => import("./pages/PreCadastro"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Logs = lazy(() => import("./pages/Logs"));
+const KPI = lazy(() => import("./pages/KPI"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 export default function App() {
@@ -32,6 +33,7 @@ export default function App() {
               <Route path="aceite-digital" element={<AceiteDigital />} />
               <Route path="pre-cadastro" element={<PreCadastro />} />
               <Route path="clientes" element={<Clientes />} />
+              <Route path="kpi" element={<KPI />} />
               <Route path="configuracoes" element={<Settings />} />
               <Route path="logs" element={<Logs />} />
             </Route>

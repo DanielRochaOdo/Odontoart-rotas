@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronUp,
   DollarSign,
+  Info,
   LoaderCircle,
   Map as MapIcon,
   MapPin,
@@ -144,6 +145,44 @@ const formatCurrency = (value: number | null) => {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 };
 
+const formatDateTime = (value: string | null | undefined) => {
+  if (!value) return "-";
+  const date = parseDateValue(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+};
+
+const formatKpiMetric = (value: number | null | undefined) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+  return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(value);
+};
+
+const formatKpiMetricSigned = (value: number | null | undefined) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+  const absolute = formatKpiMetric(Math.abs(value));
+  if (value > 0) return `+${absolute}`;
+  if (value < 0) return `-${absolute}`;
+  return absolute;
+};
+
+const formatMonthKey = (value: string | null | undefined) => {
+  if (!value) return "-";
+  const match = String(value).trim().match(/^(\d{4})-(\d{2})$/);
+  if (!match) return value;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return value;
+  return new Intl.DateTimeFormat("pt-BR", { month: "short", year: "numeric" }).format(
+    new Date(year, month - 1, 1),
+  );
+};
+
 const normalizeNumberInput = (value: string) => value.replace(/\D/g, "");
 
 const toSortableTimestamp = (value: string | null | undefined) => {
@@ -231,6 +270,20 @@ type VendorHistoryModalState = {
   empresa: string;
   codigo: string;
   assignments: Array<{ name: string; visitDate: string | null }>;
+};
+
+type KpiImportValuesModalState = {
+  codigo: string;
+  empresa: string | null;
+  vidasIn: number | null;
+  vidasOut: number | null;
+  diferenca: number | null;
+  categoria: string | null;
+  monthKey: string | null;
+  sourceFilename: string | null;
+  importCreatedAt: string | null;
+  loading: boolean;
+  error: string | null;
 };
 
 const hasPlanoValores = (planos: OdontoartPlanoValor[]) =>
@@ -389,6 +442,7 @@ export default function Agenda() {
   const {
     filters: appliedFilters,
     setFilters: setAppliedFilters,
+    clearFilters: clearAppliedFilters,
   } = useAgendaFilters("routesTableFiltersV2");
   const [filters, setDraftFilters] = useState(() => appliedFilters);
   const setFilters = setDraftFilters;
@@ -440,9 +494,11 @@ export default function Agenda() {
   const [detailsInstructionMessage, setDetailsInstructionMessage] = useState<string | null>(null);
   const [planoValoresModal, setPlanoValoresModal] = useState<PlanoValoresModalState | null>(null);
   const [vendorHistoryModal, setVendorHistoryModal] = useState<VendorHistoryModalState | null>(null);
+  const [kpiImportValuesModal, setKpiImportValuesModal] = useState<KpiImportValuesModalState | null>(null);
   const [excludedAgendaIds, setExcludedAgendaIds] = useState<string[]>([]);
   const [columnChipRemovalModal, setColumnChipRemovalModal] = useState<ColumnChipRemovalModalState | null>(null);
   const [columnChipRemovalPageIndex, setColumnChipRemovalPageIndex] = useState(0);
+  const [routesDraftHydrated, setRoutesDraftHydrated] = useState(false);
   const detailsObsRequestRef = useRef(0);
   const restoredViewRef = useRef(false);
   const restoredModalRef = useRef(false);
@@ -629,6 +685,7 @@ export default function Agenda() {
     if (Array.isArray(draft.selectedAgendaIds)) {
       setSelectedAgendaIds(Array.from(new Set(draft.selectedAgendaIds.filter(Boolean))));
     }
+    setRoutesDraftHydrated(true);
   }, []);
 
   const vendorOptions = useMemo(
@@ -789,13 +846,13 @@ export default function Agenda() {
   }, [appliedCompanyCodeQuery, appliedCompanyNameQuery, appliedFilters, sorting]);
 
   useEffect(() => {
-    if (!restoredRoutesDraftRef.current) return;
+    if (!routesDraftHydrated) return;
     writeRoutesModuleDraft({
       selectedAgendaIds,
       companyNameQuery,
       companyCodeQuery,
     });
-  }, [companyCodeQuery, companyNameQuery, selectedAgendaIds]);
+  }, [companyCodeQuery, companyNameQuery, routesDraftHydrated, selectedAgendaIds]);
 
   useEffect(() => {
     if (!canAccess) return;
@@ -1317,6 +1374,117 @@ export default function Agenda() {
         valores: [],
         loading: false,
         error: err instanceof Error ? err.message : "Erro ao carregar valores de plano.",
+      });
+    }
+  };
+
+  const openKpiImportValuesModal = async (
+    codigoRaw: string | null | undefined,
+    empresa: string | null,
+  ) => {
+    const codigo = (codigoRaw ?? "").trim();
+    setKpiImportValuesModal({
+      codigo,
+      empresa,
+      vidasIn: null,
+      vidasOut: null,
+      diferenca: null,
+      categoria: null,
+      monthKey: null,
+      sourceFilename: null,
+      importCreatedAt: null,
+      loading: true,
+      error: null,
+    });
+
+    if (!codigo) {
+      setKpiImportValuesModal({
+        codigo,
+        empresa,
+        vidasIn: null,
+        vidasOut: null,
+        diferenca: null,
+        categoria: null,
+        monthKey: null,
+        sourceFilename: null,
+        importCreatedAt: null,
+        loading: false,
+        error: "Codigo da empresa nao informado.",
+      });
+      return;
+    }
+
+    try {
+      const { data: latestRow, error: latestRowError } = await supabase
+        .from("kpi_import_rows")
+        .select("import_id, codigo, vidas_in, vidas_out, categoria, month_key, created_at")
+        .eq("codigo", codigo)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latestRowError) {
+        throw new Error(latestRowError.message);
+      }
+
+      if (!latestRow) {
+        setKpiImportValuesModal({
+          codigo,
+          empresa,
+          vidasIn: null,
+          vidasOut: null,
+          diferenca: null,
+          categoria: null,
+          monthKey: null,
+          sourceFilename: null,
+          importCreatedAt: null,
+          loading: false,
+          error: "Codigo nao encontrado no historico de importacao do KPI.",
+        });
+        return;
+      }
+
+      const { data: importRow, error: importRowError } = await supabase
+        .from("kpi_imports")
+        .select("id, source_filename, created_at")
+        .eq("id", latestRow.import_id)
+        .maybeSingle();
+
+      if (importRowError) {
+        throw new Error(importRowError.message);
+      }
+
+      const vidasIn = Number(latestRow.vidas_in ?? 0);
+      const vidasOut = Number(latestRow.vidas_out ?? 0);
+      const safeVidasIn = Number.isFinite(vidasIn) ? vidasIn : 0;
+      const safeVidasOut = Number.isFinite(vidasOut) ? vidasOut : 0;
+
+      setKpiImportValuesModal({
+        codigo,
+        empresa,
+        vidasIn: safeVidasIn,
+        vidasOut: safeVidasOut,
+        diferenca: safeVidasIn - safeVidasOut,
+        categoria: latestRow.categoria ?? null,
+        monthKey: latestRow.month_key ?? null,
+        sourceFilename: importRow?.source_filename ?? null,
+        importCreatedAt: importRow?.created_at ?? null,
+        loading: false,
+        error: null,
+      });
+    } catch (err) {
+      setKpiImportValuesModal({
+        codigo,
+        empresa,
+        vidasIn: null,
+        vidasOut: null,
+        diferenca: null,
+        categoria: null,
+        monthKey: null,
+        sourceFilename: null,
+        importCreatedAt: null,
+        loading: false,
+        error: err instanceof Error ? err.message : "Erro ao carregar dados do KPI importado.",
       });
     }
   };
@@ -1902,13 +2070,37 @@ export default function Agenda() {
           </div>
         ),
         cell: (info) => {
+          const row = info.row.original;
+          const codigo = (row.cod_1 ?? "").trim();
+          const detailsTooltip = codigo
+            ? "Ver dados importados do KPI"
+            : "Empresa sem codigo para consulta no KPI";
           const badge = getCategoriaBadgeStyles(info.getValue<string | null>());
           return (
-            <span
-              className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${badge.className}`}
-            >
-              {badge.label}
-            </span>
+            <div className="inline-flex items-center gap-1">
+              <span
+                className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${badge.className}`}
+              >
+                {badge.label}
+              </span>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void openKpiImportValuesModal(
+                    row.cod_1,
+                    row.empresa ?? row.nome_fantasia ?? null,
+                  );
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                disabled={!codigo}
+                className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 bg-indigo-50 text-indigo-600 hover:border-indigo-400 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+                title={detailsTooltip}
+                aria-label={detailsTooltip}
+              >
+                <Info size={10} />
+              </button>
+            </div>
           );
         },
         size: 90,
@@ -2080,6 +2272,7 @@ export default function Agenda() {
       allVisibleSelected,
       filterOptions,
       filters.columns,
+      openKpiImportValuesModal,
       openScheduleModal,
       selectedAgendaSet,
       scheduledVisitsByAgenda,
@@ -2407,17 +2600,26 @@ export default function Agenda() {
   const handleClearFilters = () => {
     const emptyFilters = buildEmptyAgendaFilters();
     setDraftFilters(emptyFilters);
-    setAppliedFilters(emptyFilters);
+    clearAppliedFilters();
     setCompanyNameQuery("");
     setCompanyCodeQuery("");
     setAppliedCompanyNameQuery("");
     setAppliedCompanyCodeQuery("");
     setExcludedAgendaIds([]);
     setSelectedAgendaIds([]);
+    setSorting([]);
+    setGenerateMessage(null);
+    setColumnChipRemovalModal(null);
+    setColumnChipRemovalPageIndex(0);
     setSelectedRow(null);
     setSelectedRowId(null);
     setPageIndex(0);
     setHasSearched(true);
+    writeRoutesModuleDraft({
+      companyNameQuery: "",
+      companyCodeQuery: "",
+      selectedAgendaIds: [],
+    });
   };
 
   if (!canAccess) {
@@ -3516,6 +3718,73 @@ export default function Agenda() {
                 </p>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {kpiImportValuesModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setKpiImportValuesModal(null)}
+          />
+          <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <div className="flex items-start justify-between gap-2">
+              <h3 className="font-display text-lg text-ink">Detalhes KPI importado</h3>
+              <button
+                type="button"
+                onClick={() => setKpiImportValuesModal(null)}
+                className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Fechar
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-ink/60">
+              Empresa: {kpiImportValuesModal.empresa ?? "-"} | COD {kpiImportValuesModal.codigo || "-"}
+            </p>
+            <p className="mt-1 text-xs text-ink/60">
+              Mes de referencia: {formatMonthKey(kpiImportValuesModal.monthKey)} | Categoria:{" "}
+              {kpiImportValuesModal.categoria ?? "-"}
+            </p>
+            <p className="mt-1 text-xs text-ink/60">
+              Arquivo: {kpiImportValuesModal.sourceFilename ?? "-"} | Importado em{" "}
+              {formatDateTime(kpiImportValuesModal.importCreatedAt)}
+            </p>
+
+            {kpiImportValuesModal.loading ? (
+              <div className="mt-4 inline-flex items-center gap-2 text-sm text-ink/70">
+                <LoaderCircle size={14} className="animate-spin" />
+                Carregando dados...
+              </div>
+            ) : kpiImportValuesModal.error ? (
+              <p className="mt-4 text-xs text-red-600">{kpiImportValuesModal.error}</p>
+            ) : (
+              <div className="mt-4 grid gap-2">
+                <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-ink/60">vidas_in</p>
+                  <p className="mt-1 text-sm font-semibold text-ink">
+                    {formatKpiMetric(kpiImportValuesModal.vidasIn)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-ink/60">vidas_out</p>
+                  <p className="mt-1 text-sm font-semibold text-ink">
+                    {formatKpiMetric(kpiImportValuesModal.vidasOut)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-ink/60">Diferenca (in - out)</p>
+                  <p
+                    className={`mt-1 text-sm font-semibold ${
+                      (kpiImportValuesModal.diferenca ?? 0) >= 0 ? "text-emerald-700" : "text-red-600"
+                    }`}
+                  >
+                    {formatKpiMetricSigned(kpiImportValuesModal.diferenca)}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -14,6 +14,7 @@ import {
   Sun,
   Moon,
   History,
+  ChartNoAxesCombined,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { ROLE_LABELS } from "../types/roles";
@@ -41,6 +42,7 @@ const navItems: NavItem[] = [
     requiresVendorPreCadastroAccess: true,
   },
   { label: "Empresas", to: "/clientes", icon: Building2, roles: ["SUPERVISOR", "ASSISTENTE"] },
+  { label: "KPI", to: "/kpi", icon: ChartNoAxesCombined, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Logs", to: "/logs", icon: History, roles: ["SUPERVISOR"] },
   { label: "Configuracoes", to: "/configuracoes", icon: Settings, roles: ["SUPERVISOR"] },
 ];

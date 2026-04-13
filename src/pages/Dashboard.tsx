@@ -207,6 +207,7 @@ export default function Dashboard() {
   const [vendorVidasSeries, setVendorVidasSeries] = useState<VendorVidasSeries[]>([]);
   const [vendorVidasLoading, setVendorVidasLoading] = useState(false);
   const [vendorVidasError, setVendorVidasError] = useState<string | null>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [vendorVidasSummary, setVendorVidasSummary] = useState<VendorVidasSummary>({
     total: 0,
     totalVisitas: 0,
@@ -1516,49 +1517,327 @@ export default function Dashboard() {
     );
   };
 
-  const exportDashboardPdf = () => {
+  const exportDashboardPdf = async () => {
+    setVendorVidasError(null);
+    setExportingPdf(true);
     const root = document.getElementById("dashboard-export-root");
     if (!root) {
       setVendorVidasError("Nao foi possivel preparar o PDF do dashboard.");
+      setExportingPdf(false);
       return;
     }
 
-    const styles = Array.from(
-      document.querySelectorAll("style, link[rel='stylesheet']"),
-    )
-      .map((node) => node.outerHTML)
-      .join("\n");
+    try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import("html2canvas"),
+        import("jspdf"),
+      ]);
 
-    const html = `
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Dashboard</title>
-          ${styles}
-          <style>
-            * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            body { margin: 0; padding: 16px; background: #ffffff; }
+      try {
+        const fontsReady = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts?.ready;
+        if (fontsReady) await fontsReady;
+      } catch {
+        // ignore font readiness issues and continue
+      }
 
-            @media print {
-              .print\\:hidden { display: none !important; }
+      const images = Array.from(root.querySelectorAll("img"));
+      if (images.length > 0) {
+        await Promise.all(
+          images.map(
+            (image) =>
+              new Promise<void>((resolve) => {
+                if (image.complete) {
+                  resolve();
+                  return;
+                }
+                image.onload = () => resolve();
+                image.onerror = () => resolve();
+              }),
+          ),
+        );
+      }
+
+      const waitFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await waitFrame();
+
+      const bounds = root.getBoundingClientRect();
+      const exportWidthPx = Math.max(Math.ceil(bounds.width), 1180);
+      const deviceScale = Math.min(window.devicePixelRatio || 1.5, 2);
+      const safeScale = Math.max(0.7, deviceScale);
+
+      const hasVisiblePixels = (canvas: HTMLCanvasElement) => {
+        const probeCanvas = document.createElement("canvas");
+        probeCanvas.width = 56;
+        probeCanvas.height = 56;
+        const probeCtx = probeCanvas.getContext("2d", { willReadFrequently: true });
+        if (!probeCtx) return true;
+
+        probeCtx.fillStyle = "#ffffff";
+        probeCtx.fillRect(0, 0, probeCanvas.width, probeCanvas.height);
+        probeCtx.drawImage(canvas, 0, 0, probeCanvas.width, probeCanvas.height);
+        const imageData = probeCtx.getImageData(0, 0, probeCanvas.width, probeCanvas.height).data;
+        let nonWhite = 0;
+        for (let index = 0; index < imageData.length; index += 4) {
+          const r = imageData[index];
+          const g = imageData[index + 1];
+          const b = imageData[index + 2];
+          const a = imageData[index + 3];
+          if (a > 0 && (r < 245 || g < 245 || b < 245)) {
+            nonWhite += 1;
+            if (nonWhite >= 8) return true;
+          }
+        }
+        return false;
+      };
+
+      const captureAttempts = [
+        { scale: safeScale, foreignObjectRendering: false },
+        { scale: 1, foreignObjectRendering: false },
+        { scale: 1, foreignObjectRendering: true },
+      ].filter(
+        (attempt, index, list) =>
+          list.findIndex(
+            (item) =>
+              Math.abs(item.scale - attempt.scale) < 0.01 &&
+              item.foreignObjectRendering === attempt.foreignObjectRendering,
+          ) === index,
+      );
+
+      const captureElement = async (element: HTMLElement) => {
+        let captureError: unknown = null;
+        for (const attempt of captureAttempts) {
+          try {
+            const candidate = await html2canvas(element, {
+              scale: attempt.scale,
+              useCORS: true,
+              allowTaint: false,
+              backgroundColor: "#ffffff",
+              logging: false,
+              foreignObjectRendering: attempt.foreignObjectRendering,
+              scrollX: 0,
+              scrollY: 0,
+              windowWidth: Math.max(exportWidthPx, element.clientWidth, 1),
+              windowHeight: Math.max(element.scrollHeight, element.clientHeight, document.documentElement.clientHeight, 1),
+              ignoreElements: (node) => node instanceof HTMLElement && node.dataset.pdfExclude === "true",
+            });
+
+            if (candidate.width <= 0 || candidate.height <= 0) {
+              throw new Error("Renderizacao do PDF retornou canvas vazio.");
             }
-          </style>
-        </head>
-        <body>${root.outerHTML}</body>
-      </html>
-    `;
+            if (!hasVisiblePixels(candidate)) {
+              throw new Error("Renderizacao do PDF retornou conteudo em branco.");
+            }
+            return candidate;
+          } catch (error) {
+            captureError = error;
+          }
+        }
+        if (captureError instanceof Error) throw captureError;
+        throw new Error("Falha ao renderizar bloco do dashboard.");
+      };
 
-    const win = window.open("", "_blank", "width=1280,height=900");
-    if (!win) {
-      setVendorVidasError("Nao foi possivel abrir a janela para exportar PDF.");
-      return;
+      const getPdfFileName = () => {
+        const now = new Date();
+        const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+          now.getDate(),
+        ).padStart(2, "0")}`;
+        return `dashboard-${dateKey}.pdf`;
+      };
+
+      const makePaddedSlice = (source: HTMLCanvasElement, startY: number, sliceHeightPx: number, padPx: number) => {
+        const paddedCanvas = document.createElement("canvas");
+        paddedCanvas.width = source.width + padPx * 2;
+        paddedCanvas.height = sliceHeightPx + padPx * 2;
+        const paddedCtx = paddedCanvas.getContext("2d");
+        if (!paddedCtx) throw new Error("Falha ao preparar borda de seguranca do PDF.");
+        paddedCtx.fillStyle = "#ffffff";
+        paddedCtx.fillRect(0, 0, paddedCanvas.width, paddedCanvas.height);
+        paddedCtx.drawImage(
+          source,
+          0,
+          startY,
+          source.width,
+          sliceHeightPx,
+          padPx,
+          padPx,
+          source.width,
+          sliceHeightPx,
+        );
+        return paddedCanvas;
+      };
+
+      const saveSingleCanvasPdf = (canvas: HTMLCanvasElement) => {
+        const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+        const pageWidthMm = 210;
+        const pageHeightMm = 297;
+        const marginMm = 14;
+        const contentWidthMm = pageWidthMm - marginMm * 2;
+        const contentHeightMm = pageHeightMm - marginMm * 2;
+        const renderXmm = (pageWidthMm - contentWidthMm) / 2;
+        const pageHeightPx = Math.max(1, Math.floor((contentHeightMm * canvas.width) / contentWidthMm));
+        const padPx = Math.max(12, Math.round(canvas.width * 0.015));
+        let renderedPx = 0;
+        let pageIndex = 0;
+
+        while (renderedPx < canvas.height) {
+          const sliceHeightPx = Math.min(pageHeightPx, canvas.height - renderedPx);
+          const pageCanvas = makePaddedSlice(canvas, renderedPx, sliceHeightPx, padPx);
+
+          if (pageIndex > 0) {
+            pdf.addPage();
+          }
+
+          const imgData = pageCanvas.toDataURL("image/jpeg", 0.92);
+          const sliceHeightMm = (sliceHeightPx * contentWidthMm) / canvas.width;
+          const paddedHeightMm = sliceHeightMm + (padPx * 2 * contentWidthMm) / canvas.width;
+          pdf.addImage(imgData, "JPEG", renderXmm, marginMm, contentWidthMm, paddedHeightMm, undefined, "FAST");
+
+          renderedPx += sliceHeightPx;
+          pageIndex += 1;
+        }
+
+        pdf.save(getPdfFileName());
+      };
+
+      const exportHost = document.createElement("div");
+      exportHost.style.position = "fixed";
+      exportHost.style.left = "0";
+      exportHost.style.top = "0";
+      exportHost.style.width = `${exportWidthPx}px`;
+      exportHost.style.background = "#ffffff";
+      exportHost.style.pointerEvents = "none";
+      exportHost.style.opacity = "1";
+      exportHost.style.zIndex = "-1";
+
+      const clonedRoot = root.cloneNode(true) as HTMLElement;
+      clonedRoot.style.width = `${exportWidthPx}px`;
+      clonedRoot.style.maxWidth = "none";
+      clonedRoot.style.minWidth = `${exportWidthPx}px`;
+
+      exportHost.appendChild(clonedRoot);
+      document.body.appendChild(exportHost);
+
+      let blockExportError: unknown = null;
+      try {
+        clonedRoot.querySelectorAll<HTMLElement>("[data-pdf-exclude='true']").forEach((node) => node.remove());
+        clonedRoot.style.boxSizing = "border-box";
+        clonedRoot.style.padding = "18px 18px 22px";
+
+        const cloneImages = Array.from(clonedRoot.querySelectorAll("img"));
+        if (cloneImages.length > 0) {
+          await Promise.all(
+            cloneImages.map(
+              (image) =>
+                new Promise<void>((resolve) => {
+                  if (image.complete) {
+                    resolve();
+                    return;
+                  }
+                  image.onload = () => resolve();
+                  image.onerror = () => resolve();
+                }),
+            ),
+          );
+        }
+
+        await waitFrame();
+        await waitFrame();
+
+        const blocks: HTMLElement[] = [];
+        Array.from(clonedRoot.children).forEach((child) => {
+          if (!(child instanceof HTMLElement)) return;
+          if (child.tagName === "DIV" && child.classList.contains("space-y-6") && child.children.length > 0) {
+            const nested = Array.from(child.children).filter((node): node is HTMLElement => node instanceof HTMLElement);
+            if (nested.length > 0) {
+              blocks.push(...nested);
+              return;
+            }
+          }
+          blocks.push(child);
+        });
+        if (blocks.length === 0) {
+          blocks.push(clonedRoot);
+        }
+
+        const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+        const pageWidthMm = 210;
+        const pageHeightMm = 297;
+        const marginMm = 14;
+        const sectionGapMm = 3;
+        const contentWidthMm = pageWidthMm - marginMm * 2;
+        const contentHeightMm = pageHeightMm - marginMm * 2;
+        const renderXmm = (pageWidthMm - contentWidthMm) / 2;
+
+        let cursorY = marginMm;
+
+        const addCanvasSlices = (canvas: HTMLCanvasElement) => {
+          const padPx = Math.max(12, Math.round(canvas.width * 0.015));
+          let renderedPx = 0;
+          while (renderedPx < canvas.height) {
+            const availableMm = pageHeightMm - marginMm - cursorY;
+            if (availableMm <= 1) {
+              pdf.addPage();
+              cursorY = marginMm;
+              continue;
+            }
+
+            const availablePx = Math.max(1, Math.floor((availableMm * canvas.width) / contentWidthMm));
+            const sliceHeightPx = Math.min(availablePx, canvas.height - renderedPx);
+            const pageCanvas = makePaddedSlice(canvas, renderedPx, sliceHeightPx, padPx);
+
+            const imgData = pageCanvas.toDataURL("image/jpeg", 0.92);
+            const sliceHeightMm = (sliceHeightPx * contentWidthMm) / canvas.width;
+            const paddedHeightMm = sliceHeightMm + (padPx * 2 * contentWidthMm) / canvas.width;
+            pdf.addImage(imgData, "JPEG", renderXmm, cursorY, contentWidthMm, paddedHeightMm, undefined, "FAST");
+
+            renderedPx += sliceHeightPx;
+            cursorY += paddedHeightMm;
+
+            if (renderedPx < canvas.height) {
+              pdf.addPage();
+              cursorY = marginMm;
+            }
+          }
+        };
+
+        for (let index = 0; index < blocks.length; index += 1) {
+          const block = blocks[index];
+          const blockCanvas = await captureElement(block);
+          const blockHeightMm = (blockCanvas.height * contentWidthMm) / blockCanvas.width;
+          const availableMm = pageHeightMm - marginMm - cursorY;
+
+          if (blockHeightMm <= contentHeightMm && blockHeightMm > availableMm) {
+            pdf.addPage();
+            cursorY = marginMm;
+          }
+
+          addCanvasSlices(blockCanvas);
+
+          if (index < blocks.length - 1) {
+            cursorY += sectionGapMm;
+            if (cursorY >= pageHeightMm - marginMm - 1) {
+              pdf.addPage();
+              cursorY = marginMm;
+            }
+          }
+        }
+
+        pdf.save(getPdfFileName());
+      } catch (error) {
+        blockExportError = error;
+      } finally {
+        exportHost.remove();
+      }
+
+      if (blockExportError) {
+        const fallbackCanvas = await captureElement(root);
+        saveSingleCanvasPdf(fallbackCanvas);
+      }
+    } catch (error) {
+      setVendorVidasError(error instanceof Error ? error.message : "Falha ao gerar o PDF.");
+    } finally {
+      setExportingPdf(false);
     }
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    setTimeout(() => {
-      win.print();
-    }, 300);
   };
 
   const formatPendingList = (names: string[], limit = 6) => {
@@ -1652,9 +1931,11 @@ export default function Dashboard() {
             <button
               type="button"
               onClick={exportDashboardPdf}
+              disabled={exportingPdf}
+              data-pdf-exclude="true"
               className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea print:hidden"
             >
-              Exportar PDF
+              {exportingPdf ? "Gerando PDF..." : "Exportar PDF"}
             </button>
           </div>
         </div>
