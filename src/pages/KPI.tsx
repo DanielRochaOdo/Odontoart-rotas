@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
@@ -409,7 +409,7 @@ const DoubleBarChartCard = ({
                 <div
                   key={`bar-group-${label}`}
                   className="flex min-w-[72px] flex-col items-center gap-2"
-                  title={`${label} • ${firstSeries.label}: ${firstSigned} • ${secondSeries.label}: ${secondSigned}`}
+                  title={`${label} â€¢ ${firstSeries.label}: ${firstSigned} â€¢ ${secondSeries.label}: ${secondSigned}`}
                 >
                   <span className="text-[11px] font-semibold text-ink">
                     {signedValues
@@ -605,7 +605,11 @@ export default function KPI() {
 
     XLSX.utils.book_append_sheet(workbook, dataSheet, "kpi");
     XLSX.utils.book_append_sheet(workbook, rulesSheet, "regras");
-    XLSX.writeFile(workbook, "modelo_kpi_categorias.xlsx");
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, "0");
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const year = String(now.getFullYear()).slice(-2);
+    XLSX.writeFile(workbook, `modelo_importacao_kpi_${day}_${month}_${year}.xlsx`);
   };
 
   const exportKpiPdf = async () => {
@@ -1414,11 +1418,11 @@ export default function KPI() {
           </div>
         </div>
 
-        <div className="mt-3 rounded-xl border border-sea/15 bg-white/80 px-3 py-2 text-[11px] text-ink/65">
-          <span className="font-semibold text-ink/75">Base dos graficos de rosca:</span>{" "}
+        <div className="mt-3 rounded-xl border border-sea/15 bg-white/80 px-3 py-2 text-[11px] text-slate-70">
+          <span className="font-semibold text-slate-80">Base dos graficos de rosca:</span>{" "}
           ultima validacao salva no KPI.
           {latestValidationMeta
-            ? ` ${formatDateTime(latestValidationMeta.createdAt)} • arquivo ${latestValidationMeta.sourceFilename}.`
+            ? ` ${formatDateTime(latestValidationMeta.createdAt)} - arquivo ${latestValidationMeta.sourceFilename}.`
             : " Nenhuma validacao salva ainda."}
           {latestValidationLoading ? " Atualizando..." : ""}
           {latestValidationError ? ` Erro ao carregar: ${latestValidationError}` : ""}
@@ -1617,7 +1621,7 @@ export default function KPI() {
             onClick={() => setHistoryExpanded((prev) => !prev)}
             className="flex items-center gap-2 rounded-lg border border-sea/25 bg-sand/20 px-3 py-2 text-left hover:border-sea/45"
           >
-            <span className="text-[11px] text-ink/70">{historyExpanded ? "▼" : "►"}</span>
+            <span className="text-[11px] text-ink/70">{historyExpanded ? "▲" : "▼"}</span>
             <div>
               <h3 className="font-display text-lg text-ink">Historico de importacoes</h3>
               <p className="mt-1 text-xs text-ink/60">
