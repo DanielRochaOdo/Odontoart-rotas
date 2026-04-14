@@ -144,6 +144,17 @@ type VendorDashboardAccessModalState = {
   grantAccess: boolean;
 };
 
+type AddVendorsModalState = {
+  visitId: string;
+  companyId: string;
+  companyName: string;
+  date: string;
+  perfilVisita: string | null;
+  perfilVisitaOpcoes: string | null;
+  existingVendorIds: string[];
+  selectedVendorIds: string[];
+};
+
 const formatDateKey = (value: string) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   return format(new Date(value), "yyyy-MM-dd");
@@ -249,6 +260,10 @@ export default function Visitas() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [addingVendorId, setAddingVendorId] = useState<string | null>(null);
+  const [addVendorsModal, setAddVendorsModal] = useState<AddVendorsModalState | null>(null);
+  const [addVendorsSaving, setAddVendorsSaving] = useState(false);
+  const [addVendorsError, setAddVendorsError] = useState<string | null>(null);
+  const [addVendorsQuery, setAddVendorsQuery] = useState("");
   const [maxVisibleDate, setMaxVisibleDate] = useState<string | null>(null);
   const [blockMessage, setBlockMessage] = useState<string | null>(null);
   const [supervisores, setSupervisores] = useState<
@@ -438,16 +453,16 @@ export default function Visitas() {
       const end = endOfMonth(currentMonth);
       const startDate = format(start, "yyyy-MM-dd");
       const endDate = format(end, "yyyy-MM-dd");
-      const baseDate = new Date();
-      const todayKey = getDateKey(baseDate);
-      const yesterdayKey = getDateKey(addDays(baseDate, -1));
-      const tomorrowKey = getDateKey(addDays(baseDate, 1));
-      const canUnlockTomorrowByTime = baseDate.getHours() >= 19;
+      const now = new Date();
+      const todayKey = getDateKey(now);
+      const canUnlockNextRouteByTime = now.getHours() >= 19;
       let effectiveEnd = endDate;
       let maxDate = endDate;
 
       if (isVendor) {
         let blockReason: string | null = null;
+        const formatRouteDate = (dateKey: string) =>
+          format(new Date(`${dateKey}T12:00:00`), "dd/MM/yyyy");
         const applyVendorVisitFilter = <TQuery,>(query: TQuery) => {
           if (session?.user.id && profile?.display_name) {
             return (query as TQuery & { or: (filters: string) => TQuery }).or(
@@ -467,6 +482,23 @@ export default function Visitas() {
             );
           }
           return query;
+        };
+
+        const fetchVendorRouteDates = async () => {
+          let query = supabase
+            .from("visits")
+            .select("visit_date")
+            .not("visit_date", "is", null)
+            .order("visit_date", { ascending: true });
+          query = applyVendorVisitFilter(query);
+          const { data, error: datesError } = await query;
+          if (datesError) throw new Error(datesError.message);
+          const unique = new Set<string>();
+          (data ?? []).forEach((row) => {
+            if (!row.visit_date) return;
+            unique.add(formatDateKey(row.visit_date));
+          });
+          return Array.from(unique).sort();
         };
 
         const fetchPendingVisitCount = async (dateKey: string) => {
@@ -505,7 +537,7 @@ export default function Visitas() {
           return (count ?? 0) > 0;
         };
 
-        const resolveDayGate = async (
+        const resolveRouteGate = async (
           dateKey: string,
           pendingReason: string,
           acceptanceReason: string,
@@ -530,30 +562,44 @@ export default function Visitas() {
         };
 
         try {
-          const yesterdayGate = await resolveDayGate(
-            yesterdayKey,
-            "Conclua todas as visitas de ontem para ver as visitas de hoje.",
-            "Registre o aceite digital de ontem para ver as visitas de hoje.",
-          );
-
-          if (yesterdayGate.blocked) {
-            maxDate = yesterdayKey;
-            blockReason = yesterdayGate.reason;
+          const routeDates = await fetchVendorRouteDates();
+          if (routeDates.length === 0) {
+            maxDate = endDate;
           } else {
-            const todayGate = await resolveDayGate(
-              todayKey,
-              "Conclua todas as visitas de hoje para ver as visitas de amanha.",
-              "Registre o aceite digital de hoje para ver as visitas de amanha.",
-            );
-
-            if (todayGate.blocked) {
-              maxDate = todayKey;
-              blockReason = todayGate.reason;
-            } else if (!canUnlockTomorrowByTime) {
-              maxDate = todayKey;
-              blockReason = "A agenda de amanha sera liberada a partir das 19:00.";
+            const pastOrTodayDates = routeDates.filter((dateKey) => dateKey <= todayKey);
+            if (pastOrTodayDates.length === 0) {
+              const firstRouteDate = routeDates[0];
+              if (!canUnlockNextRouteByTime) {
+                maxDate = todayKey;
+                blockReason = `A proxima rota (${formatRouteDate(firstRouteDate)}) sera liberada a partir das 19:00.`;
+              } else {
+                maxDate = firstRouteDate;
+              }
             } else {
-              maxDate = tomorrowKey;
+              const lastRouteDate = pastOrTodayDates[pastOrTodayDates.length - 1];
+              const nextRouteDate = routeDates.find((dateKey) => dateKey > lastRouteDate) ?? null;
+              const releaseTarget = nextRouteDate
+                ? `a proxima rota (${formatRouteDate(nextRouteDate)})`
+                : "as proximas rotas";
+              const routeGate = await resolveRouteGate(
+                lastRouteDate,
+                `Conclua todas as visitas da ultima rota (${formatRouteDate(lastRouteDate)}) para liberar ${releaseTarget}.`,
+                `Registre o aceite digital da ultima rota (${formatRouteDate(lastRouteDate)}) para liberar ${releaseTarget}.`,
+              );
+
+              if (routeGate.blocked) {
+                maxDate = lastRouteDate;
+                blockReason = routeGate.reason;
+              } else if (nextRouteDate) {
+                if (!canUnlockNextRouteByTime) {
+                  maxDate = lastRouteDate;
+                  blockReason = `A proxima rota (${formatRouteDate(nextRouteDate)}) sera liberada a partir das 19:00.`;
+                } else {
+                  maxDate = nextRouteDate;
+                }
+              } else {
+                maxDate = endDate;
+              }
             }
           }
         } catch (gateError) {
@@ -838,6 +884,13 @@ export default function Visitas() {
     });
     return map;
   }, [vendors]);
+  const addVendorsList = useMemo(() => {
+    if (!addVendorsQuery.trim()) return vendors;
+    const query = normalizeSearchText(addVendorsQuery);
+    return vendors.filter((vendor) =>
+      normalizeSearchText(vendor.display_name ?? vendor.user_id).includes(query),
+    );
+  }, [addVendorsQuery, vendors]);
   const selectedDateKey = useMemo(
     () => (selectedDate ? format(selectedDate, "yyyy-MM-dd") : ""),
     [selectedDate],
@@ -1040,10 +1093,6 @@ export default function Visitas() {
     if (insertError) throw new Error(insertError.message);
   };
 
-  const isSameVisitVendor = (visit: VisitRow, vendorId: string, vendorName: string) =>
-    (visit.assigned_to_user_id && visit.assigned_to_user_id === vendorId) ||
-    (!visit.assigned_to_user_id && normalize(visit.assigned_to_name) === normalize(vendorName));
-
   const handleSaveVisit = async (visitId: string) => {
     const state = editState[visitId];
     if (!state) return;
@@ -1153,10 +1202,6 @@ export default function Visitas() {
       setError("Selecione a data da visita.");
       return;
     }
-    if (!state.vendorId) {
-      setError("Selecione o vendedor.");
-      return;
-    }
 
     const visit = visits.find((item) => item.id === visitId);
     if (!visit) return;
@@ -1170,49 +1215,140 @@ export default function Visitas() {
       return;
     }
 
-    const vendor = vendorById.get(state.vendorId);
-    const vendorName = vendor?.display_name ?? vendor?.user_id ?? "Sem vendedor";
-    if (isSameVisitVendor(visit, state.vendorId, vendorName)) {
-      setError("Selecione um vendedor diferente para adicionar.");
+    setAddingVendorId(visitId);
+    setAddVendorsError(null);
+    setAddVendorsQuery("");
+    setError(null);
+    try {
+      const { data: existingVisits, error: existingVisitsError } = await supabase
+        .from("visits")
+        .select("assigned_to_user_id, assigned_to_name")
+        .eq("cliente_id", companyId)
+        .eq("visit_date", state.date);
+      if (existingVisitsError) throw new Error(existingVisitsError.message);
+
+      const existingVendorIdsSet = new Set<string>();
+      const existingVendorNamesSet = new Set<string>();
+      (existingVisits ?? []).forEach((row) => {
+        if (row.assigned_to_user_id) existingVendorIdsSet.add(row.assigned_to_user_id);
+        if (row.assigned_to_name) existingVendorNamesSet.add(normalize(row.assigned_to_name));
+      });
+      vendors.forEach((vendor) => {
+        if (!vendor.display_name || !vendor.user_id) return;
+        if (existingVendorNamesSet.has(normalize(vendor.display_name))) {
+          existingVendorIdsSet.add(vendor.user_id);
+        }
+      });
+
+      const preferredVendorId = state.vendorId;
+      const initialSelection =
+        preferredVendorId && !existingVendorIdsSet.has(preferredVendorId)
+          ? [preferredVendorId]
+          : [];
+
+      setAddVendorsModal({
+        visitId,
+        companyId,
+        companyName: visit.agenda?.empresa ?? visit.agenda?.nome_fantasia ?? "Sem nome",
+        date: state.date,
+        perfilVisita: visit.perfil_visita ?? null,
+        perfilVisitaOpcoes: visit.perfil_visita_opcoes ?? null,
+        existingVendorIds: Array.from(existingVendorIdsSet),
+        selectedVendorIds: initialSelection,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao carregar vendedores para adicionar.");
+    } finally {
+      setAddingVendorId(null);
+    }
+  };
+
+  const toggleVendorInAddModal = (vendorId: string) => {
+    if (!addVendorsModal) return;
+    if (addVendorsModal.existingVendorIds.includes(vendorId)) return;
+    setAddVendorsModal((prev) => {
+      if (!prev) return prev;
+      const selectedSet = new Set(prev.selectedVendorIds);
+      if (selectedSet.has(vendorId)) {
+        selectedSet.delete(vendorId);
+      } else {
+        selectedSet.add(vendorId);
+      }
+      return {
+        ...prev,
+        selectedVendorIds: Array.from(selectedSet),
+      };
+    });
+  };
+
+  const handleSaveAddVendors = async () => {
+    if (!addVendorsModal) return;
+    const selectedVendorIds = Array.from(new Set(addVendorsModal.selectedVendorIds));
+    if (selectedVendorIds.length === 0) {
+      setAddVendorsError("Selecione pelo menos um vendedor.");
       return;
     }
 
-    setAddingVendorId(visitId);
+    setAddVendorsSaving(true);
+    setAddVendorsError(null);
     setError(null);
     try {
-      const { data: existingVisit, error: existingVisitError } = await supabase
-        .from("visits")
-        .select("id")
-        .eq("cliente_id", companyId)
-        .eq("assigned_to_user_id", state.vendorId)
-        .eq("visit_date", state.date)
-        .maybeSingle();
-      if (existingVisitError) throw new Error(existingVisitError.message);
-      if (existingVisit?.id) {
-        setError("Este vendedor ja esta vinculado a empresa nessa data.");
+      let createdCount = 0;
+      const knownExisting = new Set(addVendorsModal.existingVendorIds);
+
+      for (const vendorId of selectedVendorIds) {
+        if (knownExisting.has(vendorId)) continue;
+        const vendor = vendorById.get(vendorId);
+        if (!vendor) continue;
+        const vendorName = vendor.display_name ?? vendor.user_id ?? "Sem vendedor";
+
+        const { data: existingVisit, error: existingVisitError } = await supabase
+          .from("visits")
+          .select("id")
+          .eq("cliente_id", addVendorsModal.companyId)
+          .eq("assigned_to_user_id", vendorId)
+          .eq("visit_date", addVendorsModal.date)
+          .maybeSingle();
+        if (existingVisitError) throw new Error(existingVisitError.message);
+        if (existingVisit?.id) {
+          knownExisting.add(vendorId);
+          continue;
+        }
+
+        const routeId = await ensureRoute(vendorId, vendorName, addVendorsModal.date);
+        const { error: insertError } = await supabase.from("visits").insert({
+          cliente_id: addVendorsModal.companyId,
+          assigned_to_user_id: vendorId,
+          assigned_to_name: vendorName,
+          visit_date: addVendorsModal.date,
+          perfil_visita: addVendorsModal.perfilVisita,
+          perfil_visita_opcoes: addVendorsModal.perfilVisitaOpcoes,
+          instructions: null,
+          route_id: routeId,
+          created_by: session?.user.id ?? null,
+        });
+        if (insertError) throw new Error(insertError.message);
+
+        await ensureRouteStop(routeId, addVendorsModal.companyId);
+        knownExisting.add(vendorId);
+        createdCount += 1;
+      }
+
+      if (createdCount === 0) {
+        setAddVendorsError("Todos os vendedores selecionados ja estao vinculados para esta data.");
+        setAddVendorsModal((prev) =>
+          prev ? { ...prev, existingVendorIds: Array.from(knownExisting) } : prev,
+        );
         return;
       }
 
-      const routeId = await ensureRoute(state.vendorId, vendorName, state.date);
-      const { error: insertError } = await supabase.from("visits").insert({
-        cliente_id: companyId,
-        assigned_to_user_id: state.vendorId,
-        assigned_to_name: vendorName,
-        visit_date: state.date,
-        perfil_visita: visit.perfil_visita ?? null,
-        perfil_visita_opcoes: visit.perfil_visita_opcoes ?? null,
-        instructions: null,
-        route_id: routeId,
-        created_by: session?.user.id ?? null,
-      });
-      if (insertError) throw new Error(insertError.message);
-
-      await ensureRouteStop(routeId, companyId);
+      setAddVendorsModal(null);
+      setAddVendorsQuery("");
       setRefreshKey((prev) => prev + 1);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao adicionar vendedor na visita.");
+      setAddVendorsError(err instanceof Error ? err.message : "Erro ao adicionar vendedores.");
     } finally {
-      setAddingVendorId(null);
+      setAddVendorsSaving(false);
     }
   };
 
@@ -2401,6 +2537,135 @@ export default function Visitas() {
               </p>
             )}
           </section>
+        </div>
+      )}
+
+      {addVendorsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => {
+              if (addVendorsSaving) return;
+              setAddVendorsModal(null);
+              setAddVendorsError(null);
+              setAddVendorsQuery("");
+            }}
+            aria-label="Fechar modal de adicionar vendedores"
+          />
+          <div className="relative w-full max-w-2xl rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-display text-lg text-ink">Adicionar vendedores</h3>
+                <p className="mt-1 text-xs text-ink/60">
+                  Empresa: {addVendorsModal.companyName} | Data:{" "}
+                  {format(new Date(`${addVendorsModal.date}T12:00:00`), "dd/MM/yyyy")}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (addVendorsSaving) return;
+                  setAddVendorsModal(null);
+                  setAddVendorsError(null);
+                  setAddVendorsQuery("");
+                }}
+                className="rounded-full border border-sea/30 bg-white px-3 py-1 text-xs text-ink/70 hover:border-sea disabled:opacity-60"
+                disabled={addVendorsSaving}
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
+                Buscar vendedor
+                <input
+                  type="text"
+                  value={addVendorsQuery}
+                  onChange={(event) => setAddVendorsQuery(event.target.value)}
+                  placeholder="Digite o nome do vendedor"
+                  className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
+            </div>
+
+            <div className="mt-4 max-h-[48vh] overflow-y-auto rounded-2xl border border-sea/15 bg-sand/20 p-3">
+              {addVendorsList.length === 0 ? (
+                <p className="text-sm text-ink/60">Nenhum vendedor encontrado.</p>
+              ) : (
+                <div className="space-y-2">
+                  {addVendorsList.map((vendor) => {
+                    const isAlreadyLinked = addVendorsModal.existingVendorIds.includes(vendor.user_id);
+                    const isSelected =
+                      isAlreadyLinked || addVendorsModal.selectedVendorIds.includes(vendor.user_id);
+                    return (
+                      <label
+                        key={vendor.user_id}
+                        className={[
+                          "flex items-center justify-between rounded-xl border px-3 py-2",
+                          isAlreadyLinked ? "border-amber-200 bg-amber-50" : "border-sea/20 bg-white",
+                        ].join(" ")}
+                      >
+                        <span className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={isAlreadyLinked || addVendorsSaving}
+                            onChange={() => toggleVendorInAddModal(vendor.user_id)}
+                            className="h-4 w-4 accent-sea"
+                          />
+                          <span className="text-sm text-ink">
+                            {vendor.display_name ?? vendor.user_id}
+                          </span>
+                        </span>
+                        {isAlreadyLinked ? (
+                          <span className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                            Ja vinculado
+                          </span>
+                        ) : null}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {addVendorsError ? (
+              <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                {addVendorsError}
+              </p>
+            ) : null}
+
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <p className="text-xs text-ink/60">
+                Selecionados: {addVendorsModal.selectedVendorIds.length}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (addVendorsSaving) return;
+                    setAddVendorsModal(null);
+                    setAddVendorsError(null);
+                    setAddVendorsQuery("");
+                  }}
+                  className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea disabled:opacity-60"
+                  disabled={addVendorsSaving}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveAddVendors}
+                  className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                  disabled={addVendorsSaving}
+                >
+                  {addVendorsSaving ? "Salvando..." : "Salvar"}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
