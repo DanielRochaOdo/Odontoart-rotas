@@ -28,6 +28,10 @@ type UpdatePayload = {
   password?: string | null;
 };
 
+type ResetAccessPayload = {
+  user_id: string;
+};
+
 type ListEmailsPayload = {
   user_ids: string[];
 };
@@ -92,7 +96,7 @@ serve(async (req) => {
 
   let body: {
     action?: string;
-    payload?: CreatePayload | DeletePayload | UpdatePayload | ListEmailsPayload;
+    payload?: CreatePayload | DeletePayload | UpdatePayload | ResetAccessPayload | ListEmailsPayload;
   } | null = null;
   try {
     body = await req.json();
@@ -200,6 +204,35 @@ serve(async (req) => {
     }
 
     return jsonResponse(200, { success: true });
+  }
+
+  if (body.action === "reset-access") {
+    const payload = body.payload as ResetAccessPayload;
+    if (!payload.user_id) {
+      return jsonResponse(400, { error: "User id obrigatorio." });
+    }
+
+    const { data: resetData, error: resetError } = await supabase.rpc("reset_user_access", {
+      p_user_id: payload.user_id,
+    });
+
+    if (resetError) {
+      return jsonResponse(400, { error: resetError.message });
+    }
+
+    const { error: profileUpdateError } = await supabase
+      .from("profiles")
+      .update({ force_reauth_after: new Date().toISOString() })
+      .eq("user_id", payload.user_id);
+
+    if (profileUpdateError) {
+      return jsonResponse(400, { error: profileUpdateError.message });
+    }
+
+    return jsonResponse(200, {
+      success: true,
+      ...(typeof resetData === "object" && resetData ? (resetData as Record<string, unknown>) : {}),
+    });
   }
 
   if (body.action === "list-emails") {

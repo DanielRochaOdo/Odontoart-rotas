@@ -24,6 +24,7 @@ import { useAuth } from "../context/AuthContext";
 import {
   fetchEmpresaScheduledVisits,
   fetchEmpresasLookup,
+  fetchSupervisorLatestVisitByEmpresa,
   type EmpresaScheduledVisit,
   type EmpresaLookupRow,
 } from "../lib/routesApi";
@@ -48,6 +49,12 @@ import cearaCitiesRaw from "../data/ceara_municipios.geojson?raw";
 import fortalezaBairrosRaw from "../data/fortaleza_bairros.geojson?raw";
 import { CATEGORIA_OPTIONS } from "../lib/categorias";
 import type { AgendaFilters } from "../types/agenda";
+import {
+  SUPERVISOR_VISIT_REASON_OPTIONS,
+  VISIT_TYPE,
+  getSupervisorEmpresaFlagMeta,
+  type SupervisorVisitReason,
+} from "../lib/supervisorVisits";
 
 const RMF_CENTER: [number, number] = [-3.86, -38.62];
 const CEARA_BOUNDS: [[number, number], [number, number]] = [
@@ -98,13 +105,35 @@ const FILTER_LABELS: Record<string, string> = {
   categoria: "Categoria",
 };
 
+const SUPERVISOR_FLAG_FILTER_OPTIONS = [
+  { value: "VERDE", label: "🟢 0-90 dias" },
+  { value: "AMARELO", label: "🟡 91-180 dias" },
+  { value: "VERMELHO", label: "🔴 >180 dias" },
+  { value: "CINZA", label: "⚪ Sem historico" },
+] as const;
+type SupervisorFlagFilterValue = (typeof SUPERVISOR_FLAG_FILTER_OPTIONS)[number]["value"];
+const getSupervisorFlagOptionLabel = (value: string) =>
+  SUPERVISOR_FLAG_FILTER_OPTIONS.find((option) => option.value === value)?.label ?? value;
+const getSupervisorFlagOptionValue = (label: string) =>
+  (SUPERVISOR_FLAG_FILTER_OPTIONS.find((option) => option.label === label)?.value ??
+    null) as SupervisorFlagFilterValue | null;
+
 const normalize = (v: string | null | undefined) =>
   normalizeText(v, { letterCase: "upper" });
+const isInactiveCompanyStatus = (v: string | null | undefined) =>
+  Boolean(normalizeText(v, { letterCase: "upper" })) &&
+  normalizeText(v, { letterCase: "upper" }) !== "ATIVO";
 
 const normalizeNumberInput = (v: string) => v.replace(/\D/g, "");
 const compact = (v: string | null | undefined) => (v ?? "").replace(/\s+/g, " ").trim();
 
 const fmtDate = (v: string | null) => formatDateBr(v);
+const getSupervisorFlagDotStyles = (color: "CINZA" | "VERDE" | "AMARELO" | "VERMELHO") => {
+  if (color === "VERDE") return "border-emerald-300 bg-emerald-500";
+  if (color === "AMARELO") return "border-amber-300 bg-amber-500";
+  if (color === "VERMELHO") return "border-red-300 bg-red-500";
+  return "border-slate-300 bg-slate-400";
+};
 
 const parseDateValue = (value: string) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -139,6 +168,33 @@ type MapViewport = {
 };
 
 type SelectionMode = "RAIO" | "BAIRRO";
+
+type InactiveCompanyWarningItem = {
+  id: string;
+  code: string;
+  name: string;
+  status: string;
+};
+type SupervisorEmpresaFlagInfo = {
+  color: "CINZA" | "VERDE" | "AMARELO" | "VERMELHO";
+  lastVisitDate: string | null;
+  daysSince: number | null;
+};
+
+const getSupervisorFlagColor = (flag: SupervisorEmpresaFlagInfo | undefined) => flag?.color ?? "CINZA";
+
+const getSupervisorFlagLabel = (flag: SupervisorEmpresaFlagInfo | undefined) => {
+  if (!flag?.lastVisitDate) return "SEM HISTORICO";
+  return flag.color;
+};
+
+const getSupervisorFlagTooltip = (flag: SupervisorEmpresaFlagInfo | undefined) => {
+  const label = getSupervisorFlagLabel(flag);
+  if (!flag?.lastVisitDate) return `Flag supervisor: ${label}`;
+  return `Flag supervisor: ${label} (ultima visita ${fmtDate(flag.lastVisitDate)})`;
+};
+
+type GenerationTab = "VENDEDOR" | "SUPERVISOR";
 
 const clampCompanyListHeight = (height: number) =>
   Math.max(COMPANY_LIST_MIN_HEIGHT, Math.min(height, COMPANY_LIST_MAX_HEIGHT));
@@ -313,6 +369,7 @@ const buildEmptyAgendaFilters = (): AgendaFilters => ({
     supervisor: [],
     vendedor: [],
     cod_1: [],
+    supervisor_flag: [],
     bairro: [],
     cidade: [],
     uf: [],
@@ -333,6 +390,7 @@ const buildEmptyAgendaFilters = (): AgendaFilters => ({
 export default function RoutesMap() {
   const { role, session } = useAuth();
   const canGenerate = role === "SUPERVISOR" || role === "ASSISTENTE";
+  const canGenerateSupervisorRoutes = role === "SUPERVISOR";
 
   const {
     filters: appliedFilters,
@@ -352,6 +410,9 @@ export default function RoutesMap() {
   const [scheduledVisitsByEmpresa, setScheduledVisitsByEmpresa] = useState<
     Record<string, EmpresaScheduledVisit[]>
   >({});
+  const [supervisorFlagByEmpresa, setSupervisorFlagByEmpresa] = useState<
+    Record<string, SupervisorEmpresaFlagInfo>
+  >({});
   const [vendedores, setVendedores] = useState<VendedorLookup[]>([]);
   const [supervisores, setSupervisores] = useState<SupervisorLookup[]>([]);
   const [filterOptions, setFilterOptions] = useState<Record<string, string[]>>({});
@@ -360,14 +421,21 @@ export default function RoutesMap() {
   const [selectedEmpresaIds, setSelectedEmpresaIds] = useState<string[]>([]);
   const [selectedBairroKeys, setSelectedBairroKeys] = useState<string[]>([]);
   const [excludedBairroEmpresaIds, setExcludedBairroEmpresaIds] = useState<string[]>([]);
+  const [generationTab, setGenerationTab] = useState<GenerationTab>("VENDEDOR");
   const [selectedVendorIds, setSelectedVendorIds] = useState<string[]>([]);
+  const [selectedSupervisorIds, setSelectedSupervisorIds] = useState<string[]>([]);
   const [vendorQuery, setVendorQuery] = useState("");
+  const [supervisorQuery, setSupervisorQuery] = useState("");
+  const [supervisorReasonByEmpresaId, setSupervisorReasonByEmpresaId] = useState<
+    Record<string, SupervisorVisitReason>
+  >({});
 
   const [visitDate, setVisitDate] = useState("");
   const [showGenerateModal, setShowGenerateModal] = useState(false);
 
   const [message, setMessage] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [inactiveCompaniesWarning, setInactiveCompaniesWarning] = useState<InactiveCompanyWarningItem[] | null>(null);
 
   // ====== SELECAO POR RAIO (AGORA COM 1KM) ======
   const [radiusKm, setRadiusKm] = useState<0.5 | 1 | 3 | 5 | 10>(1);
@@ -380,6 +448,12 @@ export default function RoutesMap() {
   const [mapViewport, setMapViewport] = useState<MapViewport | null>(null);
   const [companyListHeight, setCompanyListHeight] = useState(256);
   // ==============================================
+
+  useEffect(() => {
+    if (!canGenerateSupervisorRoutes && generationTab === "SUPERVISOR") {
+      setGenerationTab("VENDEDOR");
+    }
+  }, [canGenerateSupervisorRoutes, generationTab]);
 
   useEffect(() => {
     setDraftFilters(appliedFilters);
@@ -399,6 +473,12 @@ export default function RoutesMap() {
     if (Array.isArray(parsed.selectedVendorIds)) {
       setSelectedVendorIds(Array.from(new Set(parsed.selectedVendorIds.filter(Boolean))));
     }
+    if (Array.isArray(parsed.selectedSupervisorIds)) {
+      setSelectedSupervisorIds(Array.from(new Set(parsed.selectedSupervisorIds.filter(Boolean))));
+    }
+    setGenerationTab(parsed.generationTab === "SUPERVISOR" ? "SUPERVISOR" : "VENDEDOR");
+    setSupervisorQuery(parsed.supervisorQuery ?? "");
+    setSupervisorReasonByEmpresaId((parsed.supervisorReasonByEmpresaId ?? {}) as Record<string, SupervisorVisitReason>);
     setVendorQuery(parsed.vendorQuery ?? "");
     setVisitDate(parsed.visitDate ?? "");
     setSelectionMode(parsed.selectionMode ?? "RAIO");
@@ -557,6 +637,18 @@ export default function RoutesMap() {
     const t = normalizeSearchText(vendorQuery);
     return vendedores.filter((v) => normalizeSearchText(v.display_name ?? v.user_id).includes(t));
   }, [vendorQuery, vendedores]);
+  const filteredSupervisores = useMemo(() => {
+    if (!supervisorQuery.trim()) return supervisores;
+    const t = normalizeSearchText(supervisorQuery);
+    return supervisores.filter((s) => normalizeSearchText(s.display_name ?? s.user_id).includes(t));
+  }, [supervisorQuery, supervisores]);
+  const selectedSupervisorDisplayNames = useMemo(
+    () =>
+      selectedSupervisorIds
+        .map((id) => supervisores.find((item) => item.user_id === id)?.display_name ?? id)
+        .filter(Boolean),
+    [selectedSupervisorIds, supervisores],
+  );
 
   const dedupedEmpresaRows = useMemo(() => dedupeEmpresaLookupRows(empresaRows), [empresaRows]);
 
@@ -593,11 +685,49 @@ export default function RoutesMap() {
     };
   }, [dedupedEmpresaRows]);
 
-  const rowsMatchingFilters = useMemo(() => dedupedEmpresaRows, [dedupedEmpresaRows]);
+  useEffect(() => {
+    let active = true;
+    const empresaIds = dedupedEmpresaRows.map((row) => row.id);
+    if (role !== "SUPERVISOR" || !session?.user.id || empresaIds.length === 0) {
+      setSupervisorFlagByEmpresa({});
+      return () => {
+        active = false;
+      };
+    }
+
+    fetchSupervisorLatestVisitByEmpresa(empresaIds, session.user.id)
+      .then((latestByEmpresa) => {
+        if (!active) return;
+        const next: Record<string, SupervisorEmpresaFlagInfo> = {};
+        empresaIds.forEach((empresaId) => {
+          const meta = getSupervisorEmpresaFlagMeta(latestByEmpresa[empresaId] ?? null);
+          next[empresaId] = meta;
+        });
+        setSupervisorFlagByEmpresa(next);
+      })
+      .catch((error) => {
+        console.error(error);
+        if (active) setSupervisorFlagByEmpresa({});
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [dedupedEmpresaRows, role, session?.user.id]);
+
+  const appliedSupervisorFlagFilters = appliedFilters.columns.supervisor_flag ?? [];
+
+  const rowsMatchingFilters = useMemo(() => {
+    if (role !== "SUPERVISOR" || appliedSupervisorFlagFilters.length === 0) return dedupedEmpresaRows;
+    return dedupedEmpresaRows.filter((row) =>
+      appliedSupervisorFlagFilters.includes(supervisorFlagByEmpresa[row.id]?.color ?? "CINZA"),
+    );
+  }, [appliedSupervisorFlagFilters, dedupedEmpresaRows, role, supervisorFlagByEmpresa]);
 
   const hasActiveRowsFilter = useMemo(() => {
     if (normalizeSearchText(appliedCompanyNameQuery) || normalizeSearchText(appliedCompanyCodeQuery)) return true;
     if (Object.keys(FILTER_SOURCES).some((key) => (appliedFilters.columns[key] ?? []).length > 0)) return true;
+    if ((appliedFilters.columns.supervisor_flag ?? []).length > 0) return true;
     const dateRange = appliedFilters.dateRanges.data_da_ultima_visita;
     if (dateRange.from || dateRange.to || dateRange.month || dateRange.year || dateRange.invert) return true;
     const vidasRange = appliedFilters.ranges.vidas_ultima_visita;
@@ -704,6 +834,30 @@ export default function RoutesMap() {
     [excludedBairroEmpresaSet, selectedEmpresaIds, selectedBairroEmpresaIds],
   );
   const effectiveSelSet = useMemo(() => new Set(effectiveSelectedEmpresaIds), [effectiveSelectedEmpresaIds]);
+  const selectedGenerateRows = useMemo(() => {
+    const byId = new Map(dedupedEmpresaRows.map((row) => [row.id, row] as const));
+    return effectiveSelectedEmpresaIds
+      .map((empresaId) => byId.get(empresaId))
+      .filter((row): row is EmpresaLookupRow => Boolean(row));
+  }, [dedupedEmpresaRows, effectiveSelectedEmpresaIds]);
+
+  useEffect(() => {
+    if (effectiveSelectedEmpresaIds.length === 0) {
+      setSupervisorReasonByEmpresaId({});
+      return;
+    }
+    setSupervisorReasonByEmpresaId((prev) => {
+      const next: Record<string, SupervisorVisitReason> = {};
+      effectiveSelectedEmpresaIds.forEach((empresaId) => {
+        const current = prev[empresaId];
+        next[empresaId] =
+          current && SUPERVISOR_VISIT_REASON_OPTIONS.some((option) => option.value === current)
+            ? current
+            : "RETENCAO";
+      });
+      return next;
+    });
+  }, [effectiveSelectedEmpresaIds]);
 
   useEffect(() => {
     if (!restoredDraftRef.current) return;
@@ -711,8 +865,12 @@ export default function RoutesMap() {
       companyNameQuery,
       companyCodeQuery,
       selectedEmpresaIds: effectiveSelectedEmpresaIds,
+      generationTab,
       selectedVendorIds,
+      selectedSupervisorIds,
+      supervisorReasonByEmpresaId,
       vendorQuery,
+      supervisorQuery,
       visitDate,
       selectionMode,
       selectedBairroKeys,
@@ -728,14 +886,18 @@ export default function RoutesMap() {
     companyNameQuery,
     effectiveSelectedEmpresaIds,
     excludedBairroEmpresaIds,
+    generationTab,
     radiusCenter,
     radiusKm,
     radiusMode,
     radiusReplaceSelection,
     radiusResultIds,
     selectedBairroKeys,
+    selectedSupervisorIds,
     selectedVendorIds,
     selectionMode,
+    supervisorQuery,
+    supervisorReasonByEmpresaId,
     vendorQuery,
     visitDate,
   ]);
@@ -946,6 +1108,14 @@ export default function RoutesMap() {
 
   const toggleVendor = (id: string) =>
     setSelectedVendorIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const toggleSupervisor = (id: string) =>
+    setSelectedSupervisorIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const handleSupervisorReasonChange = (empresaId: string, reason: SupervisorVisitReason) => {
+    setSupervisorReasonByEmpresaId((prev) => ({
+      ...prev,
+      [empresaId]: reason,
+    }));
+  };
 
   const clearAllSelectedCompanies = () => {
     setSelectedEmpresaIds([]);
@@ -981,12 +1151,19 @@ export default function RoutesMap() {
 
   const handleGenerate = async () => {
     const selVendors = vendedores.filter((v) => selectedVendorIds.includes(v.user_id));
-    if (selVendors.length === 0) return setMessage("Selecione pelo menos um vendedor para gerar visitas.");
+    const selSupervisores = supervisores.filter((s) => selectedSupervisorIds.includes(s.user_id));
+    if (generationTab === "VENDEDOR" && selVendors.length === 0) {
+      return setMessage("Selecione pelo menos um vendedor para gerar visitas.");
+    }
+    if (generationTab === "SUPERVISOR" && selSupervisores.length === 0) {
+      return setMessage("Selecione pelo menos um supervisor destino.");
+    }
     if (effectiveSelectedEmpresaIds.length === 0) return setMessage("Selecione pelo menos uma empresa para gerar visitas.");
     if (!visitDate) return setMessage("Selecione a data da visita.");
 
     setGenerating(true);
     setMessage(null);
+    setInactiveCompaniesWarning(null);
 
     try {
       const rowsById = new Map(dedupedEmpresaRows.map((row) => [row.id, row]));
@@ -997,6 +1174,20 @@ export default function RoutesMap() {
       if (selectedEmpresas.length === 0) {
         return setMessage("Nenhum registro encontrado para gerar visitas.");
       }
+      const inactiveCompanies = Array.from(
+        selectedEmpresas
+          .filter((row) => isInactiveCompanyStatus(row.situacao))
+          .reduce<Map<string, InactiveCompanyWarningItem>>((acc, row) => {
+            acc.set(row.id, {
+              id: row.id,
+              code: row.codigo ?? "-",
+              name: row.empresa ?? row.nome_fantasia ?? "Sem nome",
+              status: row.situacao?.trim() || "Sem situacao",
+            });
+            return acc;
+          }, new Map())
+          .values(),
+      );
 
       const chunkSize = 500;
       const empresaIds = selectedEmpresas.map((row) => row.id);
@@ -1011,19 +1202,99 @@ export default function RoutesMap() {
         new Set(selVendors.map((v) => (supByVendor.get(v.user_id) ?? "").trim()).filter(Boolean)),
       ).join(", ");
 
-      for (const v of selVendors) {
-        const { data: route, error: re } = await supabase
+      if (generationTab === "VENDEDOR") {
+        for (const v of selVendors) {
+          const { data: route, error: re } = await supabase
+            .from("routes")
+            .insert({
+              name: `Visitas ${display} - ${v.display_name ?? "Vendedor"}`,
+              date: visitDate,
+              assigned_to_user_id: v.user_id,
+              created_by: session?.user.id ?? null,
+            })
+            .select("id")
+            .single();
+
+          if (re || !route) throw new Error(re?.message ?? "Erro ao criar rota de visitas.");
+
+          const stops = selectedEmpresas.map((item, i) => ({
+            route_id: route.id,
+            cliente_id: item.id,
+            stop_order: i + 1,
+          }));
+          for (let i = 0; i < stops.length; i += chunkSize) {
+            const { error } = await supabase.from("route_stops").insert(stops.slice(i, i + chunkSize));
+            if (error) throw new Error(error.message);
+          }
+
+          const visits = selectedEmpresas.map((item) => ({
+            cliente_id: item.id,
+            assigned_to_user_id: v.user_id,
+            assigned_to_name: v.display_name ?? v.user_id,
+            visit_date: visitDate,
+            perfil_visita: item.perfil_visita ?? null,
+            instructions: null,
+            route_id: route.id,
+            visit_type: VISIT_TYPE.VENDEDOR,
+            created_by: session?.user.id ?? null,
+          }));
+
+          for (let i = 0; i < visits.length; i += chunkSize) {
+            const { error } = await supabase
+              .from("visits")
+              .upsert(visits.slice(i, i + chunkSize), {
+                onConflict: "cliente_id,assigned_to_user_id,visit_date",
+                ignoreDuplicates: true,
+              });
+            if (error) throw new Error(error.message);
+          }
+        }
+
+        for (let i = 0; i < empresaIds.length; i += chunkSize) {
+          const ids = empresaIds.slice(i, i + chunkSize);
+
+          const { error } = await supabase
+            .from("clientes")
+            .update({
+              visit_generated_at: base.toISOString(),
+              vendedor: vendorNames || null,
+              supervisor: supNames || null,
+            })
+            .in("id", ids);
+
+          if (error) throw new Error(error.message);
+        }
+
+        setMessage(
+          `Geradas ${selectedEmpresas.length * selVendors.length} visitas (${selectedEmpresas.length} empresa(s)) para ${selVendors.length} vendedor(es).`,
+        );
+      } else {
+        const reasonByEmpresaId: Record<string, SupervisorVisitReason> = {};
+        for (const empresa of selectedEmpresas) {
+          const reason = supervisorReasonByEmpresaId[empresa.id];
+          if (!reason) {
+            return setMessage(`Defina o motivo da empresa ${empresa.empresa ?? empresa.nome_fantasia ?? empresa.id}.`);
+          }
+          reasonByEmpresaId[empresa.id] = reason;
+        }
+
+        const creatorSupervisorName =
+          supervisores.find((item) => item.user_id === session?.user.id)?.display_name ??
+          "Supervisor";
+
+        const { data: route, error: routeError } = await supabase
           .from("routes")
           .insert({
-            name: `Visitas ${display} - ${v.display_name ?? "Vendedor"}`,
+            name: `Visitas Supervisor ${display}`,
             date: visitDate,
-            assigned_to_user_id: v.user_id,
+            assigned_to_user_id: session?.user.id ?? null,
             created_by: session?.user.id ?? null,
           })
           .select("id")
           .single();
-
-        if (re || !route) throw new Error(re?.message ?? "Erro ao criar rota de visitas.");
+        if (routeError || !route) {
+          throw new Error(routeError?.message ?? "Erro ao criar rota de supervisao.");
+        }
 
         const stops = selectedEmpresas.map((item, i) => ({
           route_id: route.id,
@@ -1035,51 +1306,96 @@ export default function RoutesMap() {
           if (error) throw new Error(error.message);
         }
 
-        const visits = selectedEmpresas.map((item) => ({
-          cliente_id: item.id,
-          assigned_to_user_id: v.user_id,
-          assigned_to_name: v.display_name ?? v.user_id,
-          visit_date: visitDate,
-          perfil_visita: item.perfil_visita ?? null,
-          instructions: null,
-          route_id: route.id,
-          created_by: session?.user.id ?? null,
-        }));
+        const visitIds: string[] = [];
+        for (let i = 0; i < selectedEmpresas.length; i += chunkSize) {
+          const chunk = selectedEmpresas.slice(i, i + chunkSize);
+          const visits = chunk.map((item) => ({
+            cliente_id: item.id,
+            assigned_to_user_id: session?.user.id ?? null,
+            assigned_to_name: creatorSupervisorName,
+            visit_date: visitDate,
+            perfil_visita: item.perfil_visita ?? null,
+            instructions: null,
+            route_id: route.id,
+            visit_type: VISIT_TYPE.SUPERVISOR_RELACIONAMENTO,
+            supervisor_reason: reasonByEmpresaId[item.id],
+            created_by: session?.user.id ?? null,
+          }));
 
-        for (let i = 0; i < visits.length; i += chunkSize) {
-          const { error } = await supabase
+          const { data: upserted, error } = await supabase
             .from("visits")
-            .upsert(visits.slice(i, i + chunkSize), {
+            .upsert(visits, {
               onConflict: "cliente_id,assigned_to_user_id,visit_date",
+              ignoreDuplicates: false,
+            })
+            .select("id");
+          if (error) throw new Error(error.message);
+          (upserted ?? []).forEach((row) => {
+            const id = (row as { id?: string }).id;
+            if (id) visitIds.push(id);
+          });
+        }
+
+        if (visitIds.length === 0) {
+          const { data: fetched, error } = await supabase
+            .from("visits")
+            .select("id")
+            .in("cliente_id", empresaIds)
+            .eq("visit_date", visitDate)
+            .eq("visit_type", VISIT_TYPE.SUPERVISOR_RELACIONAMENTO)
+            .eq("assigned_to_user_id", session?.user.id ?? "");
+          if (error) throw new Error(error.message);
+          (fetched ?? []).forEach((row) => {
+            const id = (row as { id?: string }).id;
+            if (id) visitIds.push(id);
+          });
+        }
+
+        const uniqueVisitIds = Array.from(new Set(visitIds));
+        const supervisorUserIds = selSupervisores.map((item) => item.user_id);
+        const linkRows = uniqueVisitIds.flatMap((visitId) =>
+          supervisorUserIds.map((supervisorUserId) => ({
+            visit_id: visitId,
+            supervisor_user_id: supervisorUserId,
+            created_by: session?.user.id ?? null,
+          })),
+        );
+
+        for (let i = 0; i < linkRows.length; i += chunkSize) {
+          const { error } = await supabase
+            .from("visit_supervisors")
+            .upsert(linkRows.slice(i, i + chunkSize), {
+              onConflict: "visit_id,supervisor_user_id",
               ignoreDuplicates: true,
             });
           if (error) throw new Error(error.message);
         }
+
+        const supervisorNames = selectedSupervisorDisplayNames.join(", ");
+        for (let i = 0; i < empresaIds.length; i += chunkSize) {
+          const ids = empresaIds.slice(i, i + chunkSize);
+          const { error } = await supabase
+            .from("clientes")
+            .update({
+              visit_generated_at: base.toISOString(),
+              supervisor: supervisorNames || null,
+            })
+            .in("id", ids);
+          if (error) throw new Error(error.message);
+        }
+
+        setMessage(
+          `Geradas ${selectedEmpresas.length} visitas de supervisor para ${selSupervisores.length} supervisor(es).`,
+        );
       }
-
-      for (let i = 0; i < empresaIds.length; i += chunkSize) {
-        const ids = empresaIds.slice(i, i + chunkSize);
-
-        const { error } = await supabase
-          .from("clientes")
-          .update({
-            visit_generated_at: base.toISOString(),
-            vendedor: vendorNames || null,
-            supervisor: supNames || null,
-          })
-          .in("id", ids);
-
-        if (error) throw new Error(error.message);
-      }
-
-      setMessage(
-        `Geradas ${selectedEmpresas.length * selVendors.length} visitas (${selectedEmpresas.length} empresa(s)) para ${selVendors.length} vendedor(es).`,
-      );
 
       setSelectedEmpresaIds([]);
       setSelectedBairroKeys([]);
       setSelectedVendorIds([]);
+      setSelectedSupervisorIds([]);
       setVendorQuery("");
+      setSupervisorQuery("");
+      setSupervisorReasonByEmpresaId({});
       setVisitDate("");
       setShowGenerateModal(false);
       clearRoutesModuleDraft();
@@ -1087,6 +1403,9 @@ export default function RoutesMap() {
       setRadiusResultIds([]);
       setRadiusCenter(null);
       setRadiusMode(false);
+      if (inactiveCompanies.length > 0) {
+        setInactiveCompaniesWarning(inactiveCompanies);
+      }
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Erro ao gerar visitas.");
     } finally {
@@ -1144,7 +1463,13 @@ export default function RoutesMap() {
         <div className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
           <div className="flex flex-col gap-4">
             {/* Busca por nome e codigo */}
-            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)_minmax(180px,220px)] md:items-end">
+            <div
+              className={`grid gap-3 md:items-end ${
+                role === "SUPERVISOR"
+                  ? "md:grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)_minmax(180px,220px)_minmax(180px,220px)]"
+                  : "md:grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)_minmax(180px,220px)]"
+              }`}
+            >
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] font-semibold text-ink/70">Termo por nome (palavra exata)</span>
                 <input
@@ -1163,6 +1488,40 @@ export default function RoutesMap() {
                   className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
                 />
               </label>
+              {role === "SUPERVISOR" ? (
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-semibold text-ink/70">Flag supervisor</span>
+                  <div className="flex h-10 items-center justify-between rounded-lg border border-sea/20 bg-white/90 px-3">
+                    <span className="text-xs text-ink/60">
+                      {(filters.columns.supervisor_flag ?? []).length
+                        ? `${(filters.columns.supervisor_flag ?? []).length} selecionada(s)`
+                        : "Todas"}
+                    </span>
+                    <MultiSelectFilter
+                      label={
+                        (filters.columns.supervisor_flag ?? []).length
+                          ? `Flag (${filters.columns.supervisor_flag.length})`
+                          : "Flag"
+                      }
+                      options={SUPERVISOR_FLAG_FILTER_OPTIONS.map((option) => option.label)}
+                      value={(filters.columns.supervisor_flag ?? []).map(getSupervisorFlagOptionLabel)}
+                      onApply={(nextLabels) =>
+                        setFilters((prev) => ({
+                          ...prev,
+                          columns: {
+                            ...prev.columns,
+                            supervisor_flag: nextLabels
+                              .map(getSupervisorFlagOptionValue)
+                              .filter(
+                                (value): value is SupervisorFlagFilterValue => value !== null,
+                              ),
+                          },
+                        }))
+                      }
+                    />
+                  </div>
+                </label>
+              ) : null}
               <label className="flex flex-col gap-1">
                 <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-ink/70">
                   Categoria
@@ -1505,6 +1864,17 @@ export default function RoutesMap() {
                 type="button"
                 onClick={() => {
                   setMessage(null);
+                  setInactiveCompaniesWarning(null);
+                  if (selectedSupervisorIds.length === 0 && role === "SUPERVISOR" && session?.user.id) {
+                    setSelectedSupervisorIds([session.user.id]);
+                  }
+                  setSupervisorReasonByEmpresaId((prev) => {
+                    const next = { ...prev };
+                    effectiveSelectedEmpresaIds.forEach((empresaId) => {
+                      if (!next[empresaId]) next[empresaId] = "RETENCAO";
+                    });
+                    return next;
+                  });
                   setShowGenerateModal(true);
                 }}
                 disabled={effectiveSelectedEmpresaIds.length === 0}
@@ -1648,7 +2018,22 @@ export default function RoutesMap() {
                       {isLightMapMode ? (
                         <div className="w-[260px] max-w-[260px] space-y-1 text-xs [overflow-wrap:anywhere]">
                           <p className="font-semibold text-ink">{r.empresa ?? r.nome_fantasia ?? "-"}</p>
-                          <p className="text-ink/70">COD: {r.codigo ?? "-"}</p>
+                          <div className="flex items-center gap-1.5 text-ink/70">
+                            <p>COD: {r.codigo ?? "-"}</p>
+                            {role === "SUPERVISOR" ? (
+                              <span
+                                title={getSupervisorFlagTooltip(supervisorFlagByEmpresa[r.id])}
+                                aria-label={getSupervisorFlagTooltip(supervisorFlagByEmpresa[r.id])}
+                                className="inline-flex items-center"
+                              >
+                                <span
+                                  className={`h-2.5 w-2.5 rounded-full border ${getSupervisorFlagDotStyles(
+                                    getSupervisorFlagColor(supervisorFlagByEmpresa[r.id]),
+                                  )}`}
+                                />
+                              </span>
+                            ) : null}
+                          </div>
                           <p className="text-ink/70">
                             {r.bairro ?? "-"} - {r.cidade ?? "-"}
                           </p>
@@ -1664,7 +2049,22 @@ export default function RoutesMap() {
                           <p className="font-semibold text-ink">OBS: {resolveMapObs(r.id)}</p>
                           <p className="text-ink/70">ULTIMA VISITA: {fmtDate(r.data_da_ultima_visita)}</p>
                           <p className="text-ink/70">VIDAS ULTIMA VISITA: {r.visit_completed_vidas ?? "-"}</p>
-                          <p className="text-ink/70">CODIGO: {r.codigo ?? "-"}</p>
+                          <div className="flex items-center gap-1.5 text-ink/70">
+                            <p>CODIGO: {r.codigo ?? "-"}</p>
+                            {role === "SUPERVISOR" ? (
+                              <span
+                                title={getSupervisorFlagTooltip(supervisorFlagByEmpresa[r.id])}
+                                aria-label={getSupervisorFlagTooltip(supervisorFlagByEmpresa[r.id])}
+                                className="inline-flex items-center"
+                              >
+                                <span
+                                  className={`h-2.5 w-2.5 rounded-full border ${getSupervisorFlagDotStyles(
+                                    getSupervisorFlagColor(supervisorFlagByEmpresa[r.id]),
+                                  )}`}
+                                />
+                              </span>
+                            ) : null}
+                          </div>
                           <p className="text-ink/70">EMPRESA: {r.empresa ?? r.nome_fantasia ?? "-"}</p>
                           <p className="text-ink/70">BAIRRO: {r.bairro ?? "-"}</p>
                           <p className="text-ink/70">CIDADE: {r.cidade ?? "-"}</p>
@@ -1758,9 +2158,24 @@ export default function RoutesMap() {
                       className="flex h-full cursor-pointer items-start justify-between gap-2 rounded-md border border-sea/10 bg-white px-2 py-2 hover:bg-sea/10"
                     >
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-semibold text-ink">
-                          {r.empresa ?? r.nome_fantasia ?? "Empresa"}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-xs font-semibold text-ink">
+                            {r.empresa ?? r.nome_fantasia ?? "Empresa"}
+                          </p>
+                          {role === "SUPERVISOR" ? (
+                            <span
+                              title={getSupervisorFlagTooltip(supervisorFlagByEmpresa[r.id])}
+                              aria-label={getSupervisorFlagTooltip(supervisorFlagByEmpresa[r.id])}
+                              className="inline-flex items-center"
+                            >
+                              <span
+                                className={`h-2.5 w-2.5 rounded-full border ${getSupervisorFlagDotStyles(
+                                  getSupervisorFlagColor(supervisorFlagByEmpresa[r.id]),
+                                )}`}
+                              />
+                            </span>
+                          ) : null}
+                        </div>
                         <p className="truncate text-[11px] text-ink/60">{addr(r) || "-"}</p>
                         <p className="truncate text-[11px] text-ink/60">
                           COD: {r.codigo ?? "-"} - Bairro: {r.bairro ?? "-"}
@@ -1816,10 +2231,25 @@ export default function RoutesMap() {
                         key={r.id}
                         className="flex h-full cursor-pointer items-start justify-between gap-2 rounded-md border border-sea/10 bg-white px-2 py-2 hover:bg-sea/10"
                       >
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-semibold text-ink">
-                            {r.empresa ?? r.nome_fantasia ?? "Empresa"}
-                          </p>
+                      <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="truncate text-xs font-semibold text-ink">
+                              {r.empresa ?? r.nome_fantasia ?? "Empresa"}
+                            </p>
+                            {role === "SUPERVISOR" ? (
+                              <span
+                                title={getSupervisorFlagTooltip(supervisorFlagByEmpresa[r.id])}
+                                aria-label={getSupervisorFlagTooltip(supervisorFlagByEmpresa[r.id])}
+                                className="inline-flex items-center"
+                              >
+                                <span
+                                  className={`h-2.5 w-2.5 rounded-full border ${getSupervisorFlagDotStyles(
+                                    getSupervisorFlagColor(supervisorFlagByEmpresa[r.id]),
+                                  )}`}
+                                />
+                              </span>
+                            ) : null}
+                          </div>
                           <p className="truncate text-[11px] text-ink/60">{addr(r) || "-"}</p>
                           <p className="truncate text-[11px] text-ink/60">
                             COD: {r.codigo ?? "-"} - Bairro: {r.bairro ?? "-"}
@@ -1879,61 +2309,141 @@ export default function RoutesMap() {
           <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Gerar visitas</h3>
             <p className="mt-1 text-xs text-ink/60">
-              Selecione os vendedores, a data e as empresas marcadas no mapa para gerar as visitas.
+              Selecione o tipo de geracao, a data e as empresas marcadas no mapa para gerar as visitas.
             </p>
             <p className="mt-2 text-xs text-ink/60">Empresas selecionadas: {effectiveSelectedEmpresaIds.length}</p>
 
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setGenerationTab("VENDEDOR")}
+                className={[
+                  "rounded-full border px-3 py-1 text-[11px] font-semibold transition",
+                  generationTab === "VENDEDOR"
+                    ? "border-sea bg-sea/10 text-sea"
+                    : "border-sea/30 bg-white text-ink/70 hover:border-sea",
+                ].join(" ")}
+              >
+                Vendedor
+              </button>
+              {canGenerateSupervisorRoutes && (
+                <button
+                  type="button"
+                  onClick={() => setGenerationTab("SUPERVISOR")}
+                  className={[
+                    "rounded-full border px-3 py-1 text-[11px] font-semibold transition",
+                    generationTab === "SUPERVISOR"
+                      ? "border-sea bg-sea/10 text-sea"
+                      : "border-sea/30 bg-white text-ink/70 hover:border-sea",
+                  ].join(" ")}
+                >
+                  Supervisor
+                </button>
+              )}
+            </div>
+
             <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70">
-                Vendedores destino
-                <div className="rounded-xl border border-sea/20 bg-white/90 p-3">
-                  <input
-                    value={vendorQuery}
-                    onChange={(e) => setVendorQuery(e.target.value)}
-                    placeholder="Buscar vendedor..."
-                    className="w-full rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
-                  />
+              {generationTab === "VENDEDOR" ? (
+                <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70">
+                  Vendedores destino
+                  <div className="rounded-xl border border-sea/20 bg-white/90 p-3">
+                    <input
+                      value={vendorQuery}
+                      onChange={(e) => setVendorQuery(e.target.value)}
+                      placeholder="Buscar vendedor..."
+                      className="w-full rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                    />
 
-                  <div className="mt-2 max-h-40 space-y-1 overflow-auto">
-                    {filteredVendedores.length === 0 ? (
-                      <p className="text-xs text-ink/60">Nenhum vendedor encontrado.</p>
-                    ) : (
-                      filteredVendedores.map((v) => {
-                        const ck = selectedVendorIds.includes(v.user_id);
-                        return (
-                          <label
-                            key={v.user_id}
-                            className="flex cursor-pointer items-center justify-between rounded-lg px-2 py-1 text-xs text-ink hover:bg-sea/10"
-                          >
-                            <span>{v.display_name ?? v.user_id}</span>
-                            <input
-                              type="checkbox"
-                              checked={ck}
-                              onChange={() => toggleVendor(v.user_id)}
-                              className="h-4 w-4 accent-sea"
-                            />
-                          </label>
-                        );
-                      })
-                    )}
+                    <div className="mt-2 max-h-40 space-y-1 overflow-auto">
+                      {filteredVendedores.length === 0 ? (
+                        <p className="text-xs text-ink/60">Nenhum vendedor encontrado.</p>
+                      ) : (
+                        filteredVendedores.map((v) => {
+                          const ck = selectedVendorIds.includes(v.user_id);
+                          return (
+                            <label
+                              key={v.user_id}
+                              className="flex cursor-pointer items-center justify-between rounded-lg px-2 py-1 text-xs text-ink hover:bg-sea/10"
+                            >
+                              <span>{v.display_name ?? v.user_id}</span>
+                              <input
+                                type="checkbox"
+                                checked={ck}
+                                onChange={() => toggleVendor(v.user_id)}
+                                className="h-4 w-4 accent-sea"
+                              />
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-ink/60">
+                      <button
+                        type="button"
+                        className="text-sea"
+                        onClick={() => setSelectedVendorIds(vendedores.map((v) => v.user_id))}
+                      >
+                        Selecionar todos
+                      </button>
+                      <button type="button" onClick={() => setSelectedVendorIds([])}>
+                        Limpar
+                      </button>
+                    </div>
+
+                    <p className="mt-2 text-[11px] text-ink/60">Selecionados: {selectedVendorIds.length}</p>
                   </div>
-
-                  <div className="mt-2 flex items-center justify-between text-[11px] text-ink/60">
-                    <button
-                      type="button"
-                      className="text-sea"
-                      onClick={() => setSelectedVendorIds(vendedores.map((v) => v.user_id))}
-                    >
-                      Selecionar todos
-                    </button>
-                    <button type="button" onClick={() => setSelectedVendorIds([])}>
-                      Limpar
-                    </button>
-                  </div>
-
-                  <p className="mt-2 text-[11px] text-ink/60">Selecionados: {selectedVendorIds.length}</p>
                 </div>
-              </div>
+              ) : (
+                <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70">
+                  Supervisor destino
+                  <div className="rounded-xl border border-sea/20 bg-white/90 p-3">
+                    <input
+                      value={supervisorQuery}
+                      onChange={(event) => setSupervisorQuery(event.target.value)}
+                      placeholder="Buscar supervisor..."
+                      className="w-full rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                    />
+
+                    <div className="mt-2 max-h-40 space-y-1 overflow-auto">
+                      {filteredSupervisores.length === 0 ? (
+                        <p className="text-xs text-ink/60">Nenhum supervisor encontrado.</p>
+                      ) : (
+                        filteredSupervisores.map((supervisor) => {
+                          const checked = selectedSupervisorIds.includes(supervisor.user_id);
+                          return (
+                            <label
+                              key={supervisor.user_id}
+                              className="flex cursor-pointer items-center justify-between rounded-lg px-2 py-1 text-xs text-ink hover:bg-sea/10"
+                            >
+                              <span>{supervisor.display_name ?? supervisor.user_id}</span>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleSupervisor(supervisor.user_id)}
+                                className="h-4 w-4 accent-sea"
+                              />
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-ink/60">
+                      <button
+                        type="button"
+                        className="text-sea"
+                        onClick={() => setSelectedSupervisorIds(supervisores.map((s) => s.user_id))}
+                      >
+                        Selecionar todos
+                      </button>
+                      <button type="button" onClick={() => setSelectedSupervisorIds([])}>
+                        Limpar
+                      </button>
+                    </div>
+                    <p className="mt-2 text-[11px] text-ink/60">Selecionados: {selectedSupervisorIds.length}</p>
+                  </div>
+                </div>
+              )}
 
               <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
                 Data da visita
@@ -1945,6 +2455,44 @@ export default function RoutesMap() {
                 />
               </label>
             </div>
+
+            {generationTab === "SUPERVISOR" && (
+              <div className="mt-3 rounded-xl border border-sea/20 bg-sand/30 p-3">
+                <p className="text-xs font-semibold text-ink/70">Motivo por empresa</p>
+                <div className="mt-2 max-h-52 space-y-2 overflow-auto">
+                  {selectedGenerateRows.length === 0 ? (
+                    <p className="text-xs text-ink/60">Nenhuma empresa selecionada.</p>
+                  ) : (
+                    selectedGenerateRows.map((row) => (
+                      <div
+                        key={row.id}
+                        className="grid gap-2 rounded-lg border border-sea/15 bg-white/90 px-2 py-2 md:grid-cols-[1fr_210px] md:items-center"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-ink">
+                            {row.empresa ?? row.nome_fantasia ?? "Sem nome"}
+                          </p>
+                          <p className="truncate text-[11px] text-ink/60">COD: {row.codigo ?? "-"}</p>
+                        </div>
+                        <select
+                          value={supervisorReasonByEmpresaId[row.id] ?? "RETENCAO"}
+                          onChange={(event) =>
+                            handleSupervisorReasonChange(row.id, event.target.value as SupervisorVisitReason)
+                          }
+                          className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                        >
+                          {SUPERVISOR_VISIT_REASON_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
 
             {message && <p className="mt-3 text-xs text-ink/70">{message}</p>}
 
@@ -1962,7 +2510,8 @@ export default function RoutesMap() {
                 type="button"
                 onClick={handleGenerate}
                 disabled={
-                  selectedVendorIds.length === 0 ||
+                  (generationTab === "VENDEDOR" && selectedVendorIds.length === 0) ||
+                  (generationTab === "SUPERVISOR" && selectedSupervisorIds.length === 0) ||
                   effectiveSelectedEmpresaIds.length === 0 ||
                   !visitDate ||
                   generating
@@ -1970,6 +2519,47 @@ export default function RoutesMap() {
                 className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
                 {generating ? "Gerando..." : `Confirmar (${effectiveSelectedEmpresaIds.length})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {inactiveCompaniesWarning && inactiveCompaniesWarning.length > 0 && (
+        <div className="fixed inset-0 z-[3100] flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setInactiveCompaniesWarning(null)}
+            aria-label="Fechar aviso de empresa inativa"
+          />
+          <div className="relative w-full max-w-xl rounded-3xl border border-amber-300 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Aviso de empresa inativa</h3>
+            <p className="mt-1 text-xs text-ink/70">
+              A(s) empresa(s) abaixo nao esta ativa e entrou(aram) na geracao da rota.
+            </p>
+
+            <div className="mt-4 max-h-64 space-y-2 overflow-auto rounded-xl border border-amber-200 bg-amber-50/70 p-2">
+              {inactiveCompaniesWarning.map((company) => (
+                <div
+                  key={company.id}
+                  className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-ink"
+                >
+                  <p className="font-semibold">{company.name}</p>
+                  <p className="mt-1 text-[11px] text-ink/70">
+                    COD: {company.code} | Situacao: {company.status}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setInactiveCompaniesWarning(null)}
+                className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight"
+              >
+                Entendi
               </button>
             </div>
           </div>

@@ -30,6 +30,7 @@ import {
   type AgendaScheduledVisit,
   type AgendaVisitVendor,
 } from "../lib/agendaApi";
+import { fetchSupervisorLatestVisitByEmpresa } from "../lib/routesApi";
 import type { AgendaRow } from "../types/agenda";
 import { useAgendaFilters } from "../hooks/useAgendaFilters";
 import MultiSelectFilter from "../components/agenda/MultiSelectFilter";
@@ -58,6 +59,12 @@ import {
   fetchEmpresaByEmpresaId,
   type OdontoartPlanoValor,
 } from "../lib/odontoartEmpresaApi";
+import {
+  getSupervisorEmpresaFlagMeta,
+  SUPERVISOR_VISIT_REASON_OPTIONS,
+  VISIT_TYPE,
+  type SupervisorVisitReason,
+} from "../lib/supervisorVisits";
 
 const FILTER_SOURCES: Record<string, string[]> = {
   supervisor: ["supervisor"],
@@ -88,6 +95,18 @@ const FILTER_LABELS: Record<string, string> = {
 };
 
 const SITUACAO_FILTER_OPTIONS = ["Ativo", "Suspenso/Inadimplente", "Cancelado"];
+const SUPERVISOR_FLAG_FILTER_OPTIONS = [
+  { value: "VERDE", label: "🟢 0-90 dias" },
+  { value: "AMARELO", label: "🟡 91-180 dias" },
+  { value: "VERMELHO", label: "🔴 >180 dias" },
+  { value: "CINZA", label: "⚪ Sem historico" },
+] as const;
+type SupervisorFlagFilterValue = (typeof SUPERVISOR_FLAG_FILTER_OPTIONS)[number]["value"];
+const getSupervisorFlagOptionLabel = (value: string) =>
+  SUPERVISOR_FLAG_FILTER_OPTIONS.find((option) => option.value === value)?.label ?? value;
+const getSupervisorFlagOptionValue = (label: string) =>
+  (SUPERVISOR_FLAG_FILTER_OPTIONS.find((option) => option.label === label)?.value ??
+    null) as SupervisorFlagFilterValue | null;
 const COLUMN_CHIP_MODAL_PAGE_SIZE = 25;
 
 const parseDateValue = (value: string) => {
@@ -286,11 +305,25 @@ type KpiImportValuesModalState = {
   error: string | null;
 };
 
+type InactiveCompanyWarningItem = {
+  id: string;
+  code: string;
+  name: string;
+  status: string;
+};
+
+type GenerationTab = "VENDEDOR" | "SUPERVISOR";
+type SupervisorEmpresaFlagInfo = ReturnType<typeof getSupervisorEmpresaFlagMeta>;
+
 const hasPlanoValores = (planos: OdontoartPlanoValor[]) =>
   planos.some((plano) => plano.valorTitular !== null || plano.valorDependente !== null);
 
 const normalizeFilterMatchValue = (value: string | null | undefined) =>
   normalizeText(value, { letterCase: "upper" });
+
+const isInactiveCompanyStatus = (value: string | null | undefined) =>
+  Boolean(normalizeText(value, { letterCase: "upper" })) &&
+  normalizeText(value, { letterCase: "upper" }) !== "ATIVO";
 
 const getCategoriaBadgeStyles = (value: string | null | undefined) => {
   const normalized = normalizeText(value, { letterCase: "upper" });
@@ -342,6 +375,24 @@ const getCategoriaBadgeStyles = (value: string | null | undefined) => {
     label: value?.trim() || "-",
     className: `${baseClassName} bg-slate-700 text-slate-100`,
   };
+};
+
+const getSupervisorFlagDotStyles = (color: "CINZA" | "VERDE" | "AMARELO" | "VERMELHO") => {
+  if (color === "VERDE") return "border-emerald-300 bg-emerald-500";
+  if (color === "AMARELO") return "border-amber-300 bg-amber-500";
+  if (color === "VERMELHO") return "border-red-300 bg-red-500";
+  return "border-slate-300 bg-slate-400";
+};
+
+const getSupervisorFlagLabel = (flag: SupervisorEmpresaFlagInfo | undefined) => {
+  if (!flag?.lastVisitDate) return "SEM HISTORICO";
+  return flag.color;
+};
+
+const getSupervisorFlagTooltip = (flag: SupervisorEmpresaFlagInfo | undefined) => {
+  const label = getSupervisorFlagLabel(flag);
+  if (!flag?.lastVisitDate) return `Flag supervisor: ${label}`;
+  return `Flag supervisor: ${label} (ultima visita ${formatDate(flag.lastVisitDate)})`;
 };
 
 const getAgendaFilterValueFromRow = (row: AgendaRow, filterKey: string) => {
@@ -419,6 +470,7 @@ const buildEmptyAgendaFilters = () => ({
     supervisor: [],
     vendedor: [],
     cod_1: [],
+    supervisor_flag: [],
     bairro: [],
     cidade: [],
     uf: [],
@@ -480,11 +532,21 @@ export default function Agenda() {
   const [supervisores, setSupervisores] = useState<
     { id?: string; user_id: string; display_name: string | null; role: string }[]
   >([]);
+  const [generationTab, setGenerationTab] = useState<GenerationTab>("VENDEDOR");
   const [selectedVendorIds, setSelectedVendorIds] = useState<string[]>([]);
+  const [selectedSupervisorIds, setSelectedSupervisorIds] = useState<string[]>([]);
   const [vendorQuery, setVendorQuery] = useState("");
+  const [supervisorQuery, setSupervisorQuery] = useState("");
+  const [supervisorReasonByAgendaId, setSupervisorReasonByAgendaId] = useState<
+    Record<string, SupervisorVisitReason>
+  >({});
+  const [supervisorFlagByAgendaId, setSupervisorFlagByAgendaId] = useState<
+    Record<string, SupervisorEmpresaFlagInfo>
+  >({});
   const [visitDate, setVisitDate] = useState("");
   const [generating, setGenerating] = useState(false);
   const [generateMessage, setGenerateMessage] = useState<string | null>(null);
+  const [inactiveCompaniesWarning, setInactiveCompaniesWarning] = useState<InactiveCompanyWarningItem[] | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [detailsModalRow, setDetailsModalRow] = useState<AgendaRow | null>(null);
@@ -556,8 +618,12 @@ export default function Agenda() {
       const parsed = JSON.parse(raw) as Partial<{
         generate: {
           open: boolean;
+          generationTab: GenerationTab;
           selectedVendorIds: string[];
+          selectedSupervisorIds: string[];
           vendorQuery: string;
+          supervisorQuery: string;
+          supervisorReasonByAgendaId: Record<string, SupervisorVisitReason>;
           visitDate: string;
         };
         schedule: {
@@ -569,8 +635,12 @@ export default function Agenda() {
 
       if (parsed.generate?.open) {
         setShowGenerateModal(true);
+        setGenerationTab(parsed.generate.generationTab === "SUPERVISOR" ? "SUPERVISOR" : "VENDEDOR");
         setSelectedVendorIds(parsed.generate.selectedVendorIds ?? []);
+        setSelectedSupervisorIds(parsed.generate.selectedSupervisorIds ?? []);
         setVendorQuery(parsed.generate.vendorQuery ?? "");
+        setSupervisorQuery(parsed.generate.supervisorQuery ?? "");
+        setSupervisorReasonByAgendaId(parsed.generate.supervisorReasonByAgendaId ?? {});
         setVisitDate(parsed.generate.visitDate ?? "");
       }
 
@@ -638,8 +708,12 @@ export default function Agenda() {
     const payload = {
       generate: {
         open: showGenerateModal,
+        generationTab,
         selectedVendorIds,
+        selectedSupervisorIds,
         vendorQuery,
+        supervisorQuery,
+        supervisorReasonByAgendaId,
         visitDate,
       },
       schedule: {
@@ -656,8 +730,12 @@ export default function Agenda() {
   }, [
     scheduleDrafts,
     scheduleModalRow,
+    generationTab,
+    selectedSupervisorIds,
     selectedVendorIds,
     showGenerateModal,
+    supervisorQuery,
+    supervisorReasonByAgendaId,
     vendorQuery,
     visitDate,
   ]);
@@ -665,6 +743,13 @@ export default function Agenda() {
   const canGenerate = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canEdit = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canManageInstruction = role === "SUPERVISOR";
+  const canGenerateSupervisorRoutes = role === "SUPERVISOR";
+
+  useEffect(() => {
+    if (!canGenerateSupervisorRoutes && generationTab === "SUPERVISOR") {
+      setGenerationTab("VENDEDOR");
+    }
+  }, [canGenerateSupervisorRoutes, generationTab]);
 
   useEffect(() => {
     setDraftFilters(appliedFilters);
@@ -1053,8 +1138,30 @@ export default function Agenda() {
       normalizeSearchText(vendor.display_name ?? vendor.user_id ?? "").includes(term),
     );
   }, [vendorQuery, vendedores]);
+  const filteredSupervisores = useMemo(() => {
+    if (!supervisorQuery.trim()) return supervisores;
+    const term = normalizeSearchText(supervisorQuery);
+    return supervisores.filter((supervisor) =>
+      normalizeSearchText(supervisor.display_name ?? supervisor.user_id ?? "").includes(term),
+    );
+  }, [supervisorQuery, supervisores]);
+  const selectedSupervisorDisplayNames = useMemo(
+    () =>
+      selectedSupervisorIds
+        .map((id) => supervisores.find((item) => item.user_id === id)?.display_name ?? id)
+        .filter(Boolean),
+    [selectedSupervisorIds, supervisores],
+  );
+  const selectedGenerateRows = useMemo(() => {
+    const byId = new Map(data.map((row) => [row.id, row] as const));
+    return selectedAgendaIds
+      .map((agendaId) => byId.get(agendaId))
+      .filter((row): row is AgendaRow => Boolean(row));
+  }, [data, selectedAgendaIds]);
 
   const excludedAgendaSet = useMemo(() => new Set(excludedAgendaIds), [excludedAgendaIds]);
+
+  const appliedSupervisorFlagFilters = appliedFilters.columns.supervisor_flag ?? [];
 
   const displayData = useMemo(() => {
     const sortedRows =
@@ -1089,9 +1196,24 @@ export default function Agenda() {
             });
           })();
 
-    if (excludedAgendaSet.size === 0) return sortedRows;
-    return sortedRows.filter((row) => !excludedAgendaSet.has(row.id));
-  }, [data, excludedAgendaSet, scheduledVisitsByAgenda, sorting]);
+    const supervisorFlagFilteredRows =
+      role === "SUPERVISOR" && appliedSupervisorFlagFilters.length > 0
+        ? sortedRows.filter((row) =>
+            appliedSupervisorFlagFilters.includes(supervisorFlagByAgendaId[row.id]?.color ?? "CINZA"),
+          )
+        : sortedRows;
+
+    if (excludedAgendaSet.size === 0) return supervisorFlagFilteredRows;
+    return supervisorFlagFilteredRows.filter((row) => !excludedAgendaSet.has(row.id));
+  }, [
+    appliedSupervisorFlagFilters,
+    data,
+    excludedAgendaSet,
+    role,
+    scheduledVisitsByAgenda,
+    sorting,
+    supervisorFlagByAgendaId,
+  ]);
 
   const selectedAgendaSet = useMemo(() => new Set(selectedAgendaIds), [selectedAgendaIds]);
   const visibleAgendaIds = useMemo(() => displayData.map((row) => row.id), [displayData]);
@@ -1105,6 +1227,39 @@ export default function Agenda() {
       selectAllRef.current.indeterminate = someVisibleSelected;
     }
   }, [someVisibleSelected]);
+
+  const agendaIdsForSupervisorFlag = useMemo(
+    () => Array.from(new Set(data.map((row) => row.id).filter(Boolean))),
+    [data],
+  );
+
+  useEffect(() => {
+    let active = true;
+    if (role !== "SUPERVISOR" || !session?.user.id || agendaIdsForSupervisorFlag.length === 0) {
+      setSupervisorFlagByAgendaId({});
+      return () => {
+        active = false;
+      };
+    }
+
+    fetchSupervisorLatestVisitByEmpresa(agendaIdsForSupervisorFlag, session.user.id)
+      .then((latestByEmpresa) => {
+        if (!active) return;
+        const next: Record<string, SupervisorEmpresaFlagInfo> = {};
+        agendaIdsForSupervisorFlag.forEach((agendaId) => {
+          next[agendaId] = getSupervisorEmpresaFlagMeta(latestByEmpresa[agendaId] ?? null);
+        });
+        setSupervisorFlagByAgendaId(next);
+      })
+      .catch((fetchError) => {
+        console.error(fetchError);
+        if (active) setSupervisorFlagByAgendaId({});
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [agendaIdsForSupervisorFlag, role, session?.user.id]);
 
   const toggleAgendaSelection = (agendaId: string) => {
     setSelectedAgendaIds((prev) =>
@@ -1123,17 +1278,56 @@ export default function Agenda() {
     });
   };
 
+  useEffect(() => {
+    if (selectedAgendaIds.length === 0) {
+      setSupervisorReasonByAgendaId({});
+      return;
+    }
+    setSupervisorReasonByAgendaId((prev) => {
+      const next: Record<string, SupervisorVisitReason> = {};
+      selectedAgendaIds.forEach((agendaId) => {
+        const current = prev[agendaId];
+        next[agendaId] =
+          current && SUPERVISOR_VISIT_REASON_OPTIONS.some((option) => option.value === current)
+            ? current
+            : "RETENCAO";
+      });
+      return next;
+    });
+  }, [selectedAgendaIds]);
+
   const handleToggleVendor = (vendorId: string) => {
     setSelectedVendorIds((prev) =>
       prev.includes(vendorId) ? prev.filter((id) => id !== vendorId) : [...prev, vendorId],
     );
   };
+  const handleToggleSupervisor = (supervisorUserId: string) => {
+    setSelectedSupervisorIds((prev) =>
+      prev.includes(supervisorUserId)
+        ? prev.filter((id) => id !== supervisorUserId)
+        : [...prev, supervisorUserId],
+    );
+  };
+  const handleSupervisorReasonChange = (agendaId: string, reason: SupervisorVisitReason) => {
+    setSupervisorReasonByAgendaId((prev) => ({
+      ...prev,
+      [agendaId]: reason,
+    }));
+  };
 
   const handleGenerateVisits = async () => {
     if (!canGenerate) return;
     const selectedVendors = vendedores.filter((vendor) => selectedVendorIds.includes(vendor.user_id));
-    if (selectedVendors.length === 0) {
+    const selectedSupervisors = supervisores.filter((supervisor) =>
+      selectedSupervisorIds.includes(supervisor.user_id),
+    );
+
+    if (generationTab === "VENDEDOR" && selectedVendors.length === 0) {
       setGenerateMessage("Selecione pelo menos um vendedor para gerar visitas.");
+      return;
+    }
+    if (generationTab === "SUPERVISOR" && selectedSupervisors.length === 0) {
+      setGenerateMessage("Selecione pelo menos um supervisor destino.");
       return;
     }
     if (selectedAgendaIds.length === 0) {
@@ -1147,6 +1341,7 @@ export default function Agenda() {
 
     setGenerating(true);
     setGenerateMessage(null);
+    setInactiveCompaniesWarning(null);
 
     try {
       const rows = await fetchAgendaForGeneration(appliedFilters, selectedAgendaIds);
@@ -1154,45 +1349,156 @@ export default function Agenda() {
         setGenerateMessage("Nenhum registro encontrado para gerar visitas.");
         return;
       }
+      const inactiveCompanies = Array.from(
+        rows
+          .filter((row) => isInactiveCompanyStatus(row.situacao))
+          .reduce<Map<string, InactiveCompanyWarningItem>>((acc, row) => {
+            acc.set(row.id, {
+              id: row.id,
+              code: row.cod_1 ?? "-",
+              name: row.empresa ?? row.nome_fantasia ?? "Sem nome",
+              status: row.situacao?.trim() || "Sem situacao",
+            });
+            return acc;
+          }, new Map())
+          .values(),
+      );
 
       const chunkSize = 500;
       const agendaIds = rows.map((row) => row.id);
       const visitBase = new Date(`${visitDate}T12:00:00`);
       const routeDate = visitDate;
       const displayDate = new Intl.DateTimeFormat("pt-BR").format(visitBase);
-      const vendorNames = Array.from(
-        new Set(
-          selectedVendors
-            .map((vendor) => vendor.display_name ?? vendor.user_id ?? "")
-            .map((name) => name.trim())
-            .filter(Boolean),
-        ),
-      ).join(", ");
-      const supervisorNames = Array.from(
-        new Set(
-          selectedVendors
-            .map((vendor) => supervisorNameByVendorId.get(vendor.user_id) ?? "")
-            .map((name) => name.trim())
-            .filter(Boolean),
-        ),
-      ).join(", ");
+      if (generationTab === "VENDEDOR") {
+        const vendorNames = Array.from(
+          new Set(
+            selectedVendors
+              .map((vendor) => vendor.display_name ?? vendor.user_id ?? "")
+              .map((name) => name.trim())
+              .filter(Boolean),
+          ),
+        ).join(", ");
+        const supervisorNames = Array.from(
+          new Set(
+            selectedVendors
+              .map((vendor) => supervisorNameByVendorId.get(vendor.user_id) ?? "")
+              .map((name) => name.trim())
+              .filter(Boolean),
+          ),
+        ).join(", ");
 
-      for (const vendor of selectedVendors) {
-        const routeName = `Visitas ${displayDate} - ${vendor.display_name ?? "Vendedor"}`;
+        for (const vendor of selectedVendors) {
+          const routeName = `Visitas ${displayDate} - ${vendor.display_name ?? "Vendedor"}`;
 
+          const { data: route, error: routeError } = await supabase
+            .from("routes")
+            .insert({
+              name: routeName,
+              date: routeDate,
+              assigned_to_user_id: vendor.user_id,
+              created_by: session?.user.id ?? null,
+            })
+            .select("id")
+            .single();
+
+          if (routeError || !route) {
+            throw new Error(routeError?.message ?? "Erro ao criar rota de visitas.");
+          }
+
+          const stopRows = rows.map((row, index) => ({
+            route_id: route.id,
+            cliente_id: row.id,
+            stop_order: index + 1,
+          }));
+
+          for (let i = 0; i < stopRows.length; i += chunkSize) {
+            const chunk = stopRows.slice(i, i + chunkSize);
+            const { error: stopError } = await supabase.from("route_stops").insert(chunk);
+            if (stopError) {
+              throw new Error(stopError.message);
+            }
+          }
+
+          const visitRows = rows.map((row) => ({
+            cliente_id: row.id,
+            assigned_to_user_id: vendor.user_id,
+            assigned_to_name: vendor.display_name ?? vendor.user_id,
+            visit_date: routeDate,
+            perfil_visita: row.perfil_visita ?? null,
+            instructions: null,
+            route_id: route.id,
+            visit_type: VISIT_TYPE.VENDEDOR,
+            created_by: session?.user.id ?? null,
+          }));
+
+          for (let i = 0; i < visitRows.length; i += chunkSize) {
+            const chunk = visitRows.slice(i, i + chunkSize);
+            const { error: visitError } = await supabase
+              .from("visits")
+              .upsert(chunk, {
+                onConflict: "cliente_id,assigned_to_user_id,visit_date",
+                ignoreDuplicates: true,
+              });
+
+            if (visitError) {
+              throw new Error(visitError.message);
+            }
+          }
+        }
+
+        for (let i = 0; i < agendaIds.length; i += chunkSize) {
+          const chunkIds = agendaIds.slice(i, i + chunkSize);
+          const { error: updateError } = await supabase
+            .from("clientes")
+            .update({ visit_generated_at: visitBase.toISOString() })
+            .in("id", chunkIds);
+
+          if (updateError) {
+            throw new Error(updateError.message);
+          }
+
+          const { error: vendorError } = await supabase
+            .from("clientes")
+            .update({ vendedor: vendorNames || null, supervisor: supervisorNames || null })
+            .in("id", chunkIds);
+          if (vendorError) {
+            throw new Error(vendorError.message);
+          }
+        }
+
+        const totalVisits = rows.length * selectedVendors.length;
+        setGenerateMessage(
+          `Geradas ${totalVisits} visitas (${rows.length} empresa(s)) para ${selectedVendors.length} vendedor(es).`,
+        );
+      } else {
+        const reasonByAgendaId: Record<string, SupervisorVisitReason> = {};
+        for (const row of rows) {
+          const reason = supervisorReasonByAgendaId[row.id];
+          if (!reason) {
+            setGenerateMessage(
+              `Defina o motivo para todas as empresas. Empresa pendente: ${row.empresa ?? row.nome_fantasia ?? row.id}`,
+            );
+            return;
+          }
+          reasonByAgendaId[row.id] = reason;
+        }
+
+        const creatorSupervisorName =
+          supervisores.find((item) => item.user_id === session?.user.id)?.display_name ??
+          "Supervisor";
         const { data: route, error: routeError } = await supabase
           .from("routes")
           .insert({
-            name: routeName,
+            name: `Visitas Supervisor ${displayDate}`,
             date: routeDate,
-            assigned_to_user_id: vendor.user_id,
+            assigned_to_user_id: session?.user.id ?? null,
             created_by: session?.user.id ?? null,
           })
           .select("id")
           .single();
 
         if (routeError || !route) {
-          throw new Error(routeError?.message ?? "Erro ao criar rota de visitas.");
+          throw new Error(routeError?.message ?? "Erro ao criar rota de supervisao.");
         }
 
         const stopRows = rows.map((row, index) => ({
@@ -1204,68 +1510,107 @@ export default function Agenda() {
         for (let i = 0; i < stopRows.length; i += chunkSize) {
           const chunk = stopRows.slice(i, i + chunkSize);
           const { error: stopError } = await supabase.from("route_stops").insert(chunk);
-          if (stopError) {
-            throw new Error(stopError.message);
-          }
+          if (stopError) throw new Error(stopError.message);
         }
 
-        const visitRows = rows.map((row) => ({
-          cliente_id: row.id,
-          assigned_to_user_id: vendor.user_id,
-          assigned_to_name: vendor.display_name ?? vendor.user_id,
-          visit_date: routeDate,
-          perfil_visita: row.perfil_visita ?? null,
-          instructions: null,
-          route_id: route.id,
-          created_by: session?.user.id ?? null,
-        }));
+        const upsertedVisitIds: string[] = [];
+        for (let i = 0; i < rows.length; i += chunkSize) {
+          const chunkRows = rows.slice(i, i + chunkSize);
+          const visitRows = chunkRows.map((row) => ({
+            cliente_id: row.id,
+            assigned_to_user_id: session?.user.id ?? null,
+            assigned_to_name: creatorSupervisorName,
+            visit_date: routeDate,
+            perfil_visita: row.perfil_visita ?? null,
+            instructions: null,
+            route_id: route.id,
+            visit_type: VISIT_TYPE.SUPERVISOR_RELACIONAMENTO,
+            supervisor_reason: reasonByAgendaId[row.id],
+            created_by: session?.user.id ?? null,
+          }));
 
-        for (let i = 0; i < visitRows.length; i += chunkSize) {
-          const chunk = visitRows.slice(i, i + chunkSize);
-          const { error: visitError } = await supabase
+          const { data: upsertedRows, error: visitError } = await supabase
             .from("visits")
-            .upsert(chunk, {
+            .upsert(visitRows, {
               onConflict: "cliente_id,assigned_to_user_id,visit_date",
+              ignoreDuplicates: false,
+            })
+            .select("id");
+          if (visitError) throw new Error(visitError.message);
+          (upsertedRows ?? []).forEach((row) => {
+            const id = (row as { id?: string }).id;
+            if (id) upsertedVisitIds.push(id);
+          });
+        }
+
+        if (upsertedVisitIds.length === 0) {
+          const { data: fetchedVisits, error: fetchError } = await supabase
+            .from("visits")
+            .select("id")
+            .in("cliente_id", agendaIds)
+            .eq("visit_date", routeDate)
+            .eq("visit_type", VISIT_TYPE.SUPERVISOR_RELACIONAMENTO)
+            .eq("assigned_to_user_id", session?.user.id ?? "");
+          if (fetchError) throw new Error(fetchError.message);
+          (fetchedVisits ?? []).forEach((row) => {
+            const id = (row as { id?: string }).id;
+            if (id) upsertedVisitIds.push(id);
+          });
+        }
+
+        const uniqueVisitIds = Array.from(new Set(upsertedVisitIds));
+        const selectedSupervisorUserIds = selectedSupervisors.map((item) => item.user_id);
+        const linkRows = uniqueVisitIds.flatMap((visitId) =>
+          selectedSupervisorUserIds.map((supervisorUserId) => ({
+            visit_id: visitId,
+            supervisor_user_id: supervisorUserId,
+            created_by: session?.user.id ?? null,
+          })),
+        );
+
+        for (let i = 0; i < linkRows.length; i += chunkSize) {
+          const chunk = linkRows.slice(i, i + chunkSize);
+          const { error: linkError } = await supabase
+            .from("visit_supervisors")
+            .upsert(chunk, {
+              onConflict: "visit_id,supervisor_user_id",
               ignoreDuplicates: true,
             });
-
-          if (visitError) {
-            throw new Error(visitError.message);
-          }
+          if (linkError) throw new Error(linkError.message);
         }
+
+        const supervisorNames = selectedSupervisorDisplayNames.join(", ");
+        for (let i = 0; i < agendaIds.length; i += chunkSize) {
+          const chunkIds = agendaIds.slice(i, i + chunkSize);
+          const { error: updateError } = await supabase
+            .from("clientes")
+            .update({
+              visit_generated_at: visitBase.toISOString(),
+              supervisor: supervisorNames || null,
+            })
+            .in("id", chunkIds);
+
+          if (updateError) throw new Error(updateError.message);
+        }
+
+        setGenerateMessage(
+          `Geradas ${rows.length} visitas de supervisor para ${selectedSupervisors.length} supervisor(es).`,
+        );
       }
 
-      for (let i = 0; i < agendaIds.length; i += chunkSize) {
-        const chunkIds = agendaIds.slice(i, i + chunkSize);
-        const { error: updateError } = await supabase
-          .from("clientes")
-          .update({ visit_generated_at: visitBase.toISOString() })
-          .in("id", chunkIds);
-
-        if (updateError) {
-          throw new Error(updateError.message);
-        }
-
-        const { error: vendorError } = await supabase
-          .from("clientes")
-          .update({ vendedor: vendorNames || null, supervisor: supervisorNames || null })
-          .in("id", chunkIds);
-        if (vendorError) {
-          throw new Error(vendorError.message);
-        }
-      }
-
-      const totalVisits = rows.length * selectedVendors.length;
-      setGenerateMessage(
-        `Geradas ${totalVisits} visitas (${rows.length} empresa(s)) para ${selectedVendors.length} vendedor(es).`,
-      );
       setSelectedAgendaIds([]);
       setSelectedVendorIds([]);
+      setSelectedSupervisorIds([]);
       setVendorQuery("");
+      setSupervisorQuery("");
+      setSupervisorReasonByAgendaId({});
       setVisitDate("");
       setShowGenerateModal(false);
       clearRoutesModuleDraft();
       setRefreshKey((value) => value + 1);
+      if (inactiveCompanies.length > 0) {
+        setInactiveCompaniesWarning(inactiveCompanies);
+      }
     } catch (err) {
       setGenerateMessage(err instanceof Error ? err.message : "Erro ao gerar visitas.");
     } finally {
@@ -1747,6 +2092,7 @@ export default function Agenda() {
               perfil_visita_opcoes: perfilPayload.perfil_visita_opcoes,
               instructions: null,
               route_id: routeId,
+              visit_type: VISIT_TYPE.VENDEDOR,
               created_by: session?.user.id ?? null,
             })
             .select("id")
@@ -1781,6 +2127,7 @@ export default function Agenda() {
               perfil_visita_opcoes: perfilPayload.perfil_visita_opcoes,
               instructions: dateChanged ? null : (original.instructions?.trim() || null),
               route_id: routeId,
+              visit_type: VISIT_TYPE.VENDEDOR,
             })
             .eq("id", draft.id);
           if (error) throw new Error(error.message);
@@ -2034,13 +2381,27 @@ export default function Agenda() {
           const row = info.row.original;
           const name = row.empresa ?? "-";
           const codigo = row.cod_1 ?? "-";
+          const supervisorFlag = role === "SUPERVISOR" ? supervisorFlagByAgendaId[row.id] : undefined;
           return (
             <div className="space-y-1">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <p className="text-sm font-semibold text-ink">{name}</p>
                 <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
                   COD {codigo}
                 </span>
+                {role === "SUPERVISOR" ? (
+                  <span
+                    title={getSupervisorFlagTooltip(supervisorFlag)}
+                    aria-label={getSupervisorFlagTooltip(supervisorFlag)}
+                    className="inline-flex items-center"
+                  >
+                    <span
+                      className={`h-2.5 w-2.5 rounded-full border ${getSupervisorFlagDotStyles(
+                        supervisorFlag?.color ?? "CINZA",
+                      )}`}
+                    />
+                  </span>
+                ) : null}
               </div>
             </div>
           );
@@ -2280,8 +2641,10 @@ export default function Agenda() {
       resolveVendorsForAgenda,
       resolveLastCompletedVidas,
       resolveLastCompletedVisitDate,
+      role,
       setFilters,
       setVisibleSelection,
+      supervisorFlagByAgendaId,
       toggleAgendaSelection,
     ],
   );
@@ -2329,6 +2692,22 @@ export default function Agenda() {
         onRemove: () => setCompanyCodeQuery(""),
       });
     }
+
+    (filters.columns.supervisor_flag ?? []).forEach((value, index) => {
+      const optionLabel = getSupervisorFlagOptionLabel(value);
+      chips.push({
+        id: `chip-supervisor-flag-${index}-${value}`,
+        label: `Flag: ${optionLabel}`,
+        onRemove: () =>
+          setFilters((prev) => ({
+            ...prev,
+            columns: {
+              ...prev.columns,
+              supervisor_flag: (prev.columns.supervisor_flag ?? []).filter((item) => item !== value),
+            },
+          })),
+      });
+    });
 
     Object.keys(FILTER_SOURCES).forEach((key) => {
       const values = filters.columns[key] ?? [];
@@ -2647,7 +3026,13 @@ export default function Agenda() {
 
       <section className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
         <div className="flex flex-col gap-4">
-          <div className="grid gap-3 md:grid-cols-[minmax(0,0.95fr)_minmax(0,0.55fr)_minmax(180px,220px)_minmax(180px,220px)] md:items-end">
+          <div
+            className={`grid gap-3 md:items-end ${
+              role === "SUPERVISOR"
+                ? "md:grid-cols-[minmax(0,0.95fr)_minmax(0,0.55fr)_minmax(180px,220px)_minmax(180px,220px)_minmax(180px,220px)]"
+                : "md:grid-cols-[minmax(0,0.95fr)_minmax(0,0.55fr)_minmax(180px,220px)_minmax(180px,220px)]"
+            }`}
+          >
             <label className="flex flex-col gap-1">
               <span className="text-[11px] font-semibold text-ink/70">Termo por nome (palavra exata)</span>
               <input
@@ -2670,6 +3055,40 @@ export default function Agenda() {
                 className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
               />
             </label>
+            {role === "SUPERVISOR" ? (
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] font-semibold text-ink/70">Flag supervisor</span>
+                <div className="flex h-10 items-center justify-between rounded-lg border border-sea/20 bg-white/90 px-3">
+                  <span className="text-xs text-ink/60">
+                    {(filters.columns.supervisor_flag ?? []).length
+                      ? `${(filters.columns.supervisor_flag ?? []).length} selecionada(s)`
+                      : "Todas"}
+                  </span>
+                  <MultiSelectFilter
+                    label={
+                      (filters.columns.supervisor_flag ?? []).length
+                        ? `Flag (${filters.columns.supervisor_flag.length})`
+                        : "Flag"
+                    }
+                    options={SUPERVISOR_FLAG_FILTER_OPTIONS.map((option) => option.label)}
+                    value={(filters.columns.supervisor_flag ?? []).map(getSupervisorFlagOptionLabel)}
+                    onApply={(nextLabels) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        columns: {
+                          ...prev.columns,
+                          supervisor_flag: nextLabels
+                            .map(getSupervisorFlagOptionValue)
+                            .filter(
+                              (value): value is SupervisorFlagFilterValue => value !== null,
+                            ),
+                        },
+                      }))
+                    }
+                  />
+                </div>
+              </label>
+            ) : null}
             <label className="flex flex-col gap-1">
               <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-ink/70">
                 Categoria
@@ -2956,6 +3375,17 @@ export default function Agenda() {
                     type="button"
                     onClick={() => {
                       setGenerateMessage(null);
+                      setInactiveCompaniesWarning(null);
+                      if (selectedSupervisorIds.length === 0 && role === "SUPERVISOR" && session?.user.id) {
+                        setSelectedSupervisorIds([session.user.id]);
+                      }
+                      setSupervisorReasonByAgendaId((prev) => {
+                        const next = { ...prev };
+                        selectedAgendaIds.forEach((agendaId) => {
+                          if (!next[agendaId]) next[agendaId] = "RETENCAO";
+                        });
+                        return next;
+                      });
                       setShowGenerateModal(true);
                     }}
                     disabled={selectedAgendaIds.length === 0}
@@ -3157,65 +3587,148 @@ export default function Agenda() {
           <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Gerar visitas</h3>
             <p className="mt-1 text-xs text-ink/60">
-              Selecione os vendedores, a data e as empresas marcadas na lista para gerar as visitas.
+              Selecione o tipo de geracao, a data e as empresas marcadas na lista.
             </p>
             <p className="mt-2 text-xs text-ink/60">
               Empresas selecionadas: {selectedAgendaIds.length}
             </p>
 
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setGenerationTab("VENDEDOR")}
+                className={[
+                  "rounded-full border px-3 py-1 text-[11px] font-semibold transition",
+                  generationTab === "VENDEDOR"
+                    ? "border-sea bg-sea/10 text-sea"
+                    : "border-sea/30 bg-white text-ink/70 hover:border-sea",
+                ].join(" ")}
+              >
+                Vendedor
+              </button>
+              {canGenerateSupervisorRoutes && (
+                <button
+                  type="button"
+                  onClick={() => setGenerationTab("SUPERVISOR")}
+                  className={[
+                    "rounded-full border px-3 py-1 text-[11px] font-semibold transition",
+                    generationTab === "SUPERVISOR"
+                      ? "border-sea bg-sea/10 text-sea"
+                      : "border-sea/30 bg-white text-ink/70 hover:border-sea",
+                  ].join(" ")}
+                >
+                  Supervisor
+                </button>
+              )}
+            </div>
+
             <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70">
-                Vendedores destino
-                <div className="rounded-xl border border-sea/20 bg-white/90 p-3">
-                  <input
-                    value={vendorQuery}
-                    onChange={(event) => setVendorQuery(event.target.value)}
-                    placeholder="Buscar vendedor..."
-                    id="agenda-generate-vendor-search"
-                    name="agendaGenerateVendorSearch"
-                    className="w-full rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
-                  />
-                  <div className="mt-2 max-h-40 space-y-1 overflow-auto">
-                    {filteredVendedores.length === 0 ? (
-                      <p className="text-xs text-ink/60">Nenhum vendedor encontrado.</p>
-                    ) : (
-                      filteredVendedores.map((vendor) => {
-                        const checked = selectedVendorIds.includes(vendor.user_id);
-                        return (
-                          <label
-                            key={vendor.user_id}
-                            className="flex cursor-pointer items-center justify-between rounded-lg px-2 py-1 text-xs text-ink hover:bg-sea/10"
-                          >
-                            <span>{vendor.display_name ?? vendor.user_id}</span>
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => handleToggleVendor(vendor.user_id)}
-                              name={`agendaGenerateVendor-${vendor.user_id}`}
-                              className="h-4 w-4 accent-sea"
-                            />
-                          </label>
-                        );
-                      })
-                    )}
+              {generationTab === "VENDEDOR" ? (
+                <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70">
+                  Vendedores destino
+                  <div className="rounded-xl border border-sea/20 bg-white/90 p-3">
+                    <input
+                      value={vendorQuery}
+                      onChange={(event) => setVendorQuery(event.target.value)}
+                      placeholder="Buscar vendedor..."
+                      id="agenda-generate-vendor-search"
+                      name="agendaGenerateVendorSearch"
+                      className="w-full rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                    />
+                    <div className="mt-2 max-h-40 space-y-1 overflow-auto">
+                      {filteredVendedores.length === 0 ? (
+                        <p className="text-xs text-ink/60">Nenhum vendedor encontrado.</p>
+                      ) : (
+                        filteredVendedores.map((vendor) => {
+                          const checked = selectedVendorIds.includes(vendor.user_id);
+                          return (
+                            <label
+                              key={vendor.user_id}
+                              className="flex cursor-pointer items-center justify-between rounded-lg px-2 py-1 text-xs text-ink hover:bg-sea/10"
+                            >
+                              <span>{vendor.display_name ?? vendor.user_id}</span>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => handleToggleVendor(vendor.user_id)}
+                                name={`agendaGenerateVendor-${vendor.user_id}`}
+                                className="h-4 w-4 accent-sea"
+                              />
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-ink/60">
+                      <button
+                        type="button"
+                        className="text-sea"
+                        onClick={() => setSelectedVendorIds(vendedores.map((vendor) => vendor.user_id))}
+                      >
+                        Selecionar todos
+                      </button>
+                      <button type="button" onClick={() => setSelectedVendorIds([])}>
+                        Limpar
+                      </button>
+                    </div>
+                    <p className="mt-2 text-[11px] text-ink/60">
+                      Selecionados: {selectedVendorIds.length}
+                    </p>
                   </div>
-                  <div className="mt-2 flex items-center justify-between text-[11px] text-ink/60">
-                    <button
-                      type="button"
-                      className="text-sea"
-                      onClick={() => setSelectedVendorIds(vendedores.map((vendor) => vendor.user_id))}
-                    >
-                      Selecionar todos
-                    </button>
-                    <button type="button" onClick={() => setSelectedVendorIds([])}>
-                      Limpar
-                    </button>
-                  </div>
-                  <p className="mt-2 text-[11px] text-ink/60">
-                    Selecionados: {selectedVendorIds.length}
-                  </p>
                 </div>
-              </div>
+              ) : (
+                <div className="flex flex-col gap-2 text-xs font-semibold text-ink/70">
+                  Supervisor destino
+                  <div className="rounded-xl border border-sea/20 bg-white/90 p-3">
+                    <input
+                      value={supervisorQuery}
+                      onChange={(event) => setSupervisorQuery(event.target.value)}
+                      placeholder="Buscar supervisor..."
+                      id="agenda-generate-supervisor-search"
+                      name="agendaGenerateSupervisorSearch"
+                      className="w-full rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                    />
+                    <div className="mt-2 max-h-40 space-y-1 overflow-auto">
+                      {filteredSupervisores.length === 0 ? (
+                        <p className="text-xs text-ink/60">Nenhum supervisor encontrado.</p>
+                      ) : (
+                        filteredSupervisores.map((supervisor) => {
+                          const checked = selectedSupervisorIds.includes(supervisor.user_id);
+                          return (
+                            <label
+                              key={supervisor.user_id}
+                              className="flex cursor-pointer items-center justify-between rounded-lg px-2 py-1 text-xs text-ink hover:bg-sea/10"
+                            >
+                              <span>{supervisor.display_name ?? supervisor.user_id}</span>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => handleToggleSupervisor(supervisor.user_id)}
+                                className="h-4 w-4 accent-sea"
+                              />
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-ink/60">
+                      <button
+                        type="button"
+                        className="text-sea"
+                        onClick={() => setSelectedSupervisorIds(supervisores.map((item) => item.user_id))}
+                      >
+                        Selecionar todos
+                      </button>
+                      <button type="button" onClick={() => setSelectedSupervisorIds([])}>
+                        Limpar
+                      </button>
+                    </div>
+                    <p className="mt-2 text-[11px] text-ink/60">
+                      Selecionados: {selectedSupervisorIds.length}
+                    </p>
+                  </div>
+                </div>
+              )}
               <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
                 Data da visita
                 <input
@@ -3228,6 +3741,44 @@ export default function Agenda() {
                 />
               </label>
             </div>
+
+            {generationTab === "SUPERVISOR" && (
+              <div className="mt-3 rounded-xl border border-sea/20 bg-sand/30 p-3">
+                <p className="text-xs font-semibold text-ink/70">Motivo por empresa</p>
+                <div className="mt-2 max-h-52 space-y-2 overflow-auto">
+                  {selectedGenerateRows.length === 0 ? (
+                    <p className="text-xs text-ink/60">Nenhuma empresa selecionada.</p>
+                  ) : (
+                    selectedGenerateRows.map((row) => (
+                      <div
+                        key={row.id}
+                        className="grid gap-2 rounded-lg border border-sea/15 bg-white/90 px-2 py-2 md:grid-cols-[1fr_210px] md:items-center"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-ink">
+                            {row.empresa ?? row.nome_fantasia ?? "Sem nome"}
+                          </p>
+                          <p className="truncate text-[11px] text-ink/60">COD: {row.cod_1 ?? "-"}</p>
+                        </div>
+                        <select
+                          value={supervisorReasonByAgendaId[row.id] ?? "RETENCAO"}
+                          onChange={(event) =>
+                            handleSupervisorReasonChange(row.id, event.target.value as SupervisorVisitReason)
+                          }
+                          className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                        >
+                          {SUPERVISOR_VISIT_REASON_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
             {generateMessage && (
               <p className="mt-3 text-xs text-ink/70">{generateMessage}</p>
             )}
@@ -3245,7 +3796,8 @@ export default function Agenda() {
                 type="button"
                 onClick={handleGenerateVisits}
                 disabled={
-                  selectedVendorIds.length === 0 ||
+                  (generationTab === "VENDEDOR" && selectedVendorIds.length === 0) ||
+                  (generationTab === "SUPERVISOR" && selectedSupervisorIds.length === 0) ||
                   selectedAgendaIds.length === 0 ||
                   !visitDate ||
                   generating
@@ -3253,6 +3805,47 @@ export default function Agenda() {
                 className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
                 {generating ? "Gerando..." : `Confirmar (${selectedAgendaIds.length})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {inactiveCompaniesWarning && inactiveCompaniesWarning.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setInactiveCompaniesWarning(null)}
+            aria-label="Fechar aviso de empresa inativa"
+          />
+          <div className="relative w-full max-w-xl rounded-3xl border border-amber-300 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Aviso de empresa inativa</h3>
+            <p className="mt-1 text-xs text-ink/70">
+              A(s) empresa(s) abaixo nao esta ativa e entrou(aram) na geracao da rota.
+            </p>
+
+            <div className="mt-4 max-h-64 space-y-2 overflow-auto rounded-xl border border-amber-200 bg-amber-50/70 p-2">
+              {inactiveCompaniesWarning.map((company) => (
+                <div
+                  key={company.id}
+                  className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-ink"
+                >
+                  <p className="font-semibold">{company.name}</p>
+                  <p className="mt-1 text-[11px] text-ink/70">
+                    COD: {company.code} | Situacao: {company.status}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setInactiveCompaniesWarning(null)}
+                className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight"
+              >
+                Entendi
               </button>
             </div>
           </div>
@@ -3850,6 +4443,19 @@ export default function Agenda() {
                             <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
                               COD {row.cod_1 ?? "-"}
                             </span>
+                            {role === "SUPERVISOR" ? (
+                              <span
+                                title={getSupervisorFlagTooltip(supervisorFlagByAgendaId[row.id])}
+                                aria-label={getSupervisorFlagTooltip(supervisorFlagByAgendaId[row.id])}
+                                className="inline-flex items-center"
+                              >
+                                <span
+                                  className={`h-2.5 w-2.5 rounded-full border ${getSupervisorFlagDotStyles(
+                                    supervisorFlagByAgendaId[row.id]?.color ?? "CINZA",
+                                  )}`}
+                                />
+                              </span>
+                            ) : null}
                             {row.categoria ? (() => {
                               const badge = getCategoriaBadgeStyles(row.categoria);
                               return <span className={badge.className}>{badge.label}</span>;

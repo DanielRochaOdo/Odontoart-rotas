@@ -340,6 +340,7 @@ type AgendaPerfilRow = {
   cod_1?: string | null;
   empresa?: string | null;
   nome_fantasia?: string | null;
+  situacao?: string | null;
 };
 
 const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
@@ -347,6 +348,7 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
   let next: any = query;
 
   Object.entries(filters.columns).forEach(([key, values]) => {
+    if (key === "supervisor_flag") return;
     if (key === "situacao") return;
     if (!values || values.length === 0) return;
     const cleaned = values.map((value) => normalizeOption(value)).filter(Boolean);
@@ -511,6 +513,8 @@ export type AgendaScheduledVisit = {
   instructions: string | null;
   completed_at: string | null;
   route_id: string | null;
+  visit_type?: string | null;
+  supervisor_reason?: string | null;
 };
 
 export type AgendaVisitVendor = {
@@ -521,6 +525,8 @@ export type AgendaVisitVendor = {
   completed_at: string | null;
   completed_vidas: number | null;
   no_visit_reason: string | null;
+  visit_type?: string | null;
+  supervisor_reason?: string | null;
 };
 
 export const fetchAgenda = async (
@@ -669,7 +675,7 @@ export const fetchAgendaScheduledVisits = async (clienteIds: string[]) => {
     const { data, error } = await supabase
       .from("visits")
       .select(
-        "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, instructions, completed_at, route_id",
+        "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, instructions, completed_at, route_id, visit_type, supervisor_reason",
       )
       .in("cliente_id", chunk)
       .is("completed_at", null)
@@ -689,7 +695,9 @@ export const fetchAgendaVisitVendors = async (clienteIds: string[]) => {
   if (!clienteIds.length) return [] as AgendaVisitVendor[];
   const { data, error } = await supabase
     .from("visits")
-    .select("cliente_id, visit_date, assigned_to_user_id, assigned_to_name, completed_at, completed_vidas, no_visit_reason")
+    .select(
+      "cliente_id, visit_date, assigned_to_user_id, assigned_to_name, completed_at, completed_vidas, no_visit_reason, visit_type, supervisor_reason",
+    )
     .in("cliente_id", clienteIds)
     .order("completed_at", { ascending: false })
     .order("visit_date", { ascending: false });
@@ -804,7 +812,7 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
   const buildQuery = () =>
     supabase
       .from("clientes")
-      .select("id, perfil_visita, instructions, cod_1:codigo, empresa, nome_fantasia")
+      .select("id, perfil_visita, instructions, cod_1:codigo, empresa, nome_fantasia, situacao")
       .order("id", { ascending: true });
 
   if (ids && ids.length > 0) {
@@ -825,6 +833,10 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
       id: item.id,
       perfil_visita: item.perfil_visita ?? null,
       instructions: (item as { instructions?: string | null }).instructions ?? null,
+      cod_1: item.cod_1 ?? null,
+      empresa: item.empresa ?? null,
+      nome_fantasia: item.nome_fantasia ?? null,
+      situacao: item.situacao ?? null,
     }));
   }
 
@@ -871,6 +883,10 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
     id: item.id,
     perfil_visita: item.perfil_visita ?? null,
     instructions: (item as { instructions?: string | null }).instructions ?? null,
+    cod_1: item.cod_1 ?? null,
+    empresa: item.empresa ?? null,
+    nome_fantasia: item.nome_fantasia ?? null,
+    situacao: item.situacao ?? null,
   }));
 };
 
