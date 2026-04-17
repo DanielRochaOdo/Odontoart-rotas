@@ -45,11 +45,17 @@ export default function Login() {
     event.preventDefault();
     setLoading(true);
     setError(null);
-    const result = await signIn(email, password);
-    if (result.error) {
-      setError(result.error);
+    try {
+      const result = await signIn(email, password);
+      if (result.error) {
+        setError(result.error);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro ao realizar login.";
+      setError(message);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleDownloadApp = async () => {

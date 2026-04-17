@@ -12,6 +12,8 @@ import {
   LoaderCircle,
   MapPin,
   Pencil,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
@@ -32,6 +34,13 @@ import {
   isPresetPerfilVisita,
   normalizePerfilVisita,
 } from "../lib/perfilVisita";
+import {
+  SUPERVISOR_DESCRICAO_VISITA_OPTIONS,
+  SUPERVISOR_VISIT_REASON_OPTIONS,
+  VISIT_REGISTER_MODE,
+  VISIT_TYPE,
+  type SupervisorDescricaoVisita,
+} from "../lib/supervisorVisits";
 
 type VisitRow = {
   id: string;
@@ -39,6 +48,10 @@ type VisitRow = {
   visit_date: string;
   assigned_to_user_id: string | null;
   assigned_to_name: string | null;
+  visit_type?: string | null;
+  supervisor_reason?: string | null;
+  register_mode?: string | null;
+  visit_time?: string | null;
   perfil_visita: string | null;
   perfil_visita_opcoes?: string | null;
   route_id: string | null;
@@ -46,11 +59,12 @@ type VisitRow = {
   completed_vidas: number | null;
   no_visit_reason: string | null;
   instructions: string | null;
-  agenda?: {
-    id: string;
-    empresa: string | null;
-    nome_fantasia: string | null;
-    cod_1?: string | null;
+  visit_supervisors?: Array<{ supervisor_user_id: string | null }> | null;
+    agenda?: {
+      id: string;
+      empresa: string | null;
+      nome_fantasia: string | null;
+      cod_1?: string | null;
     corte?: number | null;
     venc?: number | null;
     valor?: number | null;
@@ -60,14 +74,25 @@ type VisitRow = {
     instructions?: string | null;
     endereco: string | null;
     complemento?: string | null;
-    bairro: string | null;
-    cidade: string | null;
-    uf: string | null;
-    situacao: string | null;
-    perfil_visita: string | null;
-    supervisor?: string | null;
-  } | null;
+      bairro: string | null;
+      cidade: string | null;
+      uf: string | null;
+      situacao: string | null;
+      categoria?: string | null;
+      perfil_visita: string | null;
+      supervisor?: string | null;
+    } | null;
   cliente?: ClienteCanonicalModalRow | null;
+};
+
+type VisitSupervisorRegisterRow = {
+  visit_id: string;
+  quantidade_vidas: number | null;
+  quantidade_funcionarios: number | null;
+  descricao_visita: string | null;
+  pessoa_contato_mesma: boolean | null;
+  pessoa: string | null;
+  contato: string | null;
 };
 
 type ClienteCanonicalModalRow = {
@@ -85,6 +110,7 @@ type ClienteCanonicalModalRow = {
   complemento: string | null;
   perfil_visita: string | null;
   situacao: string | null;
+  categoria: string | null;
   endereco: string | null;
   bairro: string | null;
   cidade: string | null;
@@ -137,6 +163,12 @@ type VendorOption = {
   supervisor_id?: string | null;
 };
 
+type AddAssigneeOption = {
+  user_id: string;
+  display_name: string | null;
+  role: "VENDEDOR" | "SUPERVISOR";
+};
+
 type VendorDashboardAccessModalState = {
   vendorUserId: string;
   vendorName: string;
@@ -149,10 +181,14 @@ type AddVendorsModalState = {
   companyId: string;
   companyName: string;
   date: string;
+  visitType: string | null;
+  supervisorReason: string | null;
+  supervisorUserIds: string[];
+  allowSupervisorAssignees: boolean;
   perfilVisita: string | null;
   perfilVisitaOpcoes: string | null;
-  existingVendorIds: string[];
-  selectedVendorIds: string[];
+  existingAssigneeIds: string[];
+  selectedAssigneeIds: string[];
 };
 
 const formatDateKey = (value: string) => {
@@ -177,7 +213,7 @@ const toDateInput = (value: string | null) => {
 const normalize = (value: string | null) => normalizeSearchText(value);
 
 const CLIENTE_CANONICAL_MODAL_SELECT =
-  "id, codigo, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf";
+  "id, codigo, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf";
 
 const formatCurrency = (value?: number | null) => {
   if (value === null || value === undefined) return "-";
@@ -190,7 +226,13 @@ const NO_VISIT_REASONS = [
   "ENDERECO NAO LOCALIZADO",
   "AUSENTE NO DIA",
 ];
+const SUPERVISOR_REASON_LABEL_BY_VALUE = new Map<string, string>(
+  SUPERVISOR_VISIT_REASON_OPTIONS.map((option) => [option.value, option.label]),
+);
 const SHOW_VENDOR_LOCK_ICON = false;
+
+const isSupervisorVisitType = (value: string | null | undefined) =>
+  value === VISIT_TYPE.SUPERVISOR_RELACIONAMENTO;
 
 const isMobileDevice = () => {
   if (typeof navigator === "undefined") return false;
@@ -278,8 +320,17 @@ export default function Visitas() {
     completeVisit:
       | {
           id: string;
+          visitType?: string | null;
+          supervisorReason?: string | null;
           vidas: string;
           perfil: string;
+          visitTime: string;
+          registerLikeVendor: boolean;
+          quantidadeFuncionarios: string;
+          descricaoVisita: SupervisorDescricaoVisita | "";
+          pessoaContatoMesma: boolean;
+          pessoa: string;
+          contato: string;
           customManual: boolean;
           customTime: string;
           singleTimeBase: string;
@@ -345,8 +396,17 @@ export default function Visitas() {
         noVisit?: { id: string; reason: string } | null;
         completeVisit?: {
           id: string;
+          visitType?: string | null;
+          supervisorReason?: string | null;
           vidas: string;
           perfil: string;
+          visitTime: string;
+          registerLikeVendor: boolean;
+          quantidadeFuncionarios: string;
+          descricaoVisita: SupervisorDescricaoVisita | "";
+          pessoaContatoMesma: boolean;
+          pessoa: string;
+          contato: string;
           customManual: boolean;
           customTime: string;
           singleTimeBase: string;
@@ -362,6 +422,21 @@ export default function Visitas() {
 	        completeVisit: parsed.completeVisit
 	          ? {
 	              ...parsed.completeVisit,
+	              visitType: parsed.completeVisit.visitType ?? VISIT_TYPE.VENDEDOR,
+	              supervisorReason: parsed.completeVisit.supervisorReason ?? null,
+	              visitTime: parsed.completeVisit.visitTime ?? "",
+	              registerLikeVendor:
+	                parsed.completeVisit.registerLikeVendor === undefined
+	                  ? true
+	                  : Boolean(parsed.completeVisit.registerLikeVendor),
+	              quantidadeFuncionarios: parsed.completeVisit.quantidadeFuncionarios ?? "",
+	              descricaoVisita: (parsed.completeVisit.descricaoVisita ?? "") as SupervisorDescricaoVisita | "",
+	              pessoaContatoMesma:
+	                parsed.completeVisit.pessoaContatoMesma === undefined
+	                  ? true
+	                  : Boolean(parsed.completeVisit.pessoaContatoMesma),
+	              pessoa: parsed.completeVisit.pessoa ?? "",
+	              contato: parsed.completeVisit.contato ?? "",
 	              singleTimeBase: parsed.completeVisit.singleTimeBase ?? "",
 	              singleTimeValue: parsed.completeVisit.singleTimeValue ?? "",
 	              instructions: parsed.completeVisit.instructions ?? "",
@@ -379,8 +454,17 @@ export default function Visitas() {
   const [restoredModalState, setRestoredModalState] = useState(false);
   const [completeVisit, setCompleteVisit] = useState<{
     id: string;
+    visitType?: string | null;
+    supervisorReason?: string | null;
     vidas: string;
     perfil: string;
+    visitTime: string;
+    registerLikeVendor: boolean;
+    quantidadeFuncionarios: string;
+    descricaoVisita: SupervisorDescricaoVisita | "";
+    pessoaContatoMesma: boolean;
+    pessoa: string;
+    contato: string;
     customManual: boolean;
     customTime: string;
     singleTimeBase: string;
@@ -634,13 +718,14 @@ export default function Visitas() {
       let visitsQuery = supabase
         .from("visits")
         .select(
-          "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, cliente:cliente_id (id, codigo, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, endereco, bairro, cidade, uf)",
+          "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, visit_type, supervisor_reason, register_mode, visit_time, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, visit_supervisors(supervisor_user_id), cliente:cliente_id (id, codigo, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf)",
         )
         .gte("visit_date", startDate)
         .lte("visit_date", effectiveEnd)
         .order("visit_date", { ascending: true });
 
       if (isVendor) {
+        visitsQuery = visitsQuery.eq("visit_type", VISIT_TYPE.VENDEDOR);
         if (session?.user.id && profile?.display_name) {
           visitsQuery = visitsQuery.or(
             `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
@@ -680,6 +765,7 @@ export default function Visitas() {
           cidade: cliente.cidade,
           uf: cliente.uf,
           situacao: cliente.situacao,
+          categoria: cliente.categoria,
           perfil_visita: cliente.perfil_visita,
           supervisor: null,
         });
@@ -744,6 +830,30 @@ export default function Visitas() {
     );
   }, [canFilterBySupervisor, selectedSupervisorId, supervisores, vendors]);
 
+  const selectedSupervisorUserIds = useMemo(() => {
+    if (!canFilterBySupervisor || selectedSupervisorId === "all") return new Set<string>();
+    const supervisor = supervisores.find(
+      (item) => item.id === selectedSupervisorId || item.user_id === selectedSupervisorId,
+    );
+    const ids = new Set<string>();
+    if (selectedSupervisorId) ids.add(selectedSupervisorId);
+    if (supervisor?.id) ids.add(supervisor.id);
+    if (supervisor?.user_id) ids.add(supervisor.user_id);
+    return ids;
+  }, [canFilterBySupervisor, selectedSupervisorId, supervisores]);
+
+  const isSupervisorVisitForSelectedSupervisor = useCallback(
+    (visit: VisitRow) => {
+      if (!isSupervisorVisitType(visit.visit_type) || selectedSupervisorUserIds.size === 0) return false;
+      if (visit.assigned_to_user_id && selectedSupervisorUserIds.has(visit.assigned_to_user_id)) return true;
+      const supervisorLinks = (visit.visit_supervisors ?? [])
+        .map((item) => item.supervisor_user_id)
+        .filter((value): value is string => Boolean(value));
+      return supervisorLinks.some((id) => selectedSupervisorUserIds.has(id));
+    },
+    [selectedSupervisorUserIds],
+  );
+
   useEffect(() => {
     if (!canFilterBySupervisor) return;
     setSelectedVendorId((prev) =>
@@ -767,11 +877,8 @@ export default function Visitas() {
           .map((value) => normalize(value)),
       );
 
-      if (vendorIdSet.size === 0 && vendorNameSet.size === 0) {
-        return [];
-      }
-
       scopedVisits = scopedVisits.filter((visit) => {
+        if (isSupervisorVisitForSelectedSupervisor(visit)) return true;
         if (visit.assigned_to_user_id && vendorIdSet.has(visit.assigned_to_user_id)) return true;
         if (visit.assigned_to_name && vendorNameSet.has(normalize(visit.assigned_to_name))) return true;
         if (supervisorName && visit.agenda?.supervisor) {
@@ -801,9 +908,32 @@ export default function Visitas() {
     selectedVendorId,
     selectableVendors,
     supervisores,
+    isSupervisorVisitForSelectedSupervisor,
     vendors,
     visits,
   ]);
+
+  const isSupervisorVisitForLoggedUser = useCallback(
+    (visit: VisitRow) => {
+      if (role !== "SUPERVISOR" || !session?.user.id || !isSupervisorVisitType(visit.visit_type)) return false;
+      if (visit.assigned_to_user_id === session.user.id) return true;
+      const supervisorLinks = (visit.visit_supervisors ?? [])
+        .map((item) => item.supervisor_user_id)
+        .filter((value): value is string => Boolean(value));
+      return supervisorLinks.includes(session.user.id);
+    },
+    [role, session?.user.id],
+  );
+
+  const supervisorPinDates = useMemo(() => {
+    const dates = new Set<string>();
+    visits.forEach((visit) => {
+      if (!visit.visit_date) return;
+      if (!isSupervisorVisitForLoggedUser(visit)) return;
+      dates.add(formatDateKey(visit.visit_date));
+    });
+    return dates;
+  }, [isSupervisorVisitForLoggedUser, visits]);
 
   const visitsByDate = useMemo(() => {
     const map = new Map<string, VisitRow[]>();
@@ -827,7 +957,15 @@ export default function Visitas() {
   const selectedVisits = useMemo(() => {
     if (!selectedDate) return [] as VisitRow[];
     const key = format(selectedDate, "yyyy-MM-dd");
-    return visitsByDate.get(key) ?? [];
+    const visitsForDate = visitsByDate.get(key) ?? [];
+    return [...visitsForDate].sort((a, b) => {
+      const aSupervisor = isSupervisorVisitType(a.visit_type);
+      const bSupervisor = isSupervisorVisitType(b.visit_type);
+      if (aSupervisor !== bSupervisor) return aSupervisor ? -1 : 1;
+      const aName = a.assigned_to_name ?? a.agenda?.empresa ?? "";
+      const bName = b.assigned_to_name ?? b.agenda?.empresa ?? "";
+      return aName.localeCompare(bName, "pt-BR");
+    });
   }, [selectedDate, visitsByDate]);
 
   useEffect(() => {
@@ -875,6 +1013,63 @@ export default function Visitas() {
     () => new Map(vendors.map((vendor) => [vendor.user_id, vendor])),
     [vendors],
   );
+  const supervisorByUserId = useMemo(
+    () =>
+      new Map(
+        supervisores
+          .filter((supervisor) => Boolean(supervisor.user_id))
+          .map((supervisor) => [supervisor.user_id as string, supervisor]),
+      ),
+    [supervisores],
+  );
+  const supervisorByName = useMemo(() => {
+    const map = new Map<string, { id: string; user_id: string | null; display_name: string | null }>();
+    supervisores.forEach((supervisor) => {
+      const normalizedName = normalize(supervisor.display_name);
+      if (!normalizedName || map.has(normalizedName)) return;
+      map.set(normalizedName, supervisor);
+    });
+    return map;
+  }, [supervisores]);
+  const selectableSupervisores = useMemo(
+    () =>
+      supervisores
+        .filter((supervisor): supervisor is { id: string; user_id: string; display_name: string | null } =>
+          Boolean(supervisor.user_id),
+        )
+        .map((supervisor) => ({
+          user_id: supervisor.user_id,
+          display_name: supervisor.display_name ?? "Supervisor",
+        })),
+    [supervisores],
+  );
+  const supervisorRouteAssignees = useMemo<AddAssigneeOption[]>(() => {
+    const byUserId = new Map<string, AddAssigneeOption>();
+    vendors.forEach((vendor) => {
+      if (!vendor.user_id) return;
+      byUserId.set(vendor.user_id, {
+        user_id: vendor.user_id,
+        display_name: vendor.display_name ?? vendor.user_id,
+        role: "VENDEDOR",
+      });
+    });
+    selectableSupervisores.forEach((supervisor) => {
+      if (!supervisor.user_id) return;
+      if (byUserId.has(supervisor.user_id)) return;
+      byUserId.set(supervisor.user_id, {
+        user_id: supervisor.user_id,
+        display_name: supervisor.display_name ?? supervisor.user_id,
+        role: "SUPERVISOR",
+      });
+    });
+    return Array.from(byUserId.values()).sort((a, b) =>
+      (a.display_name ?? a.user_id).localeCompare(b.display_name ?? b.user_id, "pt-BR"),
+    );
+  }, [selectableSupervisores, vendors]);
+  const supervisorRouteAssigneeById = useMemo(
+    () => new Map(supervisorRouteAssignees.map((assignee) => [assignee.user_id, assignee])),
+    [supervisorRouteAssignees],
+  );
   const vendorByName = useMemo(() => {
     const map = new Map<string, VendorOption>();
     vendors.forEach((vendor) => {
@@ -885,12 +1080,20 @@ export default function Visitas() {
     return map;
   }, [vendors]);
   const addVendorsList = useMemo(() => {
-    if (!addVendorsQuery.trim()) return vendors;
+    const options: AddAssigneeOption[] =
+      addVendorsModal?.allowSupervisorAssignees
+        ? supervisorRouteAssignees
+        : vendors.map((vendor) => ({
+            user_id: vendor.user_id,
+            display_name: vendor.display_name ?? vendor.user_id,
+            role: "VENDEDOR" as const,
+          }));
+    if (!addVendorsQuery.trim()) return options;
     const query = normalizeSearchText(addVendorsQuery);
-    return vendors.filter((vendor) =>
-      normalizeSearchText(vendor.display_name ?? vendor.user_id).includes(query),
+    return options.filter((assignee) =>
+      normalizeSearchText(assignee.display_name ?? assignee.user_id).includes(query),
     );
-  }, [addVendorsQuery, vendors]);
+  }, [addVendorsModal?.allowSupervisorAssignees, addVendorsQuery, supervisorRouteAssignees, vendors]);
   const selectedDateKey = useMemo(
     () => (selectedDate ? format(selectedDate, "yyyy-MM-dd") : ""),
     [selectedDate],
@@ -907,7 +1110,24 @@ export default function Visitas() {
       if (!groups[seller]) groups[seller] = [];
       groups[seller].push(visit);
     });
-    return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
+    return Object.entries(groups)
+      .map(([seller, items]) => [
+        seller,
+        [...items].sort((a, b) => {
+          const aSupervisor = isSupervisorVisitType(a.visit_type);
+          const bSupervisor = isSupervisorVisitType(b.visit_type);
+          if (aSupervisor !== bSupervisor) return aSupervisor ? -1 : 1;
+          const aEmpresa = a.agenda?.empresa ?? a.agenda?.nome_fantasia ?? "";
+          const bEmpresa = b.agenda?.empresa ?? b.agenda?.nome_fantasia ?? "";
+          return aEmpresa.localeCompare(bEmpresa, "pt-BR");
+        }),
+      ] as const)
+      .sort((a, b) => {
+        const aHasSupervisor = a[1].some((visit) => isSupervisorVisitType(visit.visit_type));
+        const bHasSupervisor = b[1].some((visit) => isSupervisorVisitType(visit.visit_type));
+        if (aHasSupervisor !== bHasSupervisor) return aHasSupervisor ? -1 : 1;
+        return a[0].localeCompare(b[0], "pt-BR");
+      });
   }, [selectedVisits, vendorById]);
   const releasedVendorIdSet = useMemo(
     () => new Set(releasedVendorIdsForDate),
@@ -980,6 +1200,22 @@ export default function Visitas() {
     }
     setEditState((prev) => {
       const next: Record<string, { vendorId: string; date: string }> = { ...prev };
+      const resolveAssigneeId = (visit: VisitRow) => {
+        const normalizedName = normalize(visit.assigned_to_name);
+        if (isSupervisorVisitType(visit.visit_type)) {
+          if (visit.assigned_to_user_id && supervisorByUserId.has(visit.assigned_to_user_id)) {
+            return visit.assigned_to_user_id;
+          }
+          const matchedSupervisor = normalizedName ? supervisorByName.get(normalizedName) : undefined;
+          return matchedSupervisor?.user_id ?? visit.assigned_to_user_id ?? "";
+        }
+
+        if (visit.assigned_to_user_id && vendorById.has(visit.assigned_to_user_id)) {
+          return visit.assigned_to_user_id;
+        }
+        const matchedVendor = normalizedName ? vendorByName.get(normalizedName) : undefined;
+        return matchedVendor?.user_id ?? visit.assigned_to_user_id ?? "";
+      };
       const validIds = new Set(visits.map((visit) => visit.id));
       Object.keys(next).forEach((id) => {
         if (!validIds.has(id)) {
@@ -987,14 +1223,10 @@ export default function Visitas() {
         }
       });
       visits.forEach((visit) => {
+        const resolvedAssigneeId = resolveAssigneeId(visit);
         if (!next[visit.id]) {
-          const vendorName = visit.assigned_to_name ?? "";
-          const matchedVendor =
-            visit.assigned_to_user_id
-              ? vendors.find((vendor) => vendor.user_id === visit.assigned_to_user_id)
-              : vendors.find((vendor) => normalize(vendor.display_name) === normalize(vendorName));
           next[visit.id] = {
-            vendorId: matchedVendor?.user_id ?? "",
+            vendorId: resolvedAssigneeId,
             date: toDateInput(visit.visit_date),
           };
         } else {
@@ -1002,13 +1234,8 @@ export default function Visitas() {
             next[visit.id].date = toDateInput(visit.visit_date);
           }
           if (!next[visit.id].vendorId) {
-            const vendorName = visit.assigned_to_name ?? "";
-            const matchedVendor =
-              visit.assigned_to_user_id
-                ? vendors.find((vendor) => vendor.user_id === visit.assigned_to_user_id)
-                : vendors.find((vendor) => normalize(vendor.display_name) === normalize(vendorName));
-            if (matchedVendor) {
-              next[visit.id].vendorId = matchedVendor.user_id;
+            if (resolvedAssigneeId) {
+              next[visit.id].vendorId = resolvedAssigneeId;
             }
           }
         }
@@ -1023,7 +1250,7 @@ export default function Visitas() {
       });
       return next;
     });
-  }, [visits, vendors]);
+  }, [supervisorByName, supervisorByUserId, vendorById, vendorByName, visits]);
 
   const ensureRoute = async (vendorId: string, vendorName: string, dateValue: string) => {
     const { data: existing, error } = await supabase
@@ -1045,7 +1272,7 @@ export default function Visitas() {
     const { data: created, error: createError } = await supabase
       .from("routes")
       .insert({
-        name: `Visitas ${displayDate} - ${vendorName || "Vendedor"}`,
+        name: `Visitas ${displayDate} - ${vendorName || "Responsavel"}`,
         date: dateValue,
         assigned_to_user_id: vendorId,
         created_by: session?.user.id ?? null,
@@ -1100,13 +1327,14 @@ export default function Visitas() {
       setError("Selecione a data da visita.");
       return;
     }
-    if (!state.vendorId) {
-      setError("Selecione o vendedor.");
-      return;
-    }
 
     const visit = visits.find((item) => item.id === visitId);
     if (!visit) return;
+    const isSupervisorVisit = isSupervisorVisitType(visit.visit_type);
+    if (!state.vendorId) {
+      setError(isSupervisorVisit ? "Selecione o responsavel." : "Selecione o vendedor.");
+      return;
+    }
     const companyId = visit.cliente_id ?? null;
     if (!companyId) {
       setError("Empresa da visita nao encontrada.");
@@ -1117,13 +1345,47 @@ export default function Visitas() {
       return;
     }
 
-    const vendor = vendorById.get(state.vendorId);
-    const vendorName = vendor?.display_name ?? vendor?.user_id ?? visit.assigned_to_name ?? "Sem vendedor";
+    const assigneeOption = isSupervisorVisit
+      ? supervisorRouteAssigneeById.get(state.vendorId)
+      : vendorById.get(state.vendorId);
+    const assigneeName =
+      assigneeOption?.display_name ??
+      assigneeOption?.user_id ??
+      visit.assigned_to_name ??
+      (isSupervisorVisit ? "Sem responsavel" : "Sem vendedor");
+    const supervisorUserIdsToLink = isSupervisorVisit
+      ? Array.from(
+          new Set(
+            [
+              ...(visit.assigned_to_user_id && supervisorByUserId.has(visit.assigned_to_user_id)
+                ? [visit.assigned_to_user_id]
+                : []),
+              ...(supervisorByUserId.has(state.vendorId) ? [state.vendorId] : []),
+              ...(visit.visit_supervisors ?? [])
+                .map((item) => item.supervisor_user_id)
+                .filter((value): value is string => Boolean(value)),
+            ].filter(Boolean),
+          ),
+        )
+      : [];
+    const syncSupervisorLinks = async (targetVisitId: string) => {
+      if (!isSupervisorVisit || supervisorUserIdsToLink.length === 0) return;
+      const linkRows = supervisorUserIdsToLink.map((supervisorUserId) => ({
+        visit_id: targetVisitId,
+        supervisor_user_id: supervisorUserId,
+        created_by: session?.user.id ?? null,
+      }));
+      const { error: linkError } = await supabase.from("visit_supervisors").upsert(linkRows, {
+        onConflict: "visit_id,supervisor_user_id",
+        ignoreDuplicates: true,
+      });
+      if (linkError) throw new Error(linkError.message);
+    };
 
     setSavingId(visitId);
     setError(null);
     try {
-      const routeId = await ensureRoute(state.vendorId, vendorName, state.date);
+      const routeId = await ensureRoute(state.vendorId, assigneeName, state.date);
       const { data: targetVisit, error: targetVisitError } = await supabase
         .from("visits")
         .select("id, route_id, assigned_to_name")
@@ -1135,11 +1397,11 @@ export default function Visitas() {
       if (targetVisitError) throw new Error(targetVisitError.message);
 
       if (targetVisit?.id) {
-        if (targetVisit.route_id !== routeId || normalize(targetVisit.assigned_to_name) !== normalize(vendorName)) {
+        if (targetVisit.route_id !== routeId || normalize(targetVisit.assigned_to_name) !== normalize(assigneeName)) {
           const { error: updateTargetError } = await supabase
             .from("visits")
             .update({
-              assigned_to_name: vendorName,
+              assigned_to_name: assigneeName,
               route_id: routeId,
             })
             .eq("id", targetVisit.id);
@@ -1156,6 +1418,7 @@ export default function Visitas() {
         }
 
         await ensureRouteStop(routeId, companyId);
+        await syncSupervisorLinks(targetVisit.id);
 
         const { error: deleteError } = await supabase.from("visits").delete().eq("id", visitId);
         if (deleteError) throw new Error(deleteError.message);
@@ -1179,13 +1442,14 @@ export default function Visitas() {
         .from("visits")
         .update({
           assigned_to_user_id: state.vendorId,
-          assigned_to_name: vendorName,
+          assigned_to_name: assigneeName,
           visit_date: state.date,
           route_id: routeId,
         })
         .eq("id", visitId);
 
       if (updateError) throw new Error(updateError.message);
+      await syncSupervisorLinks(visitId);
 
       setRefreshKey((prev) => prev + 1);
     } catch (err) {
@@ -1205,6 +1469,7 @@ export default function Visitas() {
 
     const visit = visits.find((item) => item.id === visitId);
     if (!visit) return;
+    const isSupervisorVisit = isSupervisorVisitType(visit.visit_type);
     const companyId = visit.cliente_id ?? null;
     if (!companyId) {
       setError("Empresa da visita nao encontrada.");
@@ -1227,37 +1492,66 @@ export default function Visitas() {
         .eq("visit_date", state.date);
       if (existingVisitsError) throw new Error(existingVisitsError.message);
 
-      const existingVendorIdsSet = new Set<string>();
-      const existingVendorNamesSet = new Set<string>();
-      (existingVisits ?? []).forEach((row) => {
-        if (row.assigned_to_user_id) existingVendorIdsSet.add(row.assigned_to_user_id);
-        if (row.assigned_to_name) existingVendorNamesSet.add(normalize(row.assigned_to_name));
+      const addAssigneeOptions: AddAssigneeOption[] = isSupervisorVisit
+        ? supervisorRouteAssignees
+        : vendors.map((vendor) => ({
+            user_id: vendor.user_id,
+            display_name: vendor.display_name ?? vendor.user_id,
+            role: "VENDEDOR" as const,
+          }));
+      const addAssigneeByName = new Map<string, AddAssigneeOption>();
+      addAssigneeOptions.forEach((option) => {
+        const normalizedName = normalize(option.display_name);
+        if (!normalizedName || addAssigneeByName.has(normalizedName)) return;
+        addAssigneeByName.set(normalizedName, option);
       });
-      vendors.forEach((vendor) => {
-        if (!vendor.display_name || !vendor.user_id) return;
-        if (existingVendorNamesSet.has(normalize(vendor.display_name))) {
-          existingVendorIdsSet.add(vendor.user_id);
+
+      const existingAssigneeIdsSet = new Set<string>();
+      const existingAssigneeNamesSet = new Set<string>();
+      (existingVisits ?? []).forEach((row) => {
+        if (row.assigned_to_user_id) existingAssigneeIdsSet.add(row.assigned_to_user_id);
+        if (row.assigned_to_name) existingAssigneeNamesSet.add(normalize(row.assigned_to_name));
+      });
+      existingAssigneeNamesSet.forEach((normalizedName) => {
+        const matched = addAssigneeByName.get(normalizedName);
+        if (matched?.user_id) {
+          existingAssigneeIdsSet.add(matched.user_id);
         }
       });
 
       const preferredVendorId = state.vendorId;
       const initialSelection =
-        preferredVendorId && !existingVendorIdsSet.has(preferredVendorId)
+        preferredVendorId && !existingAssigneeIdsSet.has(preferredVendorId)
           ? [preferredVendorId]
           : [];
+      const supervisorUserIdsSet = new Set<string>(
+        (visit.visit_supervisors ?? [])
+          .map((item) => item.supervisor_user_id)
+          .filter((value): value is string => Boolean(value)),
+      );
+      if (visit.assigned_to_user_id && supervisorByUserId.has(visit.assigned_to_user_id)) {
+        supervisorUserIdsSet.add(visit.assigned_to_user_id);
+      }
+      if (role === "SUPERVISOR" && session?.user.id) {
+        supervisorUserIdsSet.add(session.user.id);
+      }
 
       setAddVendorsModal({
         visitId,
         companyId,
         companyName: visit.agenda?.empresa ?? visit.agenda?.nome_fantasia ?? "Sem nome",
         date: state.date,
+        visitType: visit.visit_type ?? VISIT_TYPE.VENDEDOR,
+        supervisorReason: visit.supervisor_reason ?? null,
+        supervisorUserIds: Array.from(supervisorUserIdsSet),
+        allowSupervisorAssignees: isSupervisorVisit,
         perfilVisita: visit.perfil_visita ?? null,
         perfilVisitaOpcoes: visit.perfil_visita_opcoes ?? null,
-        existingVendorIds: Array.from(existingVendorIdsSet),
-        selectedVendorIds: initialSelection,
+        existingAssigneeIds: Array.from(existingAssigneeIdsSet),
+        selectedAssigneeIds: initialSelection,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao carregar vendedores para adicionar.");
+      setError(err instanceof Error ? err.message : "Erro ao carregar responsaveis para adicionar.");
     } finally {
       setAddingVendorId(null);
     }
@@ -1265,10 +1559,10 @@ export default function Visitas() {
 
   const toggleVendorInAddModal = (vendorId: string) => {
     if (!addVendorsModal) return;
-    if (addVendorsModal.existingVendorIds.includes(vendorId)) return;
+    if (addVendorsModal.existingAssigneeIds.includes(vendorId)) return;
     setAddVendorsModal((prev) => {
       if (!prev) return prev;
-      const selectedSet = new Set(prev.selectedVendorIds);
+      const selectedSet = new Set(prev.selectedAssigneeIds);
       if (selectedSet.has(vendorId)) {
         selectedSet.delete(vendorId);
       } else {
@@ -1276,16 +1570,20 @@ export default function Visitas() {
       }
       return {
         ...prev,
-        selectedVendorIds: Array.from(selectedSet),
+        selectedAssigneeIds: Array.from(selectedSet),
       };
     });
   };
 
   const handleSaveAddVendors = async () => {
     if (!addVendorsModal) return;
-    const selectedVendorIds = Array.from(new Set(addVendorsModal.selectedVendorIds));
+    const selectedVendorIds = Array.from(new Set(addVendorsModal.selectedAssigneeIds));
     if (selectedVendorIds.length === 0) {
-      setAddVendorsError("Selecione pelo menos um vendedor.");
+      setAddVendorsError(
+        addVendorsModal.allowSupervisorAssignees
+          ? "Selecione pelo menos um responsavel."
+          : "Selecione pelo menos um vendedor.",
+      );
       return;
     }
 
@@ -1294,13 +1592,17 @@ export default function Visitas() {
     setError(null);
     try {
       let createdCount = 0;
-      const knownExisting = new Set(addVendorsModal.existingVendorIds);
+      const knownExisting = new Set(addVendorsModal.existingAssigneeIds);
+      const isSupervisorRouteVisit = isSupervisorVisitType(addVendorsModal.visitType);
 
       for (const vendorId of selectedVendorIds) {
         if (knownExisting.has(vendorId)) continue;
-        const vendor = vendorById.get(vendorId);
-        if (!vendor) continue;
-        const vendorName = vendor.display_name ?? vendor.user_id ?? "Sem vendedor";
+        const assignee = isSupervisorRouteVisit
+          ? supervisorRouteAssigneeById.get(vendorId)
+          : vendorById.get(vendorId);
+        if (!assignee) continue;
+        const vendorName =
+          assignee.display_name ?? assignee.user_id ?? (isSupervisorRouteVisit ? "Sem responsavel" : "Sem vendedor");
 
         const { data: existingVisit, error: existingVisitError } = await supabase
           .from("visits")
@@ -1316,7 +1618,7 @@ export default function Visitas() {
         }
 
         const routeId = await ensureRoute(vendorId, vendorName, addVendorsModal.date);
-        const { error: insertError } = await supabase.from("visits").insert({
+        const insertPayload: Record<string, unknown> = {
           cliente_id: addVendorsModal.companyId,
           assigned_to_user_id: vendorId,
           assigned_to_name: vendorName,
@@ -1326,8 +1628,39 @@ export default function Visitas() {
           instructions: null,
           route_id: routeId,
           created_by: session?.user.id ?? null,
-        });
+        };
+        if (isSupervisorRouteVisit) {
+          insertPayload.visit_type = VISIT_TYPE.SUPERVISOR_RELACIONAMENTO;
+          insertPayload.supervisor_reason = addVendorsModal.supervisorReason;
+        }
+        const { data: insertedVisit, error: insertError } = await supabase
+          .from("visits")
+          .insert(insertPayload)
+          .select("id")
+          .single();
         if (insertError) throw new Error(insertError.message);
+
+        if (isSupervisorRouteVisit && insertedVisit?.id) {
+          const supervisorIdsForLink = new Set(addVendorsModal.supervisorUserIds);
+          if (supervisorByUserId.has(vendorId)) {
+            supervisorIdsForLink.add(vendorId);
+          }
+          if (role === "SUPERVISOR" && session?.user.id) {
+            supervisorIdsForLink.add(session.user.id);
+          }
+          if (supervisorIdsForLink.size > 0) {
+            const linkRows = Array.from(supervisorIdsForLink).map((supervisorUserId) => ({
+              visit_id: insertedVisit.id as string,
+              supervisor_user_id: supervisorUserId,
+              created_by: session?.user.id ?? null,
+            }));
+            const { error: linksError } = await supabase.from("visit_supervisors").upsert(linkRows, {
+              onConflict: "visit_id,supervisor_user_id",
+              ignoreDuplicates: true,
+            });
+            if (linksError) throw new Error(linksError.message);
+          }
+        }
 
         await ensureRouteStop(routeId, addVendorsModal.companyId);
         knownExisting.add(vendorId);
@@ -1335,9 +1668,13 @@ export default function Visitas() {
       }
 
       if (createdCount === 0) {
-        setAddVendorsError("Todos os vendedores selecionados ja estao vinculados para esta data.");
+        setAddVendorsError(
+          addVendorsModal.allowSupervisorAssignees
+            ? "Todos os responsaveis selecionados ja estao vinculados para esta data."
+            : "Todos os vendedores selecionados ja estao vinculados para esta data.",
+        );
         setAddVendorsModal((prev) =>
-          prev ? { ...prev, existingVendorIds: Array.from(knownExisting) } : prev,
+          prev ? { ...prev, existingAssigneeIds: Array.from(knownExisting) } : prev,
         );
         return;
       }
@@ -1346,7 +1683,7 @@ export default function Visitas() {
       setAddVendorsQuery("");
       setRefreshKey((prev) => prev + 1);
     } catch (err) {
-      setAddVendorsError(err instanceof Error ? err.message : "Erro ao adicionar vendedores.");
+      setAddVendorsError(err instanceof Error ? err.message : "Erro ao adicionar responsaveis.");
     } finally {
       setAddVendorsSaving(false);
     }
@@ -1401,7 +1738,19 @@ export default function Visitas() {
     }
   };
 
-  const openCompleteModal = (item: VisitRow) => {
+  const fetchSupervisorRegister = async (visitId: string) => {
+    const { data, error } = await supabase
+      .from("visit_supervisor_register")
+      .select(
+        "visit_id, quantidade_vidas, quantidade_funcionarios, descricao_visita, pessoa_contato_mesma, pessoa, contato",
+      )
+      .eq("visit_id", visitId)
+      .maybeSingle<VisitSupervisorRegisterRow>();
+    if (error) throw new Error(error.message);
+    return data ?? null;
+  };
+
+  const openCompleteModal = async (item: VisitRow) => {
     const agendaPerfil = item.agenda?.perfil_visita ?? "";
     const visitPerfil = item.perfil_visita ?? "";
     const visitOptionsRaw = item.perfil_visita_opcoes ?? "";
@@ -1420,10 +1769,24 @@ export default function Visitas() {
       : singleTimeBase && singleTimeValue
         ? `${singleTimeBase} ${singleTimeValue}`
         : normalized;
-    setCompleteVisit({
+    const fallbackVisitTime = item.visit_time ?? singleTimeValue ?? "";
+    const isSupervisorVisit = item.visit_type === VISIT_TYPE.SUPERVISOR_RELACIONAMENTO;
+    const isOwnSupervisorVisit = isSupervisorVisitForLoggedUser(item);
+    const baseState = {
       id: item.id,
+      visitType: item.visit_type ?? VISIT_TYPE.VENDEDOR,
+      supervisorReason: item.supervisor_reason ?? null,
       vidas: item.completed_vidas?.toString() ?? "",
       perfil: selectedPerfil,
+      visitTime: fallbackVisitTime,
+      registerLikeVendor: isOwnSupervisorVisit
+        ? false
+        : item.register_mode !== VISIT_REGISTER_MODE.SUPERVISOR_DIFERENCIADO,
+      quantidadeFuncionarios: "",
+      descricaoVisita: "",
+      pessoaContatoMesma: true,
+      pessoa: item.agenda?.pessoa ?? "",
+      contato: item.agenda?.contato ?? "",
       customManual: false,
       customTime: hasCustomOptions ? selectedPerfil : "",
       singleTimeBase: singleTimeBase ?? "",
@@ -1431,10 +1794,44 @@ export default function Visitas() {
       customOptions: hasCustomOptions ? customOptions : [],
       customEditEnabled: false,
       instructions: item.instructions ?? "",
-    });
+    } as const;
+
+    setCompleteVisit(baseState);
+
+    if (!isSupervisorVisit) return;
+
+    try {
+      const register = await fetchSupervisorRegister(item.id);
+      if (!register) return;
+      setCompleteVisit((prev) => {
+        if (!prev || prev.id !== item.id) return prev;
+        return {
+          ...prev,
+          vidas:
+            register.quantidade_vidas !== null && register.quantidade_vidas !== undefined
+              ? String(register.quantidade_vidas)
+              : prev.vidas,
+          registerLikeVendor: false,
+          quantidadeFuncionarios:
+            register.quantidade_funcionarios !== null && register.quantidade_funcionarios !== undefined
+              ? String(register.quantidade_funcionarios)
+              : "",
+          descricaoVisita: (register.descricao_visita ?? "") as SupervisorDescricaoVisita | "",
+          pessoaContatoMesma: register.pessoa_contato_mesma ?? true,
+          pessoa: register.pessoa ?? prev.pessoa,
+          contato: register.contato ?? prev.contato,
+        };
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao carregar registro de supervisor.");
+    }
   };
 
   const handleStartRegister = (item: VisitRow) => {
+    if (item.completed_at && !item.no_visit_reason) {
+      void openCompleteModal(item);
+      return;
+    }
     setConfirmVisit(item);
   };
 
@@ -1948,22 +2345,89 @@ export default function Visitas() {
 
   const handleConfirmVisit = async () => {
     if (!completeVisit) return;
-    const vidasValue = completeVisit.vidas.trim();
-    if (!vidasValue) {
-      setError("Informe a quantidade de vidas.");
+    const isSupervisorVisit = isSupervisorVisitType(completeVisit.visitType);
+    const isDifferentiatedSupervisor = isSupervisorVisit && !completeVisit.registerLikeVendor;
+
+    const parseIntegerValue = (
+      raw: string,
+      options: { required: boolean; fieldLabel: string },
+    ): { value: number | null; error: string | null } => {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        if (!options.required) return { value: null, error: null };
+        return { value: null, error: `Informe ${options.fieldLabel}.` };
+      }
+      if (!/^\d+$/.test(trimmed)) {
+        return { value: null, error: `${options.fieldLabel} deve conter apenas numeros.` };
+      }
+      const parsed = Number(trimmed);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return { value: null, error: `${options.fieldLabel} deve ser um numero inteiro valido.` };
+      }
+      return { value: parsed, error: null };
+    };
+
+    const vidasParsed = parseIntegerValue(completeVisit.vidas, {
+      required: !isDifferentiatedSupervisor,
+      fieldLabel: "a quantidade de vidas",
+    });
+    if (vidasParsed.error) {
+      setError(vidasParsed.error);
       return;
     }
-    if (!/^\d+$/.test(vidasValue)) {
-      setError("Quantidade de vidas deve conter apenas numeros.");
-      return;
-    }
-    const vidas = Number(vidasValue);
-    if (!Number.isInteger(vidas) || vidas < 0) {
-      setError("Quantidade de vidas deve ser um numero inteiro valido.");
-      return;
-    }
+    const vidas = vidasParsed.value;
+
     if (!completeVisit.perfil) {
-      setError("Selecione o horario da visita.");
+      setError("Selecione o perfil da visita.");
+      return;
+    }
+
+    const visitTimeValue = completeVisit.visitTime.trim();
+    if (isDifferentiatedSupervisor && !visitTimeValue) {
+      setError("Informe o horario da visita.");
+      return;
+    }
+
+    let quantidadeFuncionarios: number | null = null;
+    if (isDifferentiatedSupervisor) {
+      const parsedFuncionarios = parseIntegerValue(completeVisit.quantidadeFuncionarios, {
+        required: true,
+        fieldLabel: "a quantidade de funcionarios",
+      });
+      if (parsedFuncionarios.error) {
+        setError(parsedFuncionarios.error);
+        return;
+      }
+      quantidadeFuncionarios = parsedFuncionarios.value;
+    }
+
+    if (
+      isDifferentiatedSupervisor &&
+      quantidadeFuncionarios !== null &&
+      vidas !== null &&
+      quantidadeFuncionarios < vidas
+    ) {
+      setError("Quantidade de funcionarios deve ser maior ou igual a quantidade de vidas.");
+      return;
+    }
+
+    const descricaoVisita = completeVisit.descricaoVisita;
+    if (isDifferentiatedSupervisor && !descricaoVisita) {
+      setError("Selecione a descricao da visita.");
+      return;
+    }
+    if (
+      descricaoVisita &&
+      !SUPERVISOR_DESCRICAO_VISITA_OPTIONS.some((option) => option.value === descricaoVisita)
+    ) {
+      setError("Descricao da visita invalida.");
+      return;
+    }
+
+    const pessoa = completeVisit.pessoa.trim();
+    const contato = completeVisit.contato.trim();
+    if (isDifferentiatedSupervisor && !completeVisit.pessoaContatoMesma && (!pessoa || !contato)) {
+      setError("Preencha os campos Pessoa e Contato para atualizar os dados da empresa.");
       return;
     }
 
@@ -1983,9 +2447,12 @@ export default function Visitas() {
       if (customTime && !normalizedOptions.includes(customTime)) {
         normalizedOptions.push(customTime);
       }
-      const perfilOpcoesString = normalizedOptions.length > 0 ? normalizedOptions.join(" • ") : null;
-
+      const perfilOpcoesString = normalizedOptions.length > 0 ? normalizedOptions.join(" | ") : null;
       const completedAt = new Date().toISOString();
+      const registerMode = isDifferentiatedSupervisor
+        ? VISIT_REGISTER_MODE.SUPERVISOR_DIFERENCIADO
+        : VISIT_REGISTER_MODE.PADRAO;
+
       const { error: updateError } = await supabase
         .from("visits")
         .update({
@@ -1993,13 +2460,55 @@ export default function Visitas() {
           completed_vidas: vidas,
           perfil_visita: completeVisit.perfil,
           perfil_visita_opcoes: perfilOpcoesString,
+          visit_time: visitTimeValue || null,
+          register_mode: registerMode,
+          registered_by_user_id: session?.user.id ?? null,
           no_visit_reason: null,
         })
         .eq("id", completeVisit.id);
 
       if (updateError) throw new Error(updateError.message);
 
+      if (isSupervisorVisit) {
+        if (isDifferentiatedSupervisor) {
+          const { error: registerError } = await supabase
+            .from("visit_supervisor_register")
+            .upsert(
+              {
+                visit_id: completeVisit.id,
+                quantidade_vidas: vidas,
+                quantidade_funcionarios: quantidadeFuncionarios ?? 0,
+                descricao_visita: descricaoVisita,
+                pessoa_contato_mesma: completeVisit.pessoaContatoMesma,
+                pessoa: completeVisit.pessoaContatoMesma ? null : pessoa,
+                contato: completeVisit.pessoaContatoMesma ? null : contato,
+                updated_by_user_id: session?.user.id ?? null,
+                updated_at: completedAt,
+              },
+              { onConflict: "visit_id" },
+            );
+          if (registerError) throw new Error(registerError.message);
+        } else {
+          const { error: deleteRegisterError } = await supabase
+            .from("visit_supervisor_register")
+            .delete()
+            .eq("visit_id", completeVisit.id);
+          if (deleteRegisterError) throw new Error(deleteRegisterError.message);
+        }
+      }
+
       if (visit.cliente_id) {
+        if (isDifferentiatedSupervisor && !completeVisit.pessoaContatoMesma) {
+          const { error: contactUpdateError } = await supabase
+            .from("clientes")
+            .update({
+              pessoa,
+              contato,
+            })
+            .eq("id", visit.cliente_id);
+          if (contactUpdateError) throw new Error(contactUpdateError.message);
+        }
+
         const visitDateKey = visit.visit_date ? formatDateKey(visit.visit_date) : formatDateKey(completedAt);
         const visitDateIso = visit.visit_date
           ? new Date(`${visitDateKey}T12:00:00`).toISOString()
@@ -2101,6 +2610,21 @@ export default function Visitas() {
     });
   };
 
+  const shouldLockSupervisorRegisterMode = useMemo(() => {
+    if (!completeVisit || !isSupervisorVisitType(completeVisit.visitType)) return false;
+    const currentVisit = visits.find((item) => item.id === completeVisit.id);
+    if (!currentVisit) return false;
+    return isSupervisorVisitForLoggedUser(currentVisit);
+  }, [completeVisit, isSupervisorVisitForLoggedUser, visits]);
+
+  useEffect(() => {
+    if (!shouldLockSupervisorRegisterMode) return;
+    setCompleteVisit((prev) => {
+      if (!prev || prev.registerLikeVendor === false) return prev;
+      return { ...prev, registerLikeVendor: false };
+    });
+  }, [shouldLockSupervisorRegisterMode]);
+
   return (
     <div className="space-y-6">
       <header className="space-y-3">
@@ -2108,7 +2632,7 @@ export default function Visitas() {
           <div>
             <h2 className="font-display text-2xl text-ink">Agenda</h2>
             <p className="mt-2 text-sm text-ink/60">
-              Calendario de visitas por vendedor. Clique em um dia para ver as visitas detalhadas.
+              Calendario de visitas de vendedores e supervisores. Clique em um dia para ver os detalhes.
             </p>
           </div>
           {canFilterBySupervisor && (
@@ -2204,6 +2728,7 @@ export default function Visitas() {
                 const key = format(day, "yyyy-MM-dd");
                 const count = visitsByDate.get(key)?.length ?? 0;
                 const hasVisits = count > 0;
+                const hasSupervisorVisitForLoggedUser = supervisorPinDates.has(key);
                 const isSelected = selectedDate ? isSameDay(day, selectedDate) : false;
                 const maxDate = isVendor && maxVisibleDate ? new Date(`${maxVisibleDate}T12:00:00`) : null;
                 const isDisabled = maxDate ? isAfter(day, maxDate) : false;
@@ -2215,7 +2740,7 @@ export default function Visitas() {
                     disabled={isDisabled}
                     title={
                       hasVisits
-                        ? `${count} visita(s) em ${format(day, "dd/MM/yyyy")}`
+                        ? `${count} visita(s) em ${format(day, "dd/MM/yyyy")}${hasSupervisorVisitForLoggedUser ? " â€¢ inclui visita de supervisor" : ""}`
                         : undefined
                     }
                     className={[
@@ -2229,9 +2754,19 @@ export default function Visitas() {
                     ].join(" ")}
                   >
                     {hasVisits ? (
-                      <span className="absolute right-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full border border-orange-300 bg-orange-100 text-orange-600">
+                      <span
+                        className={[
+                          "absolute right-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full border",
+                          hasSupervisorVisitForLoggedUser
+                            ? "border-violet-400 bg-violet-100 text-violet-700"
+                            : "border-orange-300 bg-orange-100 text-orange-600",
+                        ].join(" ")}
+                      >
                         <MapPin size={11} strokeWidth={2.5} />
-                        <span className="sr-only">{count} visita(s) no dia</span>
+                        <span className="sr-only">
+                          {count} visita(s) no dia
+                          {hasSupervisorVisitForLoggedUser ? ", inclui supervisor" : ""}
+                        </span>
                       </span>
                     ) : null}
                     <span className={["text-sm font-semibold", isSelected ? "text-green-700" : "text-ink"].join(" ")}>
@@ -2267,6 +2802,7 @@ export default function Visitas() {
               <div className="mt-4 space-y-4">
                 {groupedBySeller.map(([seller, items]) => {
                   const isExpanded = expandedVendor === seller;
+                  const hasSupervisorGroup = items.some((item) => isSupervisorVisitType(item.visit_type));
                   const completedCompanies = items.filter((item) => Boolean(item.completed_at)).length;
                   const totalCompanies = items.length;
                   const allCompleted = totalCompanies > 0 && completedCompanies === totalCompanies;
@@ -2278,7 +2814,15 @@ export default function Visitas() {
                     ? `Acesso liberado para ${selectedDate ? format(selectedDate, "dd/MM/yyyy") : "a data selecionada"}`
                     : `Acesso bloqueado para ${selectedDate ? format(selectedDate, "dd/MM/yyyy") : "a data selecionada"}`;
                   return (
-                    <div key={seller} className="rounded-2xl border border-sea/20 bg-sand/20 p-3">
+                    <div
+                      key={seller}
+                      className={[
+                        "rounded-2xl border p-3",
+                        hasSupervisorGroup
+                          ? "border-violet-300 bg-violet-50/50 dark:border-violet-500/45 dark:bg-violet-950/35"
+                          : "border-sea/20 bg-sand/20",
+                      ].join(" ")}
+                    >
                       <div className="flex w-full items-center justify-between text-left">
                         <div className="flex items-center gap-2">
                           <button
@@ -2288,6 +2832,11 @@ export default function Visitas() {
                           >
                             {seller}
                           </button>
+                          {hasSupervisorGroup ? (
+                            <span className="inline-flex rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/60 dark:bg-violet-500/20 dark:text-violet-200">
+                              Supervisor
+                            </span>
+                          ) : null}
                           {SHOW_VENDOR_LOCK_ICON && canManage && sellerVendor ? (
                             <button
                               type="button"
@@ -2331,12 +2880,28 @@ export default function Visitas() {
                               vendorId: "",
                               date: toDateInput(item.visit_date),
                             };
+                            const isSupervisorVisit = isSupervisorVisitType(item.visit_type);
                             const isEditing = editingVisits[item.id] ?? false;
                             const isCompleted = Boolean(item.completed_at);
+                            const canLoggedSupervisorRegister =
+                              role === "SUPERVISOR" &&
+                              isSupervisorVisit &&
+                              isSupervisorVisitForLoggedUser(item);
                             const mapAddress = buildMapAddress(item.agenda);
                             const instructionText = item.instructions?.trim() || "";
+                            const supervisorReasonLabel = item.supervisor_reason
+                              ? SUPERVISOR_REASON_LABEL_BY_VALUE.get(item.supervisor_reason) ?? item.supervisor_reason
+                              : null;
                             return (
-                              <div key={item.id} className="rounded-xl border border-sea/10 bg-white/90 p-3">
+                              <div
+                                key={item.id}
+                                className={[
+                                  "rounded-xl border p-3",
+                                  isSupervisorVisit
+                                    ? "border-violet-300 bg-violet-50/70 dark:border-violet-500/45 dark:bg-violet-950/45"
+                                    : "border-sea/10 bg-white/90",
+                                ].join(" ")}
+                              >
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <div>
                                     <div className="flex items-center gap-2">
@@ -2346,11 +2911,31 @@ export default function Visitas() {
                                       <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
                                         COD {item.agenda?.cod_1 ?? "-"}
                                       </span>
+                                      {item.agenda?.situacao ? (
+                                        <span className="inline-flex rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
+                                          {item.agenda.situacao}
+                                        </span>
+                                      ) : null}
+                                      {canManage && item.agenda?.categoria ? (
+                                        <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                                          {item.agenda.categoria}
+                                        </span>
+                                      ) : null}
+                                      {isSupervisorVisit ? (
+                                        <span className="inline-flex rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/60 dark:bg-violet-500/20 dark:text-violet-200">
+                                          Visita supervisor
+                                        </span>
+                                      ) : null}
+                                      {isSupervisorVisit && supervisorReasonLabel ? (
+                                        <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/55 dark:bg-violet-500/15 dark:text-violet-200">
+                                          {supervisorReasonLabel}
+                                        </span>
+                                      ) : null}
                                     </div>
-                                    <p className="text-[11px] text-ink/50">
+                                    <p className="text-[11px] text-ink/70">
                                       Pessoa: {item.agenda?.pessoa ?? "-"}
                                     </p>
-                                    <p className="text-[11px] text-ink/50">
+                                    <p className="text-[11px] text-ink/70">
                                       Contato: {item.agenda?.contato ?? "-"}
                                     </p>
                                   </div>
@@ -2367,11 +2952,6 @@ export default function Visitas() {
                                     >
                                       <Eye size={12} />
                                     </button>
-                                    {item.agenda?.situacao ? (
-                                      <span className="inline-flex rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
-                                        {item.agenda.situacao}
-                                      </span>
-                                    ) : null}
                                     {mapAddress ? (
                                       <button
                                         type="button"
@@ -2410,7 +2990,7 @@ export default function Visitas() {
                                 {canManage && isEditing && !isCompleted ? (
                                   <div className="mt-3 grid gap-2 md:grid-cols-3">
                                     <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
-                                      Vendedor
+                                      {isSupervisorVisit ? "Responsavel" : "Vendedor"}
                                       <select
                                         value={state.vendorId}
                                         onChange={(event) =>
@@ -2422,11 +3002,18 @@ export default function Visitas() {
                                         className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
                                       >
                                         <option value="">Selecione</option>
-                                        {vendors.map((vendor) => (
-                                          <option key={vendor.user_id} value={vendor.user_id}>
-                                            {vendor.display_name ?? vendor.user_id}
-                                          </option>
-                                        ))}
+                                        {isSupervisorVisit
+                                          ? supervisorRouteAssignees.map((assignee) => (
+                                              <option key={assignee.user_id} value={assignee.user_id}>
+                                                {(assignee.display_name ?? assignee.user_id) +
+                                                  (assignee.role === "SUPERVISOR" ? " (Supervisor)" : " (Vendedor)")}
+                                              </option>
+                                            ))
+                                          : vendors.map((vendor) => (
+                                              <option key={vendor.user_id} value={vendor.user_id}>
+                                                {vendor.display_name ?? vendor.user_id}
+                                              </option>
+                                            ))}
                                       </select>
                                     </label>
                                     <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
@@ -2448,46 +3035,81 @@ export default function Visitas() {
                                         type="button"
                                         onClick={() => handleSaveVisit(item.id)}
                                         disabled={savingId === item.id || addingVendorId === item.id}
-                                        className="rounded-lg bg-sea px-3 py-2 text-[11px] font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                                        className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-sea text-white hover:bg-seaLight disabled:opacity-60"
+                                        aria-label="Salvar visita"
+                                        title="Salvar visita"
                                       >
-                                        {savingId === item.id ? "Salvando..." : "Salvar"}
+                                        {savingId === item.id ? (
+                                          <LoaderCircle size={14} className="animate-spin" />
+                                        ) : (
+                                          <CheckCircle2 size={14} />
+                                        )}
                                       </button>
                                       <button
                                         type="button"
                                         onClick={() => handleAddVendorToVisit(item.id)}
                                         disabled={addingVendorId === item.id || savingId === item.id}
-                                        className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-[11px] font-semibold text-sea hover:border-sea hover:bg-sea/5 disabled:opacity-60"
+                                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sea/30 bg-white text-sea hover:border-sea hover:bg-sea/5 disabled:opacity-60"
+                                        aria-label={isSupervisorVisit ? "Adicionar responsavel" : "Adicionar vendedor"}
+                                        title={isSupervisorVisit ? "Adicionar responsavel" : "Adicionar vendedor"}
                                       >
-                                        {addingVendorId === item.id ? "Adicionando..." : "Adicionar vendedor"}
+                                        {addingVendorId === item.id ? (
+                                          <LoaderCircle size={14} className="animate-spin" />
+                                        ) : (
+                                          <Plus size={14} />
+                                        )}
                                       </button>
                                       <button
                                         type="button"
                                         onClick={() => handleRemoveVisit(item.id)}
                                         disabled={removingId === item.id || addingVendorId === item.id}
-                                        className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-600 hover:border-red-300 disabled:opacity-60"
+                                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600 hover:border-red-300 disabled:opacity-60"
+                                        aria-label="Remover visita"
+                                        title="Remover visita"
                                       >
-                                        {removingId === item.id ? "Removendo..." : "Remover"}
+                                        {removingId === item.id ? (
+                                          <LoaderCircle size={14} className="animate-spin" />
+                                        ) : (
+                                          <Trash2 size={14} />
+                                        )}
                                       </button>
                                     </div>
                                   </div>
                                 ) : canManage ? (
-                                  <div className="mt-3 grid gap-1 text-[11px] text-ink/60">
-                                    <span>
-                                      Perfil visita: {item.perfil_visita ?? item.perfil_visita_opcoes ?? item.agenda?.perfil_visita ?? "-"}
-                                    </span>
-                                    {instructionText ? (
-                                      <span>Instrucoes: {instructionText}</span>
-                                    ) : null}
-                                    {isCompleted ? (
-                                      <span className="rounded-lg border border-amber-300 bg-amber-100 px-2 py-1 text-[11px] font-semibold text-red-600">
-                                        Visita registrada. Edicao bloqueada.
+                                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                                    <div className="grid gap-1 text-[11px] text-ink/60">
+                                      <span>
+                                        Perfil visita: {item.perfil_visita ?? item.perfil_visita_opcoes ?? item.agenda?.perfil_visita ?? "-"}
                                       </span>
-                                    ) : null}
-                                    {item.no_visit_reason ? (
-                                      <span>Motivo: {item.no_visit_reason}</span>
-                                    ) : null}
-                                    {isCompleted ? (
-                                      <span>Vidas: {item.completed_vidas ?? "-"}</span>
+                                      {item.visit_time ? <span>Horario visita: {item.visit_time.slice(0, 5)}</span> : null}
+                                      {instructionText ? (
+                                        <span>Instrucoes: {instructionText}</span>
+                                      ) : null}
+                                      {isCompleted ? (
+                                        <span className="rounded-lg border border-amber-300 bg-amber-100 px-2 py-1 text-[11px] font-semibold text-red-600">
+                                          Visita registrada. Edicao bloqueada.
+                                        </span>
+                                      ) : null}
+                                      {item.no_visit_reason ? (
+                                        <span>Motivo: {item.no_visit_reason}</span>
+                                      ) : null}
+                                      {isCompleted ? (
+                                        <span>Vidas: {item.completed_vidas ?? "-"}</span>
+                                      ) : null}
+                                    </div>
+                                    {canLoggedSupervisorRegister ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleStartRegister(item)}
+                                        disabled={Boolean(item.no_visit_reason)}
+                                        className="rounded-lg bg-sea px-3 py-2 text-[11px] font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                                      >
+                                        {isCompleted
+                                          ? item.no_visit_reason
+                                            ? "Visita nao realizada"
+                                            : "Editar registro"
+                                          : "Registrar visita"}
+                                      </button>
                                     ) : null}
                                   </div>
                                 ) : (
@@ -2496,6 +3118,7 @@ export default function Visitas() {
                                       <span>
                                         Perfil visita: {item.perfil_visita ?? item.perfil_visita_opcoes ?? item.agenda?.perfil_visita ?? "-"}
                                       </span>
+                                      {item.visit_time ? <span>Horario visita: {item.visit_time.slice(0, 5)}</span> : null}
                                       {instructionText ? (
                                         <span>Instrucoes: {instructionText}</span>
                                       ) : null}
@@ -2509,13 +3132,13 @@ export default function Visitas() {
                                     <button
                                       type="button"
                                       onClick={() => handleStartRegister(item)}
-                                      disabled={isCompleted}
+                                      disabled={Boolean(item.no_visit_reason)}
                                       className="rounded-lg bg-sea px-3 py-2 text-[11px] font-semibold text-white hover:bg-seaLight disabled:opacity-60"
                                     >
                                       {isCompleted
                                         ? item.no_visit_reason
                                           ? "Visita nao realizada"
-                                          : "Visita registrada"
+                                          : "Editar registro"
                                         : "Registrar visita"}
                                     </button>
                                   </div>
@@ -2556,7 +3179,9 @@ export default function Visitas() {
           <div className="relative w-full max-w-2xl rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="font-display text-lg text-ink">Adicionar vendedores</h3>
+                <h3 className="font-display text-lg text-ink">
+                  {addVendorsModal.allowSupervisorAssignees ? "Adicionar responsaveis" : "Adicionar vendedores"}
+                </h3>
                 <p className="mt-1 text-xs text-ink/60">
                   Empresa: {addVendorsModal.companyName} | Data:{" "}
                   {format(new Date(`${addVendorsModal.date}T12:00:00`), "dd/MM/yyyy")}
@@ -2579,12 +3204,16 @@ export default function Visitas() {
 
             <div className="mt-4">
               <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
-                Buscar vendedor
+                {addVendorsModal.allowSupervisorAssignees ? "Buscar responsavel" : "Buscar vendedor"}
                 <input
                   type="text"
                   value={addVendorsQuery}
                   onChange={(event) => setAddVendorsQuery(event.target.value)}
-                  placeholder="Digite o nome do vendedor"
+                  placeholder={
+                    addVendorsModal.allowSupervisorAssignees
+                      ? "Digite o nome do responsavel"
+                      : "Digite o nome do vendedor"
+                  }
                   className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                 />
               </label>
@@ -2592,19 +3221,25 @@ export default function Visitas() {
 
             <div className="mt-4 max-h-[48vh] overflow-y-auto rounded-2xl border border-sea/15 bg-sand/20 p-3">
               {addVendorsList.length === 0 ? (
-                <p className="text-sm text-ink/60">Nenhum vendedor encontrado.</p>
+                <p className="text-sm text-ink/60">
+                  {addVendorsModal.allowSupervisorAssignees
+                    ? "Nenhum responsavel encontrado."
+                    : "Nenhum vendedor encontrado."}
+                </p>
               ) : (
                 <div className="space-y-2">
                   {addVendorsList.map((vendor) => {
-                    const isAlreadyLinked = addVendorsModal.existingVendorIds.includes(vendor.user_id);
+                    const isAlreadyLinked = addVendorsModal.existingAssigneeIds.includes(vendor.user_id);
                     const isSelected =
-                      isAlreadyLinked || addVendorsModal.selectedVendorIds.includes(vendor.user_id);
+                      isAlreadyLinked || addVendorsModal.selectedAssigneeIds.includes(vendor.user_id);
                     return (
                       <label
                         key={vendor.user_id}
                         className={[
                           "flex items-center justify-between rounded-xl border px-3 py-2",
-                          isAlreadyLinked ? "border-amber-200 bg-amber-50" : "border-sea/20 bg-white",
+                          isAlreadyLinked
+                            ? "border-amber-300 bg-amber-100/90"
+                            : "border-sea/20 bg-white",
                         ].join(" ")}
                       >
                         <span className="flex items-center gap-2">
@@ -2615,12 +3250,20 @@ export default function Visitas() {
                             onChange={() => toggleVendorInAddModal(vendor.user_id)}
                             className="h-4 w-4 accent-sea"
                           />
-                          <span className="text-sm text-ink">
+                          <span
+                            className={[
+                              "text-sm",
+                              isAlreadyLinked ? "font-semibold text-amber-900" : "text-ink",
+                            ].join(" ")}
+                          >
                             {vendor.display_name ?? vendor.user_id}
+                            {addVendorsModal.allowSupervisorAssignees
+                              ? ` ${vendor.role === "SUPERVISOR" ? "(Supervisor)" : "(Vendedor)"}`
+                              : ""}
                           </span>
                         </span>
                         {isAlreadyLinked ? (
-                          <span className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                          <span className="rounded-full border border-amber-500 bg-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
                             Ja vinculado
                           </span>
                         ) : null}
@@ -2639,7 +3282,7 @@ export default function Visitas() {
 
             <div className="mt-4 flex items-center justify-between gap-3">
               <p className="text-xs text-ink/60">
-                Selecionados: {addVendorsModal.selectedVendorIds.length}
+                Selecionados: {addVendorsModal.selectedAssigneeIds.length}
               </p>
               <div className="flex items-center gap-2">
                 <button
@@ -2897,17 +3540,81 @@ export default function Visitas() {
           <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Registrar visita</h3>
             <p className="mt-1 text-xs text-ink/60">
-              Informe a quantidade de vidas e o horario da visita.
+              {isSupervisorVisitType(completeVisit.visitType) && !completeVisit.registerLikeVendor
+                ? "Preencha os dados do registro diferenciado do supervisor."
+                : "Informe a quantidade de vidas, perfil e horario da visita."}
             </p>
+            {isSupervisorVisitType(completeVisit.visitType) ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <span className="inline-flex rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700">
+                  Visita supervisor
+                </span>
+                {completeVisit.supervisorReason ? (
+                  <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">
+                    {SUPERVISOR_REASON_LABEL_BY_VALUE.get(completeVisit.supervisorReason) ??
+                      completeVisit.supervisorReason}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
             {completeVisit.instructions ? (
               <p className="mt-2 rounded-lg border border-sea/20 bg-sand/40 px-3 py-2 text-[11px] text-ink/70">
                 Instrucoes: {completeVisit.instructions}
               </p>
             ) : null}
 
+            {isSupervisorVisitType(completeVisit.visitType) && !shouldLockSupervisorRegisterMode ? (
+              <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50/60 p-3">
+                <p className="text-[11px] font-semibold text-violet-800">Tratar igual vendedor?</p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCompleteVisit((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              registerLikeVendor: true,
+                              quantidadeFuncionarios: "",
+                              descricaoVisita: "",
+                              pessoaContatoMesma: true,
+                            }
+                          : prev,
+                      )
+                    }
+                    className={[
+                      "rounded-lg border px-3 py-1 text-[11px] font-semibold",
+                      completeVisit.registerLikeVendor
+                        ? "border-sea bg-sea/20 text-sea"
+                        : "border-sea/20 bg-white text-ink/70",
+                    ].join(" ")}
+                  >
+                    Sim
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCompleteVisit((prev) =>
+                        prev ? { ...prev, registerLikeVendor: false } : prev,
+                      )
+                    }
+                    className={[
+                      "rounded-lg border px-3 py-1 text-[11px] font-semibold",
+                      !completeVisit.registerLikeVendor
+                        ? "border-violet-400 bg-violet-100 text-violet-700"
+                        : "border-sea/20 bg-white text-ink/70",
+                    ].join(" ")}
+                  >
+                    Nao
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             <div className="mt-4 grid gap-3">
               <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
                 Quantidade de vidas
+                {isSupervisorVisitType(completeVisit.visitType) && !completeVisit.registerLikeVendor ? " (opcional)" : ""}
                 <input
                   type="number"
                   inputMode="numeric"
@@ -2923,8 +3630,116 @@ export default function Visitas() {
                   className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                 />
               </label>
+              {isSupervisorVisitType(completeVisit.visitType) && !completeVisit.registerLikeVendor ? (
+                <>
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                    Quantidade de funcionarios
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      min={0}
+                      step={1}
+                      value={completeVisit.quantidadeFuncionarios}
+                      onChange={(event) =>
+                        setCompleteVisit((prev) =>
+                          prev ? { ...prev, quantidadeFuncionarios: event.target.value } : prev,
+                        )
+                      }
+                      className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                    Descricao da visita
+                    <select
+                      value={completeVisit.descricaoVisita}
+                      onChange={(event) =>
+                        setCompleteVisit((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                descricaoVisita: event.target.value as SupervisorDescricaoVisita | "",
+                              }
+                            : prev,
+                        )
+                      }
+                      className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    >
+                      <option value="">Selecione</option>
+                      {SUPERVISOR_DESCRICAO_VISITA_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                    Pessoa de contato e a mesma?
+                    <select
+                      value={completeVisit.pessoaContatoMesma ? "SIM" : "NAO"}
+                      onChange={(event) =>
+                        setCompleteVisit((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                pessoaContatoMesma: event.target.value === "SIM",
+                              }
+                            : prev,
+                        )
+                      }
+                      className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    >
+                      <option value="SIM">Sim</option>
+                      <option value="NAO">Nao</option>
+                    </select>
+                  </label>
+                  {!completeVisit.pessoaContatoMesma ? (
+                    <>
+                      <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                        Pessoa
+                        <input
+                          type="text"
+                          value={completeVisit.pessoa}
+                          onChange={(event) =>
+                            setCompleteVisit((prev) =>
+                              prev ? { ...prev, pessoa: event.target.value } : prev,
+                            )
+                          }
+                          className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                        Contato
+                        <input
+                          type="text"
+                          value={completeVisit.contato}
+                          onChange={(event) =>
+                            setCompleteVisit((prev) =>
+                              prev ? { ...prev, contato: event.target.value } : prev,
+                            )
+                          }
+                          className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                        />
+                      </label>
+                    </>
+                  ) : null}
+                </>
+              ) : null}
               <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
                 Horario da visita
+                <input
+                  type="time"
+                  value={completeVisit.visitTime}
+                  onChange={(event) =>
+                    setCompleteVisit((prev) =>
+                      prev ? { ...prev, visitTime: event.target.value } : prev,
+                    )
+                  }
+                  className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                Perfil da visita
                 {completeVisit.customOptions.filter((option) => option.trim()).length > 0 ? (
                   <div className="rounded-lg border border-sea/20 bg-sand/40 px-3 py-2 text-[11px] text-ink/70">
                     Perfil visita: Horario customizado
@@ -3175,7 +3990,9 @@ export default function Visitas() {
                 onClick={() => {
                   const visit = confirmVisit;
                   setConfirmVisit(null);
-                  if (visit) openCompleteModal(visit);
+                  if (visit) {
+                    void openCompleteModal(visit);
+                  }
                 }}
                 className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight"
               >
@@ -3237,6 +4054,7 @@ export default function Visitas() {
     </div>
   );
 }
+
 
 
 

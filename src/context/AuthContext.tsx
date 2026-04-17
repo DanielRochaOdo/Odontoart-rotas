@@ -12,6 +12,7 @@ export type Profile = {
   nome?: string | null;
   can_access_pre_cadastro: boolean;
   can_access_next_route_dashboard: boolean;
+  force_reauth_after?: string | null;
   created_at: string;
 };
 
@@ -26,6 +27,62 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+const AUTH_REQUEST_TIMEOUT_MS = 12000;
+const PROFILE_SYNC_INTERVAL_MS = 20_000;
+const PROFILE_SELECT_WITH_FORCE_REAUTH =
+  "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, force_reauth_after, created_at";
+const PROFILE_SELECT_FALLBACK =
+  "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, created_at";
+
+const parseJwtIssuedAtMs = (accessToken?: string | null) => {
+  if (!accessToken) return null;
+  const parts = accessToken.split(".");
+  if (parts.length < 2) return null;
+
+  try {
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const payload = JSON.parse(atob(padded)) as { iat?: unknown };
+    if (typeof payload.iat !== "number") return null;
+    return payload.iat * 1000;
+  } catch {
+    return null;
+  }
+};
+
+const withTimeout = async <T,>(promise: PromiseLike<T>, timeoutMs: number): Promise<T> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise),
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("AUTH_TIMEOUT")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
+
+const toFriendlyAuthError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const normalized = message.toLowerCase();
+  if (normalized.includes("failed to fetch") || normalized.includes("network")) {
+    return "Falha de conexao. Verifique sua internet e tente novamente.";
+  }
+  if (normalized.includes("auth_timeout")) {
+    return "Tempo esgotado ao validar sessao. Tente novamente.";
+  }
+  if (normalized.includes("jwt")) {
+    return "Erro de autenticacao da sessao. Faca login novamente.";
+  }
+  return message || "Erro ao autenticar.";
+};
+
+const isMissingForceReauthColumnError = (error: { message?: string } | null) => {
+  const message = (error?.message ?? "").toLowerCase();
+  return message.includes("force_reauth_after") && message.includes("column");
+};
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -38,35 +95,85 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, created_at")
-      .eq("user_id", activeSession.user.id)
-      .single();
+    try {
+      const primary = await supabase
+        .from("profiles")
+        .select(PROFILE_SELECT_WITH_FORCE_REAUTH)
+        .eq("user_id", activeSession.user.id)
+        .single();
 
-    if (error) {
+      let data = primary.data as Profile | null;
+      let error = primary.error;
+
+      if (error && isMissingForceReauthColumnError(error)) {
+        const fallback = await supabase
+          .from("profiles")
+          .select(PROFILE_SELECT_FALLBACK)
+          .eq("user_id", activeSession.user.id)
+          .single();
+        data = fallback.data
+          ? ({ ...(fallback.data as Omit<Profile, "force_reauth_after">), force_reauth_after: null } as Profile)
+          : null;
+        error = fallback.error;
+      }
+
+      if (error || !data) {
+        setProfile(null);
+        return;
+      }
+
+      const resolvedProfile = data;
+      const forceReauthAt = resolvedProfile.force_reauth_after
+        ? Date.parse(resolvedProfile.force_reauth_after)
+        : Number.NaN;
+      const sessionIssuedAt = parseJwtIssuedAtMs(activeSession.access_token);
+      const shouldForceSignOut = Number.isFinite(forceReauthAt) && (!sessionIssuedAt || sessionIssuedAt < forceReauthAt);
+
+      if (shouldForceSignOut) {
+        await supabase.auth.signOut();
+        setProfile(null);
+        return;
+      }
+
+      setProfile(resolvedProfile);
+    } catch (error) {
+      console.error("Erro ao carregar perfil:", error);
       setProfile(null);
-      return;
     }
-
-    setProfile(data as Profile);
   };
 
   useEffect(() => {
     let isMounted = true;
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (!isMounted) return;
-      setSession(data.session ?? null);
-      fetchProfile(data.session ?? null).finally(() => {
+    const initializeAuth = async () => {
+      try {
+        const { data } = await withTimeout(supabase.auth.getSession(), AUTH_REQUEST_TIMEOUT_MS);
+        if (!isMounted) return;
+        const activeSession = data.session ?? null;
+        setSession(activeSession);
+        await fetchProfile(activeSession);
+      } catch (error) {
+        console.error("Erro ao inicializar autenticacao:", error);
+        if (!isMounted) return;
+        setSession(null);
+        setProfile(null);
+      } finally {
         if (isMounted) setLoading(false);
-      });
-    });
+      }
+    };
+    void initializeAuth();
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_, nextSession) => {
+      if (!isMounted) return;
       setSession(nextSession);
       setLoading(true);
-      fetchProfile(nextSession).finally(() => setLoading(false));
+      void fetchProfile(nextSession)
+        .catch((error) => {
+          console.error("Erro ao atualizar perfil apos evento de auth:", error);
+        })
+        .finally(() => {
+          if (isMounted) setLoading(false);
+        });
     });
 
     return () => {
@@ -75,6 +182,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!session?.access_token) return;
+    const intervalId = window.setInterval(() => {
+      void fetchProfile(session);
+    }, PROFILE_SYNC_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [session?.access_token]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       session,
@@ -82,8 +200,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       role: profile?.role ?? null,
       loading,
       signIn: async (email, password) => {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        return error ? { error: error.message } : {};
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          return { error: "Sem conexao com a internet. Conecte-se e tente novamente." };
+        }
+        try {
+          const { error } = await withTimeout(
+            supabase.auth.signInWithPassword({ email, password }),
+            AUTH_REQUEST_TIMEOUT_MS,
+          );
+          return error ? { error: toFriendlyAuthError(error) } : {};
+        } catch (error) {
+          return { error: toFriendlyAuthError(error) };
+        }
       },
       signOut: async () => {
         await supabase.auth.signOut();

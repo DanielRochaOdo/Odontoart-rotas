@@ -1,6 +1,6 @@
 
 import { useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, Trash } from "lucide-react";
+import { Pencil, Plus, RotateCcw, Trash } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import {
   createManagedUser,
@@ -8,6 +8,7 @@ import {
   deleteProfileOnly,
   fetchManagedProfiles,
   fetchManagedUserEmails,
+  resetManagedUserAccess,
   updateManagedProfile,
   updateManagedUserCredentials,
   type ManagedProfile,
@@ -70,6 +71,7 @@ export default function Settings() {
   const [creatingSupervisor, setCreatingSupervisor] = useState(false);
   const [creatingVendor, setCreatingVendor] = useState(false);
   const [creatingAssistant, setCreatingAssistant] = useState(false);
+  const [resettingUserId, setResettingUserId] = useState<string | null>(null);
 
   const [supervisorForm, setSupervisorForm] = useState<FormState>({
     display_name: "",
@@ -504,6 +506,29 @@ export default function Settings() {
     }
   };
 
+  const handleResetAccess = async (profile: ManagedProfile) => {
+    if (!profile.user_id) {
+      setError("Perfil sem usuario vinculado para reset de acesso.");
+      return;
+    }
+
+    const confirmReset = window.confirm(
+      `Deseja limpar o acesso de ${profile.nome ?? profile.display_name ?? "este usuario"}?\n\nO usuario sera desconectado de todos os dispositivos e precisara entrar novamente.`,
+    );
+    if (!confirmReset) return;
+
+    setResettingUserId(profile.user_id);
+    setError(null);
+    try {
+      await resetManagedUserAccess({ user_id: profile.user_id });
+      window.alert("Acesso limpo com sucesso. Oriente o usuario a tentar login novamente.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao resetar acesso do usuario.");
+    } finally {
+      setResettingUserId(null);
+    }
+  };
+
   if (!isSupervisor) {
     return (
       <div className="rounded-2xl border border-sea/20 bg-white/90 p-6">
@@ -707,6 +732,16 @@ export default function Settings() {
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
+                            onClick={() => handleResetAccess(supervisor)}
+                            disabled={!supervisor.user_id || resettingUserId === supervisor.user_id}
+                            className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700 hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                            title={supervisor.user_id ? "Limpar acesso e forcar novo login" : "Perfil sem usuario vinculado"}
+                          >
+                            <RotateCcw size={12} />
+                            {resettingUserId === supervisor.user_id ? "Limpando" : "Resetar acesso"}
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => handleEditSupervisor(supervisor)}
                             className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink/70 hover:border-sea"
                           >
@@ -900,6 +935,16 @@ export default function Settings() {
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
+                            onClick={() => handleResetAccess(vendor)}
+                            disabled={!vendor.user_id || resettingUserId === vendor.user_id}
+                            className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700 hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                            title={vendor.user_id ? "Limpar acesso e forcar novo login" : "Perfil sem usuario vinculado"}
+                          >
+                            <RotateCcw size={12} />
+                            {resettingUserId === vendor.user_id ? "Limpando" : "Resetar acesso"}
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => handleEditVendor(vendor)}
                             className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink/70 hover:border-sea"
                           >
@@ -1035,6 +1080,16 @@ export default function Settings() {
                       )}
                       {editingAssistantId !== assistant.id && (
                         <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleResetAccess(assistant)}
+                            disabled={!assistant.user_id || resettingUserId === assistant.user_id}
+                            className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700 hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                            title={assistant.user_id ? "Limpar acesso e forcar novo login" : "Perfil sem usuario vinculado"}
+                          >
+                            <RotateCcw size={12} />
+                            {resettingUserId === assistant.user_id ? "Limpando" : "Resetar acesso"}
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleEditAssistant(assistant)}

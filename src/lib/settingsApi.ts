@@ -41,7 +41,7 @@ const parseErrorMessage = (payload: unknown, fallback: string) => {
 const invokeManageUsersViaHttp = async (
   accessToken: string,
   body: {
-    action: "create" | "delete" | "update" | "list-emails";
+    action: "create" | "delete" | "update" | "list-emails" | "reset-access";
     payload: Record<string, unknown>;
   },
 ): Promise<ManageUsersInvokeResult> => {
@@ -86,7 +86,7 @@ const invokeManageUsersViaHttp = async (
 };
 
 const invokeManageUsers = async (body: {
-  action: "create" | "delete" | "update" | "list-emails";
+  action: "create" | "delete" | "update" | "list-emails" | "reset-access";
   payload: Record<string, unknown>;
 }): Promise<ManageUsersInvokeResult> => {
   const {
@@ -94,13 +94,15 @@ const invokeManageUsers = async (body: {
   } = await supabase.auth.getSession();
 
   let session = currentSession;
-  const expiresAtMs = (session?.expires_at ?? 0) * 1000;
-  const shouldRefresh = !session || expiresAtMs - Date.now() < 30_000;
-
-  if (shouldRefresh) {
-    const { data, error } = await supabase.auth.refreshSession();
-    if (!error && data.session) {
-      session = data.session;
+  // For admin-like mutations, always prefer a freshly refreshed access token.
+  const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+  if (!refreshError && refreshedData.session) {
+    session = refreshedData.session;
+  } else {
+    const currentExpiresAtMs = (currentSession?.expires_at ?? 0) * 1000;
+    const isCurrentTokenExpired = !currentSession || currentExpiresAtMs <= Date.now() + 5_000;
+    if (isCurrentTokenExpired) {
+      throw new Error("Sessao expirada. Faca login novamente.");
     }
   }
 
@@ -224,6 +226,16 @@ export const updateManagedUserCredentials = async (payload: {
 }) => {
   const { data, error } = await invokeManageUsers({
     action: "update",
+    payload: payload as unknown as Record<string, unknown>,
+  });
+
+  if (error) throw new Error(error.message);
+  return data ?? { success: true };
+};
+
+export const resetManagedUserAccess = async (payload: { user_id: string }) => {
+  const { data, error } = await invokeManageUsers({
+    action: "reset-access",
     payload: payload as unknown as Record<string, unknown>,
   });
 

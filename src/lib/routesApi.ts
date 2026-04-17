@@ -1,6 +1,7 @@
 import { supabase } from "./supabase";
 import type { Route, RouteStop } from "../types/routes";
 import type { AgendaFilters } from "../types/agenda";
+import { VISIT_TYPE, parseDateKey } from "./supervisorVisits";
 
 export type EmpresaLookupRow = {
   id: string;
@@ -36,7 +37,11 @@ export type EmpresaScheduledVisit = {
   instructions: string | null;
   completed_at: string | null;
   route_id: string | null;
+  visit_type?: string | null;
+  supervisor_reason?: string | null;
 };
+
+export type SupervisorLatestVisitByEmpresa = Record<string, string>;
 
 type EmpresasLookupSearch = {
   companyName?: string;
@@ -71,6 +76,7 @@ const applyLookupFilters = <T,>(query: T, filters?: AgendaFilters, search?: Empr
   };
 
   Object.entries(applied.columns ?? {}).forEach(([key, values]) => {
+    if (key === "supervisor_flag") return;
     if (!Array.isArray(values) || values.length === 0) return;
     const cleaned = values.map((item) => item.trim()).filter(Boolean);
     if (cleaned.length === 0) return;
@@ -279,7 +285,7 @@ export const fetchEmpresaScheduledVisits = async (empresaIds: string[]) => {
     const { data, error } = await supabase
       .from("visits")
       .select(
-        "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, instructions, completed_at, route_id",
+        "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, perfil_visita, instructions, completed_at, route_id, visit_type, supervisor_reason",
       )
       .in("cliente_id", chunk)
       .is("completed_at", null)
@@ -290,6 +296,55 @@ export const fetchEmpresaScheduledVisits = async (empresaIds: string[]) => {
   }
 
   return results;
+};
+
+export const fetchSupervisorLatestVisitByEmpresa = async (
+  empresaIds: string[],
+  supervisorUserId: string,
+): Promise<SupervisorLatestVisitByEmpresa> => {
+  const uniqueEmpresaIds = Array.from(new Set(empresaIds.filter(Boolean)));
+  if (!uniqueEmpresaIds.length || !supervisorUserId) return {};
+
+  const chunkSize = 500;
+  const latestByEmpresa: SupervisorLatestVisitByEmpresa = {};
+
+  for (let index = 0; index < uniqueEmpresaIds.length; index += chunkSize) {
+    const chunk = uniqueEmpresaIds.slice(index, index + chunkSize);
+    const { data, error } = await supabase
+      .from("visits")
+      .select(
+        "cliente_id, visit_date, completed_at, assigned_to_user_id, visit_supervisors(supervisor_user_id)",
+      )
+      .eq("visit_type", VISIT_TYPE.SUPERVISOR_RELACIONAMENTO)
+      .in("cliente_id", chunk)
+      .not("completed_at", "is", null)
+      .order("visit_date", { ascending: false });
+
+    if (error) throw new Error(error.message);
+
+    (data ?? []).forEach((row) => {
+      const clienteId = (row as { cliente_id?: string | null }).cliente_id ?? null;
+      if (!clienteId || latestByEmpresa[clienteId]) return;
+
+      const supervisors = (
+        (row as { visit_supervisors?: Array<{ supervisor_user_id?: string | null }> | null })
+          .visit_supervisors ?? []
+      )
+        .map((item) => item.supervisor_user_id)
+        .filter((value): value is string => Boolean(value));
+
+      const hasSupervisorLink = supervisors.includes(supervisorUserId);
+      const assignedToSupervisor =
+        (row as { assigned_to_user_id?: string | null }).assigned_to_user_id === supervisorUserId;
+      if (!hasSupervisorLink && !assignedToSupervisor) return;
+
+      const visitDate = parseDateKey((row as { visit_date?: string | null }).visit_date);
+      if (!visitDate) return;
+      latestByEmpresa[clienteId] = visitDate;
+    });
+  }
+
+  return latestByEmpresa;
 };
 
 export const fetchProfiles = async () => {

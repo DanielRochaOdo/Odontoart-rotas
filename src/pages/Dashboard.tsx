@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { formatDateBr } from "../lib/dateFormat";
 import { normalizeText } from "../lib/textNormalize";
+import { SUPERVISOR_VISIT_REASON_OPTIONS, VISIT_TYPE } from "../lib/supervisorVisits";
 
 const formatNumber = (value: number) => new Intl.NumberFormat("pt-BR").format(value);
 const startOfWeek = (date: Date) => {
@@ -88,6 +89,29 @@ type NeighborhoodVidasRow = {
 type ScheduledProgress = {
   scheduled: number;
   completed: number;
+};
+
+type SupervisorVisitDashboardRow = {
+  id: string;
+  visit_date: string | null;
+  completed_at: string | null;
+  completed_vidas: number | null;
+  supervisor_reason: string | null;
+  assigned_to_user_id: string | null;
+  assigned_to_name: string | null;
+  register_mode: string | null;
+  visit_supervisors?: Array<{ supervisor_user_id: string | null }> | null;
+  cliente?:
+    | { empresa: string | null; nome_fantasia: string | null }
+    | Array<{ empresa: string | null; nome_fantasia: string | null }>
+    | null;
+};
+
+type SupervisorVisitDashboardSummary = {
+  realizadas: number;
+  pendentes: number;
+  vidas: number;
+  motivos: Array<{ key: string; label: string; count: number }>;
 };
 
 const computeVisitStats = (
@@ -196,9 +220,10 @@ export default function Dashboard() {
   const [teamDailyVidas, setTeamDailyVidas] = useState<DonutSeries[]>([]);
   const [teamVendorsCount, setTeamVendorsCount] = useState(0);
   const [supervisores, setSupervisores] = useState<
-    { id: string; display_name: string | null }[]
+    { id: string; user_id: string | null; display_name: string | null }[]
   >([]);
   const [selectedSupervisorId, setSelectedSupervisorId] = useState<string>("all");
+  const [supervisorVisitFilterUserId, setSupervisorVisitFilterUserId] = useState<string>("all");
   const [vendedores, setVendedores] = useState<
     { user_id: string | null; display_name: string | null }[]
   >([]);
@@ -238,6 +263,15 @@ export default function Dashboard() {
   const [nextRoutePreviewError, setNextRoutePreviewError] = useState<string | null>(null);
   const [showNextRouteModal, setShowNextRouteModal] = useState(false);
   const [topNeighborhoodsByVidas, setTopNeighborhoodsByVidas] = useState<NeighborhoodVidasRow[]>([]);
+  const [supervisorVisitSummary, setSupervisorVisitSummary] = useState<SupervisorVisitDashboardSummary>({
+    realizadas: 0,
+    pendentes: 0,
+    vidas: 0,
+    motivos: [],
+  });
+  const [supervisorVisitRows, setSupervisorVisitRows] = useState<SupervisorVisitDashboardRow[]>([]);
+  const [supervisorVisitLoading, setSupervisorVisitLoading] = useState(false);
+  const [supervisorVisitError, setSupervisorVisitError] = useState<string | null>(null);
 
   const isVendor = role === "VENDEDOR";
   const canSelectSupervisor = role === "SUPERVISOR" || role === "ASSISTENTE";
@@ -255,6 +289,10 @@ export default function Dashboard() {
   const globalFrom = vendorVidasFrom;
   const globalTo = vendorVidasTo;
   const globalPeriodLabel = `${formatDateBr(globalFrom)} a ${formatDateBr(globalTo)}`;
+  const supervisorReasonLabelByValue = useMemo(
+    () => new Map<string, string>(SUPERVISOR_VISIT_REASON_OPTIONS.map((option) => [option.value, option.label])),
+    [],
+  );
 
   useEffect(() => {
     if (!canSelectSupervisor) return;
@@ -262,7 +300,7 @@ export default function Dashboard() {
     const loadSupervisores = async () => {
       const { data, error: supaError } = await supabase
         .from("profiles")
-        .select("id, display_name")
+        .select("id, user_id, display_name")
         .eq("role", "SUPERVISOR")
         .order("display_name", { ascending: true });
 
@@ -281,13 +319,18 @@ export default function Dashboard() {
         if (role === "SUPERVISOR" && profile?.id) return profile.id;
         return "all";
       });
+      setSupervisorVisitFilterUserId((prev) => {
+        if (prev && prev !== "all" && list.some((item) => item.user_id === prev)) return prev;
+        if (role === "SUPERVISOR" && session?.user.id) return session.user.id;
+        return "all";
+      });
     };
 
     loadSupervisores();
     return () => {
       active = false;
     };
-  }, [canSelectSupervisor, profile?.id, role]);
+  }, [canSelectSupervisor, profile?.id, role, session?.user.id]);
 
   useEffect(() => {
     if (!canSelectSupervisor) return;
@@ -388,6 +431,7 @@ export default function Dashboard() {
         let baseQuery = supabase
           .from("visits")
           .select("visit_date, assigned_to_user_id, assigned_to_name, completed_at, no_visit_reason")
+          .eq("visit_type", VISIT_TYPE.VENDEDOR)
           .gte("visit_date", startKey)
           .lte("visit_date", endKey);
 
@@ -516,6 +560,7 @@ export default function Dashboard() {
           .select(
             "assigned_to_user_id, assigned_to_name, completed_vidas, completed_at, no_visit_reason, visit_date, cliente:cliente_id (bairro)",
           )
+          .eq("visit_type", VISIT_TYPE.VENDEDOR)
           .gte("visit_date", globalFrom)
           .lte("visit_date", globalTo)
           .not("completed_at", "is", null)
@@ -649,6 +694,7 @@ export default function Dashboard() {
           .select(
             "visit_date, perfil_visita, completed_at, assigned_to_user_id, assigned_to_name, cliente:cliente_id (empresa, nome_fantasia)",
           )
+          .eq("visit_type", VISIT_TYPE.VENDEDOR)
           .gt("visit_date", todayRouteKey)
           .is("completed_at", null)
           .order("visit_date", { ascending: true })
@@ -779,6 +825,7 @@ export default function Dashboard() {
       let visitsQuery = supabase
         .from("visits")
         .select("cliente_id, completed_at, completed_vidas, no_visit_reason, visit_date")
+        .eq("visit_type", VISIT_TYPE.VENDEDOR)
         .gte("visit_date", globalFrom)
         .lte("visit_date", globalTo);
       let aceiteQuery = supabase
@@ -898,6 +945,7 @@ export default function Dashboard() {
       let visitsQuery = supabase
         .from("visits")
         .select("cliente_id, completed_at, completed_vidas, no_visit_reason, visit_date")
+        .eq("visit_type", VISIT_TYPE.VENDEDOR)
         .gte("visit_date", globalFrom)
         .lte("visit_date", globalTo);
 
@@ -1000,6 +1048,7 @@ export default function Dashboard() {
         let visitsQuery = supabase
           .from("visits")
           .select("assigned_to_user_id, assigned_to_name, completed_vidas, completed_at, no_visit_reason, visit_date")
+          .eq("visit_type", VISIT_TYPE.VENDEDOR)
           .gte("visit_date", vendorVidasFrom)
           .lte("visit_date", vendorVidasTo)
           .not("completed_at", "is", null)
@@ -1179,6 +1228,7 @@ export default function Dashboard() {
           supabase
             .from("visits")
             .select("assigned_to_user_id, assigned_to_name")
+            .eq("visit_type", VISIT_TYPE.VENDEDOR)
             .gte("visit_date", globalFrom)
             .lte("visit_date", globalTo);
 
@@ -1391,6 +1441,101 @@ export default function Dashboard() {
     weekStartKey,
   ]);
 
+  useEffect(() => {
+    if (!canViewTeamStats) return;
+    let active = true;
+
+    const loadSupervisorVisits = async () => {
+      setSupervisorVisitLoading(true);
+      setSupervisorVisitError(null);
+      try {
+        const { data, error: visitsError } = await supabase
+          .from("visits")
+          .select(
+            "id, visit_date, completed_at, completed_vidas, supervisor_reason, assigned_to_user_id, assigned_to_name, register_mode, visit_supervisors(supervisor_user_id), cliente:cliente_id (empresa, nome_fantasia)",
+          )
+          .eq("visit_type", VISIT_TYPE.SUPERVISOR_RELACIONAMENTO)
+          .gte("visit_date", globalFrom)
+          .lte("visit_date", globalTo)
+          .order("visit_date", { ascending: false });
+
+        if (visitsError) throw new Error(visitsError.message);
+        if (!active) return;
+
+        const rows = (data ?? []) as unknown as SupervisorVisitDashboardRow[];
+        const filtered = rows.filter((row) => {
+          if (supervisorVisitFilterUserId === "all") return true;
+          if (row.assigned_to_user_id === supervisorVisitFilterUserId) return true;
+          const linkedSupervisors = (row.visit_supervisors ?? [])
+            .map((item) => item.supervisor_user_id)
+            .filter((value): value is string => Boolean(value));
+          return linkedSupervisors.includes(supervisorVisitFilterUserId);
+        });
+
+        const motivosCount = new Map<string, number>();
+        let realizadas = 0;
+        let pendentes = 0;
+        let vidas = 0;
+
+        filtered.forEach((item) => {
+          if (item.completed_at) {
+            realizadas += 1;
+          } else {
+            pendentes += 1;
+          }
+          const vidasValue = Number(item.completed_vidas ?? 0);
+          if (Number.isFinite(vidasValue)) vidas += vidasValue;
+          const motivoKey = item.supervisor_reason ?? "SEM_MOTIVO";
+          motivosCount.set(motivoKey, (motivosCount.get(motivoKey) ?? 0) + 1);
+        });
+
+        const motivos = Array.from(motivosCount.entries())
+          .map(([key, count]) => ({
+            key,
+            label:
+              key === "SEM_MOTIVO"
+                ? "Sem motivo"
+                : supervisorReasonLabelByValue.get(key) ?? key,
+            count,
+          }))
+          .sort((a, b) => b.count - a.count);
+
+        setSupervisorVisitRows(filtered);
+        setSupervisorVisitSummary({
+          realizadas,
+          pendentes,
+          vidas,
+          motivos,
+        });
+      } catch (err) {
+        if (!active) return;
+        setSupervisorVisitRows([]);
+        setSupervisorVisitSummary({
+          realizadas: 0,
+          pendentes: 0,
+          vidas: 0,
+          motivos: [],
+        });
+        setSupervisorVisitError(
+          err instanceof Error ? err.message : "Erro ao carregar visitas de supervisor.",
+        );
+      } finally {
+        if (active) setSupervisorVisitLoading(false);
+      }
+    };
+
+    void loadSupervisorVisits();
+    return () => {
+      active = false;
+    };
+  }, [
+    canViewTeamStats,
+    globalFrom,
+    globalTo,
+    supervisorReasonLabelByValue,
+    supervisorVisitFilterUserId,
+  ]);
+
   const normalizedVendorNames = useMemo(() => {
     if (!teamVendorNames.length) return new Set<string>();
     return new Set(teamVendorNames.map((name) => normalizeKey(name)));
@@ -1450,6 +1595,10 @@ export default function Dashboard() {
         .map(([label, value]) => ({ label, value }))
         .sort((a, b) => b.value - a.value),
     [summary.byVendor],
+  );
+  const supervisorVisitRowsPreview = useMemo(
+    () => supervisorVisitRows.slice(0, 12),
+    [supervisorVisitRows],
   );
 
   const donutLabel = (value: number) => new Intl.NumberFormat("pt-BR").format(value);
@@ -2119,6 +2268,135 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <p className="mt-3 text-xs text-ink/60">Sem dados de aceite digital.</p>
+              )}
+            </section>
+          )}
+
+          {canViewTeamStats && (
+            <section className="rounded-2xl border border-violet-200 bg-violet-50/40 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-display text-lg text-ink">Visitas de supervisor</h3>
+                  <p className="mt-1 text-xs text-ink/60">
+                    Bloco dedicado a realizadas, pendentes, vidas e motivo das visitas de supervisor.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="flex min-w-[220px] flex-col gap-1 text-xs font-semibold text-ink/70">
+                    Supervisor
+                    <select
+                      value={supervisorVisitFilterUserId}
+                      onChange={(event) => setSupervisorVisitFilterUserId(event.target.value || "all")}
+                      className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs text-ink outline-none focus:border-violet-400"
+                    >
+                      <option value="all">Todos</option>
+                      {supervisores
+                        .filter((supervisor) => Boolean(supervisor.user_id))
+                        .map((supervisor) => (
+                          <option key={supervisor.id} value={supervisor.user_id ?? "all"}>
+                            {supervisor.display_name ?? "Supervisor"}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              {supervisorVisitLoading ? (
+                <p className="mt-4 text-xs text-ink/60">Carregando visitas de supervisor...</p>
+              ) : supervisorVisitError ? (
+                <p className="mt-4 text-xs text-red-500">{supervisorVisitError}</p>
+              ) : (
+                <>
+                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    <div className="rounded-xl border border-violet-200 bg-white px-4 py-3">
+                      <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Realizadas</p>
+                      <p className="mt-2 text-2xl font-semibold text-ink">
+                        {formatNumber(supervisorVisitSummary.realizadas)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-violet-200 bg-white px-4 py-3">
+                      <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Pendentes</p>
+                      <p className="mt-2 text-2xl font-semibold text-ink">
+                        {formatNumber(supervisorVisitSummary.pendentes)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-violet-200 bg-white px-4 py-3">
+                      <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Vidas</p>
+                      <p className="mt-2 text-2xl font-semibold text-ink">
+                        {formatNumber(supervisorVisitSummary.vidas)}
+                      </p>
+                      <p className="text-[11px] text-ink/60">Soma de valores preenchidos (null = 0)</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1.5fr]">
+                    <div className="rounded-xl border border-violet-200 bg-white p-4">
+                      <p className="text-xs font-semibold text-ink/70">Motivos das visitas</p>
+                      <div className="mt-3 space-y-2">
+                        {supervisorVisitSummary.motivos.length === 0 ? (
+                          <p className="text-xs text-ink/60">Sem motivos no periodo.</p>
+                        ) : (
+                          supervisorVisitSummary.motivos.map((item) => (
+                            <div key={item.key} className="flex items-center justify-between text-xs">
+                              <span className="text-ink/80">{item.label}</span>
+                              <span className="font-semibold text-violet-700">{formatNumber(item.count)}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-violet-200 bg-white p-4">
+                      <p className="text-xs font-semibold text-ink/70">Detalhamento das visitas</p>
+                      <div className="mt-3 max-h-[300px] overflow-y-auto rounded-lg border border-violet-100">
+                        {supervisorVisitRowsPreview.length === 0 ? (
+                          <p className="px-3 py-3 text-xs text-ink/60">Sem visitas no periodo selecionado.</p>
+                        ) : (
+                          <div className="divide-y divide-violet-100">
+                            {supervisorVisitRowsPreview.map((item) => {
+                              const cliente = Array.isArray(item.cliente)
+                                ? item.cliente[0] ?? null
+                                : item.cliente;
+                              const empresa = cliente?.empresa ?? cliente?.nome_fantasia ?? "-";
+                              const statusLabel = item.completed_at ? "Realizada" : "Pendente";
+                              const motivoLabel = item.supervisor_reason
+                                ? supervisorReasonLabelByValue.get(item.supervisor_reason) ?? item.supervisor_reason
+                                : "Sem motivo";
+                              return (
+                                <div key={item.id} className="px-3 py-2 text-xs">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <span className="font-semibold text-ink">{empresa}</span>
+                                    <span
+                                      className={[
+                                        "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                                        item.completed_at
+                                          ? "bg-emerald-100 text-emerald-700"
+                                          : "bg-amber-100 text-amber-700",
+                                      ].join(" ")}
+                                    >
+                                      {statusLabel}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1 grid gap-1 text-[11px] text-ink/65">
+                                    <span>Data: {item.visit_date ? formatDateBr(item.visit_date) : "-"}</span>
+                                    <span>Motivo: {motivoLabel}</span>
+                                    <span>Vidas: {formatNumber(Number(item.completed_vidas ?? 0))}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                      {supervisorVisitRows.length > supervisorVisitRowsPreview.length ? (
+                        <p className="mt-2 text-[11px] text-ink/60">
+                          Mostrando {supervisorVisitRowsPreview.length} de {supervisorVisitRows.length} visitas.
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </>
               )}
             </section>
           )}
