@@ -542,31 +542,34 @@ export default function Visitas() {
       const canUnlockNextRouteByTime = now.getHours() >= 19;
       let effectiveEnd = endDate;
       let maxDate = endDate;
+      const assigneeClauses = [
+        session?.user.id ? `assigned_to_user_id.eq.${session.user.id}` : null,
+        profile?.display_name ? `assigned_to_name.eq.${profile.display_name}` : null,
+        session?.user.email ? `assigned_to_name.eq.${session.user.email}` : null,
+      ].filter((value): value is string => Boolean(value));
+      const applyVendorVisitFilter = <TQuery,>(query: TQuery) => {
+        if (assigneeClauses.length > 1) {
+          return (query as TQuery & { or: (filters: string) => TQuery }).or(assigneeClauses.join(","));
+        }
+        if (assigneeClauses.length === 1 && assigneeClauses[0].startsWith("assigned_to_user_id.eq.")) {
+          return (query as TQuery & { eq: (column: string, value: string) => TQuery }).eq(
+            "assigned_to_user_id",
+            assigneeClauses[0].replace("assigned_to_user_id.eq.", ""),
+          );
+        }
+        if (assigneeClauses.length === 1 && assigneeClauses[0].startsWith("assigned_to_name.eq.")) {
+          return (query as TQuery & { eq: (column: string, value: string) => TQuery }).eq(
+            "assigned_to_name",
+            assigneeClauses[0].replace("assigned_to_name.eq.", ""),
+          );
+        }
+        return query;
+      };
 
       if (isVendor) {
         let blockReason: string | null = null;
         const formatRouteDate = (dateKey: string) =>
           format(new Date(`${dateKey}T12:00:00`), "dd/MM/yyyy");
-        const applyVendorVisitFilter = <TQuery,>(query: TQuery) => {
-          if (session?.user.id && profile?.display_name) {
-            return (query as TQuery & { or: (filters: string) => TQuery }).or(
-              `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
-            );
-          }
-          if (session?.user.id) {
-            return (query as TQuery & { eq: (column: string, value: string) => TQuery }).eq(
-              "assigned_to_user_id",
-              session.user.id,
-            );
-          }
-          if (profile?.display_name) {
-            return (query as TQuery & { eq: (column: string, value: string) => TQuery }).eq(
-              "assigned_to_name",
-              profile.display_name,
-            );
-          }
-          return query;
-        };
 
         const fetchVendorRouteDates = async () => {
           let query = supabase
@@ -660,36 +663,48 @@ export default function Visitas() {
                 maxDate = firstRouteDate;
               }
             } else {
-              const lastRouteDate = pastOrTodayDates[pastOrTodayDates.length - 1];
-              const nextRouteDate = routeDates.find((dateKey) => dateKey > lastRouteDate) ?? null;
-              const releaseTarget = nextRouteDate
-                ? `a proxima rota (${formatRouteDate(nextRouteDate)})`
-                : "as proximas rotas";
-              const routeGate = await resolveRouteGate(
-                lastRouteDate,
-                `Conclua todas as visitas da ultima rota (${formatRouteDate(lastRouteDate)}) para liberar ${releaseTarget}.`,
-                `Registre o aceite digital da ultima rota (${formatRouteDate(lastRouteDate)}) para liberar ${releaseTarget}.`,
-              );
+              let blockedRouteDate: string | null = null;
 
-              if (routeGate.blocked) {
-                maxDate = lastRouteDate;
-                blockReason = routeGate.reason;
-              } else if (nextRouteDate) {
-                if (!canUnlockNextRouteByTime) {
-                  maxDate = lastRouteDate;
-                  blockReason = `A proxima rota (${formatRouteDate(nextRouteDate)}) sera liberada a partir das 19:00.`;
-                } else {
-                  maxDate = nextRouteDate;
+              for (const routeDate of pastOrTodayDates) {
+                const nextRouteAfterCurrent = routeDates.find((dateKey) => dateKey > routeDate) ?? null;
+                const releaseTarget = nextRouteAfterCurrent
+                  ? `a proxima rota (${formatRouteDate(nextRouteAfterCurrent)})`
+                  : "as proximas rotas";
+                const routeGate = await resolveRouteGate(
+                  routeDate,
+                  `Conclua todas as visitas da rota (${formatRouteDate(routeDate)}) para liberar ${releaseTarget}.`,
+                  `Registre o aceite digital da rota (${formatRouteDate(routeDate)}) para liberar ${releaseTarget}.`,
+                );
+
+                if (routeGate.blocked) {
+                  blockedRouteDate = routeDate;
+                  blockReason = routeGate.reason;
+                  break;
                 }
+              }
+
+              if (blockedRouteDate) {
+                maxDate = blockedRouteDate;
               } else {
-                maxDate = endDate;
+                const lastRouteDate = pastOrTodayDates[pastOrTodayDates.length - 1];
+                const nextRouteDate = routeDates.find((dateKey) => dateKey > lastRouteDate) ?? null;
+                if (nextRouteDate) {
+                  if (!canUnlockNextRouteByTime) {
+                    maxDate = lastRouteDate;
+                    blockReason = `A proxima rota (${formatRouteDate(nextRouteDate)}) sera liberada a partir das 19:00.`;
+                  } else {
+                    maxDate = nextRouteDate;
+                  }
+                } else {
+                  maxDate = endDate;
+                }
               }
             }
           }
         } catch (gateError) {
           console.error(gateError);
-          maxDate = todayKey;
-          blockReason = "Nao foi possivel validar as pendencias do vendedor.";
+          maxDate = startDate;
+          blockReason = "Nao foi possivel validar as pendencias do vendedor. O acesso a proximas rotas foi bloqueado.";
         }
 
         if (blockReason) {
@@ -726,15 +741,7 @@ export default function Visitas() {
 
       if (isVendor) {
         visitsQuery = visitsQuery.eq("visit_type", VISIT_TYPE.VENDEDOR);
-        if (session?.user.id && profile?.display_name) {
-          visitsQuery = visitsQuery.or(
-            `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
-          );
-        } else if (session?.user.id) {
-          visitsQuery = visitsQuery.eq("assigned_to_user_id", session.user.id);
-        } else if (profile?.display_name) {
-          visitsQuery = visitsQuery.eq("assigned_to_name", profile.display_name);
-        }
+        visitsQuery = applyVendorVisitFilter(visitsQuery);
       }
 
       const { data, error: supaError } = await visitsQuery;
@@ -774,7 +781,13 @@ export default function Visitas() {
           const cliente = Array.isArray(item.cliente) ? item.cliente[0] ?? null : item.cliente ?? null;
           return { ...item, agenda: cliente ? agendaFromCliente(cliente) : null, cliente };
         }) as VisitRow[];
-        setVisits(normalized);
+        const bounded = isVendor
+          ? normalized.filter((item) => {
+              if (!item.visit_date) return false;
+              return formatDateKey(item.visit_date) <= maxDate;
+            })
+          : normalized;
+        setVisits(bounded);
       }
 
       if (!active) return;
@@ -791,7 +804,7 @@ export default function Visitas() {
     return () => {
       active = false;
     };
-  }, [currentMonth, refreshKey, isVendor, profile?.display_name, session?.user.id]);
+  }, [currentMonth, refreshKey, isVendor, profile?.display_name, session?.user.email, session?.user.id]);
 
   const calendarCells = useMemo(() => {
     const firstDayOfMonth = startOfMonth(currentMonth);
@@ -940,11 +953,12 @@ export default function Visitas() {
     filteredVisits.forEach((visit) => {
       if (!visit.visit_date) return;
       const key = formatDateKey(visit.visit_date);
+      if (isVendor && maxVisibleDate && key > maxVisibleDate) return;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(visit);
     });
     return map;
-  }, [filteredVisits]);
+  }, [filteredVisits, isVendor, maxVisibleDate]);
 
   useEffect(() => {
     if (!isVendor || !maxVisibleDate || !selectedDate) return;
