@@ -26,22 +26,22 @@ const getDateKey = (date: Date) => {
   return local.toISOString().slice(0, 10);
 };
 
+const formatDateKey = (value: string) => {
+  const [year, month, day] = value.split("-");
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
+};
+
 export default function AceiteDigital() {
   const { role, session, profile } = useAuth();
   const isVendor = role === "VENDEDOR";
   const canViewSummary = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canAccess = isVendor || canViewSummary;
   const todayKey = useMemo(() => getDateKey(new Date()), []);
-  const yesterdayKey = useMemo(() => {
-    const date = new Date();
-    date.setDate(date.getDate() - 1);
-    return getDateKey(date);
-  }, []);
-
   const [digitalVidas, setDigitalVidas] = useState("");
-  const [digitalAcceptanceToday, setDigitalAcceptanceToday] = useState<DigitalAcceptance | null>(null);
-  const [digitalAcceptanceYesterday, setDigitalAcceptanceYesterday] = useState<DigitalAcceptance | null>(null);
-  const [hasVisitsYesterday, setHasVisitsYesterday] = useState(false);
+  const [requiredAceiteDates, setRequiredAceiteDates] = useState<string[]>([]);
+  const [acceptanceByDate, setAcceptanceByDate] = useState<Record<string, DigitalAcceptance>>({});
+  const [selectedPendingDate, setSelectedPendingDate] = useState("");
   const [digitalLoading, setDigitalLoading] = useState(false);
   const [digitalSaving, setDigitalSaving] = useState(false);
   const [digitalError, setDigitalError] = useState<string | null>(null);
@@ -57,66 +57,64 @@ export default function AceiteDigital() {
       setDigitalLoading(true);
       setDigitalError(null);
       try {
-        const { data, error } = await supabase
-          .from("aceite_digital")
-          .select("id, entry_date, vidas")
-          .eq("vendor_user_id", session.user.id)
-          .in("entry_date", [todayKey, yesterdayKey]);
+        let visitsQuery = supabase
+          .from("visits")
+          .select("visit_date")
+          .not("completed_at", "is", null)
+          .is("no_visit_reason", null)
+          .lte("visit_date", todayKey);
 
-        if (error) throw new Error(error.message);
-
-        const todayRow = (data ?? []).find((item) => item.entry_date === todayKey) ?? null;
-        const yesterdayRow = (data ?? []).find((item) => item.entry_date === yesterdayKey) ?? null;
-
-        setDigitalAcceptanceToday(
-          todayRow
-            ? { id: todayRow.id, entryDate: todayRow.entry_date, vidas: Number(todayRow.vidas ?? 0) }
-            : null,
-        );
-        setDigitalAcceptanceYesterday(
-          yesterdayRow
-            ? { id: yesterdayRow.id, entryDate: yesterdayRow.entry_date, vidas: Number(yesterdayRow.vidas ?? 0) }
-            : null,
-        );
-
-        let hasVisits = false;
-        if (session?.user.id || profile?.display_name) {
-          let visitsQuery = supabase
-            .from("visits")
-            .select("id", { count: "exact", head: true })
-            .eq("visit_date", yesterdayKey)
-            .not("completed_at", "is", null)
-            .is("no_visit_reason", null);
-
-          if (session?.user.id && profile?.display_name) {
-            visitsQuery = visitsQuery.or(
-              `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
-            );
-          } else if (session?.user.id) {
-            visitsQuery = visitsQuery.eq("assigned_to_user_id", session.user.id);
-          } else if (profile?.display_name) {
-            visitsQuery = visitsQuery.eq("assigned_to_name", profile.display_name);
-          }
-
-          const { count, error: visitsError } = await visitsQuery;
-          if (!visitsError && (count ?? 0) > 0) {
-            hasVisits = true;
-          }
+        if (session?.user.id && profile?.display_name) {
+          visitsQuery = visitsQuery.or(
+            `assigned_to_user_id.eq.${session.user.id},assigned_to_name.eq.${profile.display_name}`,
+          );
+        } else if (session?.user.id) {
+          visitsQuery = visitsQuery.eq("assigned_to_user_id", session.user.id);
+        } else if (profile?.display_name) {
+          visitsQuery = visitsQuery.eq("assigned_to_name", profile.display_name);
         }
 
-        setHasVisitsYesterday(hasVisits);
+        const [{ data: visitsData, error: visitsError }, { data: acceptanceData, error: acceptanceError }] =
+          await Promise.all([
+            visitsQuery,
+            supabase
+              .from("aceite_digital")
+              .select("id, entry_date, vidas")
+              .eq("vendor_user_id", session.user.id),
+          ]);
+
+        if (visitsError) throw new Error(visitsError.message);
+        if (acceptanceError) throw new Error(acceptanceError.message);
+
+        const requiredDates = Array.from(
+          new Set((visitsData ?? []).map((item) => item.visit_date).filter(Boolean)),
+        ).sort();
+
+        const nextAcceptanceByDate = (acceptanceData ?? []).reduce<Record<string, DigitalAcceptance>>(
+          (acc, item) => {
+            acc[item.entry_date] = {
+              id: item.id,
+              entryDate: item.entry_date,
+              vidas: Number(item.vidas ?? 0),
+            };
+            return acc;
+          },
+          {},
+        );
+
+        setRequiredAceiteDates(requiredDates);
+        setAcceptanceByDate(nextAcceptanceByDate);
       } catch (err) {
         setDigitalError(err instanceof Error ? err.message : "Erro ao carregar aceite digital.");
-        setDigitalAcceptanceToday(null);
-        setDigitalAcceptanceYesterday(null);
-        setHasVisitsYesterday(false);
+        setRequiredAceiteDates([]);
+        setAcceptanceByDate({});
       } finally {
         setDigitalLoading(false);
       }
     };
 
     loadDigital();
-  }, [isVendor, session?.user.id, profile?.display_name, todayKey, yesterdayKey, digitalRefreshKey]);
+  }, [isVendor, session?.user.id, profile?.display_name, todayKey, digitalRefreshKey]);
 
   useEffect(() => {
     if (!canViewSummary) return;
@@ -148,15 +146,28 @@ export default function AceiteDigital() {
     [summaryRows],
   );
 
-  const shouldRequireYesterday = hasVisitsYesterday;
-  const pendingDate = digitalAcceptanceYesterday || !shouldRequireYesterday ? todayKey : yesterdayKey;
-  const pendingAcceptance =
-    pendingDate === todayKey ? digitalAcceptanceToday : digitalAcceptanceYesterday;
-  const pendingLabel = pendingDate === yesterdayKey ? "Ontem" : "Hoje";
+  const pendingDates = useMemo(
+    () => requiredAceiteDates.filter((dateKey) => !acceptanceByDate[dateKey]),
+    [requiredAceiteDates, acceptanceByDate],
+  );
+
+  const activePendingDate = pendingDates.includes(selectedPendingDate)
+    ? selectedPendingDate
+    : pendingDates[0] ?? "";
 
   useEffect(() => {
     setDigitalVidas("");
-  }, [pendingDate, digitalAcceptanceYesterday, digitalAcceptanceToday]);
+  }, [activePendingDate]);
+
+  useEffect(() => {
+    if (pendingDates.length === 0) {
+      setSelectedPendingDate("");
+      return;
+    }
+    if (!pendingDates.includes(selectedPendingDate)) {
+      setSelectedPendingDate(pendingDates[0]);
+    }
+  }, [pendingDates, selectedPendingDate]);
 
   const handleDigitalSubmit = async (dateKey: string, vidasValue: string) => {
     if (!session?.user.id) {
@@ -176,8 +187,12 @@ export default function AceiteDigital() {
       setDigitalError("Quantidade de vidas deve ser um numero inteiro valido.");
       return;
     }
-    if (dateKey === todayKey && shouldRequireYesterday && !digitalAcceptanceYesterday) {
-      setDigitalError("Registre o aceite digital de ontem para liberar o registro de hoje.");
+    if (!dateKey) {
+      setDigitalError("Selecione uma data pendente para registrar.");
+      return;
+    }
+    if (!pendingDates.includes(dateKey)) {
+      setDigitalError("A data selecionada nao esta pendente.");
       return;
     }
 
@@ -194,7 +209,7 @@ export default function AceiteDigital() {
 
       if (error) {
         if (error.code === "23505") {
-          throw new Error("Aceite digital ja registrado hoje.");
+          throw new Error("Aceite digital ja registrado para esta data.");
         }
         throw new Error(error.message);
       }
@@ -231,7 +246,7 @@ export default function AceiteDigital() {
             <div>
               <h3 className="font-display text-lg text-ink">Registro do vendedor</h3>
               <p className="mt-1 text-xs text-ink/60">
-                Registre a quantidade de vidas. Se ontem estiver pendente, ele sera solicitado primeiro.
+                O aceite digital segue as datas das rotas concluidas. Enquanto houver pendencias, elas ficam disponiveis para registro.
               </p>
             </div>
           </div>
@@ -239,14 +254,16 @@ export default function AceiteDigital() {
           <div className="mt-4 rounded-2xl border border-sea/20 bg-white/90 p-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
-                <h4 className="text-xs font-semibold text-ink/70">{pendingLabel}</h4>
+                <h4 className="text-xs font-semibold text-ink/70">Pendencias de aceite digital</h4>
                 <p className="mt-1 text-[11px] text-ink/60">
-                  Data pendente: {formatDate(pendingDate)}
+                  {pendingDates.length > 0
+                    ? `${pendingDates.length} data(s) pendente(s).`
+                    : "Sem pendencias no momento."}
                 </p>
               </div>
-              {shouldRequireYesterday && !digitalAcceptanceYesterday && (
+              {pendingDates.length > 0 && (
                 <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] text-amber-700">
-                  Pendencia de ontem
+                  Registro obrigatorio
                 </span>
               )}
             </div>
@@ -254,12 +271,19 @@ export default function AceiteDigital() {
             <div className="mt-2 flex flex-wrap items-end gap-3">
               <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
                 Data
-                <input
-                  type="date"
-                  value={pendingDate}
-                  readOnly
-                  className="rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none"
-                />
+                <select
+                  value={activePendingDate}
+                  onChange={(event) => setSelectedPendingDate(event.target.value)}
+                  disabled={digitalLoading || digitalSaving || pendingDates.length === 0}
+                  className="rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea disabled:opacity-60"
+                >
+                  {pendingDates.length === 0 && <option value="">Sem pendencias</option>}
+                  {pendingDates.map((dateKey) => (
+                    <option key={dateKey} value={dateKey}>
+                      {formatDateKey(dateKey)}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
                 Quantidade de vidas
@@ -276,33 +300,28 @@ export default function AceiteDigital() {
                       setDigitalVidas(next);
                     }
                   }}
-                  disabled={digitalLoading || digitalSaving || Boolean(pendingAcceptance)}
+                  disabled={digitalLoading || digitalSaving || pendingDates.length === 0}
                   className="w-36 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea disabled:opacity-60"
                 />
               </label>
               <button
                 type="button"
-                onClick={() => handleDigitalSubmit(pendingDate, digitalVidas.trim())}
+                onClick={() => handleDigitalSubmit(activePendingDate, digitalVidas.trim())}
                 disabled={
                   digitalLoading ||
                   digitalSaving ||
-                  Boolean(pendingAcceptance) ||
+                  pendingDates.length === 0 ||
                   !digitalVidas.trim()
                 }
                 className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
-                {pendingAcceptance ? "Registrado" : digitalSaving ? "Salvando..." : "Registrar"}
+                {digitalSaving ? "Salvando..." : "Registrar"}
               </button>
             </div>
 
-            {pendingAcceptance && (
-              <p className="mt-2 text-[11px] text-ink/60">
-                Registrado: {formatDate(pendingAcceptance.entryDate)} • {pendingAcceptance.vidas} vidas.
-              </p>
-            )}
-            {shouldRequireYesterday && !digitalAcceptanceYesterday && (
+            {pendingDates.length > 0 && (
               <p className="mt-2 text-[11px] text-amber-600">
-                Registre o aceite de ontem para liberar o registro de hoje.
+                Registre todas as datas pendentes para liberar o fluxo normal das rotas.
               </p>
             )}
           </div>
