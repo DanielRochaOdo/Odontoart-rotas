@@ -8,6 +8,7 @@ import {
   deleteProfileOnly,
   fetchManagedProfiles,
   fetchManagedUserEmails,
+  resetAllManagedUsersAccess,
   resetManagedUserAccess,
   updateManagedProfile,
   updateManagedUserCredentials,
@@ -58,7 +59,7 @@ const readSettingsViewState = () => {
 };
 
 export default function Settings() {
-  const { role, session, loading: authLoading } = useAuth();
+  const { role, session, loading: authLoading, signOut } = useAuth();
   const isSupervisor = role === "SUPERVISOR";
 
   const [activeTab, setActiveTab] = useState<TabKey>(() => readSettingsViewState()?.activeTab ?? "SUPERVISORES");
@@ -72,6 +73,7 @@ export default function Settings() {
   const [creatingVendor, setCreatingVendor] = useState(false);
   const [creatingAssistant, setCreatingAssistant] = useState(false);
   const [resettingUserId, setResettingUserId] = useState<string | null>(null);
+  const [resettingAllAccess, setResettingAllAccess] = useState(false);
 
   const [supervisorForm, setSupervisorForm] = useState<FormState>({
     display_name: "",
@@ -529,6 +531,25 @@ export default function Settings() {
     }
   };
 
+  const handleResetAllAccess = async () => {
+    const confirmReset = window.confirm(
+      "Deseja limpar o acesso de TODOS os usuarios?\n\nTodos serao desconectados de todos os dispositivos, incluindo voce.",
+    );
+    if (!confirmReset) return;
+
+    setResettingAllAccess(true);
+    setError(null);
+    try {
+      await resetAllManagedUsersAccess();
+      window.alert("Acesso de todos os usuarios limpo com sucesso. Voce sera desconectado agora.");
+      await signOut();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao resetar acesso global.");
+    } finally {
+      setResettingAllAccess(false);
+    }
+  };
+
   if (!isSupervisor) {
     return (
       <div className="rounded-2xl border border-sea/20 bg-white/90 p-6">
@@ -546,6 +567,28 @@ export default function Settings() {
           Cadastre supervisores, vendedores e assistentes.
         </p>
       </header>
+
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-red-800">Acesso global</p>
+            <p className="text-xs text-red-700">
+              Desconecta todos os usuarios (vendedores, assistentes e supervisores).
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleResetAllAccess}
+            disabled={resettingAllAccess}
+            className={[
+              "rounded-full px-4 py-2 text-xs font-semibold text-white",
+              resettingAllAccess ? "bg-red-300" : "bg-red-600 hover:bg-red-700",
+            ].join(" ")}
+          >
+            {resettingAllAccess ? "Limpando tudo" : "Resetar acesso de todos"}
+          </button>
+        </div>
+      </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">

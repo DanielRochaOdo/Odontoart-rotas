@@ -32,6 +32,8 @@ type ResetAccessPayload = {
   user_id: string;
 };
 
+type ResetAllAccessPayload = Record<string, never>;
+
 type ListEmailsPayload = {
   user_ids: string[];
 };
@@ -96,7 +98,7 @@ serve(async (req) => {
 
   let body: {
     action?: string;
-    payload?: CreatePayload | DeletePayload | UpdatePayload | ResetAccessPayload | ListEmailsPayload;
+    payload?: CreatePayload | DeletePayload | UpdatePayload | ResetAccessPayload | ResetAllAccessPayload | ListEmailsPayload;
   } | null = null;
   try {
     body = await req.json();
@@ -227,6 +229,19 @@ serve(async (req) => {
 
     if (profileUpdateError) {
       return jsonResponse(400, { error: profileUpdateError.message });
+    }
+
+    return jsonResponse(200, {
+      success: true,
+      ...(typeof resetData === "object" && resetData ? (resetData as Record<string, unknown>) : {}),
+    });
+  }
+
+  if (body.action === "reset-all-access") {
+    const { data: resetData, error: resetError } = await supabase.rpc("reset_all_users_access");
+
+    if (resetError) {
+      return jsonResponse(400, { error: resetError.message });
     }
 
     return jsonResponse(200, {
