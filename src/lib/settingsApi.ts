@@ -30,12 +30,31 @@ type ManageUsersInvokeResult = {
   error: { message: string } | null;
 };
 
+const SESSION_EXPIRED_FRIENDLY_MESSAGE = "Sua sessao foi encerrada. Faca login novamente.";
+
 const parseErrorMessage = (payload: unknown, fallback: string) => {
   if (!payload || typeof payload !== "object") return fallback;
   const record = payload as Record<string, unknown>;
   if (typeof record.error === "string" && record.error.trim()) return record.error;
   if (typeof record.message === "string" && record.message.trim()) return record.message;
   return fallback;
+};
+
+const isInvalidRefreshTokenError = (message: string) => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("invalid refresh token") ||
+    normalized.includes("refresh token not found") ||
+    normalized.includes("session not found")
+  );
+};
+
+const forceLocalSignOut = async () => {
+  try {
+    await supabase.auth.signOut({ scope: "local" });
+  } catch {
+    // ignore local sign out errors
+  }
 };
 
 const invokeManageUsersViaHttp = async (
@@ -74,6 +93,12 @@ const invokeManageUsersViaHttp = async (
   }
 
   if (!response.ok) {
+    if (response.status === 401) {
+      return {
+        data: payload,
+        error: { message: SESSION_EXPIRED_FRIENDLY_MESSAGE },
+      };
+    }
     return {
       data: payload,
       error: {
@@ -99,16 +124,31 @@ const invokeManageUsers = async (body: {
   if (!refreshError && refreshedData.session) {
     session = refreshedData.session;
   } else {
+    if (refreshError && isInvalidRefreshTokenError(refreshError.message)) {
+      await forceLocalSignOut();
+      throw new Error(SESSION_EXPIRED_FRIENDLY_MESSAGE);
+    }
     const currentExpiresAtMs = (currentSession?.expires_at ?? 0) * 1000;
     const isCurrentTokenExpired = !currentSession || currentExpiresAtMs <= Date.now() + 5_000;
     if (isCurrentTokenExpired) {
-      throw new Error("Sessao expirada. Faca login novamente.");
+      await forceLocalSignOut();
+      throw new Error(SESSION_EXPIRED_FRIENDLY_MESSAGE);
     }
   }
 
   const accessToken = session?.access_token;
   if (!accessToken) {
-    throw new Error("Sessao expirada. Faca login novamente.");
+    await forceLocalSignOut();
+    throw new Error(SESSION_EXPIRED_FRIENDLY_MESSAGE);
+  }
+
+  const {
+    data: { user: validatedUser },
+    error: validateTokenError,
+  } = await supabase.auth.getUser(accessToken);
+  if (validateTokenError || !validatedUser) {
+    await forceLocalSignOut();
+    throw new Error(SESSION_EXPIRED_FRIENDLY_MESSAGE);
   }
 
   let firstAttempt = await invokeManageUsersViaHttp(accessToken, body);
@@ -122,11 +162,28 @@ const invokeManageUsers = async (body: {
 
   if (shouldRetryWithRefresh) {
     const { data, error } = await supabase.auth.refreshSession();
+    if (error && isInvalidRefreshTokenError(error.message)) {
+      await forceLocalSignOut();
+      throw new Error(SESSION_EXPIRED_FRIENDLY_MESSAGE);
+    }
     if (!error && data.session?.access_token) {
       const retry = await invokeManageUsersViaHttp(data.session.access_token, body);
       if (!retry.error) return retry;
       firstAttempt = retry;
     }
+  }
+
+  if (
+    firstAttempt.error &&
+    (isInvalidRefreshTokenError(firstAttempt.error.message) ||
+      firstAttempt.error.message.toLowerCase().includes("status 401") ||
+      firstAttempt.error.message.toLowerCase().includes("sessao invalida"))
+  ) {
+    await forceLocalSignOut();
+    return {
+      data: firstAttempt.data,
+      error: { message: SESSION_EXPIRED_FRIENDLY_MESSAGE },
+    };
   }
 
   return firstAttempt;
