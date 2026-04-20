@@ -58,6 +58,20 @@ const readSettingsViewState = () => {
   }
 };
 
+const isSessionExpiredError = (message: string) => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("sua sessao foi encerrada") ||
+    normalized.includes("sessao expirada") ||
+    normalized.includes("sessao invalida") ||
+    normalized.includes("unauthorized") ||
+    normalized.includes("status 401") ||
+    normalized.includes("jwt") ||
+    normalized.includes("invalid refresh token") ||
+    normalized.includes("refresh token not found")
+  );
+};
+
 export default function Settings() {
   const { role, session, loading: authLoading, signOut } = useAuth();
   const isSupervisor = role === "SUPERVISOR";
@@ -525,7 +539,12 @@ export default function Settings() {
       await resetManagedUserAccess({ user_id: profile.user_id });
       window.alert("Acesso limpo com sucesso. Oriente o usuario a tentar login novamente.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao resetar acesso do usuario.");
+      const message = err instanceof Error ? err.message : "Erro ao resetar acesso do usuario.";
+      if (isSessionExpiredError(message)) {
+        await signOut();
+        return;
+      }
+      setError(message);
     } finally {
       setResettingUserId(null);
     }
@@ -544,7 +563,12 @@ export default function Settings() {
       window.alert("Acesso de todos os usuarios limpo com sucesso. Voce sera desconectado agora.");
       await signOut();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao resetar acesso global.");
+      const message = err instanceof Error ? err.message : "Erro ao resetar acesso global.";
+      if (isSessionExpiredError(message)) {
+        await signOut();
+        return;
+      }
+      setError(message);
     } finally {
       setResettingAllAccess(false);
     }

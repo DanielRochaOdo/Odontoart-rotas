@@ -87,6 +87,19 @@ const isMissingForceReauthColumnError = (error: { message?: string } | null) => 
   return message.includes("force_reauth_after") && message.includes("column");
 };
 
+const isAuthSessionError = (message: string) => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("jwt") ||
+    normalized.includes("invalid token") ||
+    normalized.includes("refresh token") ||
+    normalized.includes("session not found") ||
+    normalized.includes("session invalida") ||
+    normalized.includes("not authenticated") ||
+    normalized.includes("401")
+  );
+};
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -123,6 +136,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (error || !data) {
+        if (error && isAuthSessionError(error.message ?? "")) {
+          try {
+            await supabase.auth.signOut({ scope: "local" });
+          } catch {
+            // ignore
+          }
+          setSession(null);
+          setProfile(null);
+          setProfileError(null);
+          return;
+        }
         setProfile((current) => (current?.user_id === activeSession.user.id ? current : null));
         setProfileError(PROFILE_LOAD_FRIENDLY_ERROR_MESSAGE);
         return;
@@ -146,6 +170,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setProfileError(null);
     } catch (error) {
       console.error("Erro ao carregar perfil:", error);
+      const message = error instanceof Error ? error.message : String(error ?? "");
+      if (isAuthSessionError(message)) {
+        try {
+          await supabase.auth.signOut({ scope: "local" });
+        } catch {
+          // ignore
+        }
+        setSession(null);
+        setProfile(null);
+        setProfileError(null);
+        return;
+      }
       setProfile((current) => (current?.user_id === activeSession.user.id ? current : null));
       setProfileError(PROFILE_LOAD_FRIENDLY_ERROR_MESSAGE);
     }
