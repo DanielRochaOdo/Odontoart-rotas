@@ -19,6 +19,7 @@ export type Profile = {
 type AuthContextValue = {
   session: Session | null;
   profile: Profile | null;
+  profileError: string | null;
   role: UserRole | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
@@ -33,6 +34,8 @@ const PROFILE_SELECT_WITH_FORCE_REAUTH =
   "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, force_reauth_after, created_at";
 const PROFILE_SELECT_FALLBACK =
   "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, created_at";
+const PROFILE_LOAD_FRIENDLY_ERROR_MESSAGE =
+  "Nao conseguimos carregar seu perfil agora. Voce ainda pode sair da conta normalmente. Tente novamente em instantes; se persistir, fale com a supervisao.";
 
 const parseJwtIssuedAtMs = (accessToken?: string | null) => {
   if (!accessToken) return null;
@@ -87,11 +90,13 @@ const isMissingForceReauthColumnError = (error: { message?: string } | null) => 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = async (activeSession: Session | null) => {
     if (!activeSession) {
       setProfile(null);
+      setProfileError(null);
       return;
     }
 
@@ -118,7 +123,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (error || !data) {
-        setProfile(null);
+        setProfile((current) => (current?.user_id === activeSession.user.id ? current : null));
+        setProfileError(PROFILE_LOAD_FRIENDLY_ERROR_MESSAGE);
         return;
       }
 
@@ -132,13 +138,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (shouldForceSignOut) {
         await supabase.auth.signOut();
         setProfile(null);
+        setProfileError(null);
         return;
       }
 
       setProfile(resolvedProfile);
+      setProfileError(null);
     } catch (error) {
       console.error("Erro ao carregar perfil:", error);
-      setProfile(null);
+      setProfile((current) => (current?.user_id === activeSession.user.id ? current : null));
+      setProfileError(PROFILE_LOAD_FRIENDLY_ERROR_MESSAGE);
     }
   };
 
@@ -157,6 +166,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!isMounted) return;
         setSession(null);
         setProfile(null);
+        setProfileError(null);
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -197,6 +207,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     () => ({
       session,
       profile,
+      profileError,
       role: profile?.role ?? null,
       loading,
       signIn: async (email, password) => {
@@ -214,13 +225,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       },
       signOut: async () => {
-        await supabase.auth.signOut();
+        try {
+          await withTimeout(supabase.auth.signOut(), AUTH_REQUEST_TIMEOUT_MS);
+        } catch (error) {
+          console.error("Erro no signOut global, tentando signOut local:", error);
+          try {
+            await supabase.auth.signOut({ scope: "local" });
+          } catch (localError) {
+            console.error("Erro no signOut local:", localError);
+          }
+        } finally {
+          setSession(null);
+          setProfile(null);
+          setProfileError(null);
+          setLoading(false);
+        }
       },
       refreshProfile: async () => {
         await fetchProfile(session);
       },
     }),
-    [session, profile, loading],
+    [session, profile, profileError, loading],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

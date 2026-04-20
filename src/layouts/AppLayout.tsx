@@ -48,7 +48,7 @@ const navItems: NavItem[] = [
 ];
 
 export default function AppLayout() {
-  const { profile, role, signOut } = useAuth();
+  const { profile, profileError, role, session, signOut } = useAuth();
   useAutoFormDraftPersistence();
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
@@ -99,6 +99,19 @@ export default function AppLayout() {
       .map((part) => part[0]?.toUpperCase())
       .join("");
   }, [profile?.display_name, profile?.nome]);
+  const fallbackDisplayName = useMemo(() => {
+    const metadata = session?.user?.user_metadata as
+      | { nome?: string; display_name?: string; name?: string }
+      | undefined;
+    const fromMetadata = metadata?.nome ?? metadata?.display_name ?? metadata?.name;
+    if (fromMetadata && typeof fromMetadata === "string" && fromMetadata.trim()) {
+      return fromMetadata.trim();
+    }
+    const email = session?.user?.email ?? "";
+    if (!email) return null;
+    return email.split("@")[0] ?? null;
+  }, [session?.user?.email, session?.user?.user_metadata]);
+  const resolvedDisplayName = profile?.nome ?? profile?.display_name ?? fallbackDisplayName ?? "Perfil pendente";
   const visibleNavItems = useMemo(
     () =>
       navItems.filter((item) => {
@@ -286,7 +299,7 @@ export default function AppLayout() {
                     </div>
                     <div className="min-w-0">
                       <p className={["truncate text-base font-semibold", isDarkTheme ? "text-slate-100" : "text-ink"].join(" ")}>
-                        {profile?.nome ?? profile?.display_name ?? "Perfil pendente"}
+                        {resolvedDisplayName}
                       </p>
                       <span
                         className={[
@@ -300,6 +313,18 @@ export default function AppLayout() {
                       </span>
                     </div>
                   </div>
+                  {profileError ? (
+                    <p
+                      className={[
+                        "mb-3 rounded-xl border px-3 py-2 text-xs leading-relaxed",
+                        isDarkTheme
+                          ? "border-amber-300/35 bg-amber-400/10 text-amber-100"
+                          : "border-amber-300 bg-amber-50 text-amber-900",
+                      ].join(" ")}
+                    >
+                      {profileError}
+                    </p>
+                  ) : null}
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
@@ -352,7 +377,7 @@ export default function AppLayout() {
             className="absolute inset-0 bg-ink/30"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <div className="relative h-full w-72 max-w-full bg-white p-5 shadow-2xl">
+          <div className="relative flex h-full w-72 max-w-full flex-col overflow-y-auto bg-white p-5 shadow-2xl">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-sea/15 text-sea">
@@ -375,9 +400,14 @@ export default function AppLayout() {
 
             <div className="mt-5 rounded-2xl border border-sea/20 bg-sand/60 px-4 py-3">
               <p className="text-xs text-ink/70">Colaborador</p>
-              <p className="font-semibold text-ink">{profile?.nome ?? profile?.display_name ?? "Perfil pendente"}</p>
+              <p className="font-semibold text-ink">{resolvedDisplayName}</p>
               <p className="text-xs text-ink/60">{role ? ROLE_LABELS[role] : "Sem função"}</p>
             </div>
+            {profileError ? (
+              <p className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                {profileError}
+              </p>
+            ) : null}
 
             <nav className="mt-6 flex flex-col gap-2">
               {visibleNavItems.map((item) => {
@@ -404,26 +434,28 @@ export default function AppLayout() {
                 })}
             </nav>
 
-            <button
-              type="button"
-              onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
-              className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
-            >
-              {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-              {theme === "dark" ? "Modo claro" : "Modo escuro"}
-            </button>
+            <div className="mt-auto pt-6">
+              <button
+                type="button"
+                onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+              >
+                {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+                {theme === "dark" ? "Modo claro" : "Modo escuro"}
+              </button>
 
-            <button
-              type="button"
-              onClick={async () => {
-                setMobileMenuOpen(false);
-                await signOut();
-              }}
-              className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
-            >
-              <LogOut size={16} />
-              Sair
-            </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setMobileMenuOpen(false);
+                  await signOut();
+                }}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+              >
+                <LogOut size={16} />
+                Sair
+              </button>
+            </div>
           </div>
         </div>
       )}
