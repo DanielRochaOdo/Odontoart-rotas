@@ -41,7 +41,7 @@ const parseErrorMessage = (payload: unknown, fallback: string) => {
 const invokeManageUsersViaHttp = async (
   accessToken: string,
   body: {
-    action: "create" | "delete" | "update" | "list-emails" | "reset-access";
+    action: "create" | "delete" | "update" | "list-emails" | "reset-access" | "reset-all-access";
     payload: Record<string, unknown>;
   },
 ): Promise<ManageUsersInvokeResult> => {
@@ -86,7 +86,7 @@ const invokeManageUsersViaHttp = async (
 };
 
 const invokeManageUsers = async (body: {
-  action: "create" | "delete" | "update" | "list-emails" | "reset-access";
+  action: "create" | "delete" | "update" | "list-emails" | "reset-access" | "reset-all-access";
   payload: Record<string, unknown>;
 }): Promise<ManageUsersInvokeResult> => {
   const {
@@ -237,6 +237,16 @@ export const resetManagedUserAccess = async (payload: { user_id: string }) => {
   const { data, error } = await invokeManageUsers({
     action: "reset-access",
     payload: payload as unknown as Record<string, unknown>,
+  });
+
+  if (error) throw new Error(error.message);
+  return data ?? { success: true };
+};
+
+export const resetAllManagedUsersAccess = async () => {
+  const { data, error } = await invokeManageUsers({
+    action: "reset-all-access",
+    payload: {},
   });
 
   if (error) throw new Error(error.message);
