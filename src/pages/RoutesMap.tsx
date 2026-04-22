@@ -37,6 +37,7 @@ import {
 } from "../lib/agendaApi";
 import { supabase } from "../lib/supabase";
 import { formatDateBr } from "../lib/dateFormat";
+import { fetchRouteEventsByDate, type RouteEventRow } from "../lib/routeEventsApi";
 import {
   clearRoutesModuleDraft,
   readRoutesModuleDraft,
@@ -118,6 +119,9 @@ const getSupervisorFlagOptionValue = (label: string) =>
   (SUPERVISOR_FLAG_FILTER_OPTIONS.find((option) => option.label === label)?.value ??
     null) as SupervisorFlagFilterValue | null;
 
+const formatRouteEventType = (eventType: RouteEventRow["event_type"]) =>
+  eventType === "REUNIAO" ? "REUNIÃO" : "TREINAMENTO";
+
 const normalize = (v: string | null | undefined) =>
   normalizeText(v, { letterCase: "upper" });
 const isInactiveCompanyStatus = (v: string | null | undefined) =>
@@ -183,15 +187,9 @@ type SupervisorEmpresaFlagInfo = {
 
 const getSupervisorFlagColor = (flag: SupervisorEmpresaFlagInfo | undefined) => flag?.color ?? "CINZA";
 
-const getSupervisorFlagLabel = (flag: SupervisorEmpresaFlagInfo | undefined) => {
-  if (!flag?.lastVisitDate) return "SEM HISTORICO";
-  return flag.color;
-};
-
 const getSupervisorFlagTooltip = (flag: SupervisorEmpresaFlagInfo | undefined) => {
-  const label = getSupervisorFlagLabel(flag);
-  if (!flag?.lastVisitDate) return `Flag supervisor: ${label}`;
-  return `Flag supervisor: ${label} (ultima visita ${fmtDate(flag.lastVisitDate)})`;
+  if (!flag?.lastVisitDate) return "Sem historico";
+  return `ultima visita ${fmtDate(flag.lastVisitDate)}`;
 };
 
 type GenerationTab = "VENDEDOR" | "SUPERVISOR";
@@ -432,6 +430,13 @@ export default function RoutesMap() {
 
   const [visitDate, setVisitDate] = useState("");
   const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const [eventWarning, setEventWarning] = useState<{ date: string; events: RouteEventRow[] } | null>(null);
+  const [eventWarningsPreview, setEventWarningsPreview] = useState<RouteEventRow[]>([]);
+  const [eventWarningsLoading, setEventWarningsLoading] = useState(false);
+  const [inactiveWarningChecked, setInactiveWarningChecked] = useState(false);
+  const [eventWarningChecked, setEventWarningChecked] = useState(false);
+  const [inactiveWarningViewed, setInactiveWarningViewed] = useState(false);
+  const [eventWarningViewed, setEventWarningViewed] = useState(false);
 
   const [message, setMessage] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -456,8 +461,46 @@ export default function RoutesMap() {
   }, [canGenerateSupervisorRoutes, generationTab]);
 
   useEffect(() => {
+    if (!showGenerateModal) {
+      setEventWarningsPreview([]);
+      setEventWarningsLoading(false);
+      return;
+    }
+    if (!visitDate) {
+      setEventWarningsPreview([]);
+      return;
+    }
+
+    let active = true;
+    setEventWarningsLoading(true);
+    setEventWarningsPreview([]);
+    void fetchRouteEventsByDate(visitDate)
+      .then((rows) => {
+        if (!active) return;
+        setEventWarningsPreview(rows);
+      })
+      .catch(() => {
+        if (!active) return;
+        setEventWarningsPreview([]);
+      })
+      .finally(() => {
+        if (active) setEventWarningsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [showGenerateModal, visitDate]);
+
+  useEffect(() => {
     setDraftFilters(appliedFilters);
   }, [appliedFilters]);
+
+  useEffect(() => {
+    if (!showGenerateModal) return;
+    setEventWarningChecked(false);
+    setEventWarningViewed(false);
+  }, [showGenerateModal, visitDate]);
 
   useEffect(() => {
     if (restoredDraftRef.current) return;
@@ -695,12 +738,12 @@ export default function RoutesMap() {
       };
     }
 
-    fetchSupervisorLatestVisitByEmpresa(empresaIds, session.user.id)
+    fetchSupervisorLatestVisitByEmpresa(empresaIds, { supervisorUserId: session.user.id })
       .then((latestByEmpresa) => {
         if (!active) return;
         const next: Record<string, SupervisorEmpresaFlagInfo> = {};
         empresaIds.forEach((empresaId) => {
-          const meta = getSupervisorEmpresaFlagMeta(latestByEmpresa[empresaId] ?? null);
+          const meta = getSupervisorEmpresaFlagMeta(latestByEmpresa[empresaId]?.visitDate ?? null);
           next[empresaId] = meta;
         });
         setSupervisorFlagByEmpresa(next);
@@ -840,6 +883,33 @@ export default function RoutesMap() {
       .map((empresaId) => byId.get(empresaId))
       .filter((row): row is EmpresaLookupRow => Boolean(row));
   }, [dedupedEmpresaRows, effectiveSelectedEmpresaIds]);
+  const inactiveCompaniesPreview = useMemo(
+    () =>
+      Array.from(
+        selectedGenerateRows
+          .filter((row) => isInactiveCompanyStatus(row.situacao))
+          .reduce<Map<string, InactiveCompanyWarningItem>>((acc, row) => {
+            acc.set(row.id, {
+              id: row.id,
+              code: row.codigo ?? "-",
+              name: row.empresa ?? row.nome_fantasia ?? "Sem nome",
+              status: row.situacao?.trim() || "Sem situacao",
+            });
+            return acc;
+          }, new Map())
+          .values(),
+      ),
+    [selectedGenerateRows],
+  );
+  const hasInactiveWarning = inactiveCompaniesPreview.length > 0;
+  const hasEventWarning = eventWarningsPreview.length > 0;
+  const shouldShowWarningBlock = hasInactiveWarning || hasEventWarning;
+
+  useEffect(() => {
+    if (!showGenerateModal) return;
+    setInactiveWarningChecked(false);
+    setInactiveWarningViewed(false);
+  }, [showGenerateModal, effectiveSelectedEmpresaIds, selectionMode]);
 
   useEffect(() => {
     if (effectiveSelectedEmpresaIds.length === 0) {
@@ -1124,6 +1194,13 @@ export default function RoutesMap() {
     setRadiusResultIds([]);
   };
 
+  const getSelectedEmpresasForGeneration = () => {
+    const rowsById = new Map(dedupedEmpresaRows.map((row) => [row.id, row]));
+    return effectiveSelectedEmpresaIds
+      .map((id) => rowsById.get(id))
+      .filter((row): row is EmpresaLookupRow => Boolean(row));
+  };
+
   const resetCompanyListHeight = () => {
     setCompanyListHeight(256);
   };
@@ -1149,7 +1226,7 @@ export default function RoutesMap() {
     window.addEventListener("mouseup", stopResize);
   };
 
-  const handleGenerate = async () => {
+  const executeGenerate = async () => {
     const selVendors = vendedores.filter((v) => selectedVendorIds.includes(v.user_id));
     const selSupervisores = supervisores.filter((s) => selectedSupervisorIds.includes(s.user_id));
     if (generationTab === "VENDEDOR" && selVendors.length === 0) {
@@ -1166,28 +1243,11 @@ export default function RoutesMap() {
     setInactiveCompaniesWarning(null);
 
     try {
-      const rowsById = new Map(dedupedEmpresaRows.map((row) => [row.id, row]));
-      const selectedEmpresas = effectiveSelectedEmpresaIds
-        .map((id) => rowsById.get(id))
-        .filter((row): row is EmpresaLookupRow => Boolean(row));
+      const selectedEmpresas = getSelectedEmpresasForGeneration();
 
       if (selectedEmpresas.length === 0) {
         return setMessage("Nenhum registro encontrado para gerar visitas.");
       }
-      const inactiveCompanies = Array.from(
-        selectedEmpresas
-          .filter((row) => isInactiveCompanyStatus(row.situacao))
-          .reduce<Map<string, InactiveCompanyWarningItem>>((acc, row) => {
-            acc.set(row.id, {
-              id: row.id,
-              code: row.codigo ?? "-",
-              name: row.empresa ?? row.nome_fantasia ?? "Sem nome",
-              status: row.situacao?.trim() || "Sem situacao",
-            });
-            return acc;
-          }, new Map())
-          .values(),
-      );
 
       const chunkSize = 500;
       const empresaIds = selectedEmpresas.map((row) => row.id);
@@ -1403,9 +1463,6 @@ export default function RoutesMap() {
       setRadiusResultIds([]);
       setRadiusCenter(null);
       setRadiusMode(false);
-      if (inactiveCompanies.length > 0) {
-        setInactiveCompaniesWarning(inactiveCompanies);
-      }
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Erro ao gerar visitas.");
     } finally {
@@ -1995,16 +2052,23 @@ export default function RoutesMap() {
 
               {rowsToRender.map((r) => {
                 const sel = effectiveSelSet.has(r.id);
-                const markerColor = r.isApproximatePoint ? "#f59e0b" : "#0f766e";
-                const markerBorderColor = r.isApproximatePoint ? "#b45309" : "#0b5b4f";
+                const hasSupervisorAssigned = Boolean(compact(r.supervisor));
+                const markerColor = hasSupervisorAssigned ? "#9333ea" : r.isApproximatePoint ? "#f59e0b" : "#0f766e";
+                const markerBorderColor = hasSupervisorAssigned
+                  ? "#6b21a8"
+                  : r.isApproximatePoint
+                    ? "#b45309"
+                    : "#0b5b4f";
+                const selectedFillColor = hasSupervisorAssigned ? "#a855f7" : "#14b8a6";
+                const selectedBorderColor = hasSupervisorAssigned ? "#6b21a8" : "#0f766e";
                 return (
                   <CircleMarker
                     key={r.id}
                     center={[r.latitude, r.longitude]}
                     radius={sel ? 8 : 6}
                     pathOptions={{
-                      color: sel ? "#0f766e" : markerBorderColor,
-                      fillColor: sel ? "#14b8a6" : markerColor,
+                      color: sel ? selectedBorderColor : markerBorderColor,
+                      fillColor: sel ? selectedFillColor : markerColor,
                       fillOpacity: sel ? 0.6 : 0.45,
                       weight: sel ? 2.2 : 1.4,
                     }}
@@ -2306,7 +2370,7 @@ export default function RoutesMap() {
             className="absolute inset-0 bg-ink/30"
             onClick={() => (generating ? null : setShowGenerateModal(false))}
           />
-          <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+          <div className="relative w-[min(94vw,1100px)] max-h-[88vh] overflow-y-auto rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Gerar visitas</h3>
             <p className="mt-1 text-xs text-ink/60">
               Selecione o tipo de geracao, a data e as empresas marcadas no mapa para gerar as visitas.
@@ -2445,15 +2509,93 @@ export default function RoutesMap() {
                 </div>
               )}
 
-              <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                Data da visita
-                <input
-                  type="date"
-                  value={visitDate}
-                  onChange={(e) => setVisitDate(e.target.value)}
-                  className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                />
-              </label>
+              <div className="flex flex-col gap-3">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Data da visita
+                  <input
+                    type="date"
+                    value={visitDate}
+                    onChange={(e) => setVisitDate(e.target.value)}
+                    className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                  />
+                </label>
+
+                {shouldShowWarningBlock && (
+                  <div className="rounded-xl border border-sea/20 bg-sand/30 p-3">
+                    <p className="text-xs font-semibold text-ink/80">Avisos obrigatorios para confirmar</p>
+                    <p className="mt-1 text-[11px] text-ink/60">
+                      Para marcar o checkbox, clique primeiro em Ver detalhes de cada aviso.
+                    </p>
+
+                    <div className="mt-3 space-y-2">
+                      {hasInactiveWarning && (
+                        <div className="flex items-start justify-between gap-2 rounded-lg border border-sea/20 bg-white/90 px-2 py-2">
+                          <label className="flex cursor-pointer items-start gap-2 text-xs text-ink">
+                            <input
+                              type="checkbox"
+                              checked={inactiveWarningChecked}
+                              onChange={(event) => setInactiveWarningChecked(event.target.checked)}
+                              disabled={!inactiveWarningViewed}
+                              className="mt-0.5 h-4 w-4 accent-sea disabled:opacity-50"
+                            />
+                            <span>
+                              <span className="block">{`Li o aviso de empresa inativa (${inactiveCompaniesPreview.length} empresa(s)).`}</span>
+                              {!inactiveWarningViewed && (
+                                <span className="mt-0.5 block text-[10px] font-semibold text-sea">
+                                  Clique em Ver detalhes para habilitar o checkbox.
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setInactiveWarningViewed(true);
+                              setInactiveCompaniesWarning(inactiveCompaniesPreview);
+                            }}
+                            className="rounded-lg border border-sea/30 bg-white/90 px-2 py-1 text-[11px] font-semibold text-ink/80 hover:border-sea"
+                          >
+                            Ver detalhes
+                          </button>
+                        </div>
+                      )}
+
+                      {hasEventWarning && (
+                        <div className="flex items-start justify-between gap-2 rounded-lg border border-sea/20 bg-white/90 px-2 py-2">
+                          <label className="flex cursor-pointer items-start gap-2 text-xs text-ink">
+                            <input
+                              type="checkbox"
+                              checked={eventWarningChecked}
+                              onChange={(event) => setEventWarningChecked(event.target.checked)}
+                              disabled={eventWarningsLoading || !eventWarningViewed}
+                              className="mt-0.5 h-4 w-4 accent-sea disabled:opacity-50"
+                            />
+                            <span>
+                              <span className="block">{`Li o aviso de evento para a data (${eventWarningsPreview.length} evento(s)).`}</span>
+                              {!eventWarningViewed && (
+                                <span className="mt-0.5 block text-[10px] font-semibold text-sea">
+                                  Clique em Ver detalhes para habilitar o checkbox.
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEventWarningViewed(true);
+                              setEventWarning({ date: visitDate, events: eventWarningsPreview });
+                            }}
+                            disabled={eventWarningsLoading}
+                            className="rounded-lg border border-sea/30 bg-white/90 px-2 py-1 text-[11px] font-semibold text-ink/80 hover:border-sea disabled:opacity-50"
+                          >
+                            Ver detalhes
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {generationTab === "SUPERVISOR" && (
@@ -2508,17 +2650,67 @@ export default function RoutesMap() {
 
               <button
                 type="button"
-                onClick={handleGenerate}
+                onClick={() => {
+                  void executeGenerate();
+                }}
                 disabled={
                   (generationTab === "VENDEDOR" && selectedVendorIds.length === 0) ||
                   (generationTab === "SUPERVISOR" && selectedSupervisorIds.length === 0) ||
                   effectiveSelectedEmpresaIds.length === 0 ||
                   !visitDate ||
+                  eventWarningsLoading ||
+                  (hasInactiveWarning && !inactiveWarningChecked) ||
+                  (hasEventWarning && !eventWarningChecked) ||
                   generating
                 }
                 className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
                 {generating ? "Gerando..." : `Confirmar (${effectiveSelectedEmpresaIds.length})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {eventWarning && (
+        <div className="fixed inset-0 z-[3300] flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => {
+              if (generating) return;
+              setEventWarning(null);
+            }}
+            aria-label="Fechar aviso de evento"
+          />
+          <div className="relative w-full max-w-xl rounded-3xl border border-amber-300 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Aviso de evento na data selecionada</h3>
+            <p className="mt-1 text-xs text-ink/70">
+              Ha evento(s) cadastrado(s) para {formatDateBr(eventWarning.date)}. A geracao da rota pode continuar apos a confirmacao.
+            </p>
+
+            <div className="mt-4 max-h-64 space-y-2 overflow-auto rounded-xl border border-amber-200 bg-amber-50/70 p-2">
+              {eventWarning.events.map((eventRow) => (
+                <div key={eventRow.id} className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-ink">
+                  <p className="font-semibold">
+                    {formatRouteEventType(eventRow.event_type)}
+                    {eventRow.event_time ? ` - ${eventRow.event_time.slice(0, 5)}` : ""}
+                  </p>
+                  {eventRow.notes ? <p className="mt-1 text-[11px] text-ink/70">{eventRow.notes}</p> : null}
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (generating) return;
+                  setEventWarning(null);
+                }}
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea"
+              >
+                Fechar
               </button>
             </div>
           </div>
@@ -2536,7 +2728,7 @@ export default function RoutesMap() {
           <div className="relative w-full max-w-xl rounded-3xl border border-amber-300 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Aviso de empresa inativa</h3>
             <p className="mt-1 text-xs text-ink/70">
-              A(s) empresa(s) abaixo nao esta ativa e entrou(aram) na geracao da rota.
+              A(s) empresa(s) abaixo nao esta ativa.
             </p>
 
             <div className="mt-4 max-h-64 space-y-2 overflow-auto rounded-xl border border-amber-200 bg-amber-50/70 p-2">
@@ -2553,13 +2745,13 @@ export default function RoutesMap() {
               ))}
             </div>
 
-            <div className="mt-4 flex justify-end">
+            <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setInactiveCompaniesWarning(null)}
-                className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight"
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea"
               >
-                Entendi
+                Fechar
               </button>
             </div>
           </div>

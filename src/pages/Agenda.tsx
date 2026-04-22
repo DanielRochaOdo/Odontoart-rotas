@@ -65,6 +65,7 @@ import {
   VISIT_TYPE,
   type SupervisorVisitReason,
 } from "../lib/supervisorVisits";
+import { fetchRouteEventsByDate, type RouteEventRow } from "../lib/routeEventsApi";
 
 const FILTER_SOURCES: Record<string, string[]> = {
   supervisor: ["supervisor"],
@@ -202,6 +203,9 @@ const formatMonthKey = (value: string | null | undefined) => {
   );
 };
 
+const formatRouteEventType = (eventType: RouteEventRow["event_type"]) =>
+  eventType === "REUNIAO" ? "REUNIAO" : "TREINAMENTO";
+
 const normalizeNumberInput = (value: string) => value.replace(/\D/g, "");
 
 const toSortableTimestamp = (value: string | null | undefined) => {
@@ -210,6 +214,9 @@ const toSortableTimestamp = (value: string | null | undefined) => {
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.getTime();
 };
+
+const isVendorVisitTypeValue = (visitType?: string | null) =>
+  (visitType ?? VISIT_TYPE.VENDEDOR) === VISIT_TYPE.VENDEDOR;
 
 const compareNullableTimestamps = (
   left: number | null,
@@ -313,7 +320,11 @@ type InactiveCompanyWarningItem = {
 };
 
 type GenerationTab = "VENDEDOR" | "SUPERVISOR";
-type SupervisorEmpresaFlagInfo = ReturnType<typeof getSupervisorEmpresaFlagMeta>;
+type SupervisorEmpresaFlagInfo = ReturnType<typeof getSupervisorEmpresaFlagMeta> & {
+  supervisorName: string | null;
+  completedVidas: number | null;
+  supervisorReason: string | null;
+};
 
 const hasPlanoValores = (planos: OdontoartPlanoValor[]) =>
   planos.some((plano) => plano.valorTitular !== null || plano.valorDependente !== null);
@@ -324,6 +335,30 @@ const normalizeFilterMatchValue = (value: string | null | undefined) =>
 const isInactiveCompanyStatus = (value: string | null | undefined) =>
   Boolean(normalizeText(value, { letterCase: "upper" })) &&
   normalizeText(value, { letterCase: "upper" }) !== "ATIVO";
+
+const mapInactiveCompanies = (
+  rows: Array<{
+    id: string;
+    cod_1: string | null;
+    empresa: string | null;
+    nome_fantasia: string | null;
+    situacao: string | null;
+  }>,
+) =>
+  Array.from(
+    rows
+      .filter((row) => isInactiveCompanyStatus(row.situacao))
+      .reduce<Map<string, InactiveCompanyWarningItem>>((acc, row) => {
+        acc.set(row.id, {
+          id: row.id,
+          code: row.cod_1 ?? "-",
+          name: row.empresa ?? row.nome_fantasia ?? "Sem nome",
+          status: row.situacao?.trim() || "Sem situacao",
+        });
+        return acc;
+      }, new Map())
+      .values(),
+  );
 
 const getCategoriaBadgeStyles = (value: string | null | undefined) => {
   const normalized = normalizeText(value, { letterCase: "upper" });
@@ -384,15 +419,20 @@ const getSupervisorFlagDotStyles = (color: "CINZA" | "VERDE" | "AMARELO" | "VERM
   return "border-slate-300 bg-slate-400";
 };
 
-const getSupervisorFlagLabel = (flag: SupervisorEmpresaFlagInfo | undefined) => {
-  if (!flag?.lastVisitDate) return "SEM HISTORICO";
-  return flag.color;
-};
-
 const getSupervisorFlagTooltip = (flag: SupervisorEmpresaFlagInfo | undefined) => {
-  const label = getSupervisorFlagLabel(flag);
-  if (!flag?.lastVisitDate) return `Flag supervisor: ${label}`;
-  return `Flag supervisor: ${label} (ultima visita ${formatDate(flag.lastVisitDate)})`;
+  if (!flag?.lastVisitDate) return "Sem historico";
+  const reasonLabel =
+    SUPERVISOR_VISIT_REASON_OPTIONS.find((option) => option.value === flag.supervisorReason)?.label ??
+    flag.supervisorReason ??
+    "-";
+  const supervisorLabel = flag.supervisorName?.trim() || "-";
+  const vidasLabel = flag.completedVidas ?? "-";
+  return [
+    `ultima visita ${formatDate(flag.lastVisitDate)}`,
+    `supervisor ${supervisorLabel}`,
+    `vidas ${vidasLabel}`,
+    `motivo ${reasonLabel}`,
+  ].join(" | ");
 };
 
 const getAgendaFilterValueFromRow = (row: AgendaRow, filterKey: string) => {
@@ -546,7 +586,19 @@ export default function Agenda() {
   const [visitDate, setVisitDate] = useState("");
   const [generating, setGenerating] = useState(false);
   const [generateMessage, setGenerateMessage] = useState<string | null>(null);
+  const [eventWarning, setEventWarning] = useState<{ date: string; events: RouteEventRow[] } | null>(null);
+  const [eventWarningsPreview, setEventWarningsPreview] = useState<RouteEventRow[]>([]);
+  const [eventWarningsLoading, setEventWarningsLoading] = useState(false);
+  const [inactiveCompaniesPreview, setInactiveCompaniesPreview] = useState<InactiveCompanyWarningItem[]>([]);
+  const [inactiveWarningsLoading, setInactiveWarningsLoading] = useState(false);
+  const [inactiveWarningChecked, setInactiveWarningChecked] = useState(false);
+  const [eventWarningChecked, setEventWarningChecked] = useState(false);
+  const [inactiveWarningViewed, setInactiveWarningViewed] = useState(false);
+  const [eventWarningViewed, setEventWarningViewed] = useState(false);
   const [inactiveCompaniesWarning, setInactiveCompaniesWarning] = useState<InactiveCompanyWarningItem[] | null>(null);
+  const hasInactiveWarning = inactiveCompaniesPreview.length > 0;
+  const hasEventWarning = eventWarningsPreview.length > 0;
+  const shouldShowWarningBlock = hasInactiveWarning || hasEventWarning;
   const [refreshKey, setRefreshKey] = useState(0);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [detailsModalRow, setDetailsModalRow] = useState<AgendaRow | null>(null);
@@ -606,6 +658,82 @@ export default function Agenda() {
       // ignore
     }
   }, [pageIndex, pageSize, selectedRowId, sorting]);
+
+  useEffect(() => {
+    if (!showGenerateModal) {
+      setEventWarningsPreview([]);
+      setEventWarningsLoading(false);
+      return;
+    }
+    if (!visitDate) {
+      setEventWarningsPreview([]);
+      return;
+    }
+
+    let active = true;
+    setEventWarningsLoading(true);
+    setEventWarningsPreview([]);
+    void fetchRouteEventsByDate(visitDate)
+      .then((rows) => {
+        if (!active) return;
+        setEventWarningsPreview(rows);
+      })
+      .catch(() => {
+        if (!active) return;
+        setEventWarningsPreview([]);
+      })
+      .finally(() => {
+        if (active) setEventWarningsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [showGenerateModal, visitDate]);
+
+  useEffect(() => {
+    if (!showGenerateModal) {
+      setInactiveCompaniesPreview([]);
+      setInactiveWarningsLoading(false);
+      return;
+    }
+    if (selectedAgendaIds.length === 0) {
+      setInactiveCompaniesPreview([]);
+      return;
+    }
+
+    let active = true;
+    setInactiveWarningsLoading(true);
+    setInactiveCompaniesPreview([]);
+    void fetchAgendaForGeneration(appliedFilters, selectedAgendaIds)
+      .then((rows) => {
+        if (!active) return;
+        setInactiveCompaniesPreview(mapInactiveCompanies(rows));
+      })
+      .catch(() => {
+        if (!active) return;
+        setInactiveCompaniesPreview([]);
+      })
+      .finally(() => {
+        if (active) setInactiveWarningsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [appliedFilters, selectedAgendaIds, showGenerateModal]);
+
+  useEffect(() => {
+    if (!showGenerateModal) return;
+    setInactiveWarningChecked(false);
+    setInactiveWarningViewed(false);
+  }, [showGenerateModal, selectedAgendaIds]);
+
+  useEffect(() => {
+    if (!showGenerateModal) return;
+    setEventWarningChecked(false);
+    setEventWarningViewed(false);
+  }, [showGenerateModal, visitDate]);
 
   useEffect(() => {
     if (restoredModalRef.current) return;
@@ -824,7 +952,9 @@ export default function Agenda() {
   );
 
   const resolveVendorsForAgenda = (agendaId: string, fallback?: string | null) => {
-    const visits = visitVendorsByAgenda[agendaId] ?? scheduledVisitsByAgenda[agendaId] ?? [];
+    const visits = (visitVendorsByAgenda[agendaId] ?? scheduledVisitsByAgenda[agendaId] ?? []).filter((visit) =>
+      isVendorVisitTypeValue((visit as { visit_type?: string | null }).visit_type),
+    );
     const fallbackAssignments = Array.from(
       new Set(
         (fallback ?? "")
@@ -880,7 +1010,9 @@ export default function Agenda() {
 
   const resolveLastCompletedVidas = (agendaId: string, fallback?: number | null) => {
     const visits = visitVendorsByAgenda[agendaId] ?? [];
-    const latestCompleted = visits.find((visit) => Boolean(visit.completed_at));
+    const latestCompleted = visits.find(
+      (visit) => isVendorVisitTypeValue(visit.visit_type) && Boolean(visit.completed_at),
+    );
     if (latestCompleted) {
       if (
         latestCompleted.completed_vidas !== null &&
@@ -890,18 +1022,28 @@ export default function Agenda() {
       }
       return "-";
     }
+    const hasCompletedSupervisorVisit = visits.some(
+      (visit) => !isVendorVisitTypeValue(visit.visit_type) && Boolean(visit.completed_at),
+    );
+    if (hasCompletedSupervisorVisit) return "-";
     if (fallback !== null && fallback !== undefined) return String(fallback);
     return "-";
   };
 
   const resolveLastCompletedVisitDate = (agendaId: string, fallback?: string | null) => {
     const visits = visitVendorsByAgenda[agendaId] ?? [];
-    const latestCompleted = visits.find((visit) => Boolean(visit.completed_at));
+    const latestCompleted = visits.find(
+      (visit) => isVendorVisitTypeValue(visit.visit_type) && Boolean(visit.completed_at),
+    );
     if (latestCompleted) {
       const noVisitReason = latestCompleted.no_visit_reason?.trim();
       if (noVisitReason) return noVisitReason;
       if (latestCompleted.visit_date) return formatDate(latestCompleted.visit_date);
     }
+    const hasCompletedSupervisorVisit = visits.some(
+      (visit) => !isVendorVisitTypeValue(visit.visit_type) && Boolean(visit.completed_at),
+    );
+    if (hasCompletedSupervisorVisit) return "-";
     return formatDate(fallback ?? null);
   };
 
@@ -1197,7 +1339,7 @@ export default function Agenda() {
           })();
 
     const supervisorFlagFilteredRows =
-      role === "SUPERVISOR" && appliedSupervisorFlagFilters.length > 0
+      appliedSupervisorFlagFilters.length > 0
         ? sortedRows.filter((row) =>
             appliedSupervisorFlagFilters.includes(supervisorFlagByAgendaId[row.id]?.color ?? "CINZA"),
           )
@@ -1235,19 +1377,25 @@ export default function Agenda() {
 
   useEffect(() => {
     let active = true;
-    if (role !== "SUPERVISOR" || !session?.user.id || agendaIdsForSupervisorFlag.length === 0) {
+    if (agendaIdsForSupervisorFlag.length === 0) {
       setSupervisorFlagByAgendaId({});
       return () => {
         active = false;
       };
     }
 
-    fetchSupervisorLatestVisitByEmpresa(agendaIdsForSupervisorFlag, session.user.id)
+    fetchSupervisorLatestVisitByEmpresa(agendaIdsForSupervisorFlag)
       .then((latestByEmpresa) => {
         if (!active) return;
         const next: Record<string, SupervisorEmpresaFlagInfo> = {};
         agendaIdsForSupervisorFlag.forEach((agendaId) => {
-          next[agendaId] = getSupervisorEmpresaFlagMeta(latestByEmpresa[agendaId] ?? null);
+          const latest = latestByEmpresa[agendaId];
+          next[agendaId] = {
+            ...getSupervisorEmpresaFlagMeta(latest?.visitDate ?? null),
+            supervisorName: latest?.supervisorName ?? null,
+            completedVidas: latest?.completedVidas ?? null,
+            supervisorReason: latest?.supervisorReason ?? null,
+          };
         });
         setSupervisorFlagByAgendaId(next);
       })
@@ -1259,7 +1407,7 @@ export default function Agenda() {
     return () => {
       active = false;
     };
-  }, [agendaIdsForSupervisorFlag, role, session?.user.id]);
+  }, [agendaIdsForSupervisorFlag]);
 
   const toggleAgendaSelection = (agendaId: string) => {
     setSelectedAgendaIds((prev) =>
@@ -1315,7 +1463,7 @@ export default function Agenda() {
     }));
   };
 
-  const handleGenerateVisits = async () => {
+  const executeGenerateVisits = async () => {
     if (!canGenerate) return;
     const selectedVendors = vendedores.filter((vendor) => selectedVendorIds.includes(vendor.user_id));
     const selectedSupervisors = supervisores.filter((supervisor) =>
@@ -1349,20 +1497,6 @@ export default function Agenda() {
         setGenerateMessage("Nenhum registro encontrado para gerar visitas.");
         return;
       }
-      const inactiveCompanies = Array.from(
-        rows
-          .filter((row) => isInactiveCompanyStatus(row.situacao))
-          .reduce<Map<string, InactiveCompanyWarningItem>>((acc, row) => {
-            acc.set(row.id, {
-              id: row.id,
-              code: row.cod_1 ?? "-",
-              name: row.empresa ?? row.nome_fantasia ?? "Sem nome",
-              status: row.situacao?.trim() || "Sem situacao",
-            });
-            return acc;
-          }, new Map())
-          .values(),
-      );
 
       const chunkSize = 500;
       const agendaIds = rows.map((row) => row.id);
@@ -1483,100 +1617,97 @@ export default function Agenda() {
           reasonByAgendaId[row.id] = reason;
         }
 
-        const creatorSupervisorName =
-          supervisores.find((item) => item.user_id === session?.user.id)?.display_name ??
-          "Supervisor";
-        const { data: route, error: routeError } = await supabase
-          .from("routes")
-          .insert({
-            name: `Visitas Supervisor ${displayDate}`,
-            date: routeDate,
-            assigned_to_user_id: session?.user.id ?? null,
-            created_by: session?.user.id ?? null,
-          })
-          .select("id")
-          .single();
+        for (const supervisor of selectedSupervisors) {
+          const supervisorName = supervisor.display_name ?? supervisor.user_id;
+          const { data: route, error: routeError } = await supabase
+            .from("routes")
+            .insert({
+              name: `Visitas Supervisor ${displayDate} - ${supervisorName}`,
+              date: routeDate,
+              assigned_to_user_id: supervisor.user_id,
+              created_by: session?.user.id ?? null,
+            })
+            .select("id")
+            .single();
 
-        if (routeError || !route) {
-          throw new Error(routeError?.message ?? "Erro ao criar rota de supervisao.");
-        }
+          if (routeError || !route) {
+            throw new Error(routeError?.message ?? "Erro ao criar rota de supervisao.");
+          }
 
-        const stopRows = rows.map((row, index) => ({
-          route_id: route.id,
-          cliente_id: row.id,
-          stop_order: index + 1,
-        }));
-
-        for (let i = 0; i < stopRows.length; i += chunkSize) {
-          const chunk = stopRows.slice(i, i + chunkSize);
-          const { error: stopError } = await supabase.from("route_stops").insert(chunk);
-          if (stopError) throw new Error(stopError.message);
-        }
-
-        const upsertedVisitIds: string[] = [];
-        for (let i = 0; i < rows.length; i += chunkSize) {
-          const chunkRows = rows.slice(i, i + chunkSize);
-          const visitRows = chunkRows.map((row) => ({
-            cliente_id: row.id,
-            assigned_to_user_id: session?.user.id ?? null,
-            assigned_to_name: creatorSupervisorName,
-            visit_date: routeDate,
-            perfil_visita: row.perfil_visita ?? null,
-            instructions: null,
+          const stopRows = rows.map((row, index) => ({
             route_id: route.id,
-            visit_type: VISIT_TYPE.SUPERVISOR_RELACIONAMENTO,
-            supervisor_reason: reasonByAgendaId[row.id],
+            cliente_id: row.id,
+            stop_order: index + 1,
+          }));
+
+          for (let i = 0; i < stopRows.length; i += chunkSize) {
+            const chunk = stopRows.slice(i, i + chunkSize);
+            const { error: stopError } = await supabase.from("route_stops").insert(chunk);
+            if (stopError) throw new Error(stopError.message);
+          }
+
+          const upsertedVisitIds: string[] = [];
+          for (let i = 0; i < rows.length; i += chunkSize) {
+            const chunkRows = rows.slice(i, i + chunkSize);
+            const visitRows = chunkRows.map((row) => ({
+              cliente_id: row.id,
+              assigned_to_user_id: supervisor.user_id,
+              assigned_to_name: supervisorName,
+              visit_date: routeDate,
+              perfil_visita: row.perfil_visita ?? null,
+              instructions: null,
+              route_id: route.id,
+              visit_type: VISIT_TYPE.SUPERVISOR_RELACIONAMENTO,
+              supervisor_reason: reasonByAgendaId[row.id],
+              created_by: session?.user.id ?? null,
+            }));
+
+            const { data: upsertedRows, error: visitError } = await supabase
+              .from("visits")
+              .upsert(visitRows, {
+                onConflict: "cliente_id,assigned_to_user_id,visit_date",
+                ignoreDuplicates: false,
+              })
+              .select("id");
+            if (visitError) throw new Error(visitError.message);
+            (upsertedRows ?? []).forEach((row) => {
+              const id = (row as { id?: string }).id;
+              if (id) upsertedVisitIds.push(id);
+            });
+          }
+
+          if (upsertedVisitIds.length === 0) {
+            const { data: fetchedVisits, error: fetchError } = await supabase
+              .from("visits")
+              .select("id")
+              .in("cliente_id", agendaIds)
+              .eq("visit_date", routeDate)
+              .eq("visit_type", VISIT_TYPE.SUPERVISOR_RELACIONAMENTO)
+              .eq("assigned_to_user_id", supervisor.user_id);
+            if (fetchError) throw new Error(fetchError.message);
+            (fetchedVisits ?? []).forEach((row) => {
+              const id = (row as { id?: string }).id;
+              if (id) upsertedVisitIds.push(id);
+            });
+          }
+
+          const uniqueVisitIds = Array.from(new Set(upsertedVisitIds));
+          const linkRows = uniqueVisitIds.map((visitId) => ({
+            visit_id: visitId,
+            supervisor_user_id: supervisor.user_id,
             created_by: session?.user.id ?? null,
           }));
 
-          const { data: upsertedRows, error: visitError } = await supabase
-            .from("visits")
-            .upsert(visitRows, {
-              onConflict: "cliente_id,assigned_to_user_id,visit_date",
-              ignoreDuplicates: false,
-            })
-            .select("id");
-          if (visitError) throw new Error(visitError.message);
-          (upsertedRows ?? []).forEach((row) => {
-            const id = (row as { id?: string }).id;
-            if (id) upsertedVisitIds.push(id);
-          });
-        }
-
-        if (upsertedVisitIds.length === 0) {
-          const { data: fetchedVisits, error: fetchError } = await supabase
-            .from("visits")
-            .select("id")
-            .in("cliente_id", agendaIds)
-            .eq("visit_date", routeDate)
-            .eq("visit_type", VISIT_TYPE.SUPERVISOR_RELACIONAMENTO)
-            .eq("assigned_to_user_id", session?.user.id ?? "");
-          if (fetchError) throw new Error(fetchError.message);
-          (fetchedVisits ?? []).forEach((row) => {
-            const id = (row as { id?: string }).id;
-            if (id) upsertedVisitIds.push(id);
-          });
-        }
-
-        const uniqueVisitIds = Array.from(new Set(upsertedVisitIds));
-        const selectedSupervisorUserIds = selectedSupervisors.map((item) => item.user_id);
-        const linkRows = uniqueVisitIds.flatMap((visitId) =>
-          selectedSupervisorUserIds.map((supervisorUserId) => ({
-            visit_id: visitId,
-            supervisor_user_id: supervisorUserId,
-            created_by: session?.user.id ?? null,
-          })),
-        );
-
-        for (let i = 0; i < linkRows.length; i += chunkSize) {
-          const chunk = linkRows.slice(i, i + chunkSize);
-          const { error: linkError } = await supabase
-            .from("visit_supervisors")
-            .upsert(chunk, {
-              onConflict: "visit_id,supervisor_user_id",
-              ignoreDuplicates: true,
-            });
-          if (linkError) throw new Error(linkError.message);
+          for (let i = 0; i < linkRows.length; i += chunkSize) {
+            const chunk = linkRows.slice(i, i + chunkSize);
+            const { error: linkError } = await supabase
+              .from("visit_supervisors")
+              .upsert(chunk, {
+                onConflict: "visit_id,supervisor_user_id",
+                ignoreDuplicates: true,
+              });
+            if (linkError) throw new Error(linkError.message);
+          }
         }
 
         const supervisorNames = selectedSupervisorDisplayNames.join(", ");
@@ -1594,7 +1725,7 @@ export default function Agenda() {
         }
 
         setGenerateMessage(
-          `Geradas ${rows.length} visitas de supervisor para ${selectedSupervisors.length} supervisor(es).`,
+          `Geradas ${rows.length * selectedSupervisors.length} visitas de supervisor (${rows.length} empresa(s)) para ${selectedSupervisors.length} supervisor(es).`,
         );
       }
 
@@ -1608,9 +1739,6 @@ export default function Agenda() {
       setShowGenerateModal(false);
       clearRoutesModuleDraft();
       setRefreshKey((value) => value + 1);
-      if (inactiveCompanies.length > 0) {
-        setInactiveCompaniesWarning(inactiveCompanies);
-      }
     } catch (err) {
       setGenerateMessage(err instanceof Error ? err.message : "Erro ao gerar visitas.");
     } finally {
@@ -3584,7 +3712,7 @@ export default function Agenda() {
             className="absolute inset-0 bg-ink/30"
             onClick={() => (generating ? null : setShowGenerateModal(false))}
           />
-          <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+          <div className="relative w-[min(94vw,1100px)] max-h-[88vh] overflow-y-auto rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Gerar visitas</h3>
             <p className="mt-1 text-xs text-ink/60">
               Selecione o tipo de geracao, a data e as empresas marcadas na lista.
@@ -3729,17 +3857,96 @@ export default function Agenda() {
                   </div>
                 </div>
               )}
-              <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                Data da visita
-                <input
-                  type="date"
-                  value={visitDate}
-                  onChange={(event) => setVisitDate(event.target.value)}
-                  id="agenda-generate-visit-date"
-                  name="agendaGenerateVisitDate"
-                  className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                />
-              </label>
+              <div className="flex flex-col gap-3">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Data da visita
+                  <input
+                    type="date"
+                    value={visitDate}
+                    onChange={(event) => setVisitDate(event.target.value)}
+                    id="agenda-generate-visit-date"
+                    name="agendaGenerateVisitDate"
+                    className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                  />
+                </label>
+
+                {shouldShowWarningBlock && (
+                  <div className="rounded-xl border border-sea/20 bg-sand/30 p-3">
+                    <p className="text-xs font-semibold text-ink/80">Avisos obrigatorios para confirmar</p>
+                    <p className="mt-1 text-[11px] text-ink/60">
+                      Para marcar o checkbox, clique primeiro em Ver detalhes de cada aviso.
+                    </p>
+
+                    <div className="mt-3 space-y-2">
+                      {hasInactiveWarning && (
+                        <div className="flex items-start justify-between gap-2 rounded-lg border border-sea/20 bg-white/90 px-2 py-2">
+                          <label className="flex cursor-pointer items-start gap-2 text-xs text-ink">
+                            <input
+                              type="checkbox"
+                              checked={inactiveWarningChecked}
+                              onChange={(event) => setInactiveWarningChecked(event.target.checked)}
+                              disabled={inactiveWarningsLoading || !inactiveWarningViewed}
+                              className="mt-0.5 h-4 w-4 accent-sea disabled:opacity-50"
+                            />
+                            <span>
+                              <span className="block">{`Li o aviso de empresa inativa (${inactiveCompaniesPreview.length} empresa(s)).`}</span>
+                              {!inactiveWarningViewed && (
+                                <span className="mt-0.5 block text-[10px] font-semibold text-sea">
+                                  Clique em Ver detalhes para habilitar o checkbox.
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setInactiveWarningViewed(true);
+                              setInactiveCompaniesWarning(inactiveCompaniesPreview);
+                            }}
+                            disabled={inactiveWarningsLoading}
+                            className="rounded-lg border border-sea/30 bg-white/90 px-2 py-1 text-[11px] font-semibold text-ink/80 hover:border-sea disabled:opacity-50"
+                          >
+                            Ver detalhes
+                          </button>
+                        </div>
+                      )}
+
+                      {hasEventWarning && (
+                        <div className="flex items-start justify-between gap-2 rounded-lg border border-sea/20 bg-white/90 px-2 py-2">
+                          <label className="flex cursor-pointer items-start gap-2 text-xs text-ink">
+                            <input
+                              type="checkbox"
+                              checked={eventWarningChecked}
+                              onChange={(event) => setEventWarningChecked(event.target.checked)}
+                              disabled={eventWarningsLoading || !eventWarningViewed}
+                              className="mt-0.5 h-4 w-4 accent-sea disabled:opacity-50"
+                            />
+                            <span>
+                              <span className="block">{`Li o aviso de evento para a data (${eventWarningsPreview.length} evento(s)).`}</span>
+                              {!eventWarningViewed && (
+                                <span className="mt-0.5 block text-[10px] font-semibold text-sea">
+                                  Clique em Ver detalhes para habilitar o checkbox.
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEventWarningViewed(true);
+                              setEventWarning({ date: visitDate, events: eventWarningsPreview });
+                            }}
+                            disabled={eventWarningsLoading}
+                            className="rounded-lg border border-sea/30 bg-white/90 px-2 py-1 text-[11px] font-semibold text-ink/80 hover:border-sea disabled:opacity-50"
+                          >
+                            Ver detalhes
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {generationTab === "SUPERVISOR" && (
@@ -3794,17 +4001,69 @@ export default function Agenda() {
               </button>
               <button
                 type="button"
-                onClick={handleGenerateVisits}
+                onClick={() => {
+                  void executeGenerateVisits();
+                }}
                 disabled={
                   (generationTab === "VENDEDOR" && selectedVendorIds.length === 0) ||
                   (generationTab === "SUPERVISOR" && selectedSupervisorIds.length === 0) ||
                   selectedAgendaIds.length === 0 ||
                   !visitDate ||
+                  inactiveWarningsLoading ||
+                  eventWarningsLoading ||
+                  (hasInactiveWarning && !inactiveWarningChecked) ||
+                  (hasEventWarning && !eventWarningChecked) ||
                   generating
                 }
                 className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
                 {generating ? "Gerando..." : `Confirmar (${selectedAgendaIds.length})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {eventWarning && (
+        <div className="fixed inset-0 z-[3300] flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => {
+              if (generating) return;
+              setEventWarning(null);
+            }}
+            aria-label="Fechar aviso de evento"
+          />
+          <div className="relative w-full max-w-xl rounded-3xl border border-amber-300 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Aviso de evento na data selecionada</h3>
+            <p className="mt-1 text-xs text-ink/70">
+              Ha evento(s) cadastrado(s) para {formatDate(eventWarning.date)}. A geracao da rota pode continuar apos
+              a confirmacao.
+            </p>
+
+            <div className="mt-4 max-h-64 space-y-2 overflow-auto rounded-xl border border-amber-200 bg-amber-50/70 p-2">
+              {eventWarning.events.map((eventRow) => (
+                <div key={eventRow.id} className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-ink">
+                  <p className="font-semibold">
+                    {formatRouteEventType(eventRow.event_type)}
+                    {eventRow.event_time ? ` - ${eventRow.event_time.slice(0, 5)}` : ""}
+                  </p>
+                  {eventRow.notes ? <p className="mt-1 text-[11px] text-ink/70">{eventRow.notes}</p> : null}
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (generating) return;
+                  setEventWarning(null);
+                }}
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea"
+              >
+                Fechar
               </button>
             </div>
           </div>
@@ -3822,7 +4081,7 @@ export default function Agenda() {
           <div className="relative w-full max-w-xl rounded-3xl border border-amber-300 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Aviso de empresa inativa</h3>
             <p className="mt-1 text-xs text-ink/70">
-              A(s) empresa(s) abaixo nao esta ativa e entrou(aram) na geracao da rota.
+              A(s) empresa(s) abaixo nao esta ativa.
             </p>
 
             <div className="mt-4 max-h-64 space-y-2 overflow-auto rounded-xl border border-amber-200 bg-amber-50/70 p-2">
@@ -3839,13 +4098,13 @@ export default function Agenda() {
               ))}
             </div>
 
-            <div className="mt-4 flex justify-end">
+            <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setInactiveCompaniesWarning(null)}
-                className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight"
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea"
               >
-                Entendi
+                Fechar
               </button>
             </div>
           </div>

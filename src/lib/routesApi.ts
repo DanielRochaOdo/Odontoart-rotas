@@ -41,7 +41,15 @@ export type EmpresaScheduledVisit = {
   supervisor_reason?: string | null;
 };
 
-export type SupervisorLatestVisitByEmpresa = Record<string, string>;
+export type SupervisorLatestVisitInfo = {
+  visitDate: string;
+  completedVidas: number | null;
+  supervisorUserId: string | null;
+  supervisorName: string | null;
+  supervisorReason: string | null;
+};
+
+export type SupervisorLatestVisitByEmpresa = Record<string, SupervisorLatestVisitInfo>;
 
 type EmpresasLookupSearch = {
   companyName?: string;
@@ -300,10 +308,12 @@ export const fetchEmpresaScheduledVisits = async (empresaIds: string[]) => {
 
 export const fetchSupervisorLatestVisitByEmpresa = async (
   empresaIds: string[],
-  supervisorUserId: string,
+  options?: { supervisorUserId?: string | null },
 ): Promise<SupervisorLatestVisitByEmpresa> => {
   const uniqueEmpresaIds = Array.from(new Set(empresaIds.filter(Boolean)));
-  if (!uniqueEmpresaIds.length || !supervisorUserId) return {};
+  if (!uniqueEmpresaIds.length) return {};
+
+  const supervisorUserId = options?.supervisorUserId?.trim() || null;
 
   const chunkSize = 500;
   const latestByEmpresa: SupervisorLatestVisitByEmpresa = {};
@@ -313,11 +323,12 @@ export const fetchSupervisorLatestVisitByEmpresa = async (
     const { data, error } = await supabase
       .from("visits")
       .select(
-        "cliente_id, visit_date, completed_at, assigned_to_user_id, visit_supervisors(supervisor_user_id)",
+        "cliente_id, visit_date, completed_at, completed_vidas, supervisor_reason, assigned_to_user_id, assigned_to_name, visit_supervisors(supervisor_user_id)",
       )
       .eq("visit_type", VISIT_TYPE.SUPERVISOR_RELACIONAMENTO)
       .in("cliente_id", chunk)
       .not("completed_at", "is", null)
+      .order("completed_at", { ascending: false })
       .order("visit_date", { ascending: false });
 
     if (error) throw new Error(error.message);
@@ -333,14 +344,22 @@ export const fetchSupervisorLatestVisitByEmpresa = async (
         .map((item) => item.supervisor_user_id)
         .filter((value): value is string => Boolean(value));
 
-      const hasSupervisorLink = supervisors.includes(supervisorUserId);
-      const assignedToSupervisor =
-        (row as { assigned_to_user_id?: string | null }).assigned_to_user_id === supervisorUserId;
-      if (!hasSupervisorLink && !assignedToSupervisor) return;
+      if (supervisorUserId) {
+        const hasSupervisorLink = supervisors.includes(supervisorUserId);
+        const assignedToSupervisor =
+          (row as { assigned_to_user_id?: string | null }).assigned_to_user_id === supervisorUserId;
+        if (!hasSupervisorLink && !assignedToSupervisor) return;
+      }
 
       const visitDate = parseDateKey((row as { visit_date?: string | null }).visit_date);
       if (!visitDate) return;
-      latestByEmpresa[clienteId] = visitDate;
+      latestByEmpresa[clienteId] = {
+        visitDate,
+        completedVidas: (row as { completed_vidas?: number | null }).completed_vidas ?? null,
+        supervisorUserId: (row as { assigned_to_user_id?: string | null }).assigned_to_user_id ?? null,
+        supervisorName: (row as { assigned_to_name?: string | null }).assigned_to_name ?? null,
+        supervisorReason: (row as { supervisor_reason?: string | null }).supervisor_reason ?? null,
+      };
     });
   }
 

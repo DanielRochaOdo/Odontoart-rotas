@@ -854,6 +854,10 @@ export default function Visitas() {
     if (supervisor?.user_id) ids.add(supervisor.user_id);
     return ids;
   }, [canFilterBySupervisor, selectedSupervisorId, supervisores]);
+  const supervisorUserIdSet = useMemo(
+    () => new Set(supervisores.map((item) => item.user_id).filter((value): value is string => Boolean(value))),
+    [supervisores],
+  );
 
   const isSupervisorVisitForSelectedSupervisor = useCallback(
     (visit: VisitRow) => {
@@ -940,13 +944,20 @@ export default function Visitas() {
 
   const supervisorPinDates = useMemo(() => {
     const dates = new Set<string>();
-    visits.forEach((visit) => {
+    filteredVisits.forEach((visit) => {
       if (!visit.visit_date) return;
-      if (!isSupervisorVisitForLoggedUser(visit)) return;
-      dates.add(formatDateKey(visit.visit_date));
+      const hasSupervisorVisitType = isSupervisorVisitType(visit.visit_type);
+      const hasSupervisorLink = (visit.visit_supervisors ?? []).some((item) => Boolean(item.supervisor_user_id));
+      const assignedToSupervisor = visit.assigned_to_user_id
+        ? supervisorUserIdSet.has(visit.assigned_to_user_id)
+        : false;
+      if (!hasSupervisorVisitType && !hasSupervisorLink && !assignedToSupervisor) return;
+      const key = formatDateKey(visit.visit_date);
+      if (isVendor && maxVisibleDate && key > maxVisibleDate) return;
+      dates.add(key);
     });
     return dates;
-  }, [isSupervisorVisitForLoggedUser, visits]);
+  }, [filteredVisits, isVendor, maxVisibleDate, supervisorUserIdSet]);
 
   const visitsByDate = useMemo(() => {
     const map = new Map<string, VisitRow[]>();
