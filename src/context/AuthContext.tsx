@@ -100,6 +100,16 @@ const isAuthSessionError = (message: string) => {
   );
 };
 
+const isInvalidRefreshTokenError = (message: string) => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("invalid refresh token") ||
+    normalized.includes("refresh token not found") ||
+    normalized.includes("session not found") ||
+    normalized.includes("refresh token")
+  );
+};
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -147,6 +157,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setProfileError(null);
           return;
         }
+
+        // Fallback for users without profile row: if refresh token was revoked by an access reset,
+        // force local sign-out immediately instead of waiting for access token expiration.
+        try {
+          const { error: refreshError } = await supabase.auth.refreshSession();
+          if (refreshError && isInvalidRefreshTokenError(refreshError.message ?? "")) {
+            try {
+              await supabase.auth.signOut({ scope: "local" });
+            } catch {
+              // ignore
+            }
+            setSession(null);
+            setProfile(null);
+            setProfileError(null);
+            return;
+          }
+        } catch {
+          // ignore refresh fallback failures and keep friendly profile error below
+        }
+
         setProfile((current) => (current?.user_id === activeSession.user.id ? current : null));
         setProfileError(PROFILE_LOAD_FRIENDLY_ERROR_MESSAGE);
         return;
