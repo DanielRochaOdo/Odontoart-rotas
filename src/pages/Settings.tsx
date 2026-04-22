@@ -8,7 +8,6 @@ import {
   deleteProfileOnly,
   fetchManagedProfiles,
   fetchManagedUserEmails,
-  resetAllManagedUsersAccess,
   resetManagedUserAccess,
   updateManagedProfile,
   updateManagedUserCredentials,
@@ -73,7 +72,7 @@ const isSessionExpiredError = (message: string) => {
 };
 
 export default function Settings() {
-  const { role, session, loading: authLoading, signOut } = useAuth();
+  const { role, session, loading: authLoading } = useAuth();
   const isSupervisor = role === "SUPERVISOR";
 
   const [activeTab, setActiveTab] = useState<TabKey>(() => readSettingsViewState()?.activeTab ?? "SUPERVISORES");
@@ -87,7 +86,8 @@ export default function Settings() {
   const [creatingVendor, setCreatingVendor] = useState(false);
   const [creatingAssistant, setCreatingAssistant] = useState(false);
   const [resettingUserId, setResettingUserId] = useState<string | null>(null);
-  const [resettingAllAccess, setResettingAllAccess] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [resetModalTab, setResetModalTab] = useState<TabKey>("VENDEDORES");
 
   const [supervisorForm, setSupervisorForm] = useState<FormState>({
     display_name: "",
@@ -159,6 +159,22 @@ export default function Settings() {
       ).includes(query),
     );
   }, [searchTerm, assistants, userEmailsByUserId]);
+  const resetModalProfiles = useMemo(() => {
+    if (resetModalTab === "SUPERVISORES") return supervisors;
+    if (resetModalTab === "VENDEDORES") return vendors;
+    return assistants;
+  }, [assistants, resetModalTab, supervisors, vendors]);
+
+  useEffect(() => {
+    if (!isResetModalOpen) return;
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsResetModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, [isResetModalOpen]);
 
   const loadProfiles = async () => {
     setLoading(true);
@@ -527,6 +543,10 @@ export default function Settings() {
       setError("Perfil sem usuario vinculado para reset de acesso.");
       return;
     }
+    if (session?.user.id && profile.user_id === session.user.id) {
+      setError("Nao e permitido resetar a propria sessao por este fluxo.");
+      return;
+    }
 
     const confirmReset = window.confirm(
       `Deseja limpar o acesso de ${profile.nome ?? profile.display_name ?? "este usuario"}?\n\nO usuario sera desconectado de todos os dispositivos e precisara entrar novamente.`,
@@ -537,40 +557,17 @@ export default function Settings() {
     setError(null);
     try {
       await resetManagedUserAccess({ user_id: profile.user_id });
-      window.alert("Acesso limpo com sucesso. Oriente o usuario a tentar login novamente.");
+      window.alert("Acesso limpo com sucesso. O usuario sera desconectado em instantes e precisara entrar novamente.");
+      setIsResetModalOpen(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Erro ao resetar acesso do usuario.";
       if (isSessionExpiredError(message)) {
-        await signOut();
+        setError("Sua sessao de supervisor expirou para esta operacao. Faca login novamente e tente de novo.");
         return;
       }
       setError(message);
     } finally {
       setResettingUserId(null);
-    }
-  };
-
-  const handleResetAllAccess = async () => {
-    const confirmReset = window.confirm(
-      "Deseja limpar o acesso de TODOS os usuarios?\n\nTodos serao desconectados de todos os dispositivos, incluindo voce.",
-    );
-    if (!confirmReset) return;
-
-    setResettingAllAccess(true);
-    setError(null);
-    try {
-      await resetAllManagedUsersAccess();
-      window.alert("Acesso de todos os usuarios limpo com sucesso. Voce sera desconectado agora.");
-      await signOut();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Erro ao resetar acesso global.";
-      if (isSessionExpiredError(message)) {
-        await signOut();
-        return;
-      }
-      setError(message);
-    } finally {
-      setResettingAllAccess(false);
     }
   };
 
@@ -591,28 +588,6 @@ export default function Settings() {
           Cadastre supervisores, vendedores e assistentes.
         </p>
       </header>
-
-      <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-red-800">Acesso global</p>
-            <p className="text-xs text-red-700">
-              Desconecta todos os usuarios (vendedores, assistentes e supervisores).
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={handleResetAllAccess}
-            disabled={resettingAllAccess}
-            className={[
-              "rounded-full px-4 py-2 text-xs font-semibold text-white",
-              resettingAllAccess ? "bg-red-300" : "bg-red-600 hover:bg-red-700",
-            ].join(" ")}
-          >
-            {resettingAllAccess ? "Limpando tudo" : "Resetar acesso de todos"}
-          </button>
-        </div>
-      </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
@@ -640,6 +615,18 @@ export default function Settings() {
         ))}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setResetModalTab(activeTab);
+              setIsResetModalOpen(true);
+              setError(null);
+            }}
+            className="inline-flex items-center gap-2 rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700 hover:border-amber-400"
+          >
+            <RotateCcw size={13} />
+            Resetar sessao
+          </button>
           <input
             type="search"
             value={searchTerm}
@@ -797,16 +784,6 @@ export default function Settings() {
                       )}
                       {editingSupervisorId !== supervisor.id && (
                         <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleResetAccess(supervisor)}
-                            disabled={!supervisor.user_id || resettingUserId === supervisor.user_id}
-                            className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700 hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
-                            title={supervisor.user_id ? "Limpar acesso e forcar novo login" : "Perfil sem usuario vinculado"}
-                          >
-                            <RotateCcw size={12} />
-                            {resettingUserId === supervisor.user_id ? "Limpando" : "Resetar acesso"}
-                          </button>
                           <button
                             type="button"
                             onClick={() => handleEditSupervisor(supervisor)}
@@ -1002,16 +979,6 @@ export default function Settings() {
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => handleResetAccess(vendor)}
-                            disabled={!vendor.user_id || resettingUserId === vendor.user_id}
-                            className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700 hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
-                            title={vendor.user_id ? "Limpar acesso e forcar novo login" : "Perfil sem usuario vinculado"}
-                          >
-                            <RotateCcw size={12} />
-                            {resettingUserId === vendor.user_id ? "Limpando" : "Resetar acesso"}
-                          </button>
-                          <button
-                            type="button"
                             onClick={() => handleEditVendor(vendor)}
                             className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink/70 hover:border-sea"
                           >
@@ -1149,16 +1116,6 @@ export default function Settings() {
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => handleResetAccess(assistant)}
-                            disabled={!assistant.user_id || resettingUserId === assistant.user_id}
-                            className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700 hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
-                            title={assistant.user_id ? "Limpar acesso e forcar novo login" : "Perfil sem usuario vinculado"}
-                          >
-                            <RotateCcw size={12} />
-                            {resettingUserId === assistant.user_id ? "Limpando" : "Resetar acesso"}
-                          </button>
-                          <button
-                            type="button"
                             onClick={() => handleEditAssistant(assistant)}
                             className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink/70 hover:border-sea"
                           >
@@ -1179,6 +1136,104 @@ export default function Settings() {
               </div>
             </section>
           )}
+        </div>
+      )}
+
+      {isResetModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setIsResetModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-3xl rounded-2xl border border-sea/20 bg-white p-4 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-display text-lg text-ink">Resetar sessao de usuario</h3>
+                <p className="mt-1 text-xs text-ink/60">
+                  Selecione o usuario correto por perfil e limpe apenas a sessao dele.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsResetModalOpen(false)}
+                className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink/70 hover:border-sea"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              {[
+                { key: "SUPERVISORES" as TabKey, label: "Supervisores" },
+                { key: "VENDEDORES" as TabKey, label: "Vendedores" },
+                { key: "ASSISTENTES" as TabKey, label: "Assistentes" },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setResetModalTab(tab.key)}
+                  className={[
+                    "rounded-full px-3 py-1.5 text-xs font-semibold",
+                    resetModalTab === tab.key
+                      ? "bg-sea text-white"
+                      : "border border-sea/30 bg-white text-ink/70 hover:border-sea",
+                  ].join(" ")}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-4 max-h-[55vh] space-y-2 overflow-y-auto pr-1">
+              {resetModalProfiles.length === 0 ? (
+                <p className="text-xs text-ink/60">Nenhum usuario encontrado nesta aba.</p>
+              ) : (
+                resetModalProfiles.map((profileItem) => (
+                  <div
+                    key={profileItem.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-sand/20 px-3 py-2"
+                  >
+                    <div>
+                      <p className="text-sm font-semibold text-ink">
+                        {profileItem.nome ?? profileItem.display_name ?? "Sem nome"}
+                        {profileItem.user_id && session?.user.id === profileItem.user_id ? " (voce)" : ""}
+                      </p>
+                      <p className="text-xs text-ink/60">
+                        {profileItem.role === "SUPERVISOR"
+                          ? "Supervisor"
+                          : profileItem.role === "VENDEDOR"
+                            ? "Vendedor"
+                            : "Assistente"}
+                      </p>
+                      <p className="text-xs text-ink/60">Email: {getCurrentEmail(profileItem)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleResetAccess(profileItem)}
+                      disabled={
+                        !profileItem.user_id ||
+                        resettingUserId === profileItem.user_id ||
+                        profileItem.user_id === session?.user.id
+                      }
+                      className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700 hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                      title={
+                        !profileItem.user_id
+                          ? "Perfil sem usuario vinculado"
+                          : profileItem.user_id === session?.user.id
+                            ? "Nao e permitido resetar sua propria sessao"
+                            : "Limpar acesso e forcar novo login"
+                      }
+                    >
+                      <RotateCcw size={12} />
+                      {resettingUserId === profileItem.user_id ? "Limpando" : "Resetar acesso"}
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

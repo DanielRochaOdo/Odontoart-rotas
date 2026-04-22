@@ -214,17 +214,10 @@ serve(async (req) => {
       return jsonResponse(400, { error: "User id obrigatorio." });
     }
 
-    const { data: resetData, error: resetError } = await supabase.rpc("reset_user_access", {
-      p_user_id: payload.user_id,
-    });
-
-    if (resetError) {
-      return jsonResponse(400, { error: resetError.message });
-    }
-
+    const forceReauthAfter = new Date().toISOString();
     const { error: profileUpdateError } = await supabase
       .from("profiles")
-      .update({ force_reauth_after: new Date().toISOString() })
+      .update({ force_reauth_after: forceReauthAfter })
       .eq("user_id", payload.user_id);
 
     if (profileUpdateError) {
@@ -233,7 +226,9 @@ serve(async (req) => {
 
     return jsonResponse(200, {
       success: true,
-      ...(typeof resetData === "object" && resetData ? (resetData as Record<string, unknown>) : {}),
+      user_id: payload.user_id,
+      force_reauth_after: forceReauthAfter,
+      scope: "single-user",
     });
   }
 

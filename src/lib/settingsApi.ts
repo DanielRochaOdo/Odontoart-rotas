@@ -40,23 +40,6 @@ const parseErrorMessage = (payload: unknown, fallback: string) => {
   return fallback;
 };
 
-const isInvalidRefreshTokenError = (message: string) => {
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("invalid refresh token") ||
-    normalized.includes("refresh token not found") ||
-    normalized.includes("session not found")
-  );
-};
-
-const forceLocalSignOut = async () => {
-  try {
-    await supabase.auth.signOut({ scope: "local" });
-  } catch {
-    // ignore local sign out errors
-  }
-};
-
 const invokeManageUsersViaHttp = async (
   accessToken: string,
   body: {
@@ -96,7 +79,7 @@ const invokeManageUsersViaHttp = async (
     if (response.status === 401) {
       return {
         data: payload,
-        error: { message: SESSION_EXPIRED_FRIENDLY_MESSAGE },
+        error: { message: "Status 401: Sessao invalida." },
       };
     }
     return {
@@ -119,26 +102,19 @@ const invokeManageUsers = async (body: {
   } = await supabase.auth.getSession();
 
   let session = currentSession;
-  // For admin-like mutations, always prefer a freshly refreshed access token.
-  const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
-  if (!refreshError && refreshedData.session) {
-    session = refreshedData.session;
-  } else {
-    if (refreshError && isInvalidRefreshTokenError(refreshError.message)) {
-      await forceLocalSignOut();
-      throw new Error(SESSION_EXPIRED_FRIENDLY_MESSAGE);
-    }
-    const currentExpiresAtMs = (currentSession?.expires_at ?? 0) * 1000;
-    const isCurrentTokenExpired = !currentSession || currentExpiresAtMs <= Date.now() + 5_000;
-    if (isCurrentTokenExpired) {
-      await forceLocalSignOut();
+  const currentExpiresAtMs = (currentSession?.expires_at ?? 0) * 1000;
+  const isCurrentTokenExpired = !currentSession || currentExpiresAtMs <= Date.now() + 5_000;
+  if (isCurrentTokenExpired) {
+    const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+    if (!refreshError && refreshedData.session) {
+      session = refreshedData.session;
+    } else {
       throw new Error(SESSION_EXPIRED_FRIENDLY_MESSAGE);
     }
   }
 
   const accessToken = session?.access_token;
   if (!accessToken) {
-    await forceLocalSignOut();
     throw new Error(SESSION_EXPIRED_FRIENDLY_MESSAGE);
   }
 
@@ -147,7 +123,6 @@ const invokeManageUsers = async (body: {
     error: validateTokenError,
   } = await supabase.auth.getUser(accessToken);
   if (validateTokenError || !validatedUser) {
-    await forceLocalSignOut();
     throw new Error(SESSION_EXPIRED_FRIENDLY_MESSAGE);
   }
 
@@ -162,28 +137,11 @@ const invokeManageUsers = async (body: {
 
   if (shouldRetryWithRefresh) {
     const { data, error } = await supabase.auth.refreshSession();
-    if (error && isInvalidRefreshTokenError(error.message)) {
-      await forceLocalSignOut();
-      throw new Error(SESSION_EXPIRED_FRIENDLY_MESSAGE);
-    }
     if (!error && data.session?.access_token) {
       const retry = await invokeManageUsersViaHttp(data.session.access_token, body);
       if (!retry.error) return retry;
       firstAttempt = retry;
     }
-  }
-
-  if (
-    firstAttempt.error &&
-    (isInvalidRefreshTokenError(firstAttempt.error.message) ||
-      firstAttempt.error.message.toLowerCase().includes("status 401") ||
-      firstAttempt.error.message.toLowerCase().includes("sessao invalida"))
-  ) {
-    await forceLocalSignOut();
-    return {
-      data: firstAttempt.data,
-      error: { message: SESSION_EXPIRED_FRIENDLY_MESSAGE },
-    };
   }
 
   return firstAttempt;
@@ -291,6 +249,22 @@ export const updateManagedUserCredentials = async (payload: {
 };
 
 export const resetManagedUserAccess = async (payload: { user_id: string }) => {
+  const forceReauthAfter = new Date().toISOString();
+
+  const { error: directUpdateError } = await supabase
+    .from("profiles")
+    .update({ force_reauth_after: forceReauthAfter })
+    .eq("user_id", payload.user_id);
+
+  if (!directUpdateError) {
+    return {
+      success: true,
+      user_id: payload.user_id,
+      force_reauth_after: forceReauthAfter,
+      scope: "client-direct",
+    };
+  }
+
   const { data, error } = await invokeManageUsers({
     action: "reset-access",
     payload: payload as unknown as Record<string, unknown>,
