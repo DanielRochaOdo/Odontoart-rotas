@@ -13,10 +13,17 @@ import {
   updateManagedUserCredentials,
   type ManagedProfile,
 } from "../lib/settingsApi";
+import {
+  createRouteEvent,
+  deleteRouteEvent,
+  fetchRouteEventsByYear,
+  type RouteEventRow,
+  type RouteEventType,
+} from "../lib/routeEventsApi";
 import { emitProfilesUpdated } from "../lib/profileEvents";
 import { normalizeSearchText } from "../lib/textNormalize";
 
-type TabKey = "SUPERVISORES" | "VENDEDORES" | "ASSISTENTES";
+type TabKey = "SUPERVISORES" | "VENDEDORES" | "ASSISTENTES" | "EVENTOS";
 
 type FormState = {
   display_name: string;
@@ -39,9 +46,47 @@ const sortByName = (items: ManagedProfile[]) =>
 
 const normalizeSearch = (value: string) => normalizeSearchText(value);
 const SETTINGS_VIEW_STATE_KEY = "settingsViewStateV1";
+const EVENT_MONTH_LABELS = [
+  "Janeiro",
+  "Fevereiro",
+  "Marco",
+  "Abril",
+  "Maio",
+  "Junho",
+  "Julho",
+  "Agosto",
+  "Setembro",
+  "Outubro",
+  "Novembro",
+  "Dezembro",
+];
+const EVENT_WEEKDAY_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"];
 
 const isValidTabKey = (value: unknown): value is TabKey =>
-  value === "SUPERVISORES" || value === "VENDEDORES" || value === "ASSISTENTES";
+  value === "SUPERVISORES" || value === "VENDEDORES" || value === "ASSISTENTES" || value === "EVENTOS";
+
+const toDateKey = (date: Date) => {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+};
+
+const formatEventDate = (dateKey: string) => {
+  const [year, month, day] = dateKey.split("-");
+  if (!year || !month || !day) return dateKey;
+  return `${day}/${month}/${year}`;
+};
+
+const formatEventTypeLabel = (eventType: RouteEventType) => {
+  if (eventType === "REUNIAO") return "REUNIAO";
+  return "TREINAMENTO";
+};
+
+const normalizeCalendarCursor = (year: number, month: number) => {
+  const safeYear = Number.isInteger(year) ? year : new Date().getFullYear();
+  const safeMonth = Number.isInteger(month) ? month : new Date().getMonth();
+  const cursor = new Date(safeYear, safeMonth, 1);
+  return { year: cursor.getFullYear(), month: cursor.getMonth() };
+};
 
 const readSettingsViewState = () => {
   try {
@@ -73,7 +118,9 @@ const isSessionExpiredError = (message: string) => {
 
 export default function Settings() {
   const { role, session, loading: authLoading } = useAuth();
-  const isSupervisor = role === "SUPERVISOR";
+  const canManageUsers = role === "SUPERVISOR";
+  const canManageEvents = role === "SUPERVISOR" || role === "ASSISTENTE";
+  const canAccessSettings = canManageUsers || canManageEvents;
 
   const [activeTab, setActiveTab] = useState<TabKey>(() => readSettingsViewState()?.activeTab ?? "SUPERVISORES");
   const [loading, setLoading] = useState(true);
@@ -88,6 +135,20 @@ export default function Settings() {
   const [resettingUserId, setResettingUserId] = useState<string | null>(null);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [resetModalTab, setResetModalTab] = useState<TabKey>("VENDEDORES");
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsSaving, setEventsSaving] = useState(false);
+  const [eventsError, setEventsError] = useState<string | null>(null);
+  const [eventsRows, setEventsRows] = useState<RouteEventRow[]>([]);
+  const [eventsCalendarCursor, setEventsCalendarCursor] = useState(() => {
+    const today = new Date();
+    return { year: today.getFullYear(), month: today.getMonth() };
+  });
+  const [selectedEventDate, setSelectedEventDate] = useState(() => toDateKey(new Date()));
+  const [eventType, setEventType] = useState<RouteEventType | "">("");
+  const [eventTime, setEventTime] = useState("");
+  const [eventNotes, setEventNotes] = useState("");
+  const [eventFormResetKey, setEventFormResetKey] = useState(0);
+  const [deletingEventId, setDeletingEventId] = useState<string | null>(null);
 
   const [supervisorForm, setSupervisorForm] = useState<FormState>({
     display_name: "",
@@ -164,6 +225,50 @@ export default function Settings() {
     if (resetModalTab === "VENDEDORES") return vendors;
     return assistants;
   }, [assistants, resetModalTab, supervisors, vendors]);
+  const eventsYear = eventsCalendarCursor.year;
+  const eventsMonth = eventsCalendarCursor.month;
+  const eventRowsByDate = useMemo(() => {
+    const map = new Map<string, RouteEventRow[]>();
+    eventsRows.forEach((row) => {
+      if (!map.has(row.event_date)) {
+        map.set(row.event_date, []);
+      }
+      map.get(row.event_date)!.push(row);
+    });
+    return map;
+  }, [eventsRows]);
+  const selectedDateEvents = useMemo(
+    () => eventRowsByDate.get(selectedEventDate) ?? [],
+    [eventRowsByDate, selectedEventDate],
+  );
+  const eventCalendarCells = useMemo(() => {
+    const firstDayOfMonth = new Date(eventsYear, eventsMonth, 1);
+    const dayCount = new Date(eventsYear, eventsMonth + 1, 0).getDate();
+    const leadingEmptyCells = (firstDayOfMonth.getDay() + 6) % 7;
+    const cells: Array<Date | null> = [];
+
+    for (let index = 0; index < leadingEmptyCells; index += 1) {
+      cells.push(null);
+    }
+    for (let day = 1; day <= dayCount; day += 1) {
+      cells.push(new Date(eventsYear, eventsMonth, day));
+    }
+    const trailingEmptyCells = (7 - (cells.length % 7)) % 7;
+    for (let index = 0; index < trailingEmptyCells; index += 1) {
+      cells.push(null);
+    }
+    return cells;
+  }, [eventsMonth, eventsYear]);
+
+  useEffect(() => {
+    setSelectedEventDate((prev) => {
+      const [yearRaw, monthRaw] = prev.split("-");
+      const selectedYear = Number(yearRaw);
+      const selectedMonth = Number(monthRaw) - 1;
+      if (selectedYear === eventsYear && selectedMonth === eventsMonth) return prev;
+      return toDateKey(new Date(eventsYear, eventsMonth, 1));
+    });
+  }, [eventsMonth, eventsYear]);
 
   useEffect(() => {
     if (!isResetModalOpen) return;
@@ -175,6 +280,13 @@ export default function Settings() {
     window.addEventListener("keydown", handleEsc);
     return () => window.removeEventListener("keydown", handleEsc);
   }, [isResetModalOpen]);
+
+  useEffect(() => {
+    if (canManageUsers) return;
+    if (activeTab !== "EVENTOS") {
+      setActiveTab("EVENTOS");
+    }
+  }, [activeTab, canManageUsers]);
 
   const loadProfiles = async () => {
     setLoading(true);
@@ -207,9 +319,13 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    if (authLoading || !isSupervisor || !session?.access_token) return;
+    if (authLoading) return;
+    if (!canManageUsers || !session?.access_token) {
+      setLoading(false);
+      return;
+    }
     loadProfiles();
-  }, [authLoading, isSupervisor, session?.access_token]);
+  }, [authLoading, canManageUsers, session?.access_token]);
 
   useEffect(() => {
     try {
@@ -224,6 +340,30 @@ export default function Settings() {
       // ignore storage failures
     }
   }, [activeTab, searchTerm]);
+
+  useEffect(() => {
+    if (!canManageEvents) return;
+    let active = true;
+    const loadEvents = async () => {
+      setEventsLoading(true);
+      setEventsError(null);
+      try {
+        const rows = await fetchRouteEventsByYear(eventsYear);
+        if (!active) return;
+        setEventsRows(rows);
+      } catch (err) {
+        if (!active) return;
+        setEventsRows([]);
+        setEventsError(err instanceof Error ? err.message : "Erro ao carregar eventos.");
+      } finally {
+        if (active) setEventsLoading(false);
+      }
+    };
+    void loadEvents();
+    return () => {
+      active = false;
+    };
+  }, [canManageEvents, eventsYear]);
 
   const resetEdits = () => {
     setEditingSupervisorId(null);
@@ -571,11 +711,69 @@ export default function Settings() {
     }
   };
 
-  if (!isSupervisor) {
+  const handleCreateEvent = async () => {
+    if (!canManageEvents) return;
+    if (!selectedEventDate) {
+      setEventsError("Selecione uma data no calendario.");
+      return;
+    }
+    if (!eventType) {
+      setEventsError("Selecione o tipo do evento.");
+      return;
+    }
+    setEventsSaving(true);
+    setEventsError(null);
+    try {
+      const created = await createRouteEvent({
+        event_date: selectedEventDate,
+        event_type: eventType,
+        event_time: eventTime || null,
+        notes: eventNotes.trim() || null,
+        created_by: session?.user.id ?? null,
+      });
+      setEventsRows((prev) =>
+        [...prev, created].sort((left, right) => {
+          if (left.event_date !== right.event_date) return left.event_date.localeCompare(right.event_date);
+          const leftTime = left.event_time ?? "99:99:99";
+          const rightTime = right.event_time ?? "99:99:99";
+          if (leftTime !== rightTime) return leftTime.localeCompare(rightTime);
+          return left.created_at.localeCompare(right.created_at);
+        }),
+      );
+      setEventType("");
+      setEventTime("");
+      setEventNotes("");
+      setEventFormResetKey((prev) => prev + 1);
+    } catch (err) {
+      setEventsError(err instanceof Error ? err.message : "Erro ao salvar evento.");
+    } finally {
+      setEventsSaving(false);
+    }
+  };
+
+  const handleDeleteEvent = async (eventRow: RouteEventRow) => {
+    const confirmDelete = window.confirm(
+      `Deseja excluir o evento ${formatEventTypeLabel(eventRow.event_type)} de ${formatEventDate(eventRow.event_date)}?`,
+    );
+    if (!confirmDelete) return;
+
+    setDeletingEventId(eventRow.id);
+    setEventsError(null);
+    try {
+      await deleteRouteEvent(eventRow.id);
+      setEventsRows((prev) => prev.filter((row) => row.id !== eventRow.id));
+    } catch (err) {
+      setEventsError(err instanceof Error ? err.message : "Erro ao excluir evento.");
+    } finally {
+      setDeletingEventId(null);
+    }
+  };
+
+  if (!canAccessSettings) {
     return (
       <div className="rounded-2xl border border-sea/20 bg-white/90 p-6">
         <h2 className="font-display text-2xl text-ink">Configuracoes</h2>
-        <p className="mt-2 text-sm text-ink/60">Acesso restrito a supervisores.</p>
+        <p className="mt-2 text-sm text-ink/60">Acesso restrito.</p>
       </div>
     );
   }
@@ -591,11 +789,14 @@ export default function Settings() {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
-        {[
-          { key: "SUPERVISORES" as TabKey, label: "Supervisores" },
-          { key: "VENDEDORES" as TabKey, label: "Vendedores" },
-          { key: "ASSISTENTES" as TabKey, label: "Assistentes" },
-        ].map((tab) => (
+        {(canManageUsers
+          ? [
+              { key: "SUPERVISORES" as TabKey, label: "Supervisores" },
+              { key: "VENDEDORES" as TabKey, label: "Vendedores" },
+              { key: "ASSISTENTES" as TabKey, label: "Assistentes" },
+              { key: "EVENTOS" as TabKey, label: "Eventos" },
+            ]
+          : [{ key: "EVENTOS" as TabKey, label: "Eventos" }]).map((tab) => (
           <button
             key={tab.key}
             type="button"
@@ -615,38 +816,64 @@ export default function Settings() {
         ))}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setResetModalTab(activeTab);
-              setIsResetModalOpen(true);
-              setError(null);
-            }}
-            className="inline-flex items-center gap-2 rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700 hover:border-amber-400"
-          >
-            <RotateCcw size={13} />
-            Resetar sessao
-          </button>
-          <input
-            type="search"
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder={`Pesquisar ${
-              activeTab === "SUPERVISORES"
-                ? "supervisores"
-                : activeTab === "VENDEDORES"
-                  ? "vendedores"
-                  : "assistentes"
-            }`}
-            className="rounded-full border border-sea/20 bg-white px-4 py-2 text-xs text-ink outline-none focus:border-sea"
-          />
-          <button
-            type="button"
-            onClick={loadProfiles}
-            className="rounded-full border border-sea/30 bg-white px-4 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
-          >
-            Atualizar lista
-          </button>
+          {canManageUsers && activeTab !== "EVENTOS" && (
+            <button
+              type="button"
+              onClick={() => {
+                setResetModalTab(activeTab);
+                setIsResetModalOpen(true);
+                setError(null);
+              }}
+              className="inline-flex items-center gap-2 rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700 hover:border-amber-400"
+            >
+              <RotateCcw size={13} />
+              Resetar sessao
+            </button>
+          )}
+          {activeTab === "EVENTOS" ? (
+            <button
+              type="button"
+              onClick={async () => {
+                if (!canManageEvents) return;
+                setEventsLoading(true);
+                setEventsError(null);
+                try {
+                  const rows = await fetchRouteEventsByYear(eventsYear);
+                  setEventsRows(rows);
+                } catch (err) {
+                  setEventsError(err instanceof Error ? err.message : "Erro ao atualizar eventos.");
+                } finally {
+                  setEventsLoading(false);
+                }
+              }}
+              className="rounded-full border border-sea/30 bg-white px-4 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+            >
+              Atualizar eventos
+            </button>
+          ) : (
+            <>
+              <input
+                type="search"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder={`Pesquisar ${
+                  activeTab === "SUPERVISORES"
+                    ? "supervisores"
+                    : activeTab === "VENDEDORES"
+                      ? "vendedores"
+                      : "assistentes"
+                }`}
+                className="rounded-full border border-sea/20 bg-white px-4 py-2 text-xs text-ink outline-none focus:border-sea"
+              />
+              <button
+                type="button"
+                onClick={loadProfiles}
+                className="rounded-full border border-sea/30 bg-white px-4 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Atualizar lista
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -655,12 +882,17 @@ export default function Settings() {
           {error}
         </div>
       )}
+      {eventsError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+          {eventsError}
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-ink/60">Carregando...</p>
       ) : (
         <div className="space-y-6">
-          {activeTab === "SUPERVISORES" && (
+          {canManageUsers && activeTab === "SUPERVISORES" && (
             <section className="rounded-2xl border border-sea/20 bg-sand/20 p-4">
               <h3 className="font-display text-lg text-ink">Supervisores</h3>
               <form onSubmit={handleCreateSupervisor} className="mt-4 grid gap-3 md:grid-cols-4">
@@ -806,7 +1038,7 @@ export default function Settings() {
               </div>
             </section>
           )}
-          {activeTab === "VENDEDORES" && (
+          {canManageUsers && activeTab === "VENDEDORES" && (
             <section className="rounded-2xl border border-sea/20 bg-sand/20 p-4">
               <h3 className="font-display text-lg text-ink">Vendedores</h3>
               <form onSubmit={handleCreateVendor} className="mt-4 grid gap-3 md:grid-cols-5">
@@ -1000,7 +1232,7 @@ export default function Settings() {
             </section>
           )}
 
-          {activeTab === "ASSISTENTES" && (
+          {canManageUsers && activeTab === "ASSISTENTES" && (
             <section className="rounded-2xl border border-sea/20 bg-sand/20 p-4">
               <h3 className="font-display text-lg text-ink">Assistentes</h3>
               <form onSubmit={handleCreateAssistant} className="mt-4 grid gap-3 md:grid-cols-4">
@@ -1136,6 +1368,169 @@ export default function Settings() {
               </div>
             </section>
           )}
+
+          {canManageEvents && activeTab === "EVENTOS" && (
+            <section className="rounded-2xl border border-sea/20 bg-sand/20 p-4">
+              <h3 className="font-display text-lg text-ink">Eventos</h3>
+              <p className="mt-1 text-xs text-ink/60">
+                Cadastre eventos que devem gerar aviso ao criar rota na mesma data.
+              </p>
+
+              <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+                <div className="rounded-2xl border border-sea/20 bg-white/90 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={eventsMonth}
+                        onChange={(event) => {
+                          const nextMonth = Number(event.target.value);
+                          if (!Number.isInteger(nextMonth) || nextMonth < 0 || nextMonth > 11) return;
+                          setEventsCalendarCursor((prev) => normalizeCalendarCursor(prev.year, nextMonth));
+                        }}
+                        className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                      >
+                        {EVENT_MONTH_LABELS.map((label, index) => (
+                          <option key={label} value={index}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        value={eventsYear}
+                        onChange={(event) => {
+                          const nextYear = Number(event.target.value);
+                          if (!Number.isInteger(nextYear) || nextYear < 2000 || nextYear > 2100) return;
+                          setEventsCalendarCursor((prev) => normalizeCalendarCursor(nextYear, prev.month));
+                        }}
+                        min={2000}
+                        max={2100}
+                        className="w-24 rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-7 gap-2 text-center text-[11px] font-semibold text-ink/60">
+                    {EVENT_WEEKDAY_LABELS.map((label) => (
+                      <span key={label}>{label}</span>
+                    ))}
+                  </div>
+                  <div className="mt-2 grid grid-cols-7 gap-2">
+                    {eventCalendarCells.map((date, index) => {
+                      if (!date) {
+                        return <div key={`event-empty-${index}`} className="h-14 rounded-xl" aria-hidden="true" />;
+                      }
+                      const dateKey = toDateKey(date);
+                      const isSelected = selectedEventDate === dateKey;
+                      const dayEvents = eventRowsByDate.get(dateKey) ?? [];
+                      const hasEvents = dayEvents.length > 0;
+                      return (
+                        <button
+                          key={dateKey}
+                          type="button"
+                          onClick={() => setSelectedEventDate(dateKey)}
+                          className={[
+                            "h-14 rounded-xl border px-1 text-xs transition",
+                            isSelected
+                              ? "border-sea bg-sea/10 text-sea"
+                              : hasEvents
+                                ? "border-amber-300 bg-amber-50 text-amber-800 hover:border-amber-400"
+                                : "border-sea/15 bg-white text-ink/70 hover:border-sea/40",
+                          ].join(" ")}
+                        >
+                          <span className="font-semibold">{date.getDate()}</span>
+                          {hasEvents && <span className="mt-1 block text-[10px]">{dayEvents.length} evento(s)</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div key={eventFormResetKey} className="rounded-2xl border border-sea/20 bg-white/90 p-3">
+                  <h4 className="text-sm font-semibold text-ink">Novo evento</h4>
+                  <p className="mt-1 text-xs text-ink/60">Data selecionada: {formatEventDate(selectedEventDate)}</p>
+
+                  <div className="mt-3 grid gap-3">
+                    <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                      Tipo (obrigatorio)
+                      <select
+                        value={eventType}
+                        onChange={(event) => setEventType(event.target.value as RouteEventType | "")}
+                        className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                      >
+                        <option value="">Selecione</option>
+                        <option value="TREINAMENTO">TREINAMENTO</option>
+                        <option value="REUNIAO">REUNIÃO</option>
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                      Horario (opcional)
+                      <input
+                        type="time"
+                        value={eventTime}
+                        onChange={(event) => setEventTime(event.target.value)}
+                        className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                      Observacao (opcional)
+                      <textarea
+                        rows={3}
+                        value={eventNotes}
+                        onChange={(event) => setEventNotes(event.target.value)}
+                        className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleCreateEvent}
+                      disabled={eventsSaving || !eventType || !selectedEventDate}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                    >
+                      <Plus size={13} />
+                      {eventsSaving ? "Salvando..." : "Salvar evento"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-sea/20 bg-white/90 p-3">
+                <h4 className="text-sm font-semibold text-ink">
+                  Eventos de {formatEventDate(selectedEventDate)}
+                </h4>
+                {eventsLoading ? (
+                  <p className="mt-2 text-xs text-ink/60">Carregando eventos...</p>
+                ) : selectedDateEvents.length === 0 ? (
+                  <p className="mt-2 text-xs text-ink/60">Nenhum evento para esta data.</p>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {selectedDateEvents.map((row) => (
+                      <div
+                        key={row.id}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-sand/30 px-3 py-2"
+                      >
+                        <div>
+                          <p className="text-xs font-semibold text-ink">
+                            {formatEventTypeLabel(row.event_type)}
+                            {row.event_time ? ` - ${row.event_time.slice(0, 5)}` : ""}
+                          </p>
+                          {row.notes ? <p className="text-xs text-ink/60">{row.notes}</p> : null}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteEvent(row)}
+                          disabled={deletingEventId === row.id}
+                          className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600 hover:border-red-300 disabled:opacity-60"
+                        >
+                          {deletingEventId === row.id ? "Excluindo..." : "Excluir"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
         </div>
       )}
 
@@ -1239,3 +1634,4 @@ export default function Settings() {
     </div>
   );
 }
+
