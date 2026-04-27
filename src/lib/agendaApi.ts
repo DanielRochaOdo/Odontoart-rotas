@@ -7,6 +7,11 @@ import {
   CATEGORIA_FILTER_SEM_CATEGORIA,
   CATEGORIA_OPTIONS,
 } from "./categorias";
+import {
+  fetchFilaRoutingBlockLists,
+  isMissingFilaBackendError,
+  type FilaRoutingBlockLists,
+} from "./filaApi";
 
 const GLOBAL_SEARCH_COLUMNS = [
   "empresa",
@@ -117,6 +122,49 @@ const dedupeAgendaRows = <T extends Partial<AgendaRow>>(rows: T[]) => {
     }
   }
   return Array.from(byId.values());
+};
+
+const CHUNK_FILTER_SIZE = 120;
+
+const chunkValues = <T,>(values: T[], size = CHUNK_FILTER_SIZE) => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+};
+
+const buildStringInClause = (values: string[]) =>
+  `(${values.map((value) => `"${value.replace(/"/g, '\\"')}"`).join(",")})`;
+
+const applyFilaRoutingExclusionsToClientesQuery = <T,>(
+  query: T,
+  blocks: Pick<FilaRoutingBlockLists, "blockedEmpresaIds" | "blockedCodigos"> | null,
+): T => {
+  if (!blocks) return query;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let next: any = query;
+  chunkValues(blocks.blockedEmpresaIds).forEach((chunk) => {
+    if (!chunk.length) return;
+    next = next.not("id", "in", buildStringInClause(chunk));
+  });
+  chunkValues(blocks.blockedCodigos).forEach((chunk) => {
+    if (!chunk.length) return;
+    next = next.not("codigo", "in", buildStringInClause(chunk));
+  });
+  return next as T;
+};
+
+const resolveFilaRoutingBlocks = async () => {
+  try {
+    const blocks = await fetchFilaRoutingBlockLists();
+    if (!blocks.blockedEmpresaIds.length && !blocks.blockedCodigos.length) return null;
+    return blocks;
+  } catch (error) {
+    const maybeError = error as { code?: string; message?: string };
+    if (isMissingFilaBackendError(maybeError)) return null;
+    throw error;
+  }
 };
 
 const AGENDA_SORTABLE_COLUMNS = new Set<string>([
@@ -268,6 +316,7 @@ let clientesOptionsBuildPromise: Promise<void> | null = null;
 const fetchColumnValuesPaged = async (
   sourceTable: "clientes",
   targetColumns: string[],
+  filaBlocks: Pick<FilaRoutingBlockLists, "blockedEmpresaIds" | "blockedCodigos"> | null,
 ) => {
   const rows: Array<Record<string, unknown>> = [];
   const pageSize = 1000;
@@ -279,6 +328,7 @@ const fetchColumnValuesPaged = async (
   while (true) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let query: any = supabase.from(sourceTable).select(selectColumns).order("id", { ascending: true }).limit(pageSize);
+    query = applyFilaRoutingExclusionsToClientesQuery(query, filaBlocks);
     if (cursorId) {
       query = query.gt("id", cursorId);
     }
@@ -552,6 +602,7 @@ export const fetchAgenda = async (
   const companyName = search?.companyName?.replace(/%/g, "").trim();
   const companyCode = search?.companyCode?.replace(/%/g, "").trim();
   const restrictedAgendaIds = agendaIdsByVidas;
+  const filaBlocks = await resolveFilaRoutingBlocks();
 
   if (restrictedAgendaIds && restrictedAgendaIds.length === 0) {
     return { data: [], count: 0 };
@@ -567,6 +618,7 @@ export const fetchAgenda = async (
   const applySearchAndIds = <T,>(inputQuery: T): T => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let next: any = inputQuery;
+    next = applyFilaRoutingExclusionsToClientesQuery(next, filaBlocks);
     if (restrictedAgendaIds) {
       next = next.in("id", restrictedAgendaIds);
     }
@@ -738,7 +790,8 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
           normalizedMaps.set(key, new Map());
         });
 
-        const data = await fetchColumnValuesPaged("clientes", CLIENTES_DYNAMIC_FILTER_COLUMNS);
+        const filaBlocks = await resolveFilaRoutingBlocks();
+        const data = await fetchColumnValuesPaged("clientes", CLIENTES_DYNAMIC_FILTER_COLUMNS, filaBlocks);
 
         data.forEach((row) => {
           CLIENTES_DYNAMIC_FILTER_PAIRS.forEach(({ key, column }) => {
@@ -787,7 +840,8 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
   const fallbackColumn = mapAgendaColumnToClientes(
     CLIENTES_FILTER_COLUMN_MAP[filterKey] ?? columns[0] ?? filterKey,
   );
-  const fallbackRows = await fetchColumnValuesPaged("clientes", [fallbackColumn]);
+  const filaBlocks = await resolveFilaRoutingBlocks();
+  const fallbackRows = await fetchColumnValuesPaged("clientes", [fallbackColumn], filaBlocks);
   fallbackRows.forEach((row) => {
     const rawValue = row[fallbackColumn as keyof typeof row];
     if (rawValue === null || rawValue === undefined) return;
@@ -809,11 +863,15 @@ export const fetchDistinctOptions = async (filterKey: string, columns: string[])
 };
 
 export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: string[]) => {
+  const filaBlocks = await resolveFilaRoutingBlocks();
   const buildQuery = () =>
-    supabase
+    applyFilaRoutingExclusionsToClientesQuery(
+      supabase
       .from("clientes")
       .select("id, perfil_visita, instructions, cod_1:codigo, empresa, nome_fantasia, situacao")
-      .order("id", { ascending: true });
+      .order("id", { ascending: true }),
+      filaBlocks,
+    );
 
   if (ids && ids.length > 0) {
     const results: AgendaPerfilRow[] = [];

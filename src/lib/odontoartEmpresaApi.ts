@@ -18,6 +18,10 @@ type OdontoartPrecoPlanoRow = {
 
 export type OdontoartEmpresaResponseRow = {
   Id?: number | string | null;
+  AnoMesPrimeiroPagamento?: string | number | null;
+  anoMesPrimeiroPagamento?: string | number | null;
+  AnoMesPrimeiroPgto?: string | number | null;
+  anoMesPrimeiroPgto?: string | number | null;
   DataContrato?: string | null;
   dataContrato?: string | null;
   Cnpj?: string | number | null;

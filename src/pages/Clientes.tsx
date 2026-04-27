@@ -576,6 +576,33 @@ const normalizeStatus = (value: string) => {
   return null;
 };
 
+const normalizeSituacaoForCadastroGate = (value: string | null | undefined) => {
+  const raw = (value ?? "").trim();
+  if (!raw) return "";
+  const normalized = normalizeStatus(raw) ?? raw;
+  const cleaned = normalizeSearchText(normalized).replace(/\s*-\s*/g, "/");
+  if (cleaned.startsWith("ativo")) return "ATIVO";
+  if (
+    cleaned.includes("suspenso") &&
+    (cleaned.includes("inadimplente") || cleaned.includes("inadimlente"))
+  ) {
+    return "SUSPENSO/INADIMPLENTE";
+  }
+  return cleaned.toUpperCase();
+};
+
+const isSituacaoAllowedForCadastro = (value: string | null | undefined) => {
+  const normalized = normalizeSituacaoForCadastroGate(value);
+  return normalized === "ATIVO" || normalized === "SUSPENSO/INADIMPLENTE";
+};
+
+const getSituacaoCadastroErrorMessage = (situacao: string | null | undefined) => {
+  const raw = (situacao ?? "").trim();
+  return `Cadastro permitido apenas para empresas com NomeSituacao ATIVO ou SUSPENSO - INADIMPLENTE.${
+    raw ? ` Situacao recebida: ${raw}.` : ""
+  }`;
+};
+
 const normalizeName = (value: string | null) =>
   normalizeSearchText(value);
 
@@ -636,6 +663,28 @@ const buildInitialCadastroForm = (): CadastroFormState => ({
   uf: "",
 });
 
+const mergeLookupIntoCadastroForm = (
+  current: CadastroFormState,
+  incoming: Partial<CadastroFormState>,
+  options?: { forceFields?: Array<keyof CadastroFormState> },
+): CadastroFormState => {
+  const forceFields = new Set(options?.forceFields ?? []);
+  const next: CadastroFormState = { ...current };
+
+  for (const [rawKey, rawValue] of Object.entries(incoming)) {
+    const key = rawKey as keyof CadastroFormState;
+    if (rawValue === undefined || rawValue === null) continue;
+    const incomingValue = String(rawValue);
+    if (!incomingValue.trim()) continue;
+    const currentValue = next[key];
+    if (forceFields.has(key) || !currentValue.trim()) {
+      next[key] = incomingValue;
+    }
+  }
+
+  return next;
+};
+
 const clearFilialSpecificFields = (base: CadastroFormState): CadastroFormState => ({
   ...buildInitialCadastroForm(),
   codigo: base.codigo.trim(),
@@ -661,16 +710,22 @@ const buildEmptyFilialForm = (params: {
 const applyApiFieldsToFilialForm = (
   base: CadastroFormState,
   apiForm: ReturnType<typeof mapEmpresaApiToClienteForm>,
-): CadastroFormState => ({
-  ...base,
-  cnpj: base.cnpj || apiForm.cnpj || "",
-  empresa: apiForm.empresa.trim() || base.empresa.trim(),
-  obs_comercial: apiForm.obs_comercial.trim() || base.obs_comercial.trim(),
-  corte: apiForm.corte.trim() || base.corte.trim(),
-  venc: apiForm.venc.trim() || base.venc.trim(),
-  valor: apiForm.valor.trim() || base.valor.trim(),
-  situacao: apiForm.situacao.trim() || base.situacao || "Ativo",
-});
+): CadastroFormState =>
+  mergeLookupIntoCadastroForm(
+    base,
+    {
+      cnpj: apiForm.cnpj,
+      empresa: apiForm.empresa,
+      obs_comercial: apiForm.obs_comercial,
+      corte: apiForm.corte,
+      venc: apiForm.venc,
+      valor: apiForm.valor,
+      situacao: apiForm.situacao,
+    },
+    {
+      forceFields: ["cnpj", "empresa", "obs_comercial", "corte", "venc", "valor", "situacao"],
+    },
+  );
 
 const preserveFilialCommonFields = (
   draft: CadastroFormState,
@@ -842,6 +897,23 @@ export default function Clientes() {
     if (import.meta.env.DEV) {
       console.debug("[Clientes:create-flow]", payload);
     }
+  };
+
+  const safeSetCadastroForm = (
+    reason: string,
+    updater: (prev: CadastroFormState) => CadastroFormState,
+  ) => {
+    setForm((prev) => {
+      const next = updater(prev);
+      if (import.meta.env.DEV) {
+        console.debug("[Clientes:create-form-update]", {
+          reason,
+          previous: prev,
+          next,
+        });
+      }
+      return next;
+    });
   };
 
   const loadClientesPage = async (showLoading = true) => {
@@ -1220,6 +1292,9 @@ export default function Clientes() {
     sourceForm: CadastroFormState,
     perfilVisita: string | null,
   ) => {
+    if (!isSituacaoAllowedForCadastro(sourceForm.situacao)) {
+      throw new Error(getSituacaoCadastroErrorMessage(sourceForm.situacao));
+    }
     const normalizedCodigo = normalizeCodigoValue(sourceForm.codigo);
     const normalizedCnpj = normalizeCnpj(sourceForm.cnpj);
     const [addressMatches, codeMatches] = await Promise.all([
@@ -1364,19 +1439,25 @@ export default function Clientes() {
   const mergeCepMappedIntoForm = (
     current: CadastroFormState,
     mapped: ReturnType<typeof mapCepResponse>,
-  ): CadastroFormState => ({
-    ...current,
-    cep: hasFilledValue(mapped.cep) ? formatCep(mapped.cep as string) : current.cep,
-    endereco: hasFilledValue(mapped.endereco) ? (mapped.endereco as string) : current.endereco,
-    bairro: hasFilledValue(mapped.bairro) ? (mapped.bairro as string) : current.bairro,
-    cidade: hasFilledValue(mapped.cidade) ? (mapped.cidade as string) : current.cidade,
-    uf: hasFilledValue(mapped.uf)
-      ? (mapped.uf as string).toUpperCase().slice(0, 3)
-      : current.uf,
-    complemento: hasFilledValue(mapped.complemento)
-      ? (mapped.complemento as string)
-      : current.complemento,
-  });
+  ): CadastroFormState =>
+    mergeLookupIntoCadastroForm(
+      current,
+      {
+        cep: hasFilledValue(mapped.cep) ? formatCep(mapped.cep as string) : undefined,
+        endereco: hasFilledValue(mapped.endereco) ? (mapped.endereco as string) : undefined,
+        bairro: hasFilledValue(mapped.bairro) ? (mapped.bairro as string) : undefined,
+        cidade: hasFilledValue(mapped.cidade) ? (mapped.cidade as string) : undefined,
+        uf: hasFilledValue(mapped.uf)
+          ? (mapped.uf as string).toUpperCase().slice(0, 3)
+          : undefined,
+        complemento: hasFilledValue(mapped.complemento)
+          ? (mapped.complemento as string)
+          : undefined,
+      },
+      {
+        forceFields: ["cep", "endereco", "bairro", "cidade", "uf", "complemento"],
+      },
+    );
 
   const applyFilialCepResult = (flowId: number, payload: Record<string, unknown>) => {
     if (!isActiveCreateFlow(flowId)) return;
@@ -1621,7 +1702,7 @@ export default function Clientes() {
       }
       const mapped = mapCepResponse(payload);
       if (requestId !== createCepLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
-      setForm((prev) => mergeCepMappedIntoForm(prev, mapped));
+      safeSetCadastroForm("cep-lookup", (prev) => mergeCepMappedIntoForm(prev, mapped));
     } catch (err) {
       if (requestId !== createCepLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
       setError(err instanceof Error ? err.message : "Erro ao buscar por CEP.");
@@ -1676,7 +1757,7 @@ export default function Clientes() {
       }
       const mapped = mapCepResponse(firstMatch);
       if (requestId !== createEnderecoLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
-      setForm((prev) => mergeCepMappedIntoForm(prev, mapped));
+      safeSetCadastroForm("endereco-lookup", (prev) => mergeCepMappedIntoForm(prev, mapped));
     } catch (err) {
       if (requestId !== createEnderecoLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
       setError(err instanceof Error ? err.message : "Erro ao buscar por endereco.");
@@ -1785,6 +1866,18 @@ export default function Clientes() {
     const flowId = modalSnapshot.flowId;
     if (!isActiveCreateFlow(flowId)) return;
     const modalForm = modalSnapshot.form;
+    if (!isSituacaoAllowedForCadastro(modalForm.situacao)) {
+      const situacaoError = getSituacaoCadastroErrorMessage(modalForm.situacao);
+      setFilialCadastroModal((prev) =>
+        prev && prev.flowId === flowId
+          ? {
+              ...prev,
+              error: situacaoError,
+            }
+          : prev,
+      );
+      return;
+    }
     if (!modalForm.empresa.trim()) {
       setFilialCadastroModal((prev) =>
         prev && prev.flowId === flowId
@@ -1836,6 +1929,7 @@ export default function Clientes() {
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canCreate || creating || codigoLoading || cnpjLoading) return;
+    if (!isSituacaoAllowedForCadastro(form.situacao)) return;
     const flowId = startNewCreateFlow();
     const formSnapshot: CadastroFormState = { ...form };
     const perfilSnapshot = perfilCreate.perfil || null;
@@ -2046,7 +2140,25 @@ export default function Clientes() {
         mapEmpresaApiToClienteForm(empresaApi, empresaId),
       );
       if (!isActiveCreateFlow(flowId)) return;
-      setForm(formData);
+      safeSetCadastroForm("codigo-lookup", (prev) =>
+        mergeLookupIntoCadastroForm(prev, formData, {
+          forceFields: [
+            "codigo",
+            "cnpj",
+            "corte",
+            "venc",
+            "valor",
+            "cep",
+            "empresa",
+            "obs_comercial",
+            "situacao",
+            "endereco",
+            "bairro",
+            "cidade",
+            "uf",
+          ],
+        }),
+      );
       setCreatePlanoValores(planoValores);
       setPerfilCreate(buildPerfilState(null));
     } catch (err) {
@@ -2098,27 +2210,30 @@ export default function Clientes() {
       if (requestId !== createCnpjLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
       const endereco = buildEnderecoWithNumero(empresaApi.logradouro, empresaApi.numero);
 
-      const nextForm: CadastroFormState = {
-        ...buildInitialCadastroForm(),
-        codigo: codigoDigitado,
+      const incomingFromCnpjApi: Partial<CadastroFormState> = {
+        codigo: codigoDigitado || undefined,
         cnpj: formattedCnpj,
         empresa: (empresaApi.razao_social ?? "").trim(),
-        endereco: endereco || "",
-        cep: empresaApi.cep ? formatCep(empresaApi.cep) : "",
-        bairro: empresaApi.bairro ?? "",
-        cidade: empresaApi.cidade ?? "",
-        uf: empresaApi.estado ? empresaApi.estado.toUpperCase().slice(0, 3) : "",
+        endereco: endereco || undefined,
+        cep: empresaApi.cep ? formatCep(empresaApi.cep) : undefined,
+        bairro: empresaApi.bairro ?? undefined,
+        cidade: empresaApi.cidade ?? undefined,
+        uf: empresaApi.estado ? empresaApi.estado.toUpperCase().slice(0, 3) : undefined,
         situacao: "Ativo",
       };
       debugCreateFlow({
-        action: "cnpj-lookup-next-form",
+        action: "cnpj-lookup-incoming",
         flowId,
-        nextForm,
+        incoming: incomingFromCnpjApi,
       });
       setCreatePlanoValores([]);
       setPerfilCreate(buildPerfilState(null));
       if (requestId !== createCnpjLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
-      setForm(nextForm);
+      safeSetCadastroForm("cnpj-lookup", (prev) =>
+        mergeLookupIntoCadastroForm(prev, incomingFromCnpjApi, {
+          forceFields: ["cnpj", "empresa", "endereco", "cep", "bairro", "cidade", "uf", "situacao"],
+        }),
+      );
     } catch (err) {
       if (requestId !== createCnpjLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
       setCnpjError(err instanceof Error ? err.message : "Erro ao buscar CNPJ na API.");
@@ -2530,6 +2645,13 @@ export default function Clientes() {
   const canEditEnderecoFilial = Boolean(
     filialCadastroModal?.form.cidade.trim() && filialCadastroModal?.form.uf.trim(),
   );
+  const createSituacaoBlockedMessage = isSituacaoAllowedForCadastro(form.situacao)
+    ? null
+    : getSituacaoCadastroErrorMessage(form.situacao);
+  const filialSituacaoBlockedMessage =
+    filialCadastroModal && !isSituacaoAllowedForCadastro(filialCadastroModal.form.situacao)
+      ? getSituacaoCadastroErrorMessage(filialCadastroModal.form.situacao)
+      : null;
   const createFlowBusy =
     creating || codigoLoading || cnpjLoading || filialCnpjLoading || filialCepLoading || filialBairroLoading;
   const hasPlanoValores = (valores: OdontoartPlanoValor[]) =>
@@ -3095,12 +3217,17 @@ export default function Clientes() {
           <div className="flex items-end md:col-span-2">
             <button
               type="submit"
-              disabled={createFlowBusy}
+              disabled={createFlowBusy || Boolean(createSituacaoBlockedMessage)}
               className="inline-flex items-center gap-2 rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
             >
               <Plus size={14} />
               {creating ? "Criando" : "Adicionar cliente"}
             </button>
+            {createSituacaoBlockedMessage && (
+              <span className="ml-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-600">
+                {createSituacaoBlockedMessage}
+              </span>
+            )}
           </div>
         </form>
       )}
@@ -4543,11 +4670,20 @@ export default function Clientes() {
               <button
                 type="button"
                 onClick={handleSaveFilialCadastro}
-                disabled={createFlowBusy || !filialCadastroModal.form.obs.trim()}
+                disabled={
+                  createFlowBusy ||
+                  !filialCadastroModal.form.obs.trim() ||
+                  Boolean(filialSituacaoBlockedMessage)
+                }
                 className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
               >
                 {creating ? "Salvando..." : "Cadastrar filial"}
               </button>
+              {filialSituacaoBlockedMessage && (
+                <span className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-600">
+                  {filialSituacaoBlockedMessage}
+                </span>
+              )}
             </div>
           </div>
         </div>

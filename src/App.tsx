@@ -1,5 +1,5 @@
 import { Suspense, lazy } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import AppLayout from "./layouts/AppLayout";
 
@@ -7,7 +7,6 @@ const Login = lazy(() => import("./pages/Login"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Agenda = lazy(() => import("./pages/Agenda"));
 const RoutesPage = lazy(() => import("./pages/Routes"));
-const RoutesMap = lazy(() => import("./pages/RoutesMap"));
 const Visitas = lazy(() => import("./pages/Visitas"));
 const AceiteDigital = lazy(() => import("./pages/AceiteDigital"));
 const Clientes = lazy(() => import("./pages/Clientes"));
@@ -28,7 +27,7 @@ export default function App() {
               <Route index element={<Dashboard />} />
               <Route path="agenda" element={<Agenda />} />
               <Route path="rotas" element={<RoutesPage />} />
-              <Route path="rotas/mapa" element={<RoutesMap />} />
+              <Route path="rotas/mapa" element={<Navigate to="/agenda" replace />} />
               <Route path="visitas" element={<Visitas />} />
               <Route path="aceite-digital" element={<AceiteDigital />} />
               <Route path="clientes" element={<Clientes />} />

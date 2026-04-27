@@ -60,12 +60,22 @@ export type FilaClienteCandidate = {
   created_at: string | null;
 };
 
+export type FilaRoutingBlockLists = {
+  blockedEmpresaIds: string[];
+  blockedCodigos: string[];
+  cachedAt: number;
+};
+
 type SupabaseLikeError = { code?: string; message?: string } | null;
 const FILA_AUTO_SYNC_STORAGE_KEY = "filaAutoSyncAtMsV1";
 const FILA_AUTO_SYNC_DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
-export const FILA_DATA_CONTRATO_CORTE = "2026-04-01";
+const FILA_ROUTING_BLOCKS_CACHE_MS = 60 * 1000;
+export const FILA_ANO_MES_PRIMEIRO_PAGAMENTO_CORTE = "2026-01-01";
+export const FILA_DATA_CONTRATO_CORTE = FILA_ANO_MES_PRIMEIRO_PAGAMENTO_CORTE;
 let filaAutoSyncPromise: Promise<number> | null = null;
 let filaAutoSyncLastRunAt = 0;
+let filaRoutingBlocksCache: FilaRoutingBlockLists | null = null;
+let filaRoutingBlocksPromise: Promise<FilaRoutingBlockLists> | null = null;
 
 const toDateOnlyFromTimestamp = (value: string | null | undefined) => {
   if (!value) return null;
@@ -95,10 +105,51 @@ const parseDataContratoToIsoDate = (value: string | null | undefined) => {
   return parsed.toISOString().slice(0, 10);
 };
 
-const isBeforeDataContratoCutoff = (dateIso: string | null | undefined) => {
+const parseAnoMesPrimeiroPagamentoToIsoDate = (
+  value: string | number | null | undefined,
+) => {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const yyyymm = raw.match(/^(\d{4})(\d{2})$/);
+  if (yyyymm) return `${yyyymm[1]}-${yyyymm[2]}-01`;
+
+  const yyyyDashMm = raw.match(/^(\d{4})-(\d{2})$/);
+  if (yyyyDashMm) return `${yyyyDashMm[1]}-${yyyyDashMm[2]}-01`;
+
+  const mmSlashYyyy = raw.match(/^(\d{2})\/(\d{4})$/);
+  if (mmSlashYyyy) return `${mmSlashYyyy[2]}-${mmSlashYyyy[1]}-01`;
+
+  const yyyymmdd = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (yyyymmdd) return `${yyyymmdd[1]}-${yyyymmdd[2]}-${yyyymmdd[3]}`;
+
+  return parseDataContratoToIsoDate(raw);
+};
+
+const resolveAnoMesPrimeiroPagamentoToIsoDate = (empresa: unknown) => {
+  if (!empresa || typeof empresa !== "object") return null;
+  const record = empresa as Record<string, unknown>;
+  const candidates = [
+    record.AnoMesPrimeiroPagamento,
+    record.anoMesPrimeiroPagamento,
+    record.AnoMesPrimeiroPgto,
+    record.anoMesPrimeiroPgto,
+    record.ANO_MES_PRIMEIRO_PAGAMENTO,
+  ];
+  for (const candidate of candidates) {
+    const parsed = parseAnoMesPrimeiroPagamentoToIsoDate(
+      candidate as string | number | null | undefined,
+    );
+    if (parsed) return parsed;
+  }
+  return null;
+};
+
+const isBeforePrimeiroPagamentoCutoff = (dateIso: string | null | undefined) => {
   const normalized = (dateIso ?? "").trim();
   if (!normalized) return false;
-  return normalized < FILA_DATA_CONTRATO_CORTE;
+  return normalized < FILA_ANO_MES_PRIMEIRO_PAGAMENTO_CORTE;
 };
 
 const readAutoSyncStorageTimestamp = () => {
@@ -202,7 +253,7 @@ export const fetchFilaControls = async (params?: {
       "empresa_id, codigo, empresa, cnpj, data_contrato, waiting_days_snapshot, eligible_at, state, effective_state, manual_block_until, manual_reason, manual_override_by, manual_override_at, created_at, updated_at, days_remaining",
     )
     .order("created_at", { ascending: false })
-    .gte("data_contrato", FILA_DATA_CONTRATO_CORTE);
+    .gte("data_contrato", FILA_ANO_MES_PRIMEIRO_PAGAMENTO_CORTE);
 
   if (params?.state) {
     query = query.eq("effective_state", params.state);
@@ -244,8 +295,10 @@ export const registerFilaEmpresa = async (payload: {
   data_contrato: string;
   waiting_days?: number | null;
 }) => {
-  if (isBeforeDataContratoCutoff(payload.data_contrato)) {
-    throw new Error("Empresa fora do escopo do modulo fila (DataContrato anterior a 01/04/2026).");
+  if (isBeforePrimeiroPagamentoCutoff(payload.data_contrato)) {
+    throw new Error(
+      "Empresa fora do escopo do modulo fila (AnoMesPrimeiroPagamento anterior a 01/2026).",
+    );
   }
 
   const { data, error } = await supabase.rpc("queue_release_register_company", {
@@ -322,6 +375,71 @@ export const fetchFilaControlsByEmpresaIds = async (empresaIds: string[]) => {
   return allRows;
 };
 
+const isFilaControlEligibleForRoutes = (row: {
+  effective_state: FilaState;
+  eligible_at: string;
+}) => {
+  if (row.effective_state === "RELEASED_MANUAL" || row.effective_state === "READY_AUTO") {
+    return true;
+  }
+  const eligibleAtMs = Date.parse(row.eligible_at);
+  if (Number.isFinite(eligibleAtMs)) return eligibleAtMs <= Date.now();
+  return row.effective_state !== "PENDING_WAIT";
+};
+
+export const clearFilaRoutingBlocksCache = () => {
+  filaRoutingBlocksCache = null;
+};
+
+export const fetchFilaRoutingBlockLists = async (options?: { force?: boolean }) => {
+  const force = Boolean(options?.force);
+  if (!force && filaRoutingBlocksCache) {
+    const age = Date.now() - filaRoutingBlocksCache.cachedAt;
+    if (age <= FILA_ROUTING_BLOCKS_CACHE_MS) {
+      return filaRoutingBlocksCache;
+    }
+  }
+  if (!force && filaRoutingBlocksPromise) {
+    return filaRoutingBlocksPromise;
+  }
+
+  filaRoutingBlocksPromise = (async () => {
+    const { data, error } = await supabase
+      .from("queue_release_controls_view")
+      .select("empresa_id, codigo, effective_state, eligible_at");
+    if (error) throw error;
+
+    const blockedEmpresaIds = new Set<string>();
+    const blockedCodigos = new Set<string>();
+
+    ((data ?? []) as Array<{
+      empresa_id: string;
+      codigo: string | null;
+      effective_state: FilaState;
+      eligible_at: string;
+    }>).forEach((row) => {
+      const eligible = isFilaControlEligibleForRoutes(row);
+      if (!eligible) {
+        blockedEmpresaIds.add(row.empresa_id);
+        const codigo = row.codigo?.trim();
+        if (codigo) blockedCodigos.add(codigo);
+      }
+    });
+
+    const snapshot: FilaRoutingBlockLists = {
+      blockedEmpresaIds: Array.from(blockedEmpresaIds),
+      blockedCodigos: Array.from(blockedCodigos),
+      cachedAt: Date.now(),
+    };
+    filaRoutingBlocksCache = snapshot;
+    return snapshot;
+  })().finally(() => {
+    filaRoutingBlocksPromise = null;
+  });
+
+  return filaRoutingBlocksPromise;
+};
+
 export const syncFilaAutoRegistration = async (options?: {
   minIntervalMs?: number;
   maxCandidates?: number;
@@ -373,15 +491,21 @@ export const syncFilaAutoRegistration = async (options?: {
         if (codigo) {
           try {
             const empresa = await fetchEmpresaByEmpresaId(codigo);
-            const dataContratoRaw = empresa?.DataContrato ?? empresa?.dataContrato ?? null;
-            const parsedDataContrato = parseDataContratoToIsoDate(dataContratoRaw);
-            if (parsedDataContrato) dataContratoIso = parsedDataContrato;
+            const parsedAnoMesPrimeiroPagamento =
+              resolveAnoMesPrimeiroPagamentoToIsoDate(empresa);
+            if (parsedAnoMesPrimeiroPagamento) {
+              dataContratoIso = parsedAnoMesPrimeiroPagamento;
+            } else {
+              const dataContratoRaw = empresa?.DataContrato ?? empresa?.dataContrato ?? null;
+              const parsedDataContrato = parseDataContratoToIsoDate(dataContratoRaw);
+              if (parsedDataContrato) dataContratoIso = parsedDataContrato;
+            }
           } catch {
             // fallback para created_at quando ERP estiver indisponivel
           }
         }
 
-        if (isBeforeDataContratoCutoff(dataContratoIso)) {
+        if (isBeforePrimeiroPagamentoCutoff(dataContratoIso)) {
           continue;
         }
 

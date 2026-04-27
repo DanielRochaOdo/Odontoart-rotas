@@ -1,7 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, Map, Plus, Trash } from "lucide-react";
-import L from "leaflet";
-import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
+import { ExternalLink, Plus, Trash } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import {
   createRoute,
@@ -17,32 +15,6 @@ import {
 import { onProfilesUpdated } from "../lib/profileEvents";
 import type { Route, RouteStop } from "../types/routes";
 import { formatDateBr } from "../lib/dateFormat";
-import { clearRoutesModuleDraft, readRoutesModuleDraft } from "../lib/routesModuleDraft";
-import { normalizeText } from "../lib/textNormalize";
-
-import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
-import markerIcon from "leaflet/dist/images/marker-icon.png";
-import markerShadow from "leaflet/dist/images/marker-shadow.png";
-
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: markerIcon2x,
-  iconUrl: markerIcon,
-  shadowUrl: markerShadow,
-});
-
-const FORTALEZA_CENTER: [number, number] = [-3.7319, -38.5267];
-
-const normalize = (value: string | null | undefined) =>
-  normalizeText(value, { letterCase: "upper" });
-
-const isFortaleza = (row: EmpresaLookupRow) => {
-  const city = normalize(row.cidade);
-  const uf = normalize(row.uf);
-  return city === "FORTALEZA" && uf === "CE";
-};
-
-const buildEmpresaAddress = (row: EmpresaLookupRow) =>
-  [row.endereco, row.complemento, row.bairro, row.cidade, row.uf].filter(Boolean).join(", ");
 
 const buildStopAddress = (stop: RouteStop) => {
   const cliente = stop.cliente;
@@ -66,7 +38,6 @@ type RoutesPageLookupsCache = {
 
 const ROUTES_PAGE_ROUTES_CACHE_KEY = "routesPageRoutesCacheV2";
 const ROUTES_PAGE_LOOKUPS_CACHE_KEY = "routesPageLookupsCacheV2";
-const ROUTES_PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 let routesPageRoutesMemoryCache: { routes: Route[]; cachedAt: number } | null = null;
 let routesPageLookupsMemoryCache: RoutesPageLookupsCache | null = null;
 
@@ -139,8 +110,6 @@ export default function Routes() {
   const [creatingRoute, setCreatingRoute] = useState(false);
   const [newRoute, setNewRoute] = useState({ name: "", date: "", assigned_to_user_id: "" });
   const [newStop, setNewStop] = useState({ cliente_id: "", stop_order: "", notes: "" });
-  const [mapAddingEmpresaId, setMapAddingEmpresaId] = useState<string | null>(null);
-  const [draftSummary, setDraftSummary] = useState(() => readRoutesModuleDraft());
 
   const canEdit = role === "SUPERVISOR" || role === "ASSISTENTE";
 
@@ -205,28 +174,13 @@ export default function Routes() {
       }
     };
 
-    const cacheIsFresh =
-      Boolean(cached) && Date.now() - (cached?.cachedAt ?? 0) <= ROUTES_PAGE_CACHE_TTL_MS;
-    if (!cacheIsFresh) {
-      loadLookups();
-    }
+    void loadLookups();
     const unsubscribe = onProfilesUpdated(loadLookups);
     return () => {
       active = false;
       unsubscribe();
     };
   }, [canEdit]);
-
-  useEffect(() => {
-    const refreshDraft = () => setDraftSummary(readRoutesModuleDraft());
-    refreshDraft();
-    window.addEventListener("focus", refreshDraft);
-    window.addEventListener("storage", refreshDraft);
-    return () => {
-      window.removeEventListener("focus", refreshDraft);
-      window.removeEventListener("storage", refreshDraft);
-    };
-  }, []);
 
   useEffect(() => {
     if (!selectedRouteId || !canEdit) {
@@ -243,24 +197,6 @@ export default function Routes() {
   const selectedRoute = useMemo(
     () => routes.find((route) => route.id === selectedRouteId) ?? null,
     [routes, selectedRouteId],
-  );
-
-  const fortalezaRows = useMemo(() => empresaOptions.filter(isFortaleza), [empresaOptions]);
-  const mapRows = useMemo(
-    () =>
-      fortalezaRows.filter(
-        (row) => typeof row.latitude === "number" && typeof row.longitude === "number",
-      ),
-    [fortalezaRows],
-  );
-  const missingCoordinatesRows = useMemo(
-    () => fortalezaRows.filter((row) => !(typeof row.latitude === "number" && typeof row.longitude === "number")),
-    [fortalezaRows],
-  );
-
-  const stopEmpresaIds = useMemo(
-    () => new Set(stops.map((stop) => stop.cliente_id).filter((value): value is string => Boolean(value))),
-    [stops],
   );
 
   if (!canEdit) {
@@ -312,24 +248,6 @@ export default function Routes() {
     setNewStop({ cliente_id: "", stop_order: "", notes: "" });
   };
 
-  const handleAddStopFromMap = async (row: EmpresaLookupRow) => {
-    if (!selectedRouteId) return;
-    if (stopEmpresaIds.has(row.id)) return;
-
-    setMapAddingEmpresaId(row.id);
-    try {
-      const maxOrder = stops.reduce((max, item) => Math.max(max, item.stop_order ?? 0), 0);
-      const created = await createRouteStop({
-        route_id: selectedRouteId,
-        cliente_id: row.id,
-        stop_order: maxOrder + 1,
-      });
-      setStops((prev) => [...prev, created].sort((a, b) => (a.stop_order ?? 0) - (b.stop_order ?? 0)));
-    } finally {
-      setMapAddingEmpresaId(null);
-    }
-  };
-
   const handleDeleteStop = async (stopId: string) => {
     await deleteRouteStop(stopId);
     setStops((prev) => prev.filter((stop) => stop.id !== stopId));
@@ -342,55 +260,7 @@ export default function Routes() {
           <h2 className="font-display text-2xl text-ink">Rotas</h2>
           <p className="mt-2 text-sm text-ink/60">Gestao de rotas e paradas comerciais.</p>
         </div>
-        <a
-          href="/rotas/mapa"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-2 rounded-lg border border-sea/30 bg-white/90 px-3 py-2 text-xs font-semibold text-ink hover:border-sea hover:text-sea"
-        >
-          <Map size={14} />
-          Abrir mapa dedicado
-        </a>
       </header>
-
-      {(draftSummary.selectedEmpresaIds?.length ?? 0) > 0 && (
-        <section className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="space-y-1">
-              <h3 className="text-sm font-semibold text-ink">Rascunho do modulo de rotas</h3>
-              <p className="text-xs text-ink/60">
-                Empresas selecionadas no mapa: {draftSummary.selectedEmpresaIds?.length ?? 0}
-              </p>
-              {draftSummary.companyNameQuery ? (
-                <p className="text-xs text-ink/60">Busca por nome: {draftSummary.companyNameQuery}</p>
-              ) : null}
-              {draftSummary.companyCodeQuery ? (
-                <p className="text-xs text-ink/60">Busca por codigo: {draftSummary.companyCodeQuery}</p>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <a
-                href="/rotas/mapa"
-                className="inline-flex items-center gap-2 rounded-lg border border-sea/30 bg-white/90 px-3 py-2 text-xs font-semibold text-ink hover:border-sea hover:text-sea"
-              >
-                <Map size={14} />
-                Continuar selecao
-              </a>
-              <button
-                type="button"
-                onClick={() => {
-                  clearRoutesModuleDraft();
-                  setDraftSummary(readRoutesModuleDraft());
-                }}
-                className="inline-flex items-center gap-2 rounded-lg border border-sea/30 bg-white/90 px-3 py-2 text-xs font-semibold text-ink hover:border-sea hover:text-sea"
-              >
-                <Trash size={14} />
-                Limpar rascunho
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
 
       <form
         onSubmit={handleCreateRoute}
@@ -483,63 +353,6 @@ export default function Routes() {
                 <div>
                   <h3 className="font-display text-xl text-ink">{selectedRoute.name}</h3>
                   <p className="text-sm text-ink/60">{formatDateBr(selectedRoute.date, "Sem data")}</p>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-sea/20 bg-sand/20 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-semibold text-ink">Modo mapa (Fortaleza/CE)</h4>
-                    <p className="text-xs text-ink/60">
-                      Empresas em Fortaleza com coordenadas reais para montar a rota por pin.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-3 text-xs text-ink/70">
-                  <span>Total Fortaleza: {fortalezaRows.length}</span>
-                  <span className="mx-2">•</span>
-                  <span>Com coordenadas: {mapRows.length}</span>
-                  <span className="mx-2">•</span>
-                  <span>Sem coordenadas: {missingCoordinatesRows.length}</span>
-                </div>
-                <div className="mt-3 overflow-hidden rounded-xl border border-sea/15">
-                  <MapContainer center={FORTALEZA_CENTER} zoom={11} className="h-[460px] w-full">
-                    <TileLayer
-                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    />
-                    {mapRows.map((row) => {
-                      if (typeof row.latitude !== "number" || typeof row.longitude !== "number") return null;
-                      const address = buildEmpresaAddress(row);
-                      const isAdded = stopEmpresaIds.has(row.id);
-
-                      return (
-                        <Marker key={row.id} position={[row.latitude, row.longitude]}>
-                          <Popup>
-                            <div className="space-y-2 text-xs">
-                              <p className="font-semibold text-ink">{row.empresa ?? row.nome_fantasia ?? "Empresa"}</p>
-                              <p className="text-ink/70">{address || "Endereco nao informado"}</p>
-                              <p className="text-ink/60">
-                                Lat/Lng: {row.latitude.toFixed(6)}, {row.longitude.toFixed(6)}
-                              </p>
-                              <button
-                                type="button"
-                                disabled={isAdded || mapAddingEmpresaId === row.id}
-                                onClick={() => {
-                                  handleAddStopFromMap(row).catch(() => undefined);
-                                }}
-                                className="inline-flex items-center gap-1 rounded border border-sea/30 px-2 py-1 text-[11px] font-semibold text-ink disabled:opacity-50"
-                              >
-                                <Plus size={12} />
-                                {isAdded ? "Ja na rota" : mapAddingEmpresaId === row.id ? "Adicionando..." : "Adicionar parada"}
-                              </button>
-                            </div>
-                          </Popup>
-                        </Marker>
-                      );
-                    })}
-                  </MapContainer>
                 </div>
               </div>
 
