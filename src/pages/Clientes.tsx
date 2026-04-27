@@ -9,6 +9,7 @@ import {
   fetchClienteById,
   fetchClientesCount,
   fetchClientesByCodigoExact,
+  fetchClientesByCnpjExact,
   fetchClientesByEnderecoExact,
   fetchClientesPage,
   fetchClienteHistory,
@@ -27,11 +28,10 @@ import {
   isPresetPerfilVisita,
   normalizePerfilVisita,
 } from "../lib/perfilVisita";
-import { formatCep, sanitizeCep } from "../lib/cep";
+import { formatCep, isCepErrorPayload, mapCepResponse, sanitizeCep } from "../lib/cep";
 import {
   extractOdontoartPlanoValores,
   fetchEmpresaByEmpresaId,
-  fetchObservacaoComercialByEmpresaId,
   resolveOdontoartValorTitular,
   type OdontoartPlanoValor,
   type OdontoartEmpresaResponseRow,
@@ -107,15 +107,45 @@ type DuplicateEntry = {
   payload?: ImportPayload;
 };
 
-type CodigoDuplicadoOrigem = "create" | "edit";
 type ClienteSearchMode = "codigo" | "empresa" | "geral";
 
-type CodigoDuplicadoModalState = {
+type CadastroFormState = {
+  codigo: string;
+  cnpj: string;
+  corte: string;
+  venc: string;
+  valor: string;
+  data_da_ultima_visita: string;
+  cep: string;
+  empresa: string;
+  pessoa: string;
+  contato: string;
+  grupo: string;
+  obs_comercial: string;
+  obs: string;
+  situacao: string;
+  categoria: string;
+  endereco: string;
+  complemento: string;
+  bairro: string;
+  cidade: string;
+  uf: string;
+};
+
+type FilialConfirmModalState = {
+  flowId: number;
   codigo: string;
   empresa: string;
-  obs: string;
-  origem: CodigoDuplicadoOrigem;
-  existingObs: string[];
+  existingCount: number;
+  draft: CadastroFormState;
+  source: "codigo" | "cnpj";
+  lookupError: string | null;
+};
+
+type FilialCadastroModalState = {
+  flowId: number;
+  form: CadastroFormState;
+  existingCount: number;
   error: string | null;
 };
 
@@ -279,16 +309,6 @@ const formatCurrency = (value: number | string | null) => {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(numeric);
 };
 
-const parseNumberFromUnknown = (value: unknown) => {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const normalized = value.replace(/\./g, "").replace(",", ".").trim();
-    const parsed = Number(normalized);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-};
-
 const resolveCnpjFromEmpresa = (empresa: OdontoartEmpresaResponseRow) => {
   const candidates: Array<string | number | null | undefined> = [
     empresa.CNPJ,
@@ -328,6 +348,57 @@ const resolveCepFromEmpresa = (empresa: OdontoartEmpresaResponseRow) => {
 const buildEnderecoWithNumero = (logradouro: string | null, numero: string | null) =>
   [logradouro?.trim(), numero?.trim()].filter(Boolean).join(", ");
 
+const readValueByKeysFromUnknown = (
+  value: unknown,
+  keys: string[],
+  depth = 0,
+): unknown => {
+  if (depth > 5 || value === null || value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = readValueByKeysFromUnknown(item, keys, depth + 1);
+      if (found !== undefined && found !== null) return found;
+    }
+    return undefined;
+  }
+  if (typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const lowerKeyMap = new Map(Object.keys(record).map((key) => [key.toLowerCase(), key]));
+  for (const key of keys) {
+    const direct = lowerKeyMap.get(key.toLowerCase());
+    if (!direct) continue;
+    const candidate = record[direct];
+    if (candidate !== undefined && candidate !== null && String(candidate).trim() !== "") {
+      return candidate;
+    }
+  }
+  for (const nested of Object.values(record)) {
+    const found = readValueByKeysFromUnknown(nested, keys, depth + 1);
+    if (found !== undefined && found !== null) return found;
+  }
+  return undefined;
+};
+
+const readStringByKeysFromUnknown = (value: unknown, keys: string[]) => {
+  const found = readValueByKeysFromUnknown(value, keys);
+  if (typeof found === "string") {
+    const trimmed = found.trim();
+    return trimmed || "";
+  }
+  if (typeof found === "number" && Number.isFinite(found)) {
+    return String(found).trim();
+  }
+  return "";
+};
+
+const readNumberLikeStringByKeysFromUnknown = (value: unknown, keys: string[]) => {
+  const found = readValueByKeysFromUnknown(value, keys);
+  if (found === undefined || found === null) return "";
+  if (typeof found === "number" && Number.isFinite(found)) return String(found);
+  if (typeof found === "string") return found.trim();
+  return "";
+};
+
 const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigoFallback: string) => {
   const codigo =
     empresa.Id !== null && empresa.Id !== undefined
@@ -340,20 +411,48 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
       : "";
   const endereco = buildEnderecoWithNumero(logradouro, numero);
   const valorTitular = resolveOdontoartValorTitular(empresa);
-  const situacaoRaw = (empresa.NomeSituacao ?? empresa.nomeSituacao ?? "").trim();
+  const situacaoRaw =
+    (empresa.NomeSituacao ?? empresa.nomeSituacao ?? "").trim() ||
+    readStringByKeysFromUnknown(empresa, [
+      "NomeSituacao",
+      "nomeSituacao",
+      "nome_situacao",
+      "situacao",
+      "status",
+    ]);
   const situacao = normalizeStatus(situacaoRaw) ?? situacaoRaw;
+  const corteFromApi =
+    (empresa.Corte !== null && empresa.Corte !== undefined
+      ? String(empresa.Corte).trim()
+      : "") ||
+    readNumberLikeStringByKeysFromUnknown(empresa, ["Corte", "corte", "DiaCorte", "diaCorte"]);
+  const vencFromApi =
+    (empresa.Vencimento !== null && empresa.Vencimento !== undefined
+      ? String(empresa.Vencimento).trim()
+      : "") ||
+    readNumberLikeStringByKeysFromUnknown(empresa, [
+      "Vencimento",
+      "vencimento",
+      "DiaVencimento",
+      "diaVencimento",
+      "Venc",
+      "venc",
+    ]);
+  const obsComercialFromApi =
+    (empresa.ObservacaoComercial ?? "").trim() ||
+    readStringByKeysFromUnknown(empresa, [
+      "ObservacaoComercial",
+      "observacaoComercial",
+      "observacao_comercial",
+      "ObsComercial",
+      "obsComercial",
+    ]);
 
   return {
     codigo,
     cnpj: resolveCnpjFromEmpresa(empresa),
-    corte:
-      empresa.Corte !== null && empresa.Corte !== undefined
-        ? String(empresa.Corte).trim()
-        : "",
-    venc:
-      empresa.Vencimento !== null && empresa.Vencimento !== undefined
-        ? String(empresa.Vencimento).trim()
-        : "",
+    corte: corteFromApi,
+    venc: vencFromApi,
     valor: valorTitular !== null ? formatCurrency(valorTitular) : "",
     data_da_ultima_visita: "",
     cep: resolveCepFromEmpresa(empresa),
@@ -361,7 +460,7 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
     pessoa: "",
     contato: "",
     grupo: "",
-    obs_comercial: (empresa.ObservacaoComercial ?? "").trim(),
+    obs_comercial: obsComercialFromApi,
     obs: "",
     situacao,
     categoria: "",
@@ -374,75 +473,10 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
 };
 
 const normalizeCodigoValue = (value: string | null | undefined) => (value ?? "").trim();
-const normalizeObsValue = (value: string | null | undefined) =>
-  normalizeSearchText(value);
 
-const normalizeNullableText = (value: string | null | undefined) => {
-  const cleaned = (value ?? "").trim();
-  return cleaned ? cleaned : null;
-};
-
-type ClienteApiSyncPayload = Partial<
-  Pick<
-    ClienteRow,
-    | "codigo"
-    | "cnpj"
-    | "corte"
-    | "venc"
-    | "valor"
-    | "cep"
-    | "empresa"
-    | "obs_comercial"
-    | "situacao"
-    | "endereco"
-    | "bairro"
-    | "cidade"
-    | "uf"
-  >
->;
-
-const mapEmpresaApiToClienteSyncPayload = async (
-  empresa: OdontoartEmpresaResponseRow,
-  codigoFallback: string,
-): Promise<ClienteApiSyncPayload> => {
-  const codigoFromApi =
-    empresa.Id !== null && empresa.Id !== undefined
-      ? String(empresa.Id).trim()
-      : codigoFallback.trim();
-  const logradouro = (empresa.Logradouro ?? "").trim();
-  const numero =
-    empresa.Numero !== null && empresa.Numero !== undefined
-      ? String(empresa.Numero).trim()
-      : "";
-  const endereco = [logradouro, numero].filter(Boolean).join(", ");
-  const situacaoRaw = normalizeNullableText(empresa.NomeSituacao ?? empresa.nomeSituacao ?? null);
-  const situacao = normalizeNullableText(situacaoRaw ? normalizeStatus(situacaoRaw) ?? situacaoRaw : null);
-  let obsComercial = normalizeNullableText(empresa.ObservacaoComercial ?? null);
-
-  if (!obsComercial && codigoFallback.trim()) {
-    try {
-      const fallbackObs = await fetchObservacaoComercialByEmpresaId(codigoFallback.trim());
-      obsComercial = normalizeNullableText(fallbackObs);
-    } catch {
-      // Ignore fallback errors; we still sync the remaining fields.
-    }
-  }
-
-  return {
-    codigo: normalizeNullableText(codigoFromApi) ?? normalizeNullableText(codigoFallback),
-    cnpj: normalizeCnpj(resolveCnpjFromEmpresa(empresa)),
-    corte: parseNumberFromUnknown(empresa.Corte),
-    venc: parseNumberFromUnknown(empresa.Vencimento),
-    valor: resolveOdontoartValorTitular(empresa),
-    cep: normalizeNullableText(resolveCepFromEmpresa(empresa)),
-    empresa: normalizeNullableText(resolveEmpresaFromApi(empresa)),
-    obs_comercial: obsComercial,
-    situacao,
-    endereco: normalizeNullableText(endereco),
-    bairro: normalizeNullableText(empresa.BairroNome ?? null),
-    cidade: normalizeNullableText(empresa.MunicipioNome ?? null),
-    uf: normalizeNullableText(empresa.UfNome ?? null),
-  };
+const isClienteNotFoundErrorMessage = (message: string | null | undefined) => {
+  const normalized = (message ?? "").toLowerCase();
+  return normalized.includes("cliente") && normalized.includes("nao encontrado");
 };
 
 const enrichFormDataCepByAddress = async (
@@ -579,6 +613,80 @@ const formatPerfilDisplay = (value: string | null) => {
   return unique.join(", ");
 };
 
+const buildInitialCadastroForm = (): CadastroFormState => ({
+  codigo: "",
+  cnpj: "",
+  corte: "",
+  venc: "",
+  valor: "",
+  data_da_ultima_visita: "",
+  cep: "",
+  empresa: "",
+  pessoa: "",
+  contato: "",
+  grupo: "",
+  obs_comercial: "",
+  obs: "",
+  situacao: "Ativo",
+  categoria: "",
+  endereco: "",
+  complemento: "",
+  bairro: "",
+  cidade: "",
+  uf: "",
+});
+
+const clearFilialSpecificFields = (base: CadastroFormState): CadastroFormState => ({
+  ...buildInitialCadastroForm(),
+  codigo: base.codigo.trim(),
+  cnpj: formatCnpjInput(base.cnpj),
+  empresa: base.empresa.trim(),
+  situacao: base.situacao.trim() || "Ativo",
+});
+
+const buildEmptyFilialForm = (params: {
+  codigo: string;
+  cnpj?: string;
+  empresa?: string;
+  situacao?: string;
+}): CadastroFormState =>
+  clearFilialSpecificFields({
+    ...buildInitialCadastroForm(),
+    codigo: params.codigo.trim(),
+    cnpj: params.cnpj ? formatCnpjInput(params.cnpj) : "",
+    empresa: params.empresa?.trim() ?? "",
+    situacao: params.situacao?.trim() || "Ativo",
+  });
+
+const applyApiFieldsToFilialForm = (
+  base: CadastroFormState,
+  apiForm: ReturnType<typeof mapEmpresaApiToClienteForm>,
+): CadastroFormState => ({
+  ...base,
+  cnpj: base.cnpj || apiForm.cnpj || "",
+  empresa: apiForm.empresa.trim() || base.empresa.trim(),
+  obs_comercial: apiForm.obs_comercial.trim() || base.obs_comercial.trim(),
+  corte: apiForm.corte.trim() || base.corte.trim(),
+  venc: apiForm.venc.trim() || base.venc.trim(),
+  valor: apiForm.valor.trim() || base.valor.trim(),
+  situacao: apiForm.situacao.trim() || base.situacao || "Ativo",
+});
+
+const preserveFilialCommonFields = (
+  draft: CadastroFormState,
+  codigoOverride?: string,
+): CadastroFormState => ({
+  ...buildInitialCadastroForm(),
+  codigo: (codigoOverride ?? draft.codigo).trim(),
+  cnpj: formatCnpjInput(draft.cnpj),
+  empresa: draft.empresa.trim(),
+  obs_comercial: draft.obs_comercial.trim(),
+  corte: draft.corte.trim(),
+  venc: draft.venc.trim(),
+  valor: draft.valor.trim(),
+  situacao: draft.situacao.trim() || "Ativo",
+});
+
 export default function Clientes() {
   const { role, session } = useAuth();
   const canView = role === "SUPERVISOR" || role === "ASSISTENTE";
@@ -594,28 +702,7 @@ export default function Clientes() {
   const [situacaoFilter, setSituacaoFilter] = useState<"" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado">("");
 
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({
-    codigo: "",
-    cnpj: "",
-    corte: "",
-    venc: "",
-    valor: "",
-    data_da_ultima_visita: "",
-    cep: "",
-    empresa: "",
-    pessoa: "",
-    contato: "",
-    grupo: "",
-    obs_comercial: "",
-    obs: "",
-    situacao: "Ativo",
-    categoria: "",
-    endereco: "",
-    complemento: "",
-    bairro: "",
-    cidade: "",
-    uf: "",
-  });
+  const [form, setForm] = useState<CadastroFormState>(buildInitialCadastroForm);
   const [perfilCreate, setPerfilCreate] = useState(() => buildPerfilState(null));
   const [createPlanoValores, setCreatePlanoValores] = useState<OdontoartPlanoValor[]>([]);
 
@@ -632,28 +719,7 @@ export default function Clientes() {
   const restoredViewRef = useRef(false);
   const pendingEditRestoreRef = useRef<boolean | null>(null);
   const [isEditing, setIsEditing] = useState(false);
-  const [editForm, setEditForm] = useState({
-    codigo: "",
-    cnpj: "",
-    corte: "",
-    venc: "",
-    valor: "",
-    data_da_ultima_visita: "",
-    cep: "",
-    empresa: "",
-    pessoa: "",
-    contato: "",
-    grupo: "",
-    obs_comercial: "",
-    obs: "",
-    situacao: "",
-    categoria: "",
-    endereco: "",
-    complemento: "",
-    bairro: "",
-    cidade: "",
-    uf: "",
-  });
+  const [editForm, setEditForm] = useState<CadastroFormState>(buildInitialCadastroForm);
   const [perfilEdit, setPerfilEdit] = useState(() => buildPerfilState(null));
   const [editPlanoValores, setEditPlanoValores] = useState<OdontoartPlanoValor[]>([]);
   const [planosModalState, setPlanosModalState] = useState<{
@@ -698,8 +764,12 @@ export default function Clientes() {
   const [codigoError, setCodigoError] = useState<string | null>(null);
   const [cnpjLoading, setCnpjLoading] = useState(false);
   const [cnpjError, setCnpjError] = useState<string | null>(null);
+  const [cepLoading, setCepLoading] = useState(false);
+  const [bairroLoading, setBairroLoading] = useState(false);
   const [cnpjLoadingEdit, setCnpjLoadingEdit] = useState(false);
   const [cnpjErrorEdit, setCnpjErrorEdit] = useState<string | null>(null);
+  const [cepLoadingEdit, setCepLoadingEdit] = useState(false);
+  const [bairroLoadingEdit, setBairroLoadingEdit] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
   const [importTotal, setImportTotal] = useState(0);
   const [importInserted, setImportInserted] = useState(0);
@@ -711,12 +781,68 @@ export default function Clientes() {
   const [duplicateQueue, setDuplicateQueue] = useState<DuplicateEntry[]>([]);
   const [duplicateResolving, setDuplicateResolving] = useState(false);
   const [duplicateComplemento, setDuplicateComplemento] = useState("");
-  const [codigoDuplicadoModal, setCodigoDuplicadoModal] = useState<CodigoDuplicadoModalState | null>(null);
-  const [codigoDuplicadoAprovado, setCodigoDuplicadoAprovado] = useState<{
-    codigo: string;
-    obs: string;
-    origem: CodigoDuplicadoOrigem;
-  } | null>(null);
+  const [filialConfirmModal, setFilialConfirmModal] = useState<FilialConfirmModalState | null>(null);
+  const [filialCadastroModal, setFilialCadastroModal] = useState<FilialCadastroModalState | null>(null);
+  const [filialCnpjLoading, setFilialCnpjLoading] = useState(false);
+  const [filialCepLoading, setFilialCepLoading] = useState(false);
+  const [filialBairroLoading, setFilialBairroLoading] = useState(false);
+  const createCepLookupRequestRef = useRef(0);
+  const createEnderecoLookupRequestRef = useRef(0);
+  const createCnpjLookupRequestRef = useRef(0);
+  const editCepLookupRequestRef = useRef(0);
+  const editEnderecoLookupRequestRef = useRef(0);
+  const editCnpjLookupRequestRef = useRef(0);
+  const filialCnpjLookupRequestRef = useRef(0);
+  const filialCepLookupRequestRef = useRef(0);
+  const filialEnderecoLookupRequestRef = useRef(0);
+  const createFlowIdRef = useRef(0);
+
+  const startNewCreateFlow = () => {
+    createFlowIdRef.current += 1;
+    return createFlowIdRef.current;
+  };
+
+  const invalidateCreateFlow = () => {
+    createFlowIdRef.current += 1;
+  };
+
+  const isActiveCreateFlow = (flowId: number) => flowId === createFlowIdRef.current;
+
+  const invalidateCreateLookups = () => {
+    invalidateCreateFlow();
+    createCepLookupRequestRef.current += 1;
+    createEnderecoLookupRequestRef.current += 1;
+    createCnpjLookupRequestRef.current += 1;
+    filialCnpjLookupRequestRef.current += 1;
+    filialCepLookupRequestRef.current += 1;
+    filialEnderecoLookupRequestRef.current += 1;
+    setFilialCnpjLoading(false);
+    setFilialCepLoading(false);
+    setFilialBairroLoading(false);
+    setCodigoLoading(false);
+    setCnpjLoading(false);
+    setCepLoading(false);
+    setBairroLoading(false);
+  };
+
+  const resetCreateFlow = () => {
+    invalidateCreateLookups();
+    setForm(buildInitialCadastroForm());
+    setPerfilCreate(buildPerfilState(null));
+    setCreatePlanoValores([]);
+    setCodigoError(null);
+    setCnpjError(null);
+    setFilialConfirmModal(null);
+    setFilialCadastroModal(null);
+    setCreating(false);
+    setError(null);
+  };
+
+  const debugCreateFlow = (payload: Record<string, unknown>) => {
+    if (import.meta.env.DEV) {
+      console.debug("[Clientes:create-flow]", payload);
+    }
+  };
 
   const loadClientesPage = async (showLoading = true) => {
     if (!canView) return;
@@ -829,24 +955,12 @@ export default function Clientes() {
         return;
       }
       const parsed = JSON.parse(raw) as Partial<{
-        search: string;
-        searchMode: ClienteSearchMode;
-        situacaoFilter: "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado";
-        currentPage: number;
         selectedId: string | null;
         isEditing: boolean;
         historySupervisorId: string;
         historyDateFrom: string;
         historyDateTo: string;
       }>;
-      if (typeof parsed.search === "string") setSearch(parsed.search);
-      if (parsed.searchMode === "codigo" || parsed.searchMode === "empresa" || parsed.searchMode === "geral") {
-        setSearchMode(parsed.searchMode);
-      }
-      if (parsed.situacaoFilter) setSituacaoFilter(parsed.situacaoFilter);
-      if (typeof parsed.currentPage === "number" && parsed.currentPage > 0) {
-        setCurrentPage(Math.floor(parsed.currentPage));
-      }
       if (typeof parsed.selectedId === "string") setSelectedId(parsed.selectedId);
       if (typeof parsed.historySupervisorId === "string") {
         setHistorySupervisorId(parsed.historySupervisorId);
@@ -887,10 +1001,6 @@ export default function Clientes() {
   useEffect(() => {
     if (!restoredViewRef.current) return;
     const payload = {
-      search,
-      searchMode,
-      situacaoFilter,
-      currentPage,
       selectedId,
       isEditing,
       historySupervisorId,
@@ -902,7 +1012,7 @@ export default function Clientes() {
     } catch {
       // ignore
     }
-  }, [currentPage, historyDateFrom, historyDateTo, historySupervisorId, isEditing, search, searchMode, selectedId, situacaoFilter]);
+  }, [historyDateFrom, historyDateTo, historySupervisorId, isEditing, selectedId]);
 
   useEffect(() => {
     if (!canView) return;
@@ -977,32 +1087,21 @@ export default function Clientes() {
       })
       .catch((err) => {
         if (!active) return;
-        setError(err instanceof Error ? err.message : "Erro ao carregar empresa selecionada.");
+        const message = err instanceof Error ? err.message : String(err ?? "");
+        if (isClienteNotFoundErrorMessage(message)) {
+          pendingEditRestoreRef.current = null;
+          setSelectedId(null);
+          setSelected(null);
+          setHistory([]);
+          setError(null);
+          return;
+        }
+        setError(message || "Erro ao carregar empresa selecionada.");
       });
     return () => {
       active = false;
     };
   }, [selected?.id, selectedId]);
-
-  useEffect(() => {
-    if (!codigoDuplicadoAprovado || codigoDuplicadoAprovado.origem !== "create") return;
-    if (
-      normalizeCodigoValue(codigoDuplicadoAprovado.codigo) !== normalizeCodigoValue(form.codigo) ||
-      normalizeObsValue(codigoDuplicadoAprovado.obs) !== normalizeObsValue(form.obs)
-    ) {
-      setCodigoDuplicadoAprovado(null);
-    }
-  }, [codigoDuplicadoAprovado, form.codigo, form.obs]);
-
-  useEffect(() => {
-    if (!codigoDuplicadoAprovado || codigoDuplicadoAprovado.origem !== "edit") return;
-    if (
-      normalizeCodigoValue(codigoDuplicadoAprovado.codigo) !== normalizeCodigoValue(editForm.codigo) ||
-      normalizeObsValue(codigoDuplicadoAprovado.obs) !== normalizeObsValue(editForm.obs)
-    ) {
-      setCodigoDuplicadoAprovado(null);
-    }
-  }, [codigoDuplicadoAprovado, editForm.codigo, editForm.obs]);
 
   const filteredHistory = useMemo(() => {
     let next = history;
@@ -1034,6 +1133,21 @@ export default function Clientes() {
   const displayClientes = clientes;
   const resultCount = totalCount;
   const totalPages = Math.max(1, Math.ceil(totalCount / CLIENTES_DEFAULT_PAGE_SIZE));
+  const resetClientesListView = () => {
+    setSearch("");
+    setSearchMode("codigo");
+    setSituacaoFilter("");
+    setCurrentPage(1);
+  };
+
+  useEffect(() => {
+    resetClientesListView();
+    try {
+      sessionStorage.removeItem(CLIENTES_VIEW_STATE_KEY);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -1052,6 +1166,21 @@ export default function Clientes() {
     return fetched.filter((cliente) => {
       if (excludeId && cliente.id === excludeId) return false;
       return normalizeCodigoValue(cliente.codigo) === normalized;
+    });
+  };
+
+  const findClientesByCnpj = async (cnpj: string, excludeId?: string | null) => {
+    const normalized = cnpj.trim();
+    if (!normalized) return [] as ClienteRow[];
+    const targetDigits = sanitizeCnpjDigits(normalized);
+    const fetched = await fetchClientesByCnpjExact(normalized);
+    return fetched.filter((cliente) => {
+      if (excludeId && cliente.id === excludeId) return false;
+      const clienteDigits = sanitizeCnpjDigits(cliente.cnpj ?? "");
+      if (targetDigits.length === 14) {
+        return clienteDigits === targetDigits;
+      }
+      return (cliente.cnpj ?? "").trim() === normalized;
     });
   };
 
@@ -1087,279 +1216,693 @@ export default function Clientes() {
     );
   };
 
-  const hasObsConflictForCodigo = async (codigo: string, obs: string, excludeId?: string | null) => {
-    const normalizedObs = normalizeObsValue(obs);
-    if (!normalizedObs) return false;
-    const matches = await findClientesByCodigo(codigo, excludeId);
-    return matches.some(
-      (cliente) => normalizeObsValue(cliente.obs) === normalizedObs,
+  const persistClienteFromForm = async (
+    sourceForm: CadastroFormState,
+    perfilVisita: string | null,
+  ) => {
+    const normalizedCodigo = normalizeCodigoValue(sourceForm.codigo);
+    const normalizedCnpj = normalizeCnpj(sourceForm.cnpj);
+    const [addressMatches, codeMatches] = await Promise.all([
+      findClientesByAddress({
+        endereco: sourceForm.endereco,
+        cidade: sourceForm.cidade,
+        uf: sourceForm.uf,
+        complemento: sourceForm.complemento,
+      }),
+      normalizedCodigo ? findClientesByCodigo(normalizedCodigo) : Promise.resolve([]),
+    ]);
+    const cnpjMatches = normalizedCnpj
+      ? codeMatches.filter((cliente) => normalizeCnpj(cliente.cnpj) === normalizedCnpj)
+      : [];
+    const existingMatches = Array.from(
+      new Map(
+        [...addressMatches, ...cnpjMatches].map((cliente) => [cliente.id, cliente]),
+      ).values(),
     );
+    const corteValue = sourceForm.corte ? Number(sourceForm.corte) : null;
+    const vencValue = sourceForm.venc ? Number(sourceForm.venc) : null;
+    const parsedCorte = Number.isFinite(corteValue ?? NaN) ? corteValue : null;
+    const parsedVenc = Number.isFinite(vencValue ?? NaN) ? vencValue : null;
+    const parsedDataUltimaVisita = toIsoDateInput(sourceForm.data_da_ultima_visita);
+    const created = await createCliente({
+      codigo: sourceForm.codigo.trim() || null,
+      cnpj: normalizeCnpj(sourceForm.cnpj),
+      corte: parsedCorte,
+      venc: parsedVenc,
+      valor: sourceForm.valor ? parseImportCurrency(sourceForm.valor) : null,
+      data_da_ultima_visita: parsedDataUltimaVisita,
+      cep: sourceForm.cep.trim() || null,
+      empresa: sourceForm.empresa.trim() || null,
+      pessoa: sourceForm.pessoa.trim() || null,
+      contato: normalizeContato(sourceForm.contato),
+      grupo: sourceForm.grupo.trim() || null,
+      obs_comercial: sourceForm.obs_comercial.trim() || null,
+      obs: sourceForm.obs.trim() || null,
+      perfil_visita: perfilVisita,
+      situacao: sourceForm.situacao.trim() || "Ativo",
+      categoria: sourceForm.categoria.trim() || null,
+      endereco: sourceForm.endereco.trim() || null,
+      complemento: sourceForm.complemento.trim() || null,
+      bairro: sourceForm.bairro.trim() || null,
+      cidade: sourceForm.cidade.trim() || null,
+      uf: sourceForm.uf.trim() || null,
+    });
+    if (existingMatches.length > 0) {
+      setDuplicateModal({ newCliente: created, existing: existingMatches });
+    }
   };
 
-  const openCodigoDuplicadoModal = async ({
-    codigo,
-    origem,
-    excludeId,
-    obsAtual,
-  }: {
+  const openFilialConfirm = (params: {
+    flowId: number;
     codigo: string;
-    origem: CodigoDuplicadoOrigem;
-    excludeId?: string | null;
-    obsAtual: string;
+    matchesByCode: ClienteRow[];
+    draft: CadastroFormState;
+    lookupError?: string | null;
+    source?: "codigo" | "cnpj";
   }) => {
-    const matches = await findClientesByCodigo(codigo, excludeId);
-    if (!matches.length) return;
-    const existingObs = Array.from(
-      new Set(
-        matches
-          .map((cliente) => (cliente.obs ?? "").trim())
-          .filter(Boolean),
-      ),
-    );
-    setCodigoDuplicadoModal({
-      codigo: codigo.trim(),
-      empresa: matches[0]?.empresa ?? "Sem nome",
-      obs: obsAtual,
-      origem,
-      existingObs,
-      error: null,
+    const source = params.source ?? "codigo";
+    const cleanDraft = preserveFilialCommonFields(params.draft, params.codigo);
+    debugCreateFlow({
+      action: "open-filial-confirm",
+      source,
+      flowId: params.flowId,
+      codigo: params.codigo.trim(),
+      draft: cleanDraft,
+      matchesCount: params.matchesByCode.length,
+      lookupError: params.lookupError ?? null,
+    });
+    setFilialConfirmModal({
+      flowId: params.flowId,
+      codigo: params.codigo.trim(),
+      empresa: cleanDraft.empresa || "Nova filial",
+      existingCount: params.matchesByCode.length,
+      draft: cleanDraft,
+      source,
+      lookupError: params.lookupError ?? null,
     });
   };
 
-  const handleSaveCodigoDuplicadoModal = async () => {
-    if (!codigoDuplicadoModal) return;
-    const modalState = codigoDuplicadoModal;
-    const obsValue = modalState.obs.trim();
-    if (!obsValue) {
-      setCodigoDuplicadoModal((prev) =>
-        prev
-          ? {
-              ...prev,
-              error: "Informe uma obs para este codigo.",
-            }
-          : prev,
-      );
-      return;
-    }
-
-    const excludeId = modalState.origem === "edit" ? selected?.id ?? null : null;
-    if (await hasObsConflictForCodigo(modalState.codigo, obsValue, excludeId)) {
-      setCodigoDuplicadoModal((prev) =>
-        prev
-          ? {
-              ...prev,
-              error: "Esta obs ja existe para este codigo. Informe uma obs diferente.",
-            }
-          : prev,
-      );
-      return;
-    }
-
-    let apiFormData: ReturnType<typeof mapEmpresaApiToClienteForm> | null = null;
-    let apiSyncPayload: ClienteApiSyncPayload | null = null;
-    let obsComercialApi: string | null = null;
-    let planoValoresApi: OdontoartPlanoValor[] = [];
-    const codigoValue = modalState.codigo.trim();
-    if (codigoValue) {
-      try {
-        const empresaApi = await fetchEmpresaByEmpresaId(codigoValue);
-        if (!empresaApi) {
-          setCodigoDuplicadoModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  error: "Empresa nao encontrada na API.",
-                }
-              : prev,
-          );
-          return;
-        }
-        planoValoresApi = extractOdontoartPlanoValores(empresaApi);
-        apiFormData = await enrichFormDataCepByAddress(
-          mapEmpresaApiToClienteForm(empresaApi, codigoValue),
-        );
-        apiSyncPayload = await mapEmpresaApiToClienteSyncPayload(empresaApi, codigoValue);
-        obsComercialApi = apiSyncPayload.obs_comercial ?? null;
-      } catch (err) {
-        setCodigoDuplicadoModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                error: err instanceof Error ? err.message : "Erro ao consultar obs comercial na API.",
-              }
-            : prev,
-        );
-        return;
+  const handleAcceptFilialConfirm = async () => {
+    if (!filialConfirmModal) return;
+    if (creating) return;
+    const snapshot = {
+      ...filialConfirmModal,
+      draft: { ...filialConfirmModal.draft },
+    };
+    if (!isActiveCreateFlow(snapshot.flowId)) return;
+    let cleanFilialForm = preserveFilialCommonFields(snapshot.draft, snapshot.codigo);
+    let apiLookupError = snapshot.lookupError ?? null;
+    setCodigoLoading(true);
+    try {
+      const empresaApi = await fetchEmpresaByEmpresaId(snapshot.codigo);
+      if (!isActiveCreateFlow(snapshot.flowId)) return;
+      if (empresaApi) {
+        const apiForm = mapEmpresaApiToClienteForm(empresaApi, snapshot.codigo);
+        cleanFilialForm = applyApiFieldsToFilialForm(cleanFilialForm, apiForm);
+        const planoValores = extractOdontoartPlanoValores(empresaApi);
+        setCreatePlanoValores(planoValores);
+      } else {
+        apiLookupError = apiLookupError ?? "Empresa nao encontrada na API.";
       }
-      if (!obsComercialApi?.trim()) {
-        setCodigoDuplicadoModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                error: "Nao foi possivel obter obs comercial da API para este codigo.",
-              }
-            : prev,
-        );
-        return;
+    } catch (err) {
+      if (!isActiveCreateFlow(snapshot.flowId)) return;
+      apiLookupError =
+        err instanceof Error
+          ? `Nao foi possivel consultar dados da empresa na API: ${err.message}`
+          : "Nao foi possivel consultar dados da empresa na API.";
+    } finally {
+      if (isActiveCreateFlow(snapshot.flowId)) {
+        setCodigoLoading(false);
       }
     }
-
-    if (modalState.origem === "edit") {
-      setEditForm((prev) => ({
-        ...prev,
-        codigo: apiFormData?.codigo ?? prev.codigo,
-        cnpj: apiFormData?.cnpj ?? prev.cnpj,
-        corte: apiFormData?.corte ?? prev.corte,
-        venc: apiFormData?.venc ?? prev.venc,
-        valor: apiFormData?.valor ?? prev.valor,
-        cep: apiFormData?.cep ?? prev.cep,
-        empresa: apiFormData?.empresa ?? prev.empresa,
-        obs: obsValue,
-        obs_comercial: obsComercialApi ?? prev.obs_comercial,
-        situacao: apiFormData?.situacao ?? prev.situacao,
-        endereco: apiFormData?.endereco ?? prev.endereco,
-        bairro: apiFormData?.bairro ?? prev.bairro,
-        cidade: apiFormData?.cidade ?? prev.cidade,
-        uf: apiFormData?.uf ?? prev.uf,
-      }));
-      setEditPlanoValores(planoValoresApi);
-    } else {
-      setForm((prev) => ({
-        ...prev,
-        codigo: apiFormData?.codigo ?? prev.codigo,
-        cnpj: apiFormData?.cnpj ?? prev.cnpj,
-        corte: apiFormData?.corte ?? prev.corte,
-        venc: apiFormData?.venc ?? prev.venc,
-        valor: apiFormData?.valor ?? prev.valor,
-        cep: apiFormData?.cep ?? prev.cep,
-        empresa: apiFormData?.empresa ?? prev.empresa,
-        obs: obsValue,
-        obs_comercial: obsComercialApi ?? prev.obs_comercial,
-        situacao: apiFormData?.situacao ?? prev.situacao,
-        endereco: apiFormData?.endereco ?? prev.endereco,
-        bairro: apiFormData?.bairro ?? prev.bairro,
-        cidade: apiFormData?.cidade ?? prev.cidade,
-        uf: apiFormData?.uf ?? prev.uf,
-      }));
-      setCreatePlanoValores(planoValoresApi);
-    }
-
-    setCodigoDuplicadoAprovado({
-      codigo: modalState.codigo,
-      obs: obsValue,
-      origem: modalState.origem,
+    if (!isActiveCreateFlow(snapshot.flowId)) return;
+    setPerfilCreate(buildPerfilState(null));
+    debugCreateFlow({
+      action: "open-filial-cadastro",
+      flowId: snapshot.flowId,
+      form: cleanFilialForm,
+      lookupError: apiLookupError,
     });
-    setCodigoDuplicadoModal(null);
+    setFilialCadastroModal({
+      flowId: snapshot.flowId,
+      form: cleanFilialForm,
+      existingCount: snapshot.existingCount,
+      error: apiLookupError,
+    });
+    setFilialConfirmModal((prev) =>
+      prev && prev.flowId === snapshot.flowId ? null : prev,
+    );
+  };
+
+  const handleCancelFilialFlow = () => {
+    resetCreateFlow();
+  };
+
+  const hasFilledValue = (value: string | null | undefined) =>
+    typeof value === "string" && value.trim().length > 0;
+
+  const mergeCepMappedIntoForm = (
+    current: CadastroFormState,
+    mapped: ReturnType<typeof mapCepResponse>,
+  ): CadastroFormState => ({
+    ...current,
+    cep: hasFilledValue(mapped.cep) ? formatCep(mapped.cep as string) : current.cep,
+    endereco: hasFilledValue(mapped.endereco) ? (mapped.endereco as string) : current.endereco,
+    bairro: hasFilledValue(mapped.bairro) ? (mapped.bairro as string) : current.bairro,
+    cidade: hasFilledValue(mapped.cidade) ? (mapped.cidade as string) : current.cidade,
+    uf: hasFilledValue(mapped.uf)
+      ? (mapped.uf as string).toUpperCase().slice(0, 3)
+      : current.uf,
+    complemento: hasFilledValue(mapped.complemento)
+      ? (mapped.complemento as string)
+      : current.complemento,
+  });
+
+  const applyFilialCepResult = (flowId: number, payload: Record<string, unknown>) => {
+    if (!isActiveCreateFlow(flowId)) return;
+    if (isCepErrorPayload(payload)) {
+      throw new Error("CEP nao encontrado.");
+    }
+    const mapped = mapCepResponse(payload);
+    setFilialCadastroModal((prev) =>
+      prev && prev.flowId === flowId
+        ? {
+            ...prev,
+            form: mergeCepMappedIntoForm(prev.form, mapped),
+            error: null,
+          }
+        : prev,
+    );
+  };
+
+  const handleFilialCnpjLookup = async () => {
+    if (!filialCadastroModal) return;
+    if (creating) return;
+    const modalSnapshot = {
+      ...filialCadastroModal,
+      form: { ...filialCadastroModal.form },
+    };
+    const flowId = modalSnapshot.flowId;
+    if (!isActiveCreateFlow(flowId)) return;
+    const cnpj = sanitizeCnpjDigits(modalSnapshot.form.cnpj);
+    if (cnpj.length !== 14) {
+      setFilialCadastroModal((prev) =>
+        prev && prev.flowId === flowId
+          ? {
+              ...prev,
+              error: "Informe um CNPJ valido.",
+            }
+          : prev,
+      );
+      return;
+    }
+
+    const requestId = ++filialCnpjLookupRequestRef.current;
+    setFilialCnpjLoading(true);
+    setFilialCadastroModal((prev) =>
+      prev && prev.flowId === flowId ? { ...prev, error: null } : prev,
+    );
+    try {
+      const empresaApi = await fetchEmpresaByCnpjWs(cnpj);
+      if (requestId !== filialCnpjLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
+      const endereco = buildEnderecoWithNumero(empresaApi.logradouro, empresaApi.numero);
+      setFilialCadastroModal((prev) =>
+        prev && prev.flowId === flowId
+          ? {
+              ...prev,
+              form: {
+                ...prev.form,
+                cnpj: formatCnpjInput(cnpj),
+                empresa: empresaApi.razao_social ?? prev.form.empresa,
+                endereco: endereco || prev.form.endereco,
+                cep: empresaApi.cep ? formatCep(empresaApi.cep) : prev.form.cep,
+                bairro: empresaApi.bairro ?? prev.form.bairro,
+                cidade: empresaApi.cidade ?? prev.form.cidade,
+                uf: empresaApi.estado
+                  ? empresaApi.estado.toUpperCase().slice(0, 3)
+                  : prev.form.uf,
+              },
+              error: null,
+            }
+          : prev,
+      );
+    } catch (err) {
+      if (requestId !== filialCnpjLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
+      setFilialCadastroModal((prev) =>
+        prev && prev.flowId === flowId
+          ? {
+              ...prev,
+              error: err instanceof Error ? err.message : "Erro ao buscar CNPJ na API.",
+            }
+          : prev,
+      );
+    } finally {
+      if (requestId === filialCnpjLookupRequestRef.current) {
+        setFilialCnpjLoading(false);
+      }
+    }
+  };
+
+  const handleFilialCepLookup = async () => {
+    if (!filialCadastroModal) return;
+    if (creating) return;
+    const modalSnapshot = {
+      ...filialCadastroModal,
+      form: { ...filialCadastroModal.form },
+    };
+    const flowId = modalSnapshot.flowId;
+    if (!isActiveCreateFlow(flowId)) return;
+    const cep = sanitizeCep(modalSnapshot.form.cep);
+    if (cep.length !== 8) {
+      setFilialCadastroModal((prev) =>
+        prev && prev.flowId === flowId
+          ? {
+              ...prev,
+              error: "Informe um CEP valido com 8 digitos.",
+            }
+          : prev,
+      );
+      return;
+    }
+
+    const requestId = ++filialCepLookupRequestRef.current;
+    setFilialCepLoading(true);
+    setFilialCadastroModal((prev) =>
+      prev && prev.flowId === flowId ? { ...prev, error: null } : prev,
+    );
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Falha ao consultar CEP (${response.status}).`);
+      }
+      const payload = (await response.json()) as Record<string, unknown>;
+      if (requestId !== filialCepLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
+      applyFilialCepResult(flowId, payload);
+    } catch (err) {
+      if (requestId !== filialCepLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
+      setFilialCadastroModal((prev) =>
+        prev && prev.flowId === flowId
+          ? {
+              ...prev,
+              error: err instanceof Error ? err.message : "Erro ao buscar por CEP.",
+            }
+          : prev,
+      );
+    } finally {
+      if (requestId === filialCepLookupRequestRef.current) {
+        setFilialCepLoading(false);
+      }
+    }
+  };
+
+  const handleFilialBairroLookup = async () => {
+    if (!filialCadastroModal) return;
+    if (creating) return;
+    const modalSnapshot = {
+      ...filialCadastroModal,
+      form: { ...filialCadastroModal.form },
+    };
+    const flowId = modalSnapshot.flowId;
+    if (!isActiveCreateFlow(flowId)) return;
+    const endereco = modalSnapshot.form.endereco.trim();
+    const cidade = modalSnapshot.form.cidade.trim();
+    const uf = modalSnapshot.form.uf.trim().toUpperCase();
+    if (!endereco || !cidade || !uf) {
+      setFilialCadastroModal((prev) =>
+        prev && prev.flowId === flowId
+          ? {
+              ...prev,
+              error: "Para buscar por endereco, informe Endereco, Cidade e UF.",
+            }
+          : prev,
+      );
+      return;
+    }
+
+    const requestId = ++filialEnderecoLookupRequestRef.current;
+    setFilialBairroLoading(true);
+    setFilialCadastroModal((prev) =>
+      prev && prev.flowId === flowId ? { ...prev, error: null } : prev,
+    );
+    try {
+      const response = await fetch(
+        `https://viacep.com.br/ws/${encodeURIComponent(uf)}/${encodeURIComponent(cidade)}/${encodeURIComponent(endereco)}/json/`,
+        {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+          },
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`Falha ao buscar por endereco (${response.status}).`);
+      }
+      const payload = (await response.json()) as unknown;
+      if (!Array.isArray(payload) || payload.length === 0) {
+        throw new Error("Nenhum resultado encontrado para este endereco.");
+      }
+      const firstMatch = payload.find(
+        (item): item is Record<string, unknown> => Boolean(item) && typeof item === "object",
+      );
+      if (!firstMatch) {
+        throw new Error("Nenhum resultado valido encontrado para este endereco.");
+      }
+      if (requestId !== filialEnderecoLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
+      applyFilialCepResult(flowId, firstMatch);
+    } catch (err) {
+      if (requestId !== filialEnderecoLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
+      setFilialCadastroModal((prev) =>
+        prev && prev.flowId === flowId
+          ? {
+              ...prev,
+              error: err instanceof Error ? err.message : "Erro ao buscar por endereco.",
+            }
+          : prev,
+      );
+    } finally {
+      if (requestId === filialEnderecoLookupRequestRef.current) {
+        setFilialBairroLoading(false);
+      }
+    }
+  };
+
+  const handleCepLookup = async () => {
+    if (creating || codigoLoading || cnpjLoading) return;
+    const flowId = createFlowIdRef.current;
+    const cep = sanitizeCep(form.cep);
+    if (cep.length !== 8) {
+      if (isActiveCreateFlow(flowId)) {
+        setError("Informe um CEP valido com 8 digitos.");
+      }
+      return;
+    }
+
+    const requestId = ++createCepLookupRequestRef.current;
+    setCepLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Falha ao consultar CEP (${response.status}).`);
+      }
+      const payload = (await response.json()) as Record<string, unknown>;
+      if (isCepErrorPayload(payload)) {
+        throw new Error("CEP nao encontrado.");
+      }
+      const mapped = mapCepResponse(payload);
+      if (requestId !== createCepLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
+      setForm((prev) => mergeCepMappedIntoForm(prev, mapped));
+    } catch (err) {
+      if (requestId !== createCepLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
+      setError(err instanceof Error ? err.message : "Erro ao buscar por CEP.");
+    } finally {
+      if (requestId === createCepLookupRequestRef.current && isActiveCreateFlow(flowId)) {
+        setCepLoading(false);
+      }
+    }
+  };
+
+  const handleBairroLookup = async () => {
+    if (creating || codigoLoading || cnpjLoading) return;
+    const flowId = createFlowIdRef.current;
+    const endereco = form.endereco.trim();
+    const cidade = form.cidade.trim();
+    const uf = form.uf.trim().toUpperCase();
+    if (!endereco || !cidade || !uf) {
+      if (isActiveCreateFlow(flowId)) {
+        setError("Para buscar por endereco, informe Endereco, Cidade e UF.");
+      }
+      return;
+    }
+
+    const requestId = ++createEnderecoLookupRequestRef.current;
+    setBairroLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `https://viacep.com.br/ws/${encodeURIComponent(uf)}/${encodeURIComponent(cidade)}/${encodeURIComponent(endereco)}/json/`,
+        {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+          },
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`Falha ao buscar por endereco (${response.status}).`);
+      }
+      const payload = (await response.json()) as unknown;
+      if (!Array.isArray(payload) || payload.length === 0) {
+        throw new Error("Nenhum resultado encontrado para este endereco.");
+      }
+      const firstMatch = payload.find(
+        (item): item is Record<string, unknown> => Boolean(item) && typeof item === "object",
+      );
+      if (!firstMatch) {
+        throw new Error("Nenhum resultado valido encontrado para este endereco.");
+      }
+      if (isCepErrorPayload(firstMatch)) {
+        throw new Error("Nenhum resultado encontrado para este endereco.");
+      }
+      const mapped = mapCepResponse(firstMatch);
+      if (requestId !== createEnderecoLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
+      setForm((prev) => mergeCepMappedIntoForm(prev, mapped));
+    } catch (err) {
+      if (requestId !== createEnderecoLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
+      setError(err instanceof Error ? err.message : "Erro ao buscar por endereco.");
+    } finally {
+      if (requestId === createEnderecoLookupRequestRef.current && isActiveCreateFlow(flowId)) {
+        setBairroLoading(false);
+      }
+    }
+  };
+
+  const handleCepLookupEdit = async () => {
+    const cep = sanitizeCep(editForm.cep);
+    if (cep.length !== 8) {
+      setError("Informe um CEP valido com 8 digitos.");
+      return;
+    }
+
+    const requestId = ++editCepLookupRequestRef.current;
+    setCepLoadingEdit(true);
+    setError(null);
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Falha ao consultar CEP (${response.status}).`);
+      }
+      const payload = (await response.json()) as Record<string, unknown>;
+      if (isCepErrorPayload(payload)) {
+        throw new Error("CEP nao encontrado.");
+      }
+      const mapped = mapCepResponse(payload);
+      if (requestId !== editCepLookupRequestRef.current) return;
+      setEditForm((prev) => mergeCepMappedIntoForm(prev, mapped));
+    } catch (err) {
+      if (requestId !== editCepLookupRequestRef.current) return;
+      setError(err instanceof Error ? err.message : "Erro ao buscar por CEP.");
+    } finally {
+      if (requestId === editCepLookupRequestRef.current) {
+        setCepLoadingEdit(false);
+      }
+    }
+  };
+
+  const handleBairroLookupEdit = async () => {
+    const endereco = editForm.endereco.trim();
+    const cidade = editForm.cidade.trim();
+    const uf = editForm.uf.trim().toUpperCase();
+    if (!endereco || !cidade || !uf) {
+      setError("Para buscar por endereco, informe Endereco, Cidade e UF.");
+      return;
+    }
+
+    const requestId = ++editEnderecoLookupRequestRef.current;
+    setBairroLoadingEdit(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `https://viacep.com.br/ws/${encodeURIComponent(uf)}/${encodeURIComponent(cidade)}/${encodeURIComponent(endereco)}/json/`,
+        {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+          },
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`Falha ao buscar por endereco (${response.status}).`);
+      }
+      const payload = (await response.json()) as unknown;
+      if (!Array.isArray(payload) || payload.length === 0) {
+        throw new Error("Nenhum resultado encontrado para este endereco.");
+      }
+      const firstMatch = payload.find(
+        (item): item is Record<string, unknown> => Boolean(item) && typeof item === "object",
+      );
+      if (!firstMatch) {
+        throw new Error("Nenhum resultado valido encontrado para este endereco.");
+      }
+      if (isCepErrorPayload(firstMatch)) {
+        throw new Error("Nenhum resultado encontrado para este endereco.");
+      }
+      const mapped = mapCepResponse(firstMatch);
+      if (requestId !== editEnderecoLookupRequestRef.current) return;
+      setEditForm((prev) => mergeCepMappedIntoForm(prev, mapped));
+    } catch (err) {
+      if (requestId !== editEnderecoLookupRequestRef.current) return;
+      setError(err instanceof Error ? err.message : "Erro ao buscar por endereco.");
+    } finally {
+      if (requestId === editEnderecoLookupRequestRef.current) {
+        setBairroLoadingEdit(false);
+      }
+    }
+  };
+
+  const handleSaveFilialCadastro = async () => {
+    if (!filialCadastroModal) return;
+    if (creating) return;
+    const modalSnapshot = {
+      ...filialCadastroModal,
+      form: { ...filialCadastroModal.form },
+    };
+    const flowId = modalSnapshot.flowId;
+    if (!isActiveCreateFlow(flowId)) return;
+    const modalForm = modalSnapshot.form;
+    if (!modalForm.empresa.trim()) {
+      setFilialCadastroModal((prev) =>
+        prev && prev.flowId === flowId
+          ? {
+              ...prev,
+              error: "Informe o nome da empresa.",
+            }
+          : prev,
+      );
+      return;
+    }
+    if (!modalForm.obs.trim()) {
+      setFilialCadastroModal((prev) =>
+        prev && prev.flowId === flowId
+          ? {
+              ...prev,
+              error: "Para filial, o campo Obs e obrigatorio.",
+            }
+          : prev,
+      );
+      return;
+    }
+
+    setCreating(true);
+    setError(null);
+    try {
+      const perfilSnapshot = perfilCreate.perfil || null;
+      await persistClienteFromForm(modalForm, perfilSnapshot);
+      if (!isActiveCreateFlow(flowId)) return;
+      resetCreateFlow();
+      await refreshClientesData();
+    } catch (err) {
+      if (!isActiveCreateFlow(flowId)) return;
+      setFilialCadastroModal((prev) =>
+        prev && prev.flowId === flowId
+          ? {
+              ...prev,
+              error: err instanceof Error ? err.message : "Erro ao cadastrar filial.",
+            }
+          : prev,
+      );
+    } finally {
+      if (isActiveCreateFlow(flowId)) {
+        setCreating(false);
+      }
+    }
   };
 
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canCreate) return;
-    const codigoInformado = form.codigo.trim();
+    if (!canCreate || creating || codigoLoading || cnpjLoading) return;
+    const flowId = startNewCreateFlow();
+    const formSnapshot: CadastroFormState = { ...form };
+    const perfilSnapshot = perfilCreate.perfil || null;
+    const codigoInformado = formSnapshot.codigo.trim();
     if (codigoInformado) {
       const matchesByCode = await findClientesByCodigo(codigoInformado);
+      if (!isActiveCreateFlow(flowId)) return;
       if (matchesByCode.length > 0) {
-        const obsInformada = form.obs.trim();
-        const alreadyApproved =
-          codigoDuplicadoAprovado?.origem === "create" &&
-          normalizeCodigoValue(codigoDuplicadoAprovado.codigo) === normalizeCodigoValue(codigoInformado) &&
-          normalizeObsValue(codigoDuplicadoAprovado.obs) === normalizeObsValue(obsInformada);
-        const hasConflict = await hasObsConflictForCodigo(codigoInformado, obsInformada);
-        if (!alreadyApproved || !obsInformada || hasConflict) {
-          await openCodigoDuplicadoModal({
-            codigo: codigoInformado,
-            origem: "create",
-            obsAtual: obsInformada,
-          });
-          return;
+        let draft: CadastroFormState = { ...formSnapshot, codigo: codigoInformado };
+        let lookupError: string | null = null;
+        try {
+          const empresaApi = await fetchEmpresaByEmpresaId(codigoInformado);
+          if (!isActiveCreateFlow(flowId)) return;
+          if (empresaApi) {
+            const apiForm = mapEmpresaApiToClienteForm(empresaApi, codigoInformado);
+            draft = applyApiFieldsToFilialForm(
+              buildEmptyFilialForm({
+                codigo: codigoInformado,
+                cnpj: draft.cnpj,
+                empresa: draft.empresa,
+              }),
+              apiForm,
+            );
+          } else {
+            lookupError = "Empresa nao encontrada na API.";
+          }
+        } catch (err) {
+          if (!isActiveCreateFlow(flowId)) return;
+          lookupError =
+            err instanceof Error
+              ? `Nao foi possivel consultar dados da empresa na API: ${err.message}`
+              : "Nao foi possivel consultar dados da empresa na API.";
         }
+        setCreatePlanoValores([]);
+        setPerfilCreate(buildPerfilState(null));
+        openFilialConfirm({
+          flowId,
+          codigo: codigoInformado,
+          matchesByCode,
+          draft,
+          lookupError,
+          source: "codigo",
+        });
+        return;
       }
     }
-    if (codigoDuplicadoAprovado?.origem === "create" && !form.codigo.trim()) {
-      setCodigoDuplicadoAprovado(null);
-    }
-    const codigoCreate = form.codigo.trim();
-    const obsCreate = form.obs.trim();
-    const duplicateCodigoApprovedForCreate =
-      Boolean(codigoCreate) &&
-      Boolean(obsCreate) &&
-      codigoDuplicadoAprovado?.origem === "create" &&
-      normalizeCodigoValue(codigoDuplicadoAprovado.codigo) === normalizeCodigoValue(codigoCreate) &&
-      normalizeObsValue(codigoDuplicadoAprovado.obs) === normalizeObsValue(obsCreate);
-    if (!form.empresa.trim() && !duplicateCodigoApprovedForCreate) {
-      setError("Informe o nome da empresa.");
+    if (!formSnapshot.empresa.trim()) {
+      if (isActiveCreateFlow(flowId)) {
+        setError("Informe o nome da empresa.");
+      }
       return;
     }
+
     setCreating(true);
     setError(null);
     try {
-      const existingMatches = await findClientesByAddress({
-        endereco: form.endereco,
-        cidade: form.cidade,
-        uf: form.uf,
-        complemento: form.complemento,
-      });
-      const corteValue = form.corte ? Number(form.corte) : null;
-      const vencValue = form.venc ? Number(form.venc) : null;
-      const parsedCorte = Number.isFinite(corteValue ?? NaN) ? corteValue : null;
-      const parsedVenc = Number.isFinite(vencValue ?? NaN) ? vencValue : null;
-      const parsedDataUltimaVisita = toIsoDateInput(form.data_da_ultima_visita);
-      const created = await createCliente({
-        codigo: form.codigo.trim() || null,
-        cnpj: normalizeCnpj(form.cnpj),
-        corte: parsedCorte,
-        venc: parsedVenc,
-        valor: form.valor ? parseImportCurrency(form.valor) : null,
-        data_da_ultima_visita: parsedDataUltimaVisita,
-        cep: form.cep.trim() || null,
-        empresa: form.empresa.trim() || null,
-        pessoa: form.pessoa.trim() || null,
-        contato: normalizeContato(form.contato),
-        grupo: form.grupo.trim() || null,
-        obs_comercial: form.obs_comercial.trim() || null,
-        obs: form.obs.trim() || null,
-        perfil_visita: perfilCreate.perfil || null,
-        situacao: form.situacao.trim() || "Ativo",
-        categoria: form.categoria.trim() || null,
-        endereco: form.endereco.trim() || null,
-        complemento: form.complemento.trim() || null,
-        bairro: form.bairro.trim() || null,
-        cidade: form.cidade.trim() || null,
-        uf: form.uf.trim() || null,
-      });
-      if (existingMatches.length > 0) {
-        setDuplicateModal({ newCliente: created, existing: existingMatches });
-      }
-      setForm({
-        codigo: "",
-        cnpj: "",
-        corte: "",
-        venc: "",
-        valor: "",
-        data_da_ultima_visita: "",
-        cep: "",
-        empresa: "",
-        pessoa: "",
-        contato: "",
-        grupo: "",
-        obs_comercial: "",
-        obs: "",
-        situacao: "Ativo",
-        categoria: "",
-        endereco: "",
-        complemento: "",
-        bairro: "",
-        cidade: "",
-        uf: "",
-      });
-      setCreatePlanoValores([]);
-      setCodigoDuplicadoAprovado(null);
-      setPerfilCreate(buildPerfilState(null));
+      await persistClienteFromForm(formSnapshot, perfilSnapshot);
+      if (!isActiveCreateFlow(flowId)) return;
+      resetCreateFlow();
       await refreshClientesData();
     } catch (err) {
+      if (!isActiveCreateFlow(flowId)) return;
       setError(err instanceof Error ? err.message : "Erro ao criar cliente.");
     } finally {
-      setCreating(false);
+      if (isActiveCreateFlow(flowId)) {
+        setCreating(false);
+      }
     }
   };
 
@@ -1444,23 +1987,57 @@ export default function Clientes() {
   };
 
   const handleCodigoLookup = async () => {
+    if (creating || codigoLoading || cnpjLoading) return;
     const empresaId = form.codigo.trim();
     if (!empresaId) {
       setCodigoError("Informe o codigo da empresa.");
       return;
     }
-    if ((await findClientesByCodigo(empresaId)).length > 0) {
-      await openCodigoDuplicadoModal({
-        codigo: empresaId,
-        origem: "create",
-        obsAtual: form.obs,
-      });
-      return;
-    }
+    const flowId = startNewCreateFlow();
     setCodigoLoading(true);
     setCodigoError(null);
+    setCnpjError(null);
+    setCreatePlanoValores([]);
+    setPerfilCreate(buildPerfilState(null));
+    setFilialConfirmModal(null);
+    setFilialCadastroModal(null);
     try {
+      const matchesByCode = await findClientesByCodigo(empresaId);
+      if (!isActiveCreateFlow(flowId)) return;
+      if (matchesByCode.length > 0) {
+        let draft = buildEmptyFilialForm({ codigo: empresaId });
+        let lookupError: string | null = null;
+        try {
+          const empresaApi = await fetchEmpresaByEmpresaId(empresaId);
+          if (!isActiveCreateFlow(flowId)) return;
+          if (empresaApi) {
+            const apiForm = mapEmpresaApiToClienteForm(empresaApi, empresaId);
+            draft = applyApiFieldsToFilialForm(draft, apiForm);
+          } else {
+            lookupError = "Empresa nao encontrada na API.";
+          }
+        } catch (err) {
+          if (!isActiveCreateFlow(flowId)) return;
+          lookupError =
+            err instanceof Error
+              ? `Nao foi possivel consultar dados da empresa na API: ${err.message}`
+              : "Nao foi possivel consultar dados da empresa na API.";
+        }
+        setCreatePlanoValores([]);
+        setPerfilCreate(buildPerfilState(null));
+        openFilialConfirm({
+          flowId,
+          codigo: empresaId,
+          matchesByCode,
+          draft,
+          lookupError,
+          source: "codigo",
+        });
+        return;
+      }
+
       const empresaApi = await fetchEmpresaByEmpresaId(empresaId);
+      if (!isActiveCreateFlow(flowId)) return;
       if (!empresaApi) {
         throw new Error("Empresa nao encontrada na API.");
       }
@@ -1468,42 +2045,87 @@ export default function Clientes() {
       const formData = await enrichFormDataCepByAddress(
         mapEmpresaApiToClienteForm(empresaApi, empresaId),
       );
+      if (!isActiveCreateFlow(flowId)) return;
       setForm(formData);
       setCreatePlanoValores(planoValores);
       setPerfilCreate(buildPerfilState(null));
     } catch (err) {
+      if (!isActiveCreateFlow(flowId)) return;
       setCodigoError(err instanceof Error ? err.message : "Erro ao buscar codigo na API.");
     } finally {
-      setCodigoLoading(false);
+      if (isActiveCreateFlow(flowId)) {
+        setCodigoLoading(false);
+      }
     }
   };
 
   const handleCnpjLookup = async () => {
+    if (creating || codigoLoading || cnpjLoading) return;
     const cnpj = sanitizeCnpjDigits(form.cnpj);
     if (cnpj.length !== 14) {
       setCnpjError("Informe um CNPJ valido.");
       return;
     }
 
+    const flowId = startNewCreateFlow();
+    const requestId = ++createCnpjLookupRequestRef.current;
+    const codigoDigitado = form.codigo.trim();
     setCnpjLoading(true);
     setCnpjError(null);
+    setCodigoError(null);
+    setCreatePlanoValores([]);
+    setPerfilCreate(buildPerfilState(null));
+    setFilialConfirmModal(null);
+    setFilialCadastroModal(null);
     try {
+      const formattedCnpj = formatCnpjInput(cnpj);
+      const matchesByCnpj = await findClientesByCnpj(formattedCnpj);
+      if (requestId !== createCnpjLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
+      if (matchesByCnpj.length > 0) {
+        setCnpjError(
+          "Este CNPJ ja esta cadastrado. Se deseja alterar os dados, abra o cadastro existente.",
+        );
+        const firstMatch = matchesByCnpj[0];
+        if (firstMatch) {
+          setSelected(null);
+          setSelectedId(firstMatch.id);
+          setIsEditing(false);
+        }
+        return;
+      }
+
       const empresaApi = await fetchEmpresaByCnpjWs(cnpj);
+      if (requestId !== createCnpjLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
       const endereco = buildEnderecoWithNumero(empresaApi.logradouro, empresaApi.numero);
+
+      const nextForm: CadastroFormState = {
+        ...buildInitialCadastroForm(),
+        codigo: codigoDigitado,
+        cnpj: formattedCnpj,
+        empresa: (empresaApi.razao_social ?? "").trim(),
+        endereco: endereco || "",
+        cep: empresaApi.cep ? formatCep(empresaApi.cep) : "",
+        bairro: empresaApi.bairro ?? "",
+        cidade: empresaApi.cidade ?? "",
+        uf: empresaApi.estado ? empresaApi.estado.toUpperCase().slice(0, 3) : "",
+        situacao: "Ativo",
+      };
+      debugCreateFlow({
+        action: "cnpj-lookup-next-form",
+        flowId,
+        nextForm,
+      });
       setCreatePlanoValores([]);
-      setForm((prev) => ({
-        ...prev,
-        empresa: empresaApi.razao_social ?? prev.empresa,
-        endereco: endereco || prev.endereco,
-        cep: empresaApi.cep ? formatCep(empresaApi.cep) : prev.cep,
-        bairro: empresaApi.bairro ?? prev.bairro,
-        cidade: empresaApi.cidade ?? prev.cidade,
-        uf: empresaApi.estado ?? prev.uf,
-      }));
+      setPerfilCreate(buildPerfilState(null));
+      if (requestId !== createCnpjLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
+      setForm(nextForm);
     } catch (err) {
+      if (requestId !== createCnpjLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
       setCnpjError(err instanceof Error ? err.message : "Erro ao buscar CNPJ na API.");
     } finally {
-      setCnpjLoading(false);
+      if (requestId === createCnpjLookupRequestRef.current && isActiveCreateFlow(flowId)) {
+        setCnpjLoading(false);
+      }
     }
   };
 
@@ -1513,25 +2135,11 @@ export default function Clientes() {
     if (codigoInformado) {
       const matchesByCode = await findClientesByCodigo(codigoInformado, selected.id);
       if (matchesByCode.length > 0) {
-        const obsInformada = editForm.obs.trim();
-        const alreadyApproved =
-          codigoDuplicadoAprovado?.origem === "edit" &&
-          normalizeCodigoValue(codigoDuplicadoAprovado.codigo) === normalizeCodigoValue(codigoInformado) &&
-          normalizeObsValue(codigoDuplicadoAprovado.obs) === normalizeObsValue(obsInformada);
-        const hasConflict = await hasObsConflictForCodigo(codigoInformado, obsInformada, selected.id);
-        if (!alreadyApproved || !obsInformada || hasConflict) {
-          await openCodigoDuplicadoModal({
-            codigo: codigoInformado,
-            origem: "edit",
-            excludeId: selected.id,
-            obsAtual: obsInformada,
-          });
+        if (!editForm.obs.trim()) {
+          setError("Para filial, o campo Obs e obrigatorio.");
           return;
         }
       }
-    }
-    if (codigoDuplicadoAprovado?.origem === "edit" && !editForm.codigo.trim()) {
-      setCodigoDuplicadoAprovado(null);
     }
     if (!editForm.empresa.trim()) {
       setError("Informe o nome da empresa.");
@@ -1570,7 +2178,6 @@ export default function Clientes() {
       });
       await syncVisitsForCliente(updated);
       setSelected(updated);
-      setCodigoDuplicadoAprovado(null);
       setIsEditing(false);
       await refreshClientesData();
     } catch (err) {
@@ -1624,10 +2231,12 @@ export default function Clientes() {
       return;
     }
 
+    const requestId = ++editCnpjLookupRequestRef.current;
     setCnpjLoadingEdit(true);
     setCnpjErrorEdit(null);
     try {
       const empresaApi = await fetchEmpresaByCnpjWs(cnpj);
+      if (requestId !== editCnpjLookupRequestRef.current) return;
       const endereco = buildEnderecoWithNumero(empresaApi.logradouro, empresaApi.numero);
       setEditPlanoValores([]);
       setEditForm((prev) => ({
@@ -1640,9 +2249,12 @@ export default function Clientes() {
         uf: empresaApi.estado ?? prev.uf,
       }));
     } catch (err) {
+      if (requestId !== editCnpjLookupRequestRef.current) return;
       setCnpjErrorEdit(err instanceof Error ? err.message : "Erro ao buscar CNPJ na API.");
     } finally {
-      setCnpjLoadingEdit(false);
+      if (requestId === editCnpjLookupRequestRef.current) {
+        setCnpjLoadingEdit(false);
+      }
     }
   };
 
@@ -1915,6 +2527,11 @@ export default function Clientes() {
 
   const canEditEndereco = Boolean(form.cidade.trim() && form.uf.trim());
   const canEditEnderecoEdit = Boolean(editForm.cidade.trim() && editForm.uf.trim());
+  const canEditEnderecoFilial = Boolean(
+    filialCadastroModal?.form.cidade.trim() && filialCadastroModal?.form.uf.trim(),
+  );
+  const createFlowBusy =
+    creating || codigoLoading || cnpjLoading || filialCnpjLoading || filialCepLoading || filialBairroLoading;
   const hasPlanoValores = (valores: OdontoartPlanoValor[]) =>
     valores.some((plano) => plano.valorTitular !== null || plano.valorDependente !== null);
 
@@ -2065,7 +2682,9 @@ export default function Clientes() {
               <input
                 value={form.codigo}
                 onChange={(event) => {
+                  invalidateCreateLookups();
                   setCodigoError(null);
+                  setCnpjError(null);
                   setForm((prev) => ({ ...prev, codigo: event.target.value }));
                 }}
                 className="min-w-0 w-full flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
@@ -2073,7 +2692,7 @@ export default function Clientes() {
               <button
                 type="button"
                 onClick={handleCodigoLookup}
-                disabled={codigoLoading || !form.codigo.trim()}
+                disabled={createFlowBusy || codigoLoading || !form.codigo.trim()}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
                 title={codigoLoading ? "Buscando codigo..." : "Buscar por codigo"}
                 aria-label={codigoLoading ? "Buscando codigo..." : "Buscar por codigo"}
@@ -2090,7 +2709,9 @@ export default function Clientes() {
               <input
                 value={form.cnpj}
                 onChange={(event) => {
+                  invalidateCreateLookups();
                   setCnpjError(null);
+                  setCodigoError(null);
                   setForm((prev) => ({ ...prev, cnpj: formatCnpjInput(event.target.value) }));
                 }}
                 inputMode="numeric"
@@ -2101,7 +2722,7 @@ export default function Clientes() {
               <button
                 type="button"
                 onClick={handleCnpjLookup}
-                disabled={cnpjLoading || sanitizeCnpjDigits(form.cnpj).length !== 14}
+                disabled={createFlowBusy || cnpjLoading || sanitizeCnpjDigits(form.cnpj).length !== 14}
                 className="absolute right-0 top-0 inline-flex h-10 w-10 items-center justify-center rounded-r-lg border-l border-sea/30 bg-white text-sea hover:text-seaLight disabled:opacity-50"
                 title={cnpjLoading ? "Buscando CNPJ..." : "Buscar por CNPJ"}
                 aria-label={cnpjLoading ? "Buscando CNPJ..." : "Buscar por CNPJ"}
@@ -2417,7 +3038,18 @@ export default function Clientes() {
                   disabled={!canEditEndereco}
                   className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                 />
+                <button
+                  type="button"
+                  onClick={handleBairroLookup}
+                  disabled={createFlowBusy || bairroLoading || !form.endereco.trim() || !form.cidade.trim() || !form.uf.trim()}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                  title={bairroLoading ? "Buscando endereco..." : "Buscar por endereco"}
+                  aria-label={bairroLoading ? "Buscando endereco..." : "Buscar por endereco"}
+                >
+                  <Search size={15} className={bairroLoading ? "animate-pulse" : ""} />
+                </button>
               </div>
+              {bairroLoading && <span className="text-[11px] text-ink/60">Consultando endereco...</span>}
             </label>
           </div>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
@@ -2447,12 +3079,23 @@ export default function Clientes() {
                 placeholder="00000-000"
                 className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
               />
+              <button
+                type="button"
+                onClick={handleCepLookup}
+                disabled={createFlowBusy || cepLoading || sanitizeCep(form.cep).length !== 8}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                title={cepLoading ? "Buscando CEP..." : "Buscar por CEP"}
+                aria-label={cepLoading ? "Buscando CEP..." : "Buscar por CEP"}
+              >
+                <Search size={15} className={cepLoading ? "animate-pulse" : ""} />
+              </button>
             </div>
+            {cepLoading && <span className="text-[11px] text-ink/60">Consultando CEP...</span>}
           </label>
           <div className="flex items-end md:col-span-2">
             <button
               type="submit"
-              disabled={creating}
+              disabled={createFlowBusy}
               className="inline-flex items-center gap-2 rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
             >
               <Plus size={14} />
@@ -2470,22 +3113,13 @@ export default function Clientes() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {canCreate && (
-            <button
-              type="button"
-              onClick={() => {
-                setImportMessage(null);
-                setImportStageLabel("Aguardando arquivo");
-                setImportProgress(0);
-                setImportTotal(0);
-                setImportInserted(0);
-                setShowImportModal(true);
-              }}
-              className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
-            >
-              Importar empresa
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={resetClientesListView}
+            className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-sm text-ink/70 hover:border-sea hover:text-sea"
+          >
+            Mostrar todas
+          </button>
           <select
             value={situacaoFilter}
             onChange={(event) => setSituacaoFilter(event.target.value as "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado")}
@@ -3041,7 +3675,23 @@ export default function Clientes() {
                         disabled={!canEditEnderecoEdit}
                         className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                       />
+                      <button
+                        type="button"
+                        onClick={handleBairroLookupEdit}
+                        disabled={
+                          bairroLoadingEdit ||
+                          !editForm.endereco.trim() ||
+                          !editForm.cidade.trim() ||
+                          !editForm.uf.trim()
+                        }
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                        title={bairroLoadingEdit ? "Buscando endereco..." : "Buscar por endereco"}
+                        aria-label={bairroLoadingEdit ? "Buscando endereco..." : "Buscar por endereco"}
+                      >
+                        <Search size={15} className={bairroLoadingEdit ? "animate-pulse" : ""} />
+                      </button>
                     </div>
+                    {bairroLoadingEdit && <span className="text-[11px] text-ink/60">Consultando endereco...</span>}
                   </label>
                 </div>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
@@ -3056,15 +3706,13 @@ export default function Clientes() {
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   Bairro
-                  <div className="flex items-end gap-1">
-                    <input
-                      value={editForm.bairro}
-                      onChange={(event) =>
-                        setEditForm((prev) => ({ ...prev, bairro: event.target.value }))
-                      }
-                      className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                    />
-                  </div>
+                  <input
+                    value={editForm.bairro}
+                    onChange={(event) =>
+                      setEditForm((prev) => ({ ...prev, bairro: event.target.value }))
+                    }
+                    className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
                   CEP
@@ -3077,7 +3725,18 @@ export default function Clientes() {
                       placeholder="00000-000"
                       className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
                     />
+                    <button
+                      type="button"
+                      onClick={handleCepLookupEdit}
+                      disabled={cepLoadingEdit || sanitizeCep(editForm.cep).length !== 8}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                      title={cepLoadingEdit ? "Buscando CEP..." : "Buscar por CEP"}
+                      aria-label={cepLoadingEdit ? "Buscando CEP..." : "Buscar por CEP"}
+                    >
+                      <Search size={15} className={cepLoadingEdit ? "animate-pulse" : ""} />
+                    </button>
                   </div>
+                  {cepLoadingEdit && <span className="text-[11px] text-ink/60">Consultando CEP...</span>}
                 </label>
               </div>
             ) : (
@@ -3326,73 +3985,568 @@ export default function Clientes() {
         </div>
       )}
 
-      {codigoDuplicadoModal && (
+      {filialConfirmModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
-            onClick={() => setCodigoDuplicadoModal(null)}
+            onClick={handleCancelFilialFlow}
           />
           <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Codigo ja cadastrado</h3>
             <p className="mt-2 text-sm text-ink/70">
-              Ja existe empresa cadastrada com este codigo. Informe uma obs unica para diferenciar a filial.
+              Ja existe empresa cadastrada com este codigo. Deseja cadastrar como filial?
             </p>
             <div className="mt-4 grid gap-2 rounded-xl border border-sea/15 bg-sand/30 p-3 text-sm text-ink/80">
               <p>
-                <span className="font-semibold">Codigo:</span> {codigoDuplicadoModal.codigo}
+                <span className="font-semibold">Codigo:</span> {filialConfirmModal.codigo}
               </p>
               <p>
-                <span className="font-semibold">Empresa:</span> {codigoDuplicadoModal.empresa}
+                <span className="font-semibold">Empresa:</span> {filialConfirmModal.empresa}
+              </p>
+              <p>
+                <span className="font-semibold">Cadastros com este codigo:</span> {filialConfirmModal.existingCount}
               </p>
             </div>
-            {codigoDuplicadoModal.existingObs.length > 0 && (
-              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                <p className="font-semibold">Obs ja utilizadas para este codigo:</p>
-                <p className="mt-1 break-words">
-                  {codigoDuplicadoModal.existingObs.join(" | ")}
-                </p>
-              </div>
+            {filialConfirmModal.lookupError && (
+              <p className="mt-3 text-xs font-semibold text-amber-700">
+                Aviso: {filialConfirmModal.lookupError}
+              </p>
             )}
-            <label className="mt-4 flex flex-col gap-1 text-xs font-semibold text-ink/70">
-              Obs
-              <textarea
-                value={codigoDuplicadoModal.obs}
-                onChange={(event) =>
-                  setCodigoDuplicadoModal((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          obs: event.target.value,
-                          error: null,
-                        }
-                      : prev,
-                  )
-                }
-                rows={4}
-                className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-              />
-            </label>
-            {codigoDuplicadoModal.error && (
-              <p className="mt-2 text-xs font-semibold text-red-600">{codigoDuplicadoModal.error}</p>
-            )}
-            <p className="mt-2 text-[11px] text-ink/60">
-              Apos salvar a obs, clique em "Adicionar cliente" para concluir.
-            </p>
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setCodigoDuplicadoModal(null)}
+                onClick={handleCancelFilialFlow}
                 className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
               >
-                Fechar
+                Nao
               </button>
               <button
                 type="button"
-                onClick={handleSaveCodigoDuplicadoModal}
+                onClick={handleAcceptFilialConfirm}
+                disabled={createFlowBusy}
                 className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight"
               >
-                Salvar
+                Sim, cadastrar filial
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {filialCadastroModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={handleCancelFilialFlow}
+          />
+          <div className="relative max-h-[92vh] w-[98vw] max-w-[96rem] overflow-y-auto overflow-x-hidden rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Cadastro de filial</h3>
+            <p className="mt-2 text-sm text-ink/70">
+              Preencha os dados da filial. O codigo ja esta definido e nao pode ser alterado.
+            </p>
+            <p className="mt-1 text-xs text-ink/60">
+              Ja existem {filialCadastroModal.existingCount} cadastro(s) com este codigo.
+            </p>
+            <div className="mt-4 grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-4 md:grid-cols-6">
+              <label className="min-w-0 flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
+                Codigo
+                <div className="min-w-0 flex items-end gap-1">
+                  <input
+                    value={filialCadastroModal.form.codigo}
+                    disabled
+                    className="min-w-0 w-full flex-1 rounded-lg border border-sea/20 bg-sand/40 px-3 py-2 text-sm text-ink/70 outline-none"
+                  />
+                  <button
+                    type="button"
+                    disabled
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-sand/40 text-sea/40"
+                    title="Codigo bloqueado para filial"
+                    aria-label="Codigo bloqueado para filial"
+                  >
+                    <Search size={15} />
+                  </button>
+                </div>
+              </label>
+              <label className="min-w-0 flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
+                CNPJ
+                <div className="relative">
+                  <input
+                    value={filialCadastroModal.form.cnpj}
+                    onChange={(event) =>
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: { ...prev.form, cnpj: formatCnpjInput(event.target.value) },
+                              error: null,
+                            }
+                          : prev,
+                      )
+                    }
+                    inputMode="numeric"
+                    maxLength={18}
+                    placeholder="00.000.000/0000-00"
+                    className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 pr-11 text-sm text-ink outline-none focus:border-sea"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleFilialCnpjLookup}
+                    disabled={createFlowBusy || filialCnpjLoading || sanitizeCnpjDigits(filialCadastroModal.form.cnpj).length !== 14}
+                    className="absolute right-0 top-0 inline-flex h-10 w-10 items-center justify-center rounded-r-lg border-l border-sea/30 bg-white text-sea hover:text-seaLight disabled:opacity-50"
+                    title={filialCnpjLoading ? "Buscando CNPJ..." : "Buscar por CNPJ"}
+                    aria-label={filialCnpjLoading ? "Buscando CNPJ..." : "Buscar por CNPJ"}
+                  >
+                    <Building2 size={15} className={filialCnpjLoading ? "animate-pulse" : ""} />
+                  </button>
+                </div>
+                {filialCnpjLoading && <span className="text-[11px] text-ink/60">Consultando CNPJ...</span>}
+              </label>
+              <label className="flex min-w-0 flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                Empresa
+                <input
+                  value={filialCadastroModal.form.empresa}
+                  onChange={(event) =>
+                    setFilialCadastroModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            form: { ...prev.form, empresa: event.target.value },
+                            error: null,
+                          }
+                        : prev,
+                    )
+                  }
+                  className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
+                Pessoa
+                <input
+                  value={filialCadastroModal.form.pessoa}
+                  onChange={(event) =>
+                    setFilialCadastroModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            form: { ...prev.form, pessoa: event.target.value },
+                          }
+                        : prev,
+                    )
+                  }
+                  className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
+                Contato
+                <input
+                  value={filialCadastroModal.form.contato}
+                  onChange={(event) =>
+                    setFilialCadastroModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            form: { ...prev.form, contato: sanitizeContatoInput(event.target.value) },
+                          }
+                        : prev,
+                    )
+                  }
+                  placeholder="85999999999,85988888888"
+                  className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                Grupo
+                <input
+                  value={filialCadastroModal.form.grupo}
+                  onChange={(event) =>
+                    setFilialCadastroModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            form: { ...prev.form, grupo: event.target.value },
+                          }
+                        : prev,
+                    )
+                  }
+                  className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                Obs comercial
+                <input
+                  value={filialCadastroModal.form.obs_comercial}
+                  onChange={(event) =>
+                    setFilialCadastroModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            form: { ...prev.form, obs_comercial: event.target.value },
+                          }
+                        : prev,
+                    )
+                  }
+                  className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                Obs (obrigatorio para filial)
+                <input
+                  value={filialCadastroModal.form.obs}
+                  onChange={(event) =>
+                    setFilialCadastroModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            form: { ...prev.form, obs: event.target.value },
+                            error: null,
+                          }
+                        : prev,
+                    )
+                  }
+                  className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
+              <div className="md:col-span-6 flex flex-wrap items-end gap-2">
+                <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Corte
+                  <input
+                    value={filialCadastroModal.form.corte}
+                    onChange={(event) =>
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: {
+                                ...prev.form,
+                                corte: sanitizeDigits(event.target.value).slice(0, 2),
+                              },
+                            }
+                          : prev,
+                      )
+                    }
+                    inputMode="numeric"
+                    maxLength={2}
+                    className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Venc
+                  <input
+                    value={filialCadastroModal.form.venc}
+                    onChange={(event) =>
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: {
+                                ...prev.form,
+                                venc: sanitizeDigits(event.target.value).slice(0, 2),
+                              },
+                            }
+                          : prev,
+                      )
+                    }
+                    inputMode="numeric"
+                    maxLength={2}
+                    className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="w-16 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  <span>Valor</span>
+                  <div className="flex h-10 w-full items-center">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void openPlanoValoresModal({
+                          title: "Valores por plano (filial)",
+                          source: "create",
+                          codigo: filialCadastroModal.form.codigo,
+                          empresa: filialCadastroModal.form.empresa,
+                          valores: createPlanoValores,
+                        })
+                      }
+                      title="Ver valores Titular/Dependente"
+                      aria-label="Ver valores Titular e Dependente"
+                      className="inline-flex h-10 w-full items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                    >
+                      {createValoresLoading ? <LoaderCircle size={14} className="animate-spin" /> : <DollarSign size={14} />}
+                    </button>
+                  </div>
+                </label>
+                <label className="w-40 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Data da ultima visita
+                  <input
+                    type="date"
+                    value={filialCadastroModal.form.data_da_ultima_visita}
+                    onChange={(event) =>
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: { ...prev.form, data_da_ultima_visita: event.target.value },
+                            }
+                          : prev,
+                      )
+                    }
+                    className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Perfil visita
+                  <select
+                    value={perfilCreate.perfil}
+                    onChange={(event) =>
+                      setPerfilCreate({
+                        perfil: event.target.value,
+                        customEnabled: false,
+                        customTimes: [],
+                        singleTimeBase: "",
+                        singleTimeValue: "",
+                      })
+                    }
+                    className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  >
+                    <option value="">Selecione</option>
+                    {PERFIL_VISITA_PRESETS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="w-36 shrink-0 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  Situacao
+                  <select
+                    value={filialCadastroModal.form.situacao}
+                    onChange={(event) =>
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: { ...prev.form, situacao: event.target.value },
+                            }
+                          : prev,
+                      )
+                    }
+                    className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  >
+                    <option value="">Selecione</option>
+                    {filialCadastroModal.form.situacao &&
+                      !SITUACAO_OPTIONS.some((option) => option === filialCadastroModal.form.situacao) && (
+                        <option value={filialCadastroModal.form.situacao}>
+                          {filialCadastroModal.form.situacao}
+                        </option>
+                      )}
+                    {SITUACAO_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="w-36 shrink-0 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  <span className="inline-flex items-center gap-1">
+                    Categoria
+                    <CategoriaLegendPopover />
+                  </span>
+                  <select
+                    value={filialCadastroModal.form.categoria}
+                    onChange={(event) =>
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: { ...prev.form, categoria: event.target.value },
+                            }
+                          : prev,
+                      )
+                    }
+                    className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  >
+                    <option value="">Selecione</option>
+                    {filialCadastroModal.form.categoria &&
+                      !CATEGORIA_OPTIONS.some((option) => option === filialCadastroModal.form.categoria) && (
+                        <option value={filialCadastroModal.form.categoria}>
+                          {filialCadastroModal.form.categoria}
+                        </option>
+                      )}
+                    {CATEGORIA_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                Cidade
+                <input
+                  value={filialCadastroModal.form.cidade}
+                  onChange={(event) =>
+                    setFilialCadastroModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            form: { ...prev.form, cidade: event.target.value },
+                            error: null,
+                          }
+                        : prev,
+                    )
+                  }
+                  className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
+              <div className="md:col-span-4 grid gap-3 md:grid-cols-[80px_minmax(0,1fr)] md:items-start">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  UF
+                  <input
+                    value={filialCadastroModal.form.uf}
+                    onChange={(event) =>
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: { ...prev.form, uf: event.target.value.toUpperCase().slice(0, 3) },
+                              error: null,
+                            }
+                          : prev,
+                      )
+                    }
+                    maxLength={3}
+                    className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm uppercase tracking-wide text-ink outline-none focus:border-sea"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  <span>
+                    Endereco + Nº
+                    {!canEditEnderecoFilial && (
+                      <span className="font-normal text-ink/50"> (Informe cidade e UF para editar o endereco.)</span>
+                    )}
+                  </span>
+                  <div className="flex items-end gap-1">
+                    <input
+                      value={filialCadastroModal.form.endereco}
+                      onChange={(event) =>
+                        setFilialCadastroModal((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                form: { ...prev.form, endereco: event.target.value },
+                              }
+                            : prev,
+                        )
+                      }
+                      disabled={!canEditEnderecoFilial}
+                      className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleFilialBairroLookup}
+                      disabled={
+                        createFlowBusy ||
+                        filialBairroLoading ||
+                        !filialCadastroModal.form.endereco.trim() ||
+                        !filialCadastroModal.form.cidade.trim() ||
+                        !filialCadastroModal.form.uf.trim()
+                      }
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                      title={filialBairroLoading ? "Buscando endereco..." : "Buscar por endereco"}
+                      aria-label={filialBairroLoading ? "Buscando endereco..." : "Buscar por endereco"}
+                    >
+                      <Search size={15} className={filialBairroLoading ? "animate-pulse" : ""} />
+                    </button>
+                  </div>
+                  {filialBairroLoading && <span className="text-[11px] text-ink/60">Consultando endereco...</span>}
+                </label>
+              </div>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                Complemento
+                <input
+                  value={filialCadastroModal.form.complemento}
+                  onChange={(event) =>
+                    setFilialCadastroModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            form: { ...prev.form, complemento: event.target.value },
+                          }
+                        : prev,
+                    )
+                  }
+                  className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                Bairro
+                <input
+                  value={filialCadastroModal.form.bairro}
+                  onChange={(event) =>
+                    setFilialCadastroModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            form: { ...prev.form, bairro: event.target.value },
+                            error: null,
+                          }
+                        : prev,
+                    )
+                  }
+                  className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
+                CEP
+                <div className="flex items-end gap-1">
+                  <input
+                    value={filialCadastroModal.form.cep}
+                    onChange={(event) =>
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: { ...prev.form, cep: formatCep(event.target.value) },
+                              error: null,
+                            }
+                          : prev,
+                      )
+                    }
+                    placeholder="00000-000"
+                    className="flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleFilialCepLookup}
+                    disabled={createFlowBusy || filialCepLoading || sanitizeCep(filialCadastroModal.form.cep).length !== 8}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
+                    title={filialCepLoading ? "Buscando CEP..." : "Buscar por CEP"}
+                    aria-label={filialCepLoading ? "Buscando CEP..." : "Buscar por CEP"}
+                  >
+                    <Search size={15} className={filialCepLoading ? "animate-pulse" : ""} />
+                  </button>
+                </div>
+                {filialCepLoading && <span className="text-[11px] text-ink/60">Consultando CEP...</span>}
+              </label>
+            </div>
+            {filialCadastroModal.error && (
+              <p className="mt-3 text-xs font-semibold text-red-600">{filialCadastroModal.error}</p>
+            )}
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCancelFilialFlow}
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveFilialCadastro}
+                disabled={createFlowBusy || !filialCadastroModal.form.obs.trim()}
+                className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+              >
+                {creating ? "Salvando..." : "Cadastrar filial"}
               </button>
             </div>
           </div>
@@ -3570,3 +4724,4 @@ export default function Clientes() {
     </div>
   );
 }
+

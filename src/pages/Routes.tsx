@@ -64,8 +64,8 @@ type RoutesPageLookupsCache = {
   cachedAt: number;
 };
 
-const ROUTES_PAGE_ROUTES_CACHE_KEY = "routesPageRoutesCacheV1";
-const ROUTES_PAGE_LOOKUPS_CACHE_KEY = "routesPageLookupsCacheV1";
+const ROUTES_PAGE_ROUTES_CACHE_KEY = "routesPageRoutesCacheV2";
+const ROUTES_PAGE_LOOKUPS_CACHE_KEY = "routesPageLookupsCacheV2";
 const ROUTES_PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 let routesPageRoutesMemoryCache: { routes: Route[]; cachedAt: number } | null = null;
 let routesPageLookupsMemoryCache: RoutesPageLookupsCache | null = null;

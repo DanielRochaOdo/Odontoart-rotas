@@ -128,9 +128,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .from("profiles")
         .select(PROFILE_SELECT_WITH_FORCE_REAUTH)
         .eq("user_id", activeSession.user.id)
-        .single();
+        .limit(1);
 
-      let data = primary.data as Profile | null;
+      let data: Profile | null = ((primary.data as Profile[] | null) ?? [])[0] ?? null;
       let error = primary.error;
 
       if (error && isMissingForceReauthColumnError(error)) {
@@ -138,9 +138,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .from("profiles")
           .select(PROFILE_SELECT_FALLBACK)
           .eq("user_id", activeSession.user.id)
-          .single();
-        data = fallback.data
-          ? ({ ...(fallback.data as Omit<Profile, "force_reauth_after">), force_reauth_after: null } as Profile)
+          .limit(1);
+        const fallbackRow = ((fallback.data as Omit<Profile, "force_reauth_after">[] | null) ?? [])[0] ?? null;
+        data = fallbackRow
+          ? ({ ...fallbackRow, force_reauth_after: null } as Profile)
           : null;
         error = fallback.error;
       }
@@ -177,7 +178,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // ignore refresh fallback failures and keep friendly profile error below
         }
 
-        setProfile((current) => (current?.user_id === activeSession.user.id ? current : null));
+        setProfile(null);
         setProfileError(PROFILE_LOAD_FRIENDLY_ERROR_MESSAGE);
         return;
       }
@@ -212,7 +213,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfileError(null);
         return;
       }
-      setProfile((current) => (current?.user_id === activeSession.user.id ? current : null));
+      setProfile(null);
       setProfileError(PROFILE_LOAD_FRIENDLY_ERROR_MESSAGE);
     }
   };

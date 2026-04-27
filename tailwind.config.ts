@@ -6,24 +6,25 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        display: ["Sora", "system-ui", "sans-serif"],
-        body: ["Source Sans 3", "system-ui", "sans-serif"],
+        display: ["Circular", "Avenir Next", "Helvetica Neue", "Helvetica", "Arial", "sans-serif"],
+        body: ["Circular", "Avenir Next", "Helvetica Neue", "Helvetica", "Arial", "sans-serif"],
+        mono: ["Source Code Pro", "Menlo", "Consolas", "monospace"],
       },
       colors: {
-        ink: "#0b1f14",
-        muted: "#355446",
-        mist: "#cfe6d9",
-        sea: "#0c6f3d",
-        seaLight: "#34d399",
-        sand: "#dff7ea",
-        paper: "#f3fbf6",
+        ink: "rgb(var(--color-ink) / <alpha-value>)",
+        muted: "rgb(var(--color-muted) / <alpha-value>)",
+        mist: "rgb(var(--color-mist) / <alpha-value>)",
+        sea: "rgb(var(--color-sea) / <alpha-value>)",
+        seaLight: "rgb(var(--color-seaLight) / <alpha-value>)",
+        sand: "rgb(var(--color-sand) / <alpha-value>)",
+        paper: "rgb(var(--color-paper) / <alpha-value>)",
       },
       boxShadow: {
-        card: "0 10px 30px -18px rgba(11, 31, 20, 0.35)",
+        card: "0 8px 24px -18px rgba(16, 33, 26, 0.26)",
       },
       backgroundImage: {
         "hero-gradient":
-          "radial-gradient(circle at top left, rgba(12,111,61,0.28), transparent 55%), radial-gradient(circle at 25% 15%, rgba(52,211,153,0.28), transparent 60%), radial-gradient(circle at 80% 10%, rgba(223,247,234,0.45), transparent 55%), linear-gradient(135deg, #f1faf5 0%, #e0f4ea 45%, #f2fbf6 100%)",
+          "radial-gradient(circle at 12% 8%, rgba(62, 207, 142, 0.16), transparent 42%), radial-gradient(circle at 88% 0%, rgba(0, 197, 115, 0.12), transparent 40%), linear-gradient(135deg, #f6faf7 0%, #eef5f1 48%, #f9fcfa 100%)",
       },
     },
   },

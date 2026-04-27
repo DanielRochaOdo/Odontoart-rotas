@@ -119,7 +119,7 @@ export const fetchClientesCount = async (params: {
 }) => {
   let query = supabase
     .from("clientes")
-    .select("id", { count: "planned", head: true });
+    .select("id", { count: "exact", head: true });
 
   query = applyClientesListFilters(query, {
     search: params.search,
@@ -152,6 +152,26 @@ export const fetchClientesByCodigoExact = async (codigo: string) => {
     .from("clientes")
     .select(CLIENTES_SELECT_COLUMNS)
     .eq("codigo", normalized)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ClienteRow[];
+};
+
+export const fetchClientesByCnpjExact = async (cnpj: string) => {
+  const normalized = cnpj.trim();
+  if (!normalized) return [] as ClienteRow[];
+  const digits = normalized.replace(/\D/g, "");
+  const formatted =
+    digits.length === 14
+      ? `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`
+      : normalized;
+  const candidates = Array.from(new Set([normalized, formatted, digits].filter(Boolean)));
+
+  const { data, error } = await supabase
+    .from("clientes")
+    .select(CLIENTES_SELECT_COLUMNS)
+    .in("cnpj", candidates)
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(error.message);

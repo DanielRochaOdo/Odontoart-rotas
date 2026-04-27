@@ -66,30 +66,37 @@ const isMissingUserError = (message: string) => {
   return normalized.includes("not found") || normalized.includes("does not exist");
 };
 
+const extractBearerToken = (authorizationHeader: string) => {
+  const match = authorizationHeader.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() ?? "";
+};
+
+const resolveCallerUserId = async (token: string) => {
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data?.user?.id) return null;
+  return data.user.id;
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   const authHeader = req.headers.get("Authorization") ?? "";
-  const token = authHeader.replace("Bearer ", "").trim();
+  const token = extractBearerToken(authHeader);
   if (!token) {
     return jsonResponse(401, { error: "Token ausente." });
   }
 
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser(token);
-
-  if (userError || !user) {
-    return jsonResponse(401, { error: "Sessao invalida." });
+  const callerUserId = await resolveCallerUserId(token);
+  if (!callerUserId) {
+    return jsonResponse(401, { error: "Token JWT invalido." });
   }
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("role")
-    .eq("user_id", user.id)
+    .eq("user_id", callerUserId)
     .single();
 
   if (profileError || profile?.role !== "SUPERVISOR") {

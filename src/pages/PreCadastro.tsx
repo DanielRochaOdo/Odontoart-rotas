@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Building2, Check, DollarSign, Search, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { formatCep, sanitizeCep } from "../lib/cep";
@@ -203,6 +203,7 @@ export default function PreCadastro() {
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [planoValores, setPlanoValores] = useState<OdontoartPlanoValor[]>([]);
   const [showPlanoValoresModal, setShowPlanoValoresModal] = useState(false);
+  const lookupVersionRef = useRef(0);
 
   const [statusRows, setStatusRows] = useState<PreCadastroRow[]>([]);
   const [statusLoading, setStatusLoading] = useState(false);
@@ -294,26 +295,33 @@ export default function PreCadastro() {
   const handleCodigoLookup = async () => {
     const empresaId = form.codigo.trim();
     if (!empresaId) return setLookupError("Informe o codigo da empresa.");
+    const lookupVersion = ++lookupVersionRef.current;
     setLookupLoading("codigo");
     setLookupError(null);
     try {
       const empresaApi = await fetchEmpresaByEmpresaId(empresaId);
+      if (lookupVersion !== lookupVersionRef.current) return;
       if (!empresaApi) throw new Error("Empresa nao encontrada na API.");
       mergeEmpresaApi(empresaApi, empresaId);
     } catch (err) {
+      if (lookupVersion !== lookupVersionRef.current) return;
       setLookupError(err instanceof Error ? err.message : "Erro ao buscar codigo na API.");
     } finally {
-      setLookupLoading("");
+      if (lookupVersion === lookupVersionRef.current) {
+        setLookupLoading("");
+      }
     }
   };
 
   const handleCnpjLookup = async () => {
     const cnpj = sanitizeCnpjDigits(form.cnpj);
     if (cnpj.length !== 14) return setLookupError("Informe um CNPJ valido.");
+    const lookupVersion = ++lookupVersionRef.current;
     setLookupLoading("cnpj");
     setLookupError(null);
     try {
       const empresaApi = await fetchEmpresaByCnpjWs(cnpj);
+      if (lookupVersion !== lookupVersionRef.current) return;
       setPlanoValores([]);
       setForm((prev) => ({
         ...prev,
@@ -325,9 +333,12 @@ export default function PreCadastro() {
         uf: empresaApi.estado ?? prev.uf,
       }));
     } catch (err) {
+      if (lookupVersion !== lookupVersionRef.current) return;
       setLookupError(err instanceof Error ? err.message : "Erro ao buscar CNPJ na API.");
     } finally {
-      setLookupLoading("");
+      if (lookupVersion === lookupVersionRef.current) {
+        setLookupLoading("");
+      }
     }
   };
 

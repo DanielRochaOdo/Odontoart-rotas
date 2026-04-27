@@ -1863,6 +1863,17 @@ export default function Visitas() {
   const fetchObsComercialFromClientes = async (visit?: VisitRow | null) => {
     const agenda = visit?.agenda;
     if (!agenda) return null;
+    const joinUniqueObs = (rows: Array<{ obs_comercial?: string | null }> | null | undefined) => {
+      if (!rows || rows.length === 0) return null;
+      const unique = Array.from(
+        new Set(
+          rows
+            .map((row) => (row.obs_comercial ?? "").trim())
+            .filter(Boolean),
+        ),
+      );
+      return unique.length > 0 ? unique.join(" | ") : null;
+    };
 
     if (visit?.cliente?.obs_comercial?.trim()) {
       return visit.cliente.obs_comercial.trim();
@@ -1882,20 +1893,20 @@ export default function Visitas() {
 
     const codigo = agenda.cod_1?.trim();
     if (codigo) {
+      const { data, error } = await supabase
+        .from("clientes")
+        .select("obs_comercial")
+        .eq("codigo", codigo);
+      if (!error) {
+        const merged = joinUniqueObs(data as Array<{ obs_comercial?: string | null }>);
+        if (merged) return merged;
+      }
+
       try {
         const fromEndpoint = await fetchObservacaoComercialByEmpresaId(codigo);
         if (fromEndpoint?.trim()) return fromEndpoint.trim();
       } catch (error) {
         console.error(error);
-      }
-
-      const { data, error } = await supabase
-        .from("clientes")
-        .select("obs_comercial")
-        .eq("codigo", codigo)
-        .limit(1);
-      if (!error && data && data.length > 0) {
-        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
       }
     }
 
@@ -1906,30 +1917,30 @@ export default function Visitas() {
         .from("clientes")
         .select("obs_comercial")
         .eq("empresa", empresa)
-        .eq("nome_fantasia", nomeFantasia)
-        .limit(1);
-      if (!error && data && data.length > 0) {
-        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
+        .eq("nome_fantasia", nomeFantasia);
+      if (!error) {
+        const merged = joinUniqueObs(data as Array<{ obs_comercial?: string | null }>);
+        if (merged) return merged;
       }
     }
     if (empresa) {
       const { data, error } = await supabase
         .from("clientes")
         .select("obs_comercial")
-        .eq("empresa", empresa)
-        .limit(1);
-      if (!error && data && data.length > 0) {
-        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
+        .eq("empresa", empresa);
+      if (!error) {
+        const merged = joinUniqueObs(data as Array<{ obs_comercial?: string | null }>);
+        if (merged) return merged;
       }
     }
     if (nomeFantasia) {
       const { data, error } = await supabase
         .from("clientes")
         .select("obs_comercial")
-        .eq("nome_fantasia", nomeFantasia)
-        .limit(1);
-      if (!error && data && data.length > 0) {
-        return (data[0] as { obs_comercial?: string | null }).obs_comercial ?? null;
+        .eq("nome_fantasia", nomeFantasia);
+      if (!error) {
+        const merged = joinUniqueObs(data as Array<{ obs_comercial?: string | null }>);
+        if (merged) return merged;
       }
     }
 

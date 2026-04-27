@@ -1,0 +1,419 @@
+import { supabase } from "./supabase";
+import { fetchEmpresaByEmpresaId } from "./odontoartEmpresaApi";
+
+export type FilaState = "PENDING_WAIT" | "READY_AUTO" | "RELEASED_MANUAL" | "BLOCKED_MANUAL";
+
+export type FilaEventType =
+  | "NEW_COMPANY_WAITING"
+  | "COUNTDOWN_30"
+  | "COUNTDOWN_15"
+  | "COUNTDOWN_7"
+  | "COUNTDOWN_1"
+  | "RULE_CHANGED"
+  | "RELEASED_MANUAL"
+  | "BLOCKED_MANUAL";
+
+export type FilaSettingsRow = {
+  id: boolean;
+  feature_start_at: string;
+  default_waiting_days: number;
+  reminder_days: number[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type FilaControlRow = {
+  empresa_id: string;
+  codigo: string | null;
+  empresa: string | null;
+  cnpj: string | null;
+  data_contrato: string;
+  waiting_days_snapshot: number;
+  eligible_at: string;
+  state: FilaState;
+  effective_state: FilaState;
+  manual_block_until: string | null;
+  manual_reason: string | null;
+  manual_override_by: string | null;
+  manual_override_at: string | null;
+  created_at: string;
+  updated_at: string;
+  days_remaining: number;
+};
+
+export type FilaPendingNotificationRow = {
+  event_id: string;
+  empresa_id: string;
+  codigo: string | null;
+  empresa: string | null;
+  event_type: FilaEventType;
+  payload: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+};
+
+export type FilaClienteCandidate = {
+  id: string;
+  codigo: string | null;
+  empresa: string | null;
+  cnpj: string | null;
+  created_at: string | null;
+};
+
+type SupabaseLikeError = { code?: string; message?: string } | null;
+const FILA_AUTO_SYNC_STORAGE_KEY = "filaAutoSyncAtMsV1";
+const FILA_AUTO_SYNC_DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
+export const FILA_DATA_CONTRATO_CORTE = "2026-04-01";
+let filaAutoSyncPromise: Promise<number> | null = null;
+let filaAutoSyncLastRunAt = 0;
+
+const toDateOnlyFromTimestamp = (value: string | null | undefined) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const parseDataContratoToIsoDate = (value: string | null | undefined) => {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return null;
+
+  const ymdSlash = trimmed.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
+  if (ymdSlash) return `${ymdSlash[1]}-${ymdSlash[2]}-${ymdSlash[3]}`;
+
+  const ymdDash = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (ymdDash) return `${ymdDash[1]}-${ymdDash[2]}-${ymdDash[3]}`;
+
+  const dmySlash = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (dmySlash) return `${dmySlash[3]}-${dmySlash[2]}-${dmySlash[1]}`;
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+};
+
+const isBeforeDataContratoCutoff = (dateIso: string | null | undefined) => {
+  const normalized = (dateIso ?? "").trim();
+  if (!normalized) return false;
+  return normalized < FILA_DATA_CONTRATO_CORTE;
+};
+
+const readAutoSyncStorageTimestamp = () => {
+  if (typeof window === "undefined") return 0;
+  try {
+    const raw = window.localStorage.getItem(FILA_AUTO_SYNC_STORAGE_KEY);
+    const parsed = Number(raw ?? "0");
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch {
+    return 0;
+  }
+};
+
+const writeAutoSyncStorageTimestamp = (timestamp: number) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(FILA_AUTO_SYNC_STORAGE_KEY, String(timestamp));
+  } catch {
+    // ignore
+  }
+};
+
+const ensureCurrentMonthFeatureStart = async (settings: FilaSettingsRow) => {
+  const featureStart = Date.parse(settings.feature_start_at);
+  if (!Number.isFinite(featureStart)) return settings;
+
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+  const monthStartMs = monthStart.getTime();
+
+  const featureDate = new Date(featureStart);
+  const isSameMonthAsNow =
+    featureDate.getUTCFullYear() === now.getUTCFullYear() &&
+    featureDate.getUTCMonth() === now.getUTCMonth();
+
+  if (!isSameMonthAsNow || featureStart <= monthStartMs) {
+    return settings;
+  }
+
+  const monthStartIso = monthStart.toISOString();
+  const { data, error } = await supabase
+    .from("queue_release_settings")
+    .update({ feature_start_at: monthStartIso })
+    .eq("id", true)
+    .select("id, feature_start_at, default_waiting_days, reminder_days, created_at, updated_at")
+    .single();
+
+  if (error) throw error;
+  return data as FilaSettingsRow;
+};
+
+export const isMissingFilaBackendError = (error: SupabaseLikeError) => {
+  const code = (error?.code ?? "").toUpperCase();
+  const message = (error?.message ?? "").toLowerCase();
+  if (code === "42P01" || code === "42883") return true;
+  return (
+    message.includes("queue_release") &&
+    (message.includes("does not exist") || message.includes("nao existe"))
+  );
+};
+
+export const fetchFilaSettings = async () => {
+  const { data, error } = await supabase
+    .from("queue_release_settings")
+    .select("id, feature_start_at, default_waiting_days, reminder_days, created_at, updated_at")
+    .eq("id", true)
+    .maybeSingle();
+
+  if (error) throw error;
+  return (data ?? null) as FilaSettingsRow | null;
+};
+
+export const updateFilaSettings = async (payload: {
+  default_waiting_days: number;
+  reminder_days: number[];
+}) => {
+  const { data, error } = await supabase
+    .from("queue_release_settings")
+    .upsert(
+      {
+        id: true,
+        default_waiting_days: payload.default_waiting_days,
+        reminder_days: payload.reminder_days,
+      },
+      { onConflict: "id" },
+    )
+    .select("id, feature_start_at, default_waiting_days, reminder_days, created_at, updated_at")
+    .single();
+
+  if (error) throw error;
+  return data as FilaSettingsRow;
+};
+
+export const fetchFilaControls = async (params?: {
+  state?: FilaState | "";
+  search?: string;
+}) => {
+  let query = supabase
+    .from("queue_release_controls_view")
+    .select(
+      "empresa_id, codigo, empresa, cnpj, data_contrato, waiting_days_snapshot, eligible_at, state, effective_state, manual_block_until, manual_reason, manual_override_by, manual_override_at, created_at, updated_at, days_remaining",
+    )
+    .order("created_at", { ascending: false })
+    .gte("data_contrato", FILA_DATA_CONTRATO_CORTE);
+
+  if (params?.state) {
+    query = query.eq("effective_state", params.state);
+  }
+
+  const search = (params?.search ?? "").replace(/%/g, "").trim();
+  if (search) {
+    query = query.or(
+      [
+        `codigo.ilike.%${search}%`,
+        `empresa.ilike.%${search}%`,
+        `cnpj.ilike.%${search}%`,
+      ].join(","),
+    );
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []) as FilaControlRow[];
+};
+
+export const searchFilaClientesByCodigo = async (codigo: string) => {
+  const normalized = codigo.trim();
+  if (!normalized) return [] as FilaClienteCandidate[];
+
+  const { data, error } = await supabase
+    .from("clientes")
+    .select("id, codigo, empresa, cnpj, created_at")
+    .eq("codigo", normalized)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (error) throw error;
+  return (data ?? []) as FilaClienteCandidate[];
+};
+
+export const registerFilaEmpresa = async (payload: {
+  empresa_id: string;
+  data_contrato: string;
+  waiting_days?: number | null;
+}) => {
+  if (isBeforeDataContratoCutoff(payload.data_contrato)) {
+    throw new Error("Empresa fora do escopo do modulo fila (DataContrato anterior a 01/04/2026).");
+  }
+
+  const { data, error } = await supabase.rpc("queue_release_register_company", {
+    p_empresa_id: payload.empresa_id,
+    p_data_contrato: payload.data_contrato,
+    p_waiting_days: payload.waiting_days ?? null,
+  });
+  if (error) throw error;
+  if (Array.isArray(data)) return (data[0] ?? null) as FilaControlRow | null;
+  return (data ?? null) as FilaControlRow | null;
+};
+
+export const applyFilaAction = async (payload: {
+  empresa_id: string;
+  action: "RELEASE_NOW" | "SET_WAITING_DAYS" | "BLOCK_DAYS" | "UNBLOCK";
+  waiting_days?: number | null;
+  block_days?: number | null;
+  reason?: string | null;
+}) => {
+  const { data, error } = await supabase.rpc("queue_release_apply_action", {
+    p_empresa_id: payload.empresa_id,
+    p_action: payload.action,
+    p_waiting_days: payload.waiting_days ?? null,
+    p_block_days: payload.block_days ?? null,
+    p_reason: payload.reason ?? null,
+  });
+  if (error) throw error;
+  if (Array.isArray(data)) return (data[0] ?? null) as FilaControlRow | null;
+  return (data ?? null) as FilaControlRow | null;
+};
+
+export const generateFilaCountdownEvents = async () => {
+  const { data, error } = await supabase.rpc("queue_release_generate_countdown_events");
+  if (error) throw error;
+  return Number(data ?? 0);
+};
+
+export const fetchFilaPendingNotifications = async (limit = 10) => {
+  const { data, error } = await supabase.rpc("queue_release_pending_notifications", {
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return (data ?? []) as FilaPendingNotificationRow[];
+};
+
+export const acknowledgeFilaNotification = async (eventId: string) => {
+  const { error } = await supabase.rpc("queue_release_acknowledge_event", {
+    p_event_id: eventId,
+  });
+  if (error) throw error;
+};
+
+export const fetchFilaControlsByEmpresaIds = async (empresaIds: string[]) => {
+  const uniqueIds = Array.from(new Set(empresaIds.filter(Boolean)));
+  if (!uniqueIds.length) return [] as Array<Pick<FilaControlRow, "empresa_id" | "codigo" | "effective_state" | "eligible_at" | "manual_block_until">>;
+
+  const chunkSize = 500;
+  const allRows: Array<Pick<FilaControlRow, "empresa_id" | "codigo" | "effective_state" | "eligible_at" | "manual_block_until">> = [];
+
+  for (let index = 0; index < uniqueIds.length; index += chunkSize) {
+    const chunk = uniqueIds.slice(index, index + chunkSize);
+    const { data, error } = await supabase
+      .from("queue_release_controls_view")
+      .select("empresa_id, codigo, effective_state, eligible_at, manual_block_until")
+      .in("empresa_id", chunk);
+    if (error) throw error;
+    allRows.push(
+      ...((data ?? []) as Array<
+        Pick<FilaControlRow, "empresa_id" | "codigo" | "effective_state" | "eligible_at" | "manual_block_until">
+      >),
+    );
+  }
+
+  return allRows;
+};
+
+export const syncFilaAutoRegistration = async (options?: {
+  minIntervalMs?: number;
+  maxCandidates?: number;
+  maxRegistrations?: number;
+}) => {
+  const minIntervalMs = options?.minIntervalMs ?? FILA_AUTO_SYNC_DEFAULT_INTERVAL_MS;
+  const maxCandidates = Math.max(1, Math.min(options?.maxCandidates ?? 120, 500));
+  const maxRegistrations = Math.max(1, Math.min(options?.maxRegistrations ?? 30, 200));
+  const nowMs = Date.now();
+  const lastStorageRunAt = readAutoSyncStorageTimestamp();
+  const lastRunAt = Math.max(filaAutoSyncLastRunAt, lastStorageRunAt);
+
+  if (nowMs - lastRunAt < minIntervalMs) return 0;
+  if (filaAutoSyncPromise) return filaAutoSyncPromise;
+
+  filaAutoSyncPromise = (async () => {
+    try {
+      let settings = await fetchFilaSettings();
+      if (!settings) return 0;
+      settings = await ensureCurrentMonthFeatureStart(settings);
+
+      const startAt = settings.feature_start_at;
+      const { data: candidatesData, error: candidatesError } = await supabase
+        .from("clientes")
+        .select("id, codigo, empresa, cnpj, created_at")
+        .gte("created_at", startAt)
+        .order("created_at", { ascending: true })
+        .limit(maxCandidates);
+
+      if (candidatesError) throw candidatesError;
+      const candidates = (candidatesData ?? []) as FilaClienteCandidate[];
+      if (!candidates.length) return 0;
+
+      const controls = await fetchFilaControlsByEmpresaIds(candidates.map((row) => row.id));
+      const controlledIds = new Set(controls.map((row) => row.empresa_id));
+      const missing = candidates.filter((row) => !controlledIds.has(row.id));
+      if (!missing.length) return 0;
+
+      let registered = 0;
+
+      for (const candidate of missing) {
+        if (registered >= maxRegistrations) break;
+
+        const createdAtDate = toDateOnlyFromTimestamp(candidate.created_at);
+        if (!createdAtDate) continue;
+
+        let dataContratoIso = createdAtDate;
+        const codigo = (candidate.codigo ?? "").trim();
+        if (codigo) {
+          try {
+            const empresa = await fetchEmpresaByEmpresaId(codigo);
+            const dataContratoRaw = empresa?.DataContrato ?? empresa?.dataContrato ?? null;
+            const parsedDataContrato = parseDataContratoToIsoDate(dataContratoRaw);
+            if (parsedDataContrato) dataContratoIso = parsedDataContrato;
+          } catch {
+            // fallback para created_at quando ERP estiver indisponivel
+          }
+        }
+
+        if (isBeforeDataContratoCutoff(dataContratoIso)) {
+          continue;
+        }
+
+        try {
+          await registerFilaEmpresa({
+            empresa_id: candidate.id,
+            data_contrato: dataContratoIso,
+          });
+          registered += 1;
+        } catch (error) {
+          const maybeError = error as { message?: string };
+          const message = (maybeError.message ?? "").toLowerCase();
+          const knownNonFatal =
+            message.includes("ja registrada") ||
+            message.includes("fora do escopo") ||
+            message.includes("duplicate") ||
+            message.includes("already exists");
+          if (!knownNonFatal) {
+            throw error;
+          }
+        }
+      }
+
+      return registered;
+    } finally {
+      const finishedAt = Date.now();
+      filaAutoSyncLastRunAt = finishedAt;
+      writeAutoSyncStorageTimestamp(finishedAt);
+    }
+  })().finally(() => {
+    filaAutoSyncPromise = null;
+  });
+
+  return filaAutoSyncPromise;
+};

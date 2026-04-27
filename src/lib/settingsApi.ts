@@ -77,9 +77,10 @@ const invokeManageUsersViaHttp = async (
 
   if (!response.ok) {
     if (response.status === 401) {
+      const message = parseErrorMessage(payload, "Status 401: Sessao invalida.");
       return {
         data: payload,
-        error: { message: "Status 401: Sessao invalida." },
+        error: { message },
       };
     }
     return {

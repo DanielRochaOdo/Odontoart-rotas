@@ -1,0 +1,396 @@
+{
+    "codigo":  1,
+    "mensagem":  null,
+    "dados":  [
+                  {
+                      "Id":  239,
+                      "RazaoSocial":  "ODONTOART PLANOS ODONTOLOGICOS LTDA",
+                      "NomeFantazia":  "ODONTOART",
+                      "CNPJ":  "03187913000157",
+                      "DescTipoEmpresa":  null,
+                      "InclusaoPortal":  1,
+                      "ResponsavelLegal":  "CEZAR AUGUSTO FERREIRA GOMES FILHO",
+                      "Plataforma":  22,
+                      "Vendedor":  -1,
+                      "DataContrato":  "2007/02/16",
+                      "Vencimento":  10,
+                      "Corte":  25,
+                      "AnoMesPrimeiroPagamento":  "2007/02",
+                      "EmpresaOnline":  1,
+                      "Vigencia":  12,
+                      "CarenciaCobertura":  1,
+                      "CarenciaPrimeiroAtendimento":  5,
+                      "InicioCobertura":  1,
+                      "PadraoVendas":  1,
+                      "RedeAtendimento":  1,
+                      "FormaPagamento":  134,
+                      "ExigeMatricula":  0,
+                      "Cep":  "60150150",
+                      "Uf":  5,
+                      "UfNome":  "CEARA",
+                      "Municipio":  41,
+                      "MunicipioNome":  "FORTALEZA",
+                      "Bairro":  1262,
+                      "BairroNome":  "ALDEOTA",
+                      "IdTipoLogradouro":  816,
+                      "Logradouro":  "DESEMBARGADOR LEITE ALBUQUERQUE",
+                      "Numero":  635,
+                      "Complemento":  "cobertura",
+                      "CentroCusto":  1,
+                      "Contato":  [
+                                      {
+                                          "Id":  4973253,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "jeffersoncarvalho@odontoart.com",
+                                          "situacao":  1
+                                      },
+                                      {
+                                          "Id":  4985379,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "reginabulcao@odontoartonline.com.br",
+                                          "situacao":  1
+                                      },
+                                      {
+                                          "Id":  4879943,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "financeiro@odontoart.com",
+                                          "situacao":  1
+                                      },
+                                      {
+                                          "Id":  5040298,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "josemberg.santos@odontoartonline.com.br",
+                                          "situacao":  1
+                                      },
+                                      {
+                                          "Id":  5075105,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "atendimento.empresas@odontoart.com",
+                                          "situacao":  1
+                                      },
+                                      {
+                                          "Id":  4288557,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "jacianecarneiro@odontoartonline.com.br",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  4343652,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "brunoduarte@odontoartonline.com.br",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  3272315,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "carlosfilho27@gmail.com",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  3151268,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "financeiro@odontoartonline.com.br",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  3135376,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "valoniamatos@odontoartonline.com.br",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  4514841,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "jacianecarneiro@odontoartonline.com.br",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  3151267,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "elainefernandes@odontoartonline.com.br",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  4339193,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "ozias.alves@s4e.com.br",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  4582104,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "jeffersoncarvalho@odontoart.com",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  4285514,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "jeffersoncarvalho@odontoart.com",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  2938429,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "flaviasilva@odontoartonline.com.br",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  4514735,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "jeffersonsoares@odontoart.com",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  4912385,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "josembergsantos@odontoartonline.com.br",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  3382025,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "cobranca2@odontoartonline.com.br",
+                                          "situacao":  0
+                                      },
+                                      {
+                                          "Id":  2906179,
+                                          "Tipo":  "E-mail",
+                                          "descricao":  "setorpessoal@odontoartonline.com.br",
+                                          "situacao":  0
+                                      }
+                                  ],
+                      "PrecoPlano":  [
+                                         {
+                                             "Id":  15991,
+                                             "Plano":  2,
+                                             "ValorTitular":  11.9,
+                                             "ValorDependente":  11.9,
+                                             "ValorPrimeiroDependente":  0,
+                                             "ValorSegundoDependente":  0,
+                                             "ValorTerceiroDependente":  0,
+                                             "ValorQuartoDependente":  0,
+                                             "ValorQuintoDependente":  0,
+                                             "ValorAgregado":  11.9,
+                                             "ValorFixo":  1,
+                                             "ExigeAdesao":  0,
+                                             "AlteraPrecoPlano":  0
+                                         },
+                                         {
+                                             "Id":  1175,
+                                             "Plano":  5,
+                                             "ValorTitular":  0,
+                                             "ValorDependente":  0,
+                                             "ValorPrimeiroDependente":  0,
+                                             "ValorSegundoDependente":  0,
+                                             "ValorTerceiroDependente":  0,
+                                             "ValorQuartoDependente":  0,
+                                             "ValorQuintoDependente":  0,
+                                             "ValorAgregado":  0,
+                                             "ValorFixo":  0,
+                                             "ExigeAdesao":  0,
+                                             "AlteraPrecoPlano":  0
+                                         },
+                                         {
+                                             "Id":  25633,
+                                             "Plano":  15,
+                                             "ValorTitular":  0,
+                                             "ValorDependente":  0,
+                                             "ValorPrimeiroDependente":  0,
+                                             "ValorSegundoDependente":  0,
+                                             "ValorTerceiroDependente":  0,
+                                             "ValorQuartoDependente":  0,
+                                             "ValorQuintoDependente":  0,
+                                             "ValorAgregado":  0,
+                                             "ValorFixo":  0,
+                                             "ExigeAdesao":  0,
+                                             "AlteraPrecoPlano":  0
+                                         },
+                                         {
+                                             "Id":  20632,
+                                             "Plano":  26,
+                                             "ValorTitular":  0,
+                                             "ValorDependente":  0,
+                                             "ValorPrimeiroDependente":  0,
+                                             "ValorSegundoDependente":  0,
+                                             "ValorTerceiroDependente":  0,
+                                             "ValorQuartoDependente":  0,
+                                             "ValorQuintoDependente":  0,
+                                             "ValorAgregado":  0,
+                                             "ValorFixo":  0,
+                                             "ExigeAdesao":  0,
+                                             "AlteraPrecoPlano":  0
+                                         },
+                                         {
+                                             "Id":  19398,
+                                             "Plano":  39,
+                                             "ValorTitular":  0,
+                                             "ValorDependente":  0,
+                                             "ValorPrimeiroDependente":  0,
+                                             "ValorSegundoDependente":  0,
+                                             "ValorTerceiroDependente":  0,
+                                             "ValorQuartoDependente":  0,
+                                             "ValorQuintoDependente":  0,
+                                             "ValorAgregado":  0,
+                                             "ValorFixo":  0,
+                                             "ExigeAdesao":  0,
+                                             "AlteraPrecoPlano":  0
+                                         },
+                                         {
+                                             "Id":  18293,
+                                             "Plano":  42,
+                                             "ValorTitular":  11.9,
+                                             "ValorDependente":  11.9,
+                                             "ValorPrimeiroDependente":  0,
+                                             "ValorSegundoDependente":  0,
+                                             "ValorTerceiroDependente":  0,
+                                             "ValorQuartoDependente":  0,
+                                             "ValorQuintoDependente":  0,
+                                             "ValorAgregado":  11.9,
+                                             "ValorFixo":  1,
+                                             "ExigeAdesao":  0,
+                                             "AlteraPrecoPlano":  0
+                                         },
+                                         {
+                                             "Id":  18294,
+                                             "Plano":  43,
+                                             "ValorTitular":  11.9,
+                                             "ValorDependente":  11.9,
+                                             "ValorPrimeiroDependente":  0,
+                                             "ValorSegundoDependente":  0,
+                                             "ValorTerceiroDependente":  0,
+                                             "ValorQuartoDependente":  0,
+                                             "ValorQuintoDependente":  0,
+                                             "ValorAgregado":  11.9,
+                                             "ValorFixo":  1,
+                                             "ExigeAdesao":  0,
+                                             "AlteraPrecoPlano":  0
+                                         },
+                                         {
+                                             "Id":  18295,
+                                             "Plano":  44,
+                                             "ValorTitular":  11.9,
+                                             "ValorDependente":  11.9,
+                                             "ValorPrimeiroDependente":  0,
+                                             "ValorSegundoDependente":  0,
+                                             "ValorTerceiroDependente":  0,
+                                             "ValorQuartoDependente":  0,
+                                             "ValorQuintoDependente":  0,
+                                             "ValorAgregado":  11.9,
+                                             "ValorFixo":  1,
+                                             "ExigeAdesao":  0,
+                                             "AlteraPrecoPlano":  0
+                                         },
+                                         {
+                                             "Id":  230765,
+                                             "Plano":  140,
+                                             "ValorTitular":  0,
+                                             "ValorDependente":  0,
+                                             "ValorPrimeiroDependente":  0,
+                                             "ValorSegundoDependente":  0,
+                                             "ValorTerceiroDependente":  0,
+                                             "ValorQuartoDependente":  0,
+                                             "ValorQuintoDependente":  0,
+                                             "ValorAgregado":  0,
+                                             "ValorFixo":  0,
+                                             "ExigeAdesao":  0,
+                                             "AlteraPrecoPlano":  0
+                                         }
+                                     ],
+                      "VidasPorPlano":  null,
+                      "GruposFaturamento":  [
+
+                                            ],
+                      "RegrasCadastro":  [
+                                             {
+                                                 "IdRegra":  1,
+                                                 "EmpresaPossuiRegra":  0,
+                                                 "Descricao":  "Aceita cadastro somente com titular",
+                                                 "InformacoesAdicionais":  ""
+                                             },
+                                             {
+                                                 "IdRegra":  2,
+                                                 "EmpresaPossuiRegra":  0,
+                                                 "Descricao":  "Aceita cadastro sem agregado",
+                                                 "InformacoesAdicionais":  ""
+                                             },
+                                             {
+                                                 "IdRegra":  3,
+                                                 "EmpresaPossuiRegra":  0,
+                                                 "Descricao":  "Aceita cadastro com titular, cônjuge, companheiro",
+                                                 "InformacoesAdicionais":  ""
+                                             },
+                                             {
+                                                 "IdRegra":  4,
+                                                 "EmpresaPossuiRegra":  0,
+                                                 "Descricao":  "Exigir CPF independente da idade",
+                                                 "InformacoesAdicionais":  ""
+                                             },
+                                             {
+                                                 "IdRegra":  5,
+                                                 "EmpresaPossuiRegra":  0,
+                                                 "Descricao":  "Exigir CPF maior 12 anos",
+                                                 "InformacoesAdicionais":  ""
+                                             },
+                                             {
+                                                 "IdRegra":  6,
+                                                 "EmpresaPossuiRegra":  0,
+                                                 "Descricao":  "Exigir CPF maior 16 anos",
+                                                 "InformacoesAdicionais":  ""
+                                             },
+                                             {
+                                                 "IdRegra":  8,
+                                                 "EmpresaPossuiRegra":  0,
+                                                 "Descricao":  "Exigir filho até 21 anos",
+                                                 "InformacoesAdicionais":  ""
+                                             },
+                                             {
+                                                 "IdRegra":  10,
+                                                 "EmpresaPossuiRegra":  0,
+                                                 "Descricao":  "Aceita cadastro com(somente) titular, cônjuge/companheiro e filho",
+                                                 "InformacoesAdicionais":  ""
+                                             },
+                                             {
+                                                 "IdRegra":  11,
+                                                 "EmpresaPossuiRegra":  0,
+                                                 "Descricao":  "Aceita cadastro somente com titular",
+                                                 "InformacoesAdicionais":  ""
+                                             },
+                                             {
+                                                 "IdRegra":  12,
+                                                 "EmpresaPossuiRegra":  0,
+                                                 "Descricao":  "Aceita cadastro sem agregado",
+                                                 "InformacoesAdicionais":  ""
+                                             }
+                                         ],
+                      "EnderecoBoleto":  "",
+                      "CobrancaCep":  "60120220",
+                      "CobrancaIdTipoLogradouro":  816,
+                      "CobrancaLogradouro":  "CAPITAO MELO",
+                      "CobrancaNumero":  1,
+                      "CobrancaComplemento":  "TESTE123",
+                      "CobrancaMunicipio":  0,
+                      "CobrancaMunicipioNome":  "FORTALEZA",
+                      "CobrancaUf":  5,
+                      "CobrancaUfNome":  "5",
+                      "CobrancaBairro":  12350,
+                      "CobrancaBairroNome":  "JOAQUIM TAVORA",
+                      "FaturaCep":  "",
+                      "FaturaIdTipoLogradouro":  0,
+                      "FaturaLogradouro":  "",
+                      "FaturaNumero":  0,
+                      "FaturaComplemento":  "",
+                      "FaturaMunicipio":  0,
+                      "FaturaMunicipioNome":  "",
+                      "FaturaUf":  0,
+                      "FaturaUfNome":  "",
+                      "FaturaBairro":  0,
+                      "FaturaBairroNome":  "",
+                      "NomeContato":  null,
+                      "CodigoSituacao":  1,
+                      "NomeSituacao":  "ATIVO",
+                      "ObservacaoComercial":  "- Adesão com até 30 dias da contratação entra sem carência, titular e dependentes. \r\n- As inclusões de dependentes no plano odontológico serão  limitadas a cinco pessoas independente do grau de parentesco.\r\n- Obrigatório CPF independente da idade(03/05/2022- Anderson skype Jaci)",
+                      "ObservacaoContrato":  "teste observação e contrato"
+                  }
+              ],
+    "erros":  null
+}
