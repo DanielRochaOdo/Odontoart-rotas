@@ -3,7 +3,7 @@ import type { Route, RouteStop } from "../types/routes";
 import type { AgendaFilters } from "../types/agenda";
 import { VISIT_TYPE, parseDateKey } from "./supervisorVisits";
 import {
-  fetchFilaControlsByEmpresaIds,
+  fetchFilaRoutingBlockLists,
   isMissingFilaBackendError,
   syncFilaAutoRegistration,
 } from "./filaApi";
@@ -293,38 +293,14 @@ export const fetchEmpresasLookup = async (options?: EmpresasLookupOptions) => {
   if (allRows.length === 0) return allRows;
 
   try {
-    const controls = await fetchFilaControlsByEmpresaIds(allRows.map((row) => row.id));
-    if (controls.length === 0) return allRows;
-    const nowMs = Date.now();
-    const isControlEligible = (row: (typeof controls)[number]) => {
-      if (row.effective_state === "RELEASED_MANUAL" || row.effective_state === "READY_AUTO") return true;
-
-      const eligibleAtMs = Date.parse(row.eligible_at);
-      if (Number.isFinite(eligibleAtMs)) return eligibleAtMs <= nowMs;
-      return row.effective_state !== "PENDING_WAIT";
-    };
-
-    const eligibilityByEmpresaId = new Map<string, boolean>();
-    const eligibilityByCodigo = new Map<string, boolean>();
-
-    controls.forEach((row) => {
-      const eligible = isControlEligible(row);
-      eligibilityByEmpresaId.set(row.empresa_id, eligible);
-
-      const codigo = row.codigo?.trim();
-      if (!codigo) return;
-      const previous = eligibilityByCodigo.get(codigo);
-      eligibilityByCodigo.set(codigo, previous === undefined ? eligible : previous && eligible);
-    });
-
+    const blocks = await fetchFilaRoutingBlockLists();
+    if (!blocks.blockedEmpresaIds.length && !blocks.blockedCodigos.length) return allRows;
+    const blockedEmpresaIdSet = new Set(blocks.blockedEmpresaIds);
+    const blockedCodigoSet = new Set(blocks.blockedCodigos);
     return allRows.filter((row) => {
-      const byId = eligibilityByEmpresaId.get(row.id);
-      if (byId !== undefined) return byId;
-
+      if (blockedEmpresaIdSet.has(row.id)) return false;
       const codigo = row.codigo?.trim();
-      if (!codigo) return true;
-      const byCode = eligibilityByCodigo.get(codigo);
-      if (byCode !== undefined) return byCode;
+      if (codigo && blockedCodigoSet.has(codigo)) return false;
       return true;
     });
   } catch (error) {
