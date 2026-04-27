@@ -119,7 +119,7 @@ export const fetchClientesCount = async (params: {
 }) => {
   let query = supabase
     .from("clientes")
-    .select("id", { count: "planned", head: true });
+    .select("id", { count: "exact", head: true });
 
   query = applyClientesListFilters(query, {
     search: params.search,
