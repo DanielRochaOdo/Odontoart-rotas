@@ -326,7 +326,7 @@ type RoutesMapLookupCache = {
   cachedAt: number;
 };
 
-const ROUTES_MAP_LOOKUP_CACHE_STORAGE_KEY = "routesMapLookupCacheV1";
+const ROUTES_MAP_LOOKUP_CACHE_STORAGE_KEY = "routesMapLookupCacheV2";
 const ROUTES_MAP_LOOKUP_CACHE_TTL_MS = 5 * 60 * 1000;
 let routesMapLookupMemoryCache: RoutesMapLookupCache | null = null;
 

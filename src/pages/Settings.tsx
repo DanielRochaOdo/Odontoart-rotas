@@ -1085,17 +1085,6 @@ export default function Settings() {
                     ))}
                   </select>
                 </label>
-                <label className="flex items-center gap-2 rounded-lg border border-sea/20 bg-white px-3 py-2 text-xs font-semibold text-ink/70 md:self-end">
-                  <input
-                    type="checkbox"
-                    checked={vendorForm.can_access_pre_cadastro}
-                    onChange={(event) =>
-                      setVendorForm((prev) => ({ ...prev, can_access_pre_cadastro: event.target.checked }))
-                    }
-                    className="h-4 w-4 rounded border-sea/30 text-sea focus:ring-sea"
-                  />
-                  Permitir acesso ao modulo pre-cadastro
-                </label>
                 <div className="flex items-end">
                   <button
                     type="submit"
@@ -1147,20 +1136,6 @@ export default function Settings() {
                               </option>
                             ))}
                           </select>
-                          <label className="flex items-center gap-2 rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs font-semibold text-ink/70">
-                            <input
-                              type="checkbox"
-                              checked={vendorEdit.can_access_pre_cadastro}
-                              onChange={(event) =>
-                                setVendorEdit((prev) => ({
-                                  ...prev,
-                                  can_access_pre_cadastro: event.target.checked,
-                                }))
-                              }
-                              className="h-4 w-4 rounded border-sea/30 text-sea focus:ring-sea"
-                            />
-                            Pre-cadastro
-                          </label>
                           <input
                             type="email"
                             autoComplete="email"
@@ -1198,9 +1173,6 @@ export default function Settings() {
                           </p>
                           <p className="text-xs text-ink/60">
                             Supervisor: {vendor.supervisor?.display_name ?? "Nao informado"}
-                          </p>
-                          <p className="text-xs text-ink/60">
-                            Pre-cadastro: {vendor.can_access_pre_cadastro ? "Liberado" : "Bloqueado"}
                           </p>
                           <p className="text-xs text-ink/60">
                             Email: {getCurrentEmail(vendor)}

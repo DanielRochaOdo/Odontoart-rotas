@@ -6,7 +6,6 @@ import {
   CalendarCheck,
   Settings,
   MapPin,
-  MapPinPlus,
   Building2,
   Menu,
   X,
@@ -15,18 +14,19 @@ import {
   Moon,
   History,
   ChartNoAxesCombined,
+  ListChecks,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { ROLE_LABELS } from "../types/roles";
 import PwaInstallHint from "../components/PwaInstallHint";
 import { useAutoFormDraftPersistence } from "../hooks/useAutoFormDraftPersistence";
+import FilaAlertsModal from "../components/FilaAlertsModal";
 
 type NavItem = {
   label: string;
   to: string;
   icon: typeof LayoutDashboard;
   roles?: Array<"SUPERVISOR" | "ASSISTENTE" | "VENDEDOR">;
-  requiresVendorPreCadastroAccess?: boolean;
 };
 
 const navItems: NavItem[] = [
@@ -34,14 +34,8 @@ const navItems: NavItem[] = [
   { label: "Rotas", to: "/agenda", icon: MapPin, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Agenda", to: "/visitas", icon: CalendarCheck, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
   { label: "Aceite digital", to: "/aceite-digital", icon: CheckSquare, roles: ["VENDEDOR"] },
-  {
-    label: "Pre-cadastro",
-    to: "/pre-cadastro",
-    icon: MapPinPlus,
-    roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"],
-    requiresVendorPreCadastroAccess: true,
-  },
   { label: "Empresas", to: "/clientes", icon: Building2, roles: ["SUPERVISOR", "ASSISTENTE"] },
+  { label: "Modulo Fila", to: "/fila", icon: ListChecks, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "KPI", to: "/kpi", icon: ChartNoAxesCombined, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Logs", to: "/logs", icon: History, roles: ["SUPERVISOR"] },
   { label: "Configuracoes", to: "/configuracoes", icon: Settings, roles: ["SUPERVISOR"] },
@@ -116,12 +110,9 @@ export default function AppLayout() {
     () =>
       navItems.filter((item) => {
         if (item.roles && (!role || !item.roles.includes(role))) return false;
-        if (item.requiresVendorPreCadastroAccess && role === "VENDEDOR" && !profile?.can_access_pre_cadastro) {
-          return false;
-        }
         return true;
       }),
-    [profile?.can_access_pre_cadastro, role],
+    [role],
   );
   const isDarkTheme = theme === "dark";
 
@@ -157,7 +148,7 @@ export default function AppLayout() {
           className={[
             "normal-case mb-6 hidden shrink-0 border-r md:fixed md:bottom-0 md:left-0 md:top-0 md:z-30 md:mb-0 md:flex md:flex-col md:overflow-y-auto md:overflow-x-hidden no-scrollbar",
             isDarkTheme
-              ? "border-[#1bd4bf]/12 bg-[#030910]/95 text-slate-100 shadow-[0_18px_40px_-24px_rgba(0,0,0,0.85)] backdrop-blur-xl"
+              ? "border-mist/50 bg-paper/95 text-ink shadow-card backdrop-blur-xl"
               : "border-sea/20 bg-gradient-to-b from-white via-white to-sand/60 text-ink shadow-card",
             collapsed ? "md:w-[84px]" : "md:w-[272px]",
           ].join(" ")}
@@ -165,19 +156,19 @@ export default function AppLayout() {
           <div className="flex h-full flex-col">
             {collapsed ? (
               <>
-                <div className={["flex h-16 items-center justify-center border-b", isDarkTheme ? "border-white/10" : "border-sea/20"].join(" ")}>
-                  <div className={["flex h-9 w-9 items-center justify-center rounded-xl", isDarkTheme ? "border border-[#21d6c0]/45 bg-[#071922] text-[#21d6c0]" : "bg-sea/15 text-sea"].join(" ")}>
+                <div className={["flex h-16 items-center justify-center border-b", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
+                  <div className={["flex h-9 w-9 items-center justify-center rounded-xl", isDarkTheme ? "border border-sea/30 bg-sea/10 text-seaLight" : "bg-sea/15 text-sea"].join(" ")}>
                     <MapPin size={16} />
                   </div>
                 </div>
-                <div className={["flex h-14 items-center justify-center border-b", isDarkTheme ? "border-white/10" : "border-sea/20"].join(" ")}>
+                <div className={["flex h-14 items-center justify-center border-b", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
                   <button
                     type="button"
                     onClick={() => setCollapsed((prev) => !prev)}
                     className={[
                       "p-2 transition",
                       isDarkTheme
-                        ? "rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:border-[#21d6c0]/40 hover:text-[#6ff3dc]"
+                        ? "rounded-lg border border-mist/60 bg-white/5 text-ink/70 hover:border-sea/35 hover:text-seaLight"
                         : "rounded-full border border-sea/20 bg-white/80 text-sea hover:border-sea",
                     ].join(" ")}
                     aria-label="Expandir menu"
@@ -187,12 +178,12 @@ export default function AppLayout() {
                 </div>
               </>
             ) : (
-              <div className={["flex h-16 items-center justify-between border-b px-4", isDarkTheme ? "border-white/10" : "border-sea/20"].join(" ")}>
+              <div className={["flex h-16 items-center justify-between border-b px-4", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
                 <div className="flex items-center gap-3">
-                  <div className={["flex h-9 w-9 items-center justify-center rounded-xl", isDarkTheme ? "border border-[#21d6c0]/45 bg-[#071922] text-[#21d6c0]" : "bg-sea/15 text-sea"].join(" ")}>
+                  <div className={["flex h-9 w-9 items-center justify-center rounded-xl", isDarkTheme ? "border border-sea/30 bg-sea/10 text-seaLight" : "bg-sea/15 text-sea"].join(" ")}>
                     <MapPin size={16} />
                   </div>
-                  <p className={["truncate font-display text-[1.02rem] font-semibold tracking-tight", isDarkTheme ? "text-slate-100" : "text-ink"].join(" ")}>
+                  <p className="truncate font-display text-[1.02rem] font-semibold tracking-tight text-ink">
                     Odontoart Rotas
                   </p>
                 </div>
@@ -202,7 +193,7 @@ export default function AppLayout() {
                   className={[
                     "p-2 transition",
                     isDarkTheme
-                      ? "rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:border-[#21d6c0]/40 hover:text-[#6ff3dc]"
+                      ? "rounded-lg border border-mist/60 bg-white/5 text-ink/70 hover:border-sea/35 hover:text-seaLight"
                       : "rounded-full border border-sea/20 bg-white/80 text-sea hover:border-sea",
                   ].join(" ")}
                   aria-label="Recolher menu"
@@ -231,17 +222,17 @@ export default function AppLayout() {
                             isActive
                               ? collapsed
                                 ? isDarkTheme
-                                  ? "bg-[#0b2d34] text-[#8bf6e1]"
+                                  ? "bg-sea/15 text-seaLight"
                                   : "bg-sea/12 text-sea"
                                 : isDarkTheme
-                                  ? "border border-[#21d6c0]/15 bg-gradient-to-r from-[#0d3a38] to-[#0b2b2d] text-[#bafcf0]"
+                                  ? "border border-sea/30 bg-sea/10 text-seaLight"
                                   : "border border-sea/25 bg-sea/12 text-sea"
                               : collapsed
                                 ? isDarkTheme
-                                  ? "text-slate-300 hover:bg-white/8 hover:text-slate-100"
+                                  ? "text-ink/70 hover:bg-white/8 hover:text-ink"
                                   : "text-ink/70 hover:bg-sea/10 hover:text-sea"
                                 : isDarkTheme
-                                  ? "text-slate-300 hover:bg-white/8 hover:text-slate-100"
+                                  ? "text-ink/70 hover:bg-white/8 hover:text-ink"
                                   : "text-ink/70 hover:bg-sea/10 hover:text-sea",
                           ].join(" ")
                         }
@@ -249,9 +240,9 @@ export default function AppLayout() {
                         {({ isActive }) => (
                           <>
                             {collapsed && isActive ? (
-                              <span className={["absolute -left-2 h-7 w-1 rounded-full", isDarkTheme ? "bg-[#21d6c0]" : "bg-sea"].join(" ")} />
+                              <span className={["absolute -left-2 h-7 w-1 rounded-full", isDarkTheme ? "bg-seaLight" : "bg-sea"].join(" ")} />
                             ) : null}
-                            <Icon size={18} className={isActive ? (isDarkTheme ? "text-[#8bf6e1]" : "text-sea") : ""} />
+                            <Icon size={18} className={isActive ? (isDarkTheme ? "text-seaLight" : "text-sea") : ""} />
                             {!collapsed ? <span className="min-w-0 truncate">{item.label}</span> : null}
                           </>
                         )}
@@ -261,7 +252,7 @@ export default function AppLayout() {
               </div>
             </nav>
 
-            <div className={["mt-auto border-t p-3", isDarkTheme ? "border-white/10" : "border-sea/20"].join(" ")}>
+            <div className={["mt-auto border-t p-3", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
               {collapsed ? (
                 <div className="flex flex-col gap-2">
                   <button
@@ -270,7 +261,7 @@ export default function AppLayout() {
                     className={[
                       "inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
                       isDarkTheme
-                        ? "border-white/10 bg-white/3 text-slate-200 hover:border-[#21d6c0]/35 hover:text-[#9afae8]"
+                        ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
                         : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
                     ].join(" ")}
                     aria-label={theme === "dark" ? "Ativar modo claro" : "Ativar modo escuro"}
@@ -283,7 +274,7 @@ export default function AppLayout() {
                     className={[
                       "inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
                       isDarkTheme
-                        ? "border-white/10 bg-white/3 text-slate-200 hover:border-[#21d6c0]/35 hover:text-[#9afae8]"
+                        ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
                         : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
                     ].join(" ")}
                     aria-label="Sair"
@@ -293,19 +284,19 @@ export default function AppLayout() {
                 </div>
               ) : (
                 <>
-                  <div className={["mb-3 flex items-center gap-3 rounded-xl border px-3 py-2.5", isDarkTheme ? "border-white/10 bg-white/4" : "border-sea/20 bg-sand/60"].join(" ")}>
-                    <div className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold", isDarkTheme ? "bg-[#0e4a45] text-[#9df8e9]" : "bg-white text-sea"].join(" ")}>
+                  <div className={["mb-3 flex items-center gap-3 rounded-xl border px-3 py-2.5", isDarkTheme ? "border-mist/60 bg-white/5" : "border-sea/20 bg-sand/60"].join(" ")}>
+                    <div className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold", isDarkTheme ? "bg-sea/20 text-seaLight" : "bg-white text-sea"].join(" ")}>
                       {initials.slice(0, 1) || "O"}
                     </div>
                     <div className="min-w-0">
-                      <p className={["truncate text-base font-semibold", isDarkTheme ? "text-slate-100" : "text-ink"].join(" ")}>
+                      <p className="truncate text-base font-semibold text-ink">
                         {resolvedDisplayName}
                       </p>
                       <span
                         className={[
                           "mt-1 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide",
                           isDarkTheme
-                            ? "border-[#c8b07a]/55 bg-[#2d2517] text-[#f7dfaa]"
+                            ? "border-mist/70 bg-sand/30 text-ink/80"
                             : "border-sea/25 bg-white text-ink/70",
                         ].join(" ")}
                       >
@@ -332,7 +323,7 @@ export default function AppLayout() {
                       className={[
                         "inline-flex h-10 items-center justify-center rounded-xl border transition",
                         isDarkTheme
-                          ? "border-white/10 bg-white/3 text-slate-200 hover:border-[#21d6c0]/35 hover:text-[#9afae8]"
+                          ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
                           : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
                       ].join(" ")}
                       aria-label={theme === "dark" ? "Ativar modo claro" : "Ativar modo escuro"}
@@ -345,7 +336,7 @@ export default function AppLayout() {
                       className={[
                         "inline-flex h-10 items-center justify-center rounded-xl border transition",
                         isDarkTheme
-                          ? "border-white/10 bg-white/3 text-slate-200 hover:border-[#21d6c0]/35 hover:text-[#9afae8]"
+                          ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
                           : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
                       ].join(" ")}
                       aria-label="Sair"
@@ -459,6 +450,7 @@ export default function AppLayout() {
           </div>
         </div>
       )}
+      <FilaAlertsModal />
     </div>
   );
 }

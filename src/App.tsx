@@ -11,7 +11,7 @@ const RoutesMap = lazy(() => import("./pages/RoutesMap"));
 const Visitas = lazy(() => import("./pages/Visitas"));
 const AceiteDigital = lazy(() => import("./pages/AceiteDigital"));
 const Clientes = lazy(() => import("./pages/Clientes"));
-const PreCadastro = lazy(() => import("./pages/PreCadastro"));
+const Fila = lazy(() => import("./pages/Fila"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Logs = lazy(() => import("./pages/Logs"));
 const KPI = lazy(() => import("./pages/KPI"));
@@ -31,8 +31,8 @@ export default function App() {
               <Route path="rotas/mapa" element={<RoutesMap />} />
               <Route path="visitas" element={<Visitas />} />
               <Route path="aceite-digital" element={<AceiteDigital />} />
-              <Route path="pre-cadastro" element={<PreCadastro />} />
               <Route path="clientes" element={<Clientes />} />
+              <Route path="fila" element={<Fila />} />
               <Route path="kpi" element={<KPI />} />
               <Route path="configuracoes" element={<Settings />} />
               <Route path="logs" element={<Logs />} />
