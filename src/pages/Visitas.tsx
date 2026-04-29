@@ -85,6 +85,13 @@ type VisitRow = {
   cliente?: ClienteCanonicalModalRow | null;
 };
 
+const isVisitRegistered = (
+  visit: Pick<VisitRow, "completed_at" | "completed_vidas" | "no_visit_reason">,
+) =>
+  Boolean(visit.completed_at) ||
+  typeof visit.completed_vidas === "number" ||
+  Boolean(visit.no_visit_reason?.trim());
+
 type VisitSupervisorRegisterRow = {
   visit_id: string;
   quantidade_vidas: number | null;
@@ -226,6 +233,7 @@ const NO_VISIT_REASONS = [
   "ENDERECO NAO LOCALIZADO",
   "AUSENTE NO DIA",
 ];
+const VISITS_FETCH_BATCH_SIZE = 1000;
 const SUPERVISOR_REASON_LABEL_BY_VALUE = new Map<string, string>(
   SUPERVISOR_VISIT_REASON_OPTIONS.map((option) => [option.value, option.label]),
 );
@@ -233,6 +241,11 @@ const SHOW_VENDOR_LOCK_ICON = false;
 
 const isSupervisorVisitType = (value: string | null | undefined) =>
   value === VISIT_TYPE.SUPERVISOR_RELACIONAMENTO;
+
+const applyVendorVisitTypeScope = <TQuery,>(query: TQuery) =>
+  (query as TQuery & { or: (filters: string) => TQuery }).or(
+    `visit_type.eq.${VISIT_TYPE.VENDEDOR},visit_type.is.null`,
+  );
 
 const isMobileDevice = () => {
   if (typeof navigator === "undefined") return false;
@@ -286,6 +299,8 @@ export default function Visitas() {
   const { role, session, profile } = useAuth();
   const isVendor = role === "VENDEDOR";
   const canManage = role === "SUPERVISOR" || role === "ASSISTENTE";
+  const canManageVendorRouteAccess =
+    SHOW_VENDOR_LOCK_ICON && canManage && role !== "SUPERVISOR";
   const canManageInstruction = role === "SUPERVISOR";
   const canAccess = canManage || isVendor;
   const canFilterBySupervisor = role === "ASSISTENTE" || role === "SUPERVISOR";
@@ -540,7 +555,6 @@ export default function Visitas() {
       const now = new Date();
       const todayKey = getDateKey(now);
       const canUnlockNextRouteByTime = now.getHours() >= 19;
-      let effectiveEnd = endDate;
       let maxDate = endDate;
       const assigneeClauses = [
         session?.user.id ? `assigned_to_user_id.eq.${session.user.id}` : null,
@@ -717,43 +731,60 @@ export default function Visitas() {
 
         if (!active) return;
         setMaxVisibleDate(maxDate);
-        effectiveEnd = maxDate < endDate ? maxDate : endDate;
-        if (effectiveEnd < startDate) {
-          if (!active) return;
-          setVisits([]);
-          setLoading(false);
-          return;
-        }
       } else {
         if (!active) return;
         setMaxVisibleDate(null);
         setBlockMessage(null);
       }
 
-      let visitsQuery = supabase
-        .from("visits")
-        .select(
-          "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, visit_type, supervisor_reason, register_mode, visit_time, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, visit_supervisors(supervisor_user_id), cliente:cliente_id (id, codigo, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf)",
-        )
-        .gte("visit_date", startDate)
-        .lte("visit_date", effectiveEnd)
-        .order("visit_date", { ascending: true });
+      const buildVisitsQuery = () => {
+        let query = supabase
+          .from("visits")
+          .select(
+            "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, visit_type, supervisor_reason, register_mode, visit_time, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, visit_supervisors(supervisor_user_id), cliente:cliente_id (id, codigo, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf)",
+          )
+          .gte("visit_date", startDate)
+          .lte("visit_date", endDate)
+          .order("visit_date", { ascending: true });
 
-      if (isVendor) {
-        visitsQuery = visitsQuery.eq("visit_type", VISIT_TYPE.VENDEDOR);
-        visitsQuery = applyVendorVisitFilter(visitsQuery);
+        if (isVendor) {
+          query = applyVendorVisitTypeScope(query);
+          query = applyVendorVisitFilter(query);
+        }
+
+        return query;
+      };
+
+      type VisitRowJoin = VisitRow & {
+        cliente?: VisitRow["cliente"] | VisitRow["cliente"][] | null;
+      };
+      const data: VisitRowJoin[] = [];
+      let pageStart = 0;
+      let supaError: { message: string } | null = null;
+
+      while (true) {
+        const { data: batchData, error: batchError } = await buildVisitsQuery().range(
+          pageStart,
+          pageStart + VISITS_FETCH_BATCH_SIZE - 1,
+        );
+        if (batchError) {
+          supaError = batchError;
+          break;
+        }
+        const batch = (batchData ?? []) as VisitRowJoin[];
+        data.push(...batch);
+        if (batch.length < VISITS_FETCH_BATCH_SIZE) {
+          break;
+        }
+        pageStart += VISITS_FETCH_BATCH_SIZE;
       }
 
-      const { data, error: supaError } = await visitsQuery;
       if (!active) return;
 
       if (supaError) {
         setError(supaError.message);
         setVisits([]);
       } else {
-        type VisitRowJoin = VisitRow & {
-          cliente?: VisitRow["cliente"] | VisitRow["cliente"][] | null;
-        };
         const agendaFromCliente = (cliente: ClienteCanonicalModalRow): NonNullable<VisitRow["agenda"]> => ({
           id: cliente.id,
           empresa: cliente.empresa,
@@ -781,13 +812,7 @@ export default function Visitas() {
           const cliente = Array.isArray(item.cliente) ? item.cliente[0] ?? null : item.cliente ?? null;
           return { ...item, agenda: cliente ? agendaFromCliente(cliente) : null, cliente };
         }) as VisitRow[];
-        const bounded = isVendor
-          ? normalized.filter((item) => {
-              if (!item.visit_date) return false;
-              return formatDateKey(item.visit_date) <= maxDate;
-            })
-          : normalized;
-        setVisits(bounded);
+        setVisits(normalized);
       }
 
       if (!active) return;
@@ -953,23 +978,21 @@ export default function Visitas() {
         : false;
       if (!hasSupervisorVisitType && !hasSupervisorLink && !assignedToSupervisor) return;
       const key = formatDateKey(visit.visit_date);
-      if (isVendor && maxVisibleDate && key > maxVisibleDate) return;
       dates.add(key);
     });
     return dates;
-  }, [filteredVisits, isVendor, maxVisibleDate, supervisorUserIdSet]);
+  }, [filteredVisits, supervisorUserIdSet]);
 
   const visitsByDate = useMemo(() => {
     const map = new Map<string, VisitRow[]>();
     filteredVisits.forEach((visit) => {
       if (!visit.visit_date) return;
       const key = formatDateKey(visit.visit_date);
-      if (isVendor && maxVisibleDate && key > maxVisibleDate) return;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(visit);
     });
     return map;
-  }, [filteredVisits, isVendor, maxVisibleDate]);
+  }, [filteredVisits]);
 
   useEffect(() => {
     if (!isVendor || !maxVisibleDate || !selectedDate) return;
@@ -1174,7 +1197,7 @@ export default function Visitas() {
     let active = true;
 
     const loadVendorRouteReleaseByDate = async () => {
-      if (!canManage || !selectedDateKey) {
+      if (!canManageVendorRouteAccess || !selectedDateKey) {
         setReleasedVendorIdsForDate([]);
         return;
       }
@@ -1215,7 +1238,7 @@ export default function Visitas() {
     return () => {
       active = false;
     };
-  }, [canManage, groupedBySeller, resolveSellerVendor, selectedDateKey]);
+  }, [canManageVendorRouteAccess, groupedBySeller, resolveSellerVendor, selectedDateKey]);
 
   useEffect(() => {
     if (!visits.length) {
@@ -2839,7 +2862,7 @@ export default function Visitas() {
                 {groupedBySeller.map(([seller, items]) => {
                   const isExpanded = expandedVendor === seller;
                   const hasSupervisorGroup = items.some((item) => isSupervisorVisitType(item.visit_type));
-                  const completedCompanies = items.filter((item) => Boolean(item.completed_at)).length;
+                  const completedCompanies = items.filter((item) => isVisitRegistered(item)).length;
                   const totalCompanies = items.length;
                   const allCompleted = totalCompanies > 0 && completedCompanies === totalCompanies;
                   const sellerVendor = resolveSellerVendor(seller, items);
@@ -2873,7 +2896,7 @@ export default function Visitas() {
                               Supervisor
                             </span>
                           ) : null}
-                          {SHOW_VENDOR_LOCK_ICON && canManage && sellerVendor ? (
+                          {canManageVendorRouteAccess && sellerVendor ? (
                             <button
                               type="button"
                               onClick={() => {
@@ -2918,7 +2941,7 @@ export default function Visitas() {
                             };
                             const isSupervisorVisit = isSupervisorVisitType(item.visit_type);
                             const isEditing = editingVisits[item.id] ?? false;
-                            const isCompleted = Boolean(item.completed_at);
+                            const isCompleted = isVisitRegistered(item);
                             const canLoggedSupervisorRegister =
                               role === "SUPERVISOR" &&
                               isSupervisorVisit &&
@@ -3520,7 +3543,7 @@ export default function Visitas() {
         </div>
       )}
 
-      {vendorDashboardAccessModal && (
+      {canManageVendorRouteAccess && vendorDashboardAccessModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
           <button
             type="button"
