@@ -844,6 +844,7 @@ export default function Clientes() {
   const createCepLookupRequestRef = useRef(0);
   const createEnderecoLookupRequestRef = useRef(0);
   const createCnpjLookupRequestRef = useRef(0);
+  const createCodigoLookupRequestRef = useRef(0);
   const editCepLookupRequestRef = useRef(0);
   const editEnderecoLookupRequestRef = useRef(0);
   const editCnpjLookupRequestRef = useRef(0);
@@ -863,8 +864,8 @@ export default function Clientes() {
 
   const isActiveCreateFlow = (flowId: number) => flowId === createFlowIdRef.current;
 
-  const invalidateCreateLookups = () => {
-    invalidateCreateFlow();
+  const cancelPendingCreateLookups = () => {
+    createCodigoLookupRequestRef.current += 1;
     createCepLookupRequestRef.current += 1;
     createEnderecoLookupRequestRef.current += 1;
     createCnpjLookupRequestRef.current += 1;
@@ -880,8 +881,14 @@ export default function Clientes() {
     setBairroLoading(false);
   };
 
-  const resetCreateFlow = () => {
-    invalidateCreateLookups();
+  const resetCreateFlow = (reason = "manual-reset") => {
+    cancelPendingCreateLookups();
+    invalidateCreateFlow();
+    debugCreateFlow({
+      action: "reset-create-flow",
+      reason,
+      activeFlowId: createFlowIdRef.current,
+    });
     setForm(buildInitialCadastroForm());
     setPerfilCreate(buildPerfilState(null));
     setCreatePlanoValores([]);
@@ -902,8 +909,35 @@ export default function Clientes() {
   const safeSetCadastroForm = (
     reason: string,
     updater: (prev: CadastroFormState) => CadastroFormState,
+    options?: {
+      flowId?: number;
+      requestId?: number;
+      requestRef?: { current: number };
+    },
   ) => {
     setForm((prev) => {
+      if (options?.flowId !== undefined && !isActiveCreateFlow(options.flowId)) {
+        debugCreateFlow({
+          action: "skip-create-form-update-inactive-flow",
+          reason,
+          flowId: options.flowId,
+          activeFlowId: createFlowIdRef.current,
+        });
+        return prev;
+      }
+      if (
+        options?.requestRef &&
+        options.requestId !== undefined &&
+        options.requestRef.current !== options.requestId
+      ) {
+        debugCreateFlow({
+          action: "skip-create-form-update-stale-request",
+          reason,
+          requestId: options.requestId,
+          currentRequestId: options.requestRef.current,
+        });
+        return prev;
+      }
       const next = updater(prev);
       if (import.meta.env.DEV) {
         console.debug("[Clientes:create-form-update]", {
@@ -1430,7 +1464,7 @@ export default function Clientes() {
   };
 
   const handleCancelFilialFlow = () => {
-    resetCreateFlow();
+    resetCreateFlow("cancel-filial-flow");
   };
 
   const hasFilledValue = (value: string | null | undefined) =>
@@ -1702,7 +1736,11 @@ export default function Clientes() {
       }
       const mapped = mapCepResponse(payload);
       if (requestId !== createCepLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
-      safeSetCadastroForm("cep-lookup", (prev) => mergeCepMappedIntoForm(prev, mapped));
+      safeSetCadastroForm("cep-lookup", (prev) => mergeCepMappedIntoForm(prev, mapped), {
+        flowId,
+        requestId,
+        requestRef: createCepLookupRequestRef,
+      });
     } catch (err) {
       if (requestId !== createCepLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
       setError(err instanceof Error ? err.message : "Erro ao buscar por CEP.");
@@ -1757,7 +1795,11 @@ export default function Clientes() {
       }
       const mapped = mapCepResponse(firstMatch);
       if (requestId !== createEnderecoLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
-      safeSetCadastroForm("endereco-lookup", (prev) => mergeCepMappedIntoForm(prev, mapped));
+      safeSetCadastroForm("endereco-lookup", (prev) => mergeCepMappedIntoForm(prev, mapped), {
+        flowId,
+        requestId,
+        requestRef: createEnderecoLookupRequestRef,
+      });
     } catch (err) {
       if (requestId !== createEnderecoLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
       setError(err instanceof Error ? err.message : "Erro ao buscar por endereco.");
@@ -1907,7 +1949,7 @@ export default function Clientes() {
       const perfilSnapshot = perfilCreate.perfil || null;
       await persistClienteFromForm(modalForm, perfilSnapshot);
       if (!isActiveCreateFlow(flowId)) return;
-      resetCreateFlow();
+      resetCreateFlow("save-filial-success");
       await refreshClientesData();
     } catch (err) {
       if (!isActiveCreateFlow(flowId)) return;
@@ -1988,7 +2030,7 @@ export default function Clientes() {
     try {
       await persistClienteFromForm(formSnapshot, perfilSnapshot);
       if (!isActiveCreateFlow(flowId)) return;
-      resetCreateFlow();
+      resetCreateFlow("save-create-success");
       await refreshClientesData();
     } catch (err) {
       if (!isActiveCreateFlow(flowId)) return;
@@ -2088,6 +2130,28 @@ export default function Clientes() {
       return;
     }
     const flowId = startNewCreateFlow();
+    const requestId = ++createCodigoLookupRequestRef.current;
+    const isStaleCodigoLookup = () => {
+      const stale =
+        requestId !== createCodigoLookupRequestRef.current || !isActiveCreateFlow(flowId);
+      if (stale) {
+        debugCreateFlow({
+          action: "codigo-lookup-stale-response",
+          flowId,
+          requestId,
+          currentRequestId: createCodigoLookupRequestRef.current,
+          activeFlowId: createFlowIdRef.current,
+          codigo: empresaId,
+        });
+      }
+      return stale;
+    };
+    debugCreateFlow({
+      action: "codigo-lookup-start",
+      flowId,
+      requestId,
+      codigo: empresaId,
+    });
     setCodigoLoading(true);
     setCodigoError(null);
     setCnpjError(null);
@@ -2097,13 +2161,20 @@ export default function Clientes() {
     setFilialCadastroModal(null);
     try {
       const matchesByCode = await findClientesByCodigo(empresaId);
-      if (!isActiveCreateFlow(flowId)) return;
+      if (isStaleCodigoLookup()) return;
+      debugCreateFlow({
+        action: "codigo-lookup-after-find",
+        flowId,
+        requestId,
+        codigo: empresaId,
+        matchesCount: matchesByCode.length,
+      });
       if (matchesByCode.length > 0) {
         let draft = buildEmptyFilialForm({ codigo: empresaId });
         let lookupError: string | null = null;
         try {
           const empresaApi = await fetchEmpresaByEmpresaId(empresaId);
-          if (!isActiveCreateFlow(flowId)) return;
+          if (isStaleCodigoLookup()) return;
           if (empresaApi) {
             const apiForm = mapEmpresaApiToClienteForm(empresaApi, empresaId);
             draft = applyApiFieldsToFilialForm(draft, apiForm);
@@ -2111,7 +2182,7 @@ export default function Clientes() {
             lookupError = "Empresa nao encontrada na API.";
           }
         } catch (err) {
-          if (!isActiveCreateFlow(flowId)) return;
+          if (isStaleCodigoLookup()) return;
           lookupError =
             err instanceof Error
               ? `Nao foi possivel consultar dados da empresa na API: ${err.message}`
@@ -2119,6 +2190,15 @@ export default function Clientes() {
         }
         setCreatePlanoValores([]);
         setPerfilCreate(buildPerfilState(null));
+        debugCreateFlow({
+          action: "codigo-lookup-open-filial-confirm",
+          flowId,
+          requestId,
+          codigo: empresaId,
+          lookupError,
+          draft,
+          matchesCount: matchesByCode.length,
+        });
         openFilialConfirm({
           flowId,
           codigo: empresaId,
@@ -2131,7 +2211,7 @@ export default function Clientes() {
       }
 
       const empresaApi = await fetchEmpresaByEmpresaId(empresaId);
-      if (!isActiveCreateFlow(flowId)) return;
+      if (isStaleCodigoLookup()) return;
       if (!empresaApi) {
         throw new Error("Empresa nao encontrada na API.");
       }
@@ -2139,33 +2219,47 @@ export default function Clientes() {
       const formData = await enrichFormDataCepByAddress(
         mapEmpresaApiToClienteForm(empresaApi, empresaId),
       );
-      if (!isActiveCreateFlow(flowId)) return;
-      safeSetCadastroForm("codigo-lookup", (prev) =>
-        mergeLookupIntoCadastroForm(prev, formData, {
-          forceFields: [
-            "codigo",
-            "cnpj",
-            "corte",
-            "venc",
-            "valor",
-            "cep",
-            "empresa",
-            "obs_comercial",
-            "situacao",
-            "endereco",
-            "bairro",
-            "cidade",
-            "uf",
-          ],
-        }),
+      if (isStaleCodigoLookup()) return;
+      debugCreateFlow({
+        action: "codigo-lookup-apply-form",
+        flowId,
+        requestId,
+        codigo: empresaId,
+        formData,
+      });
+      safeSetCadastroForm(
+        "codigo-lookup",
+        (prev) =>
+          mergeLookupIntoCadastroForm(prev, formData, {
+            forceFields: [
+              "codigo",
+              "cnpj",
+              "corte",
+              "venc",
+              "valor",
+              "cep",
+              "empresa",
+              "obs_comercial",
+              "situacao",
+              "endereco",
+              "bairro",
+              "cidade",
+              "uf",
+            ],
+          }),
+        {
+          flowId,
+          requestId,
+          requestRef: createCodigoLookupRequestRef,
+        },
       );
       setCreatePlanoValores(planoValores);
       setPerfilCreate(buildPerfilState(null));
     } catch (err) {
-      if (!isActiveCreateFlow(flowId)) return;
+      if (isStaleCodigoLookup()) return;
       setCodigoError(err instanceof Error ? err.message : "Erro ao buscar codigo na API.");
     } finally {
-      if (isActiveCreateFlow(flowId)) {
+      if (requestId === createCodigoLookupRequestRef.current) {
         setCodigoLoading(false);
       }
     }
@@ -2229,10 +2323,17 @@ export default function Clientes() {
       setCreatePlanoValores([]);
       setPerfilCreate(buildPerfilState(null));
       if (requestId !== createCnpjLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
-      safeSetCadastroForm("cnpj-lookup", (prev) =>
-        mergeLookupIntoCadastroForm(prev, incomingFromCnpjApi, {
-          forceFields: ["cnpj", "empresa", "endereco", "cep", "bairro", "cidade", "uf", "situacao"],
-        }),
+      safeSetCadastroForm(
+        "cnpj-lookup",
+        (prev) =>
+          mergeLookupIntoCadastroForm(prev, incomingFromCnpjApi, {
+            forceFields: ["cnpj", "empresa", "endereco", "cep", "bairro", "cidade", "uf", "situacao"],
+          }),
+        {
+          flowId,
+          requestId,
+          requestRef: createCnpjLookupRequestRef,
+        },
       );
     } catch (err) {
       if (requestId !== createCnpjLookupRequestRef.current || !isActiveCreateFlow(flowId)) return;
@@ -2804,16 +2905,22 @@ export default function Clientes() {
               <input
                 value={form.codigo}
                 onChange={(event) => {
-                  invalidateCreateLookups();
+                  cancelPendingCreateLookups();
                   setCodigoError(null);
                   setCnpjError(null);
                   setForm((prev) => ({ ...prev, codigo: event.target.value }));
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void handleCodigoLookup();
+                  }
                 }}
                 className="min-w-0 w-full flex-1 rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
               />
               <button
                 type="button"
-                onClick={handleCodigoLookup}
+                onClick={() => void handleCodigoLookup()}
                 disabled={createFlowBusy || codigoLoading || !form.codigo.trim()}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight disabled:opacity-50"
                 title={codigoLoading ? "Buscando codigo..." : "Buscar por codigo"}
@@ -2831,7 +2938,7 @@ export default function Clientes() {
               <input
                 value={form.cnpj}
                 onChange={(event) => {
-                  invalidateCreateLookups();
+                  cancelPendingCreateLookups();
                   setCnpjError(null);
                   setCodigoError(null);
                   setForm((prev) => ({ ...prev, cnpj: formatCnpjInput(event.target.value) }));
