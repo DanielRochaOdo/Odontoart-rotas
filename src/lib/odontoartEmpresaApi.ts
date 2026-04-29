@@ -2,6 +2,7 @@ const ODONTOART_EMPRESA_URL = "https://odontoart.s4e.com.br/api/empresa/BuscaEmp
 const ODONTOART_DEFAULT_TOKEN = "7DqKKmNcZDWY2Pie35tbKwY6hAKXzS5wWl7hNLAmPWBIljmfeX";
 const ODONTOART_TIMEOUT_MS = 12000;
 const ODONTOART_MAX_ATTEMPTS = 3;
+const ODONTOART_PROXY_URL = (import.meta.env.VITE_ODONTOART_PROXY_URL as string | undefined)?.trim() ?? "";
 
 export type OdontoartPlanoCodigo = 2 | 18 | 19 | 20;
 
@@ -302,6 +303,27 @@ const extractEmpresaFromPayload = (payload: unknown): OdontoartEmpresaResponseRo
 const fetchEmpresaPayloadById = async (empresaId: string) => {
   const trimmedEmpresaId = empresaId.trim();
   if (!trimmedEmpresaId) return null as unknown;
+
+  const fetchViaProxy = async () => {
+    const response = await fetch(ODONTOART_PROXY_URL, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      },
+      cache: "no-store",
+      body: JSON.stringify({ empresaId: trimmedEmpresaId }),
+    });
+    if (!response.ok) {
+      throw new Error(`Falha ao consultar proxy Odontoart (${response.status}).`);
+    }
+    return (await response.json()) as unknown;
+  };
+
+  if (ODONTOART_PROXY_URL) {
+    return fetchViaProxy();
+  }
 
   const token = (import.meta.env.VITE_ODONTOART_TOKEN as string | undefined)?.trim() || ODONTOART_DEFAULT_TOKEN;
   const isNumericCode = /^\d+$/.test(trimmedEmpresaId);
