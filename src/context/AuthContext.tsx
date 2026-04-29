@@ -178,7 +178,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // ignore refresh fallback failures and keep friendly profile error below
         }
 
-        setProfile(null);
+        // Preserve last known profile on transient sync errors.
+        setProfile((prev) => prev);
         setProfileError(PROFILE_LOAD_FRIENDLY_ERROR_MESSAGE);
         return;
       }
@@ -213,7 +214,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfileError(null);
         return;
       }
-      setProfile(null);
+      // Preserve last known profile on transient sync errors.
+      setProfile((prev) => prev);
       setProfileError(PROFILE_LOAD_FRIENDLY_ERROR_MESSAGE);
     }
   };
