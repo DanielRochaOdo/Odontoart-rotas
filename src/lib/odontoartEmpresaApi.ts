@@ -310,7 +310,6 @@ const fetchEmpresaPayloadById = async (empresaId: string) => {
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        "Cache-Control": "no-store",
       },
       cache: "no-store",
       body: JSON.stringify({ empresaId: trimmedEmpresaId }),
