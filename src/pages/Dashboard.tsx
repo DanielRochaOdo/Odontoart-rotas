@@ -36,6 +36,12 @@ const formatOrValues = (values: string[]) =>
 
 const normalizeKey = (value: string) =>
   normalizeText(value, { letterCase: "upper" });
+
+const applyVendorVisitTypeScope = <TQuery,>(query: TQuery) =>
+  (query as TQuery & { or: (filters: string) => TQuery }).or(
+    `visit_type.eq.${VISIT_TYPE.VENDEDOR},visit_type.is.null`,
+  );
+
 const SHOW_NEXT_ROUTE_BLOCK = false;
 
 type VisitStats = {
@@ -431,9 +437,9 @@ export default function Dashboard() {
         let baseQuery = supabase
           .from("visits")
           .select("visit_date, assigned_to_user_id, assigned_to_name, completed_at, no_visit_reason")
-          .eq("visit_type", VISIT_TYPE.VENDEDOR)
           .gte("visit_date", startKey)
           .lte("visit_date", endKey);
+        baseQuery = applyVendorVisitTypeScope(baseQuery);
 
         if (isVendor) {
           if (session?.user.id && profile?.display_name) {
@@ -560,11 +566,11 @@ export default function Dashboard() {
           .select(
             "assigned_to_user_id, assigned_to_name, completed_vidas, completed_at, no_visit_reason, visit_date, cliente:cliente_id (bairro)",
           )
-          .eq("visit_type", VISIT_TYPE.VENDEDOR)
           .gte("visit_date", globalFrom)
           .lte("visit_date", globalTo)
           .not("completed_at", "is", null)
           .is("no_visit_reason", null);
+        visitsQuery = applyVendorVisitTypeScope(visitsQuery);
 
         if (isVendor) {
           if (session?.user.id && profile?.display_name) {
@@ -694,11 +700,11 @@ export default function Dashboard() {
           .select(
             "visit_date, perfil_visita, completed_at, assigned_to_user_id, assigned_to_name, cliente:cliente_id (empresa, nome_fantasia)",
           )
-          .eq("visit_type", VISIT_TYPE.VENDEDOR)
           .gt("visit_date", todayRouteKey)
           .is("completed_at", null)
           .order("visit_date", { ascending: true })
           .limit(120);
+        nextRouteQuery = applyVendorVisitTypeScope(nextRouteQuery);
 
         if (session.user.id && profile?.display_name) {
           nextRouteQuery = nextRouteQuery.or(
@@ -825,9 +831,9 @@ export default function Dashboard() {
       let visitsQuery = supabase
         .from("visits")
         .select("cliente_id, completed_at, completed_vidas, no_visit_reason, visit_date")
-        .eq("visit_type", VISIT_TYPE.VENDEDOR)
         .gte("visit_date", globalFrom)
         .lte("visit_date", globalTo);
+      visitsQuery = applyVendorVisitTypeScope(visitsQuery);
       let aceiteQuery = supabase
         .from("aceite_digital")
         .select("vidas")
@@ -945,9 +951,9 @@ export default function Dashboard() {
       let visitsQuery = supabase
         .from("visits")
         .select("cliente_id, completed_at, completed_vidas, no_visit_reason, visit_date")
-        .eq("visit_type", VISIT_TYPE.VENDEDOR)
         .gte("visit_date", globalFrom)
         .lte("visit_date", globalTo);
+      visitsQuery = applyVendorVisitTypeScope(visitsQuery);
 
       if (activeSupervisorId || activeVendorId || activeVendorName) {
         if (vendorIds.length === 0 && vendorNames.length === 0) {
@@ -1048,11 +1054,11 @@ export default function Dashboard() {
         let visitsQuery = supabase
           .from("visits")
           .select("assigned_to_user_id, assigned_to_name, completed_vidas, completed_at, no_visit_reason, visit_date")
-          .eq("visit_type", VISIT_TYPE.VENDEDOR)
           .gte("visit_date", vendorVidasFrom)
           .lte("visit_date", vendorVidasTo)
           .not("completed_at", "is", null)
           .is("no_visit_reason", null);
+        visitsQuery = applyVendorVisitTypeScope(visitsQuery);
 
         if (activeSupervisorId || activeVendorId || activeVendorName) {
           if (vendorIds.length === 0 && vendorNames.length === 0) {
@@ -1225,12 +1231,13 @@ export default function Dashboard() {
         }
 
         const buildScheduledVisitsQuery = () =>
-          supabase
-            .from("visits")
-            .select("assigned_to_user_id, assigned_to_name")
-            .eq("visit_type", VISIT_TYPE.VENDEDOR)
-            .gte("visit_date", globalFrom)
-            .lte("visit_date", globalTo);
+          applyVendorVisitTypeScope(
+            supabase
+              .from("visits")
+              .select("assigned_to_user_id, assigned_to_name")
+              .gte("visit_date", globalFrom)
+              .lte("visit_date", globalTo),
+          );
 
         const applyScheduledVendorFilter = (query: ReturnType<typeof buildScheduledVisitsQuery>) => {
           if (vendorIds.length && vendorNames.length) {

@@ -23,6 +23,7 @@ import type { Feature, GeoJsonObject } from "geojson";
 import { useAuth } from "../context/AuthContext";
 import {
   fetchEmpresaScheduledVisits,
+  fetchEmpresasLookupByIds,
   fetchEmpresasLookup,
   fetchSupervisorLatestVisitByEmpresa,
   type EmpresaScheduledVisit,
@@ -1194,13 +1195,6 @@ export default function RoutesMap() {
     setRadiusResultIds([]);
   };
 
-  const getSelectedEmpresasForGeneration = () => {
-    const rowsById = new Map(dedupedEmpresaRows.map((row) => [row.id, row]));
-    return effectiveSelectedEmpresaIds
-      .map((id) => rowsById.get(id))
-      .filter((row): row is EmpresaLookupRow => Boolean(row));
-  };
-
   const resetCompanyListHeight = () => {
     setCompanyListHeight(256);
   };
@@ -1243,7 +1237,7 @@ export default function RoutesMap() {
     setInactiveCompaniesWarning(null);
 
     try {
-      const selectedEmpresas = getSelectedEmpresasForGeneration();
+      const selectedEmpresas = await fetchEmpresasLookupByIds(effectiveSelectedEmpresaIds);
 
       if (selectedEmpresas.length === 0) {
         return setMessage("Nenhum registro encontrado para gerar visitas.");

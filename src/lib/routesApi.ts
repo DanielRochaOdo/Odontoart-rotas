@@ -66,6 +66,9 @@ type EmpresasLookupOptions = {
   search?: EmpresasLookupSearch;
 };
 
+const EMPRESA_LOOKUP_SELECT_COLUMNS =
+  "id, codigo, empresa, nome_fantasia, vendedor, supervisor, situacao, categoria, perfil_visita, instructions, data_da_ultima_visita, visit_completed_vidas, grupo, obs_comercial, endereco, complemento, bairro, cidade, uf, latitude, longitude";
+
 const normalizeValue = (value: string) => value.trim().replace(/\s+/g, " ").toUpperCase();
 
 const sanitizeSearchTerm = (value: string | null | undefined) => (value ?? "").replace(/%/g, "").trim();
@@ -265,9 +268,6 @@ export const fetchEmpresasLookup = async (options?: EmpresasLookupOptions) => {
     }
   }
 
-  const selectColumns =
-    "id, codigo, empresa, nome_fantasia, vendedor, supervisor, situacao, categoria, perfil_visita, instructions, data_da_ultima_visita, visit_completed_vidas, grupo, obs_comercial, endereco, complemento, bairro, cidade, uf, latitude, longitude";
-
   const pageSize = 1000;
   let from = 0;
   const allRows: EmpresaLookupRow[] = [];
@@ -275,7 +275,7 @@ export const fetchEmpresasLookup = async (options?: EmpresasLookupOptions) => {
   while (true) {
     let query = supabase
       .from("clientes")
-      .select(selectColumns)
+      .select(EMPRESA_LOOKUP_SELECT_COLUMNS)
       .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
 
@@ -337,6 +337,55 @@ export const fetchEmpresaScheduledVisits = async (empresaIds: string[]) => {
   }
 
   return results;
+};
+
+export const fetchEmpresasLookupByIds = async (empresaIds: string[]) => {
+  const uniqueIds = Array.from(new Set(empresaIds.map((id) => id.trim()).filter(Boolean)));
+  if (!uniqueIds.length) return [] as EmpresaLookupRow[];
+
+  const rowsById = new Map<string, EmpresaLookupRow>();
+  const chunkSize = 500;
+
+  for (let index = 0; index < uniqueIds.length; index += chunkSize) {
+    const chunk = uniqueIds.slice(index, index + chunkSize);
+    const { data, error } = await supabase
+      .from("clientes")
+      .select(EMPRESA_LOOKUP_SELECT_COLUMNS)
+      .in("id", chunk);
+
+    if (error) throw new Error(error.message);
+    ((data ?? []) as EmpresaLookupRow[]).forEach((row) => {
+      if (!row.id) return;
+      rowsById.set(row.id, row);
+    });
+  }
+
+  if (!rowsById.size) return [] as EmpresaLookupRow[];
+
+  let filteredRows = Array.from(rowsById.values());
+  try {
+    const blocks = await fetchFilaRoutingBlockLists();
+    if (blocks.blockedEmpresaIds.length || blocks.blockedCodigos.length) {
+      const blockedEmpresaIdSet = new Set(blocks.blockedEmpresaIds);
+      const blockedCodigoSet = new Set(blocks.blockedCodigos);
+      filteredRows = filteredRows.filter((row) => {
+        if (blockedEmpresaIdSet.has(row.id)) return false;
+        const codigo = row.codigo?.trim();
+        if (codigo && blockedCodigoSet.has(codigo)) return false;
+        return true;
+      });
+    }
+  } catch (error) {
+    const maybeError = error as { code?: string; message?: string };
+    if (!isMissingFilaBackendError(maybeError)) {
+      throw error;
+    }
+  }
+
+  const filteredById = new Map(filteredRows.map((row) => [row.id, row] as const));
+  return uniqueIds
+    .map((id) => filteredById.get(id))
+    .filter((row): row is EmpresaLookupRow => Boolean(row));
 };
 
 export const fetchSupervisorLatestVisitByEmpresa = async (
