@@ -7,7 +7,7 @@ import App from "./App";
 import { AuthProvider } from "./context/AuthContext";
 import { initPwaInstall } from "./lib/pwaInstall";
 
-const PWA_RESET_VERSION = "2026-04-29-codigo-lookup-hotfix-2";
+const PWA_RESET_VERSION = "2026-04-30-codigo-lookup-draft-restore-hotfix-1";
 const PWA_RESET_STORAGE_KEY = `odontoart-pwa-reset:${PWA_RESET_VERSION}`;
 
 const forcePwaResetOnce = async () => {

@@ -43,7 +43,7 @@ const navItems: NavItem[] = [
 
 export default function AppLayout() {
   const { profile, profileError, role, session, signOut } = useAuth();
-  useAutoFormDraftPersistence();
+  useAutoFormDraftPersistence(session?.user?.id ?? "anonymous");
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     try {

@@ -1,6 +1,7 @@
 
 import { useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, RotateCcw, Trash } from "lucide-react";
+import * as XLSX from "xlsx";
+import { LoaderCircle, Pencil, Plus, RotateCcw, Trash, UploadCloud } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import {
   createManagedUser,
@@ -22,8 +23,15 @@ import {
 } from "../lib/routeEventsApi";
 import { emitProfilesUpdated } from "../lib/profileEvents";
 import { normalizeSearchText } from "../lib/textNormalize";
+import {
+  executeErpSyncWave,
+  previewErpSyncCodes,
+  unlockErpSyncSection,
+  type ErpSyncExecuteItem,
+  type ErpSyncPreviewResult,
+} from "../lib/erpSyncApi";
 
-type TabKey = "SUPERVISORES" | "VENDEDORES" | "ASSISTENTES" | "EVENTOS";
+type TabKey = "SUPERVISORES" | "VENDEDORES" | "ASSISTENTES" | "SINCRONIZACAO_ERP" | "EVENTOS";
 
 type FormState = {
   display_name: string;
@@ -46,6 +54,7 @@ const sortByName = (items: ManagedProfile[]) =>
 
 const normalizeSearch = (value: string) => normalizeSearchText(value);
 const SETTINGS_VIEW_STATE_KEY = "settingsViewStateV1";
+const ERP_SYNC_UNLOCK_STATE_KEY = "erpSyncUnlockStateV1";
 const EVENT_MONTH_LABELS = [
   "Janeiro",
   "Fevereiro",
@@ -61,9 +70,15 @@ const EVENT_MONTH_LABELS = [
   "Dezembro",
 ];
 const EVENT_WEEKDAY_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"];
+const ERP_SYNC_DEFAULT_WAVE_LIMIT = 20;
+const ERP_SYNC_MAX_WAVE_LIMIT = 50;
 
 const isValidTabKey = (value: unknown): value is TabKey =>
-  value === "SUPERVISORES" || value === "VENDEDORES" || value === "ASSISTENTES" || value === "EVENTOS";
+  value === "SUPERVISORES" ||
+  value === "VENDEDORES" ||
+  value === "ASSISTENTES" ||
+  value === "SINCRONIZACAO_ERP" ||
+  value === "EVENTOS";
 
 const toDateKey = (date: Date) => {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -116,6 +131,99 @@ const isSessionExpiredError = (message: string) => {
   );
 };
 
+type ErpSyncUnlockStoredState = {
+  unlock_token: string;
+  expires_at: string;
+  user_id: string;
+};
+
+const readErpSyncUnlockStoredState = () => {
+  try {
+    const raw = sessionStorage.getItem(ERP_SYNC_UNLOCK_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ErpSyncUnlockStoredState>;
+    if (
+      typeof parsed.unlock_token !== "string" ||
+      typeof parsed.expires_at !== "string" ||
+      typeof parsed.user_id !== "string"
+    ) {
+      return null;
+    }
+    return parsed as ErpSyncUnlockStoredState;
+  } catch {
+    return null;
+  }
+};
+
+const writeErpSyncUnlockStoredState = (state: ErpSyncUnlockStoredState | null) => {
+  try {
+    if (!state) {
+      sessionStorage.removeItem(ERP_SYNC_UNLOCK_STATE_KEY);
+      return;
+    }
+    sessionStorage.setItem(ERP_SYNC_UNLOCK_STATE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore storage failures
+  }
+};
+
+const parseCodesFromText = (input: string) => {
+  const tokens = input
+    .split(/[\n,;]+/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+
+  tokens.forEach((token) => {
+    if (seen.has(token)) return;
+    seen.add(token);
+    deduped.push(token);
+  });
+
+  return deduped;
+};
+
+const sanitizeWaveLimit = (value: string, maxLimit = ERP_SYNC_MAX_WAVE_LIMIT) => {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return "";
+  const numeric = Number(digits);
+  if (!Number.isFinite(numeric)) return "";
+  return String(Math.max(1, Math.min(maxLimit, Math.floor(numeric))));
+};
+
+const formatErpSyncValue = (value: string | number | null) => {
+  if (value === null) return "(vazio)";
+  return String(value);
+};
+
+const parseCodesFromWorkbook = (workbook: XLSX.WorkBook) => {
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) return [] as string[];
+  const worksheet = workbook.Sheets[firstSheetName];
+  if (!worksheet) return [] as string[];
+
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: "" });
+  if (!rows.length) return [] as string[];
+
+  const firstRow = rows[0];
+  const keys = Object.keys(firstRow ?? {});
+  const normalizedKeyMap = new Map(keys.map((key) => [normalizeSearch(key), key]));
+  const resolvedKey =
+    normalizedKeyMap.get("codigo") ??
+    normalizedKeyMap.get("cod_1") ??
+    normalizedKeyMap.get("cod") ??
+    keys[0];
+
+  if (!resolvedKey) return [] as string[];
+
+  return rows
+    .map((row) => row[resolvedKey])
+    .map((value) => (value === null || value === undefined ? "" : String(value).trim()))
+    .filter(Boolean);
+};
+
 export default function Settings() {
   const { role, session, loading: authLoading } = useAuth();
   const canManageUsers = role === "SUPERVISOR";
@@ -149,6 +257,27 @@ export default function Settings() {
   const [eventNotes, setEventNotes] = useState("");
   const [eventFormResetKey, setEventFormResetKey] = useState(0);
   const [deletingEventId, setDeletingEventId] = useState<string | null>(null);
+  const [erpReleasePassword, setErpReleasePassword] = useState("");
+  const [erpUnlockToken, setErpUnlockToken] = useState<string | null>(null);
+  const [erpUnlockExpiresAt, setErpUnlockExpiresAt] = useState<string | null>(null);
+  const [erpUnlockLoading, setErpUnlockLoading] = useState(false);
+  const [erpUnlockError, setErpUnlockError] = useState<string | null>(null);
+  const [erpCodesInput, setErpCodesInput] = useState("");
+  const [erpCodesMessage, setErpCodesMessage] = useState<string | null>(null);
+  const [erpPreview, setErpPreview] = useState<ErpSyncPreviewResult | null>(null);
+  const [erpPreviewLoading, setErpPreviewLoading] = useState(false);
+  const [erpWaveLimitInput, setErpWaveLimitInput] = useState(String(ERP_SYNC_DEFAULT_WAVE_LIMIT));
+  const [erpExecuteOffset, setErpExecuteOffset] = useState(0);
+  const [erpExecuteLoading, setErpExecuteLoading] = useState(false);
+  const [erpLastWaveResults, setErpLastWaveResults] = useState<ErpSyncExecuteItem[]>([]);
+  const [erpExecutionSummary, setErpExecutionSummary] = useState<{
+    updated: number;
+    no_changes: number;
+    local_not_found: number;
+    erp_not_found: number;
+    no_mapped_fields: number;
+    failed: number;
+  } | null>(null);
 
   const [supervisorForm, setSupervisorForm] = useState<FormState>({
     display_name: "",
@@ -259,6 +388,10 @@ export default function Settings() {
     }
     return cells;
   }, [eventsMonth, eventsYear]);
+  const erpNormalizedCodes = useMemo(() => parseCodesFromText(erpCodesInput), [erpCodesInput]);
+  const erpCodesForExecution = erpPreview?.normalized_codes ?? erpNormalizedCodes;
+  const erpHasUnlock = Boolean(erpUnlockToken);
+  const erpRemainingCount = Math.max(0, erpCodesForExecution.length - erpExecuteOffset);
 
   useEffect(() => {
     setSelectedEventDate((prev) => {
@@ -340,6 +473,82 @@ export default function Settings() {
       // ignore storage failures
     }
   }, [activeTab, searchTerm]);
+
+  useEffect(() => {
+    if (!canManageUsers || !session?.user.id) {
+      writeErpSyncUnlockStoredState(null);
+      return;
+    }
+
+    if (!erpUnlockToken || !erpUnlockExpiresAt) {
+      writeErpSyncUnlockStoredState(null);
+      return;
+    }
+
+    const expiresAtMs = new Date(erpUnlockExpiresAt).getTime();
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+      writeErpSyncUnlockStoredState(null);
+      return;
+    }
+
+    writeErpSyncUnlockStoredState({
+      unlock_token: erpUnlockToken,
+      expires_at: erpUnlockExpiresAt,
+      user_id: session.user.id,
+    });
+  }, [canManageUsers, erpUnlockExpiresAt, erpUnlockToken, session?.user.id]);
+
+  useEffect(() => {
+    if (!canManageUsers || !session?.user.id || erpUnlockToken) return;
+    const stored = readErpSyncUnlockStoredState();
+    if (!stored) return;
+
+    if (stored.user_id !== session.user.id) {
+      writeErpSyncUnlockStoredState(null);
+      return;
+    }
+
+    const expiresAtMs = new Date(stored.expires_at).getTime();
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+      writeErpSyncUnlockStoredState(null);
+      return;
+    }
+
+    setErpUnlockToken(stored.unlock_token);
+    setErpUnlockExpiresAt(stored.expires_at);
+    setErpUnlockError(null);
+  }, [canManageUsers, erpUnlockToken, session?.user.id]);
+
+  useEffect(() => {
+    if (!erpUnlockToken || !erpUnlockExpiresAt) return;
+
+    const expiresAtMs = new Date(erpUnlockExpiresAt).getTime();
+    if (!Number.isFinite(expiresAtMs)) return;
+
+    const remainingMs = expiresAtMs - Date.now();
+    if (remainingMs <= 0) {
+      setErpUnlockToken(null);
+      setErpUnlockExpiresAt(null);
+      setErpUnlockError("Sessao de liberacao expirada. Desbloqueie novamente.");
+      setErpPreview(null);
+      setErpExecuteOffset(0);
+      setErpLastWaveResults([]);
+      setErpExecutionSummary(null);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setErpUnlockToken(null);
+      setErpUnlockExpiresAt(null);
+      setErpUnlockError("Sessao de liberacao expirada. Desbloqueie novamente.");
+      setErpPreview(null);
+      setErpExecuteOffset(0);
+      setErpLastWaveResults([]);
+      setErpExecutionSummary(null);
+    }, remainingMs + 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [erpUnlockExpiresAt, erpUnlockToken]);
 
   useEffect(() => {
     if (!canManageEvents) return;
@@ -769,6 +978,145 @@ export default function Settings() {
     }
   };
 
+  const handleUnlockErpSection = async () => {
+    const releasePassword = erpReleasePassword.trim();
+    if (!releasePassword) {
+      setErpUnlockError("Informe a senha de liberacao.");
+      return;
+    }
+
+    setErpUnlockLoading(true);
+    setErpUnlockError(null);
+    try {
+      const unlocked = await unlockErpSyncSection(releasePassword);
+      setErpUnlockToken(unlocked.unlock_token);
+      setErpUnlockExpiresAt(unlocked.expires_at);
+      setErpReleasePassword("");
+      setErpCodesMessage(null);
+    } catch (err) {
+      setErpUnlockError(err instanceof Error ? err.message : "Falha ao desbloquear sincronizacao ERP.");
+    } finally {
+      setErpUnlockLoading(false);
+    }
+  };
+
+  const handleLockErpSection = () => {
+    setErpUnlockToken(null);
+    setErpUnlockExpiresAt(null);
+    setErpUnlockError(null);
+    setErpPreview(null);
+    setErpExecuteOffset(0);
+    setErpLastWaveResults([]);
+    setErpExecutionSummary(null);
+  };
+
+  const handleUploadErpCodes = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+    if (!file) return;
+
+    setErpCodesMessage(null);
+    try {
+      const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+      if (![ "csv", "xlsx", "xls" ].includes(extension)) {
+        throw new Error("Arquivo invalido. Use CSV, XLSX ou XLS.");
+      }
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: "array" });
+      const fileCodes = parseCodesFromWorkbook(workbook);
+      if (!fileCodes.length) {
+        throw new Error("Nenhum codigo encontrado no arquivo.");
+      }
+
+      const mergedCodes = Array.from(new Set([...erpNormalizedCodes, ...fileCodes]));
+      setErpCodesInput(mergedCodes.join("\n"));
+      setErpPreview(null);
+      setErpExecuteOffset(0);
+      setErpLastWaveResults([]);
+      setErpExecutionSummary(null);
+      setErpCodesMessage(`${fileCodes.length} codigo(s) lido(s) do arquivo. Total atual: ${mergedCodes.length}.`);
+    } catch (err) {
+      setErpCodesMessage(err instanceof Error ? err.message : "Falha ao carregar arquivo.");
+    }
+  };
+
+  const handlePreviewErpSync = async () => {
+    if (!erpUnlockToken) {
+      setErpUnlockError("Desbloqueie a secao para continuar.");
+      return;
+    }
+    if (!erpNormalizedCodes.length) {
+      setErpCodesMessage("Informe pelo menos um codigo para gerar preview.");
+      return;
+    }
+
+    setErpPreviewLoading(true);
+    setErpCodesMessage(null);
+    try {
+      const preview = await previewErpSyncCodes({
+        unlockToken: erpUnlockToken,
+        codes: erpNormalizedCodes,
+      });
+      setErpPreview(preview);
+      setErpExecuteOffset(0);
+      setErpLastWaveResults([]);
+      setErpExecutionSummary(null);
+      const recommendedWave = String(Math.min(preview.recommended_wave_limit, preview.max_wave_limit));
+      setErpWaveLimitInput(recommendedWave);
+    } catch (err) {
+      setErpCodesMessage(err instanceof Error ? err.message : "Falha ao gerar preview.");
+    } finally {
+      setErpPreviewLoading(false);
+    }
+  };
+
+  const handleExecuteErpWave = async () => {
+    if (!erpUnlockToken) {
+      setErpUnlockError("Desbloqueie a secao para continuar.");
+      return;
+    }
+    if (!erpCodesForExecution.length) {
+      setErpCodesMessage("Nao ha codigos para processar.");
+      return;
+    }
+    if (erpExecuteOffset >= erpCodesForExecution.length) {
+      setErpCodesMessage("Todas as ondas ja foram processadas.");
+      return;
+    }
+
+    const parsedLimit = Number(erpWaveLimitInput || ERP_SYNC_DEFAULT_WAVE_LIMIT);
+    const safeLimit = Math.max(
+      1,
+      Math.min(Number.isFinite(parsedLimit) ? Math.floor(parsedLimit) : ERP_SYNC_DEFAULT_WAVE_LIMIT, ERP_SYNC_MAX_WAVE_LIMIT),
+    );
+
+    setErpExecuteLoading(true);
+    setErpCodesMessage(null);
+    try {
+      const wave = await executeErpSyncWave({
+        unlockToken: erpUnlockToken,
+        codes: erpCodesForExecution,
+        offset: erpExecuteOffset,
+        limit: safeLimit,
+      });
+
+      setErpExecuteOffset(wave.next_offset);
+      setErpLastWaveResults(wave.results);
+      setErpExecutionSummary(wave.summary);
+      if (!wave.has_more) {
+        setErpCodesMessage("Sincronizacao concluida para todos os codigos da lista.");
+      } else {
+        setErpCodesMessage(
+          `Onda concluida: ${wave.processed_count} codigo(s). Restante: ${wave.remaining_count}.`,
+        );
+      }
+    } catch (err) {
+      setErpCodesMessage(err instanceof Error ? err.message : "Falha ao executar onda.");
+    } finally {
+      setErpExecuteLoading(false);
+    }
+  };
+
   if (!canAccessSettings) {
     return (
       <div className="rounded-2xl border border-sea/20 bg-white/90 p-6">
@@ -794,6 +1142,7 @@ export default function Settings() {
               { key: "SUPERVISORES" as TabKey, label: "Supervisores" },
               { key: "VENDEDORES" as TabKey, label: "Vendedores" },
               { key: "ASSISTENTES" as TabKey, label: "Assistentes" },
+              { key: "SINCRONIZACAO_ERP" as TabKey, label: "Sincronizacao ERP" },
               { key: "EVENTOS" as TabKey, label: "Eventos" },
             ]
           : [{ key: "EVENTOS" as TabKey, label: "Eventos" }]).map((tab) => (
@@ -816,7 +1165,10 @@ export default function Settings() {
         ))}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {canManageUsers && activeTab !== "EVENTOS" && (
+          {canManageUsers &&
+            (activeTab === "SUPERVISORES" ||
+              activeTab === "VENDEDORES" ||
+              activeTab === "ASSISTENTES") && (
             <button
               type="button"
               onClick={() => {
@@ -849,6 +1201,15 @@ export default function Settings() {
               className="rounded-full border border-sea/30 bg-white px-4 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
             >
               Atualizar eventos
+            </button>
+          ) : activeTab === "SINCRONIZACAO_ERP" ? (
+            <button
+              type="button"
+              onClick={handleLockErpSection}
+              className="rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700 hover:border-amber-400 disabled:opacity-50"
+              disabled={!erpHasUnlock}
+            >
+              Bloquear secao
             </button>
           ) : (
             <>
@@ -1338,6 +1699,205 @@ export default function Settings() {
                   ))
                 )}
               </div>
+            </section>
+          )}
+
+          {canManageUsers && activeTab === "SINCRONIZACAO_ERP" && (
+            <section className="space-y-4 rounded-2xl border border-sea/20 bg-sand/20 p-4">
+              <header>
+                <h3 className="font-display text-lg text-ink">Sincronizacao ERP</h3>
+                <p className="mt-1 text-xs text-ink/60">
+                  Atualize empresas por codigo (manual) com lotes seguros e execucao em ondas.
+                </p>
+              </header>
+
+              {!erpHasUnlock ? (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+                  <p className="text-xs font-semibold text-amber-800">
+                    Secao protegida. Informe a senha de liberacao para acessar.
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-end gap-2">
+                    <label className="flex min-w-[240px] flex-1 flex-col gap-1 text-xs font-semibold text-ink/70">
+                      Senha de liberacao
+                      <input
+                        type="password"
+                        value={erpReleasePassword}
+                        onChange={(event) => setErpReleasePassword(event.target.value)}
+                        className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                        placeholder="Senha"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void handleUnlockErpSection()}
+                      disabled={erpUnlockLoading}
+                      className="inline-flex items-center gap-2 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                    >
+                      {erpUnlockLoading ? <LoaderCircle size={14} className="animate-spin" /> : null}
+                      {erpUnlockLoading ? "Desbloqueando" : "Desbloquear secao"}
+                    </button>
+                  </div>
+                  {erpUnlockError && (
+                    <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600">
+                      {erpUnlockError}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                    Secao desbloqueada ate{" "}
+                    {erpUnlockExpiresAt ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(erpUnlockExpiresAt)) : "-"}.
+                  </div>
+
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="space-y-2 rounded-xl border border-sea/15 bg-white/90 p-3">
+                      <p className="text-xs font-semibold text-ink/70">Lista de codigos</p>
+                      <textarea
+                        value={erpCodesInput}
+                        onChange={(event) => {
+                          setErpCodesInput(event.target.value);
+                          setErpPreview(null);
+                          setErpExecuteOffset(0);
+                          setErpLastWaveResults([]);
+                          setErpExecutionSummary(null);
+                        }}
+                        rows={10}
+                        placeholder="Um codigo por linha ou separado por virgula"
+                        className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-xs text-ink outline-none focus:border-sea"
+                      />
+                      <p className="text-[11px] text-ink/60">
+                        Codigos unicos prontos para sincronizacao: {erpNormalizedCodes.length}
+                      </p>
+                    </div>
+
+                    <div className="space-y-3 rounded-xl border border-sea/15 bg-white/90 p-3">
+                      <p className="text-xs font-semibold text-ink/70">Upload CSV/XLSX</p>
+                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-sea/25 bg-white px-3 py-2 text-xs font-semibold text-ink/80 hover:border-sea">
+                        <UploadCloud size={14} />
+                        Carregar arquivo
+                        <input
+                          type="file"
+                          accept=".csv,.xlsx,.xls"
+                          className="hidden"
+                          onChange={(event) => void handleUploadErpCodes(event)}
+                        />
+                      </label>
+                      <p className="text-[11px] text-ink/60">
+                        Use coluna <code>codigo</code> (ou primeira coluna do arquivo).
+                      </p>
+                      <div className="flex flex-wrap items-end gap-2 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => void handlePreviewErpSync()}
+                          disabled={erpPreviewLoading || !erpNormalizedCodes.length}
+                          className="inline-flex items-center gap-2 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                        >
+                          {erpPreviewLoading ? <LoaderCircle size={14} className="animate-spin" /> : null}
+                          {erpPreviewLoading ? "Gerando preview" : "Gerar preview"}
+                        </button>
+                        <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
+                          Tamanho da onda (max {ERP_SYNC_MAX_WAVE_LIMIT})
+                          <input
+                            value={erpWaveLimitInput}
+                            onChange={(event) => setErpWaveLimitInput(sanitizeWaveLimit(event.target.value))}
+                            className="w-24 rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => void handleExecuteErpWave()}
+                          disabled={erpExecuteLoading || !erpCodesForExecution.length || erpRemainingCount <= 0}
+                          className="inline-flex items-center gap-2 rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/80 hover:border-sea disabled:opacity-60"
+                        >
+                          {erpExecuteLoading ? <LoaderCircle size={14} className="animate-spin" /> : null}
+                          {erpExecuteLoading ? "Processando onda" : "Executar proxima onda"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {erpCodesMessage && (
+                    <div className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink/70">
+                      {erpCodesMessage}
+                    </div>
+                  )}
+
+                  {erpPreview && (
+                    <div className="rounded-xl border border-sea/15 bg-white/90 p-3 text-xs text-ink/80">
+                      <p className="font-semibold text-ink">Preview</p>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                        <p>Total codigos: {erpPreview.total_codes}</p>
+                        <p>Encontrados local: {erpPreview.found_local_count}</p>
+                        <p>Nao encontrados local: {erpPreview.missing_local_count}</p>
+                        <p>Restante para ondas: {erpRemainingCount}</p>
+                      </div>
+                      {erpPreview.missing_local_codes.length > 0 && (
+                        <p className="mt-2 text-[11px] text-amber-700">
+                          Codigos sem cadastro local: {erpPreview.missing_local_codes.slice(0, 20).join(", ")}
+                          {erpPreview.missing_local_codes.length > 20 ? " ..." : ""}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {erpExecutionSummary && (
+                    <div className="rounded-xl border border-sea/15 bg-white/90 p-3 text-xs text-ink/80">
+                      <p className="font-semibold text-ink">Resumo da ultima onda</p>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+                        <p>Atualizados: {erpExecutionSummary.updated}</p>
+                        <p>Sem mudanca: {erpExecutionSummary.no_changes}</p>
+                        <p>Sem local: {erpExecutionSummary.local_not_found}</p>
+                        <p>Sem ERP: {erpExecutionSummary.erp_not_found}</p>
+                        <p>Sem campos: {erpExecutionSummary.no_mapped_fields}</p>
+                        <p>Falhas: {erpExecutionSummary.failed}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {erpLastWaveResults.length > 0 && (
+                    <div className="overflow-x-auto rounded-xl border border-sea/15 bg-white/95">
+                      <table className="min-w-full divide-y divide-sea/10 text-xs">
+                        <thead className="bg-sand/40 text-ink/70">
+                          <tr>
+                            <th className="px-3 py-2 text-left">Codigo</th>
+                            <th className="px-3 py-2 text-left">Status</th>
+                            <th className="px-3 py-2 text-left">Rows atualizadas</th>
+                            <th className="px-3 py-2 text-left">Rows alteradas</th>
+                            <th className="px-3 py-2 text-left">Campos</th>
+                            <th className="px-3 py-2 text-left">Mudancas</th>
+                            <th className="px-3 py-2 text-left">Mensagem</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-sea/10 text-ink/80">
+                          {erpLastWaveResults.map((result) => (
+                            <tr key={`${result.code}-${result.status}-${result.updated_rows}`}>
+                              <td className="whitespace-nowrap px-3 py-2 font-semibold text-ink">{result.code}</td>
+                              <td className="whitespace-nowrap px-3 py-2">{result.status}</td>
+                              <td className="whitespace-nowrap px-3 py-2">{result.updated_rows}</td>
+                              <td className="whitespace-nowrap px-3 py-2">{result.changed_rows}</td>
+                              <td className="px-3 py-2">{result.fields.join(", ") || "-"}</td>
+                              <td className="px-3 py-2">
+                                {result.changes.length
+                                  ? result.changes
+                                      .map(
+                                        (change) =>
+                                          `${change.field}: ${change.from_values
+                                            .map((value) => formatErpSyncValue(value))
+                                            .join(" / ")} -> ${formatErpSyncValue(change.to_value)} (${change.changed_rows})`,
+                                      )
+                                      .join(" | ")
+                                  : "-"}
+                              </td>
+                              <td className="px-3 py-2">{result.message ?? "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
             </section>
           )}
 
