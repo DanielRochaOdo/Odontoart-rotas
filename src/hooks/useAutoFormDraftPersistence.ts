@@ -15,8 +15,8 @@ type DraftStore = Record<string, RouteDraft>;
 
 const STORAGE_KEY = "odontoartRouteFormDraftsV1";
 const SAVE_DEBOUNCE_MS = 180;
-const RESTORE_DEBOUNCE_MS = 120;
 const SNAPSHOT_INTERVAL_MS = 1500;
+const INITIAL_RESTORE_WINDOW_MS = 1200;
 
 type DraftField = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
 
@@ -177,13 +177,12 @@ const applyDraftValue = (field: DraftField, value: DraftValue) => {
   }
 };
 
-export const useAutoFormDraftPersistence = () => {
+export const useAutoFormDraftPersistence = (scopeKey?: string) => {
   const location = useLocation();
-  const routeKey = location.pathname;
+  const routeKey = `${scopeKey ?? "anonymous"}:${location.pathname}`;
   const storeRef = useRef<DraftStore>({});
   const saveTimeoutRef = useRef<number | null>(null);
-  const restoreTimeoutRef = useRef<number | null>(null);
-  const restoreRunRef = useRef(false);
+  const canRestoreRef = useRef(true);
 
   useEffect(() => {
     storeRef.current = readStore();
@@ -222,7 +221,6 @@ export const useAutoFormDraftPersistence = () => {
         if (!savedValue) return;
         applyDraftValue(field, savedValue);
       });
-      restoreRunRef.current = true;
     };
 
     const scheduleSave = () => {
@@ -235,25 +233,21 @@ export const useAutoFormDraftPersistence = () => {
       }, SAVE_DEBOUNCE_MS);
     };
 
-    const scheduleRestore = () => {
-      if (restoreTimeoutRef.current !== null) {
-        window.clearTimeout(restoreTimeoutRef.current);
-      }
-      restoreTimeoutRef.current = window.setTimeout(() => {
-        restoreSnapshot();
-        restoreTimeoutRef.current = null;
-      }, RESTORE_DEBOUNCE_MS);
-    };
-
     const handleInput = (event: Event) => {
       if (!isEligibleField(event.target as Element)) return;
+      canRestoreRef.current = false;
       scheduleSave();
     };
 
     const handleSubmit = () => {
+      canRestoreRef.current = false;
       window.setTimeout(() => {
         saveSnapshot();
       }, 0);
+    };
+
+    const handlePointerDown = () => {
+      canRestoreRef.current = false;
     };
 
     const handlePageHide = () => {
@@ -263,18 +257,16 @@ export const useAutoFormDraftPersistence = () => {
     root.addEventListener("input", handleInput, true);
     root.addEventListener("change", handleInput, true);
     root.addEventListener("submit", handleSubmit, true);
+    root.addEventListener("pointerdown", handlePointerDown, true);
     window.addEventListener("pagehide", handlePageHide);
     window.addEventListener("beforeunload", handlePageHide);
-
-    const observer = new MutationObserver(() => {
-      if (!restoreRunRef.current) return;
-      scheduleRestore();
-    });
-    observer.observe(root, { childList: true, subtree: true });
 
     restoreSnapshot();
     window.setTimeout(restoreSnapshot, 200);
     window.setTimeout(restoreSnapshot, 700);
+    window.setTimeout(() => {
+      canRestoreRef.current = false;
+    }, INITIAL_RESTORE_WINDOW_MS);
     const intervalId = window.setInterval(saveSnapshot, SNAPSHOT_INTERVAL_MS);
 
     return () => {
@@ -283,15 +275,11 @@ export const useAutoFormDraftPersistence = () => {
         window.clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = null;
       }
-      if (restoreTimeoutRef.current !== null) {
-        window.clearTimeout(restoreTimeoutRef.current);
-        restoreTimeoutRef.current = null;
-      }
       window.clearInterval(intervalId);
-      observer.disconnect();
       root.removeEventListener("input", handleInput, true);
       root.removeEventListener("change", handleInput, true);
       root.removeEventListener("submit", handleSubmit, true);
+      root.removeEventListener("pointerdown", handlePointerDown, true);
       window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("beforeunload", handlePageHide);
     };

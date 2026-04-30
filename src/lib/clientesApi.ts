@@ -117,19 +117,40 @@ export const fetchClientesCount = async (params: {
   searchMode?: "codigo" | "empresa" | "geral";
   situacao?: "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado";
 }) => {
-  let query = supabase
-    .from("clientes")
-    .select("id", { count: "exact", head: true });
+  const applyFilters = <T,>(query: T) =>
+    applyClientesListFilters(query, {
+      search: params.search,
+      searchMode: params.searchMode,
+      situacao: params.situacao,
+    });
 
-  query = applyClientesListFilters(query, {
-    search: params.search,
-    searchMode: params.searchMode,
-    situacao: params.situacao,
-  });
+  const headExactQuery = applyFilters(
+    supabase
+      .from("clientes")
+      .select("id", { count: "exact", head: true }),
+  );
 
-  const { count, error } = await query;
-  if (error) throw new Error(error.message);
-  return count ?? 0;
+  const headExactResult = await headExactQuery;
+  if (!headExactResult.error) {
+    return headExactResult.count ?? 0;
+  }
+
+  // Fallback resiliente para ambientes/proxies que falham em HEAD + exact count.
+  const getPlannedQuery = applyFilters(
+    supabase
+      .from("clientes")
+      .select("id", { count: "planned", head: false })
+      .limit(1),
+  );
+
+  const getPlannedResult = await getPlannedQuery;
+  if (!getPlannedResult.error) {
+    return getPlannedResult.count ?? 0;
+  }
+
+  throw new Error(
+    `${headExactResult.error.message} | fallback: ${getPlannedResult.error.message}`,
+  );
 };
 
 export const fetchClienteById = async (id: string) => {

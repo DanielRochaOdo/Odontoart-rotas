@@ -1,6 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { Building2, DollarSign, LoaderCircle, Plus, Search } from "lucide-react";
+import { BrushCleaning, Building2, DollarSign, LoaderCircle, Plus, Search } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -747,6 +747,7 @@ export default function Clientes() {
   const canView = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canCreate = canView;
   const canEdit = role === "SUPERVISOR";
+  const canUseLocalResetTool = role === "ASSISTENTE";
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -841,6 +842,7 @@ export default function Clientes() {
   const [filialCnpjLoading, setFilialCnpjLoading] = useState(false);
   const [filialCepLoading, setFilialCepLoading] = useState(false);
   const [filialBairroLoading, setFilialBairroLoading] = useState(false);
+  const [localResetLoading, setLocalResetLoading] = useState(false);
   const createCepLookupRequestRef = useRef(0);
   const createEnderecoLookupRequestRef = useRef(0);
   const createCnpjLookupRequestRef = useRef(0);
@@ -2265,6 +2267,36 @@ export default function Clientes() {
     }
   };
 
+  const handleLocalTechnicalReset = async () => {
+    if (localResetLoading) return;
+    const confirmed = window.confirm(
+      "Isso vai limpar cache local do app neste dispositivo e recarregar a pagina. Deseja continuar?",
+    );
+    if (!confirmed) return;
+
+    setLocalResetLoading(true);
+    try {
+      if ("serviceWorker" in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map((registration) => registration.unregister()));
+      }
+
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((key) => caches.delete(key)));
+      }
+
+      sessionStorage.removeItem("odontoartRouteFormDraftsV1");
+      sessionStorage.removeItem(CLIENTES_VIEW_STATE_KEY);
+
+      window.location.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao limpar cache local.");
+    } finally {
+      setLocalResetLoading(false);
+    }
+  };
+
   const handleCnpjLookup = async () => {
     if (creating || codigoLoading || cnpjLoading) return;
     const cnpj = sanitizeCnpjDigits(form.cnpj);
@@ -2881,11 +2913,30 @@ export default function Clientes() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h2 className="font-display text-2xl text-ink">Empresas</h2>
-        <p className="mt-2 text-sm text-ink/60">
-          Gestao de empresas cadastradas e historico de visitas.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-display text-2xl text-ink">Empresas</h2>
+          <p className="mt-2 text-sm text-ink/60">
+            Gestao de empresas cadastradas e historico de visitas.
+          </p>
+        </div>
+        {canUseLocalResetTool && (
+          <div className="inline-flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleLocalTechnicalReset()}
+              disabled={localResetLoading}
+              title="Reset tecnico local deste dispositivo"
+              aria-label="Reset tecnico local deste dispositivo"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-sea/30 bg-white text-ink/70 hover:border-sea hover:text-sea disabled:opacity-50"
+            >
+              {localResetLoading ? <LoaderCircle size={16} className="animate-spin" /> : <BrushCleaning size={16} />}
+            </button>
+            <span className="rounded-md border border-yellow-400 bg-yellow-100 px-2 py-1 text-xs font-semibold text-red-700 dark:border-yellow-300 dark:bg-yellow-200 dark:text-red-800">
+              se a busca pelo codigo falhar, clique aqui
+            </span>
+          </div>
+        )}
       </header>
 
       {error && (
