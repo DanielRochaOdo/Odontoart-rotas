@@ -3130,25 +3130,25 @@ export default function Agenda() {
 
   if (!canAccess) {
     return (
-      <div className="rounded-2xl border border-sea/20 bg-sand/30 p-6 text-sm text-ink/70">
+      <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-6">
         Este modulo e restrito a supervisao e assistencia.
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-2xl text-ink">Rotas</h2>
       </header>
 
-      <section className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
+      <section className="p-0">
         <div className="flex flex-col gap-4">
           <div
-            className={`grid gap-3 md:items-end ${
+            className={`grid gap-3 md:grid-cols-2 xl:items-end ${
               role === "SUPERVISOR"
-                ? "md:grid-cols-[minmax(0,0.95fr)_minmax(0,0.55fr)_minmax(180px,220px)_minmax(180px,220px)_minmax(180px,220px)]"
-                : "md:grid-cols-[minmax(0,0.95fr)_minmax(0,0.55fr)_minmax(180px,220px)_minmax(180px,220px)]"
+                ? "xl:grid-cols-[minmax(0,1.5fr)_minmax(220px,0.9fr)_minmax(170px,0.8fr)_minmax(180px,0.9fr)_minmax(180px,0.9fr)]"
+                : "xl:grid-cols-[minmax(0,1.7fr)_minmax(220px,1fr)_minmax(180px,0.95fr)_minmax(180px,0.95fr)]"
             }`}
           >
             <label className="flex flex-col gap-1">
@@ -3284,209 +3284,210 @@ export default function Agenda() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-1">
-              <div className="flex flex-wrap items-end gap-2 md:flex-nowrap">
-                <div className="flex flex-col gap-1">
-                  <span className="text-[11px] font-semibold text-ink/70">Ultima visita</span>
-                  <div className="flex flex-wrap items-center gap-2 md:flex-nowrap">
-                    <input
-                      type="date"
-                      value={filters.dateRanges.data_da_ultima_visita.from ?? ""}
-                      onChange={(event) =>
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(220px,280px)] xl:items-end">
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] font-semibold text-ink/70">Ultima visita</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="date"
+                    value={filters.dateRanges.data_da_ultima_visita.from ?? ""}
+                    onChange={(event) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        dateRanges: {
+                          ...prev.dateRanges,
+                          data_da_ultima_visita: {
+                            ...prev.dateRanges.data_da_ultima_visita,
+                            from: event.target.value || undefined,
+                            month: undefined,
+                            year: undefined,
+                          },
+                        },
+                      }))
+                    }
+                    id="agenda-duv-from"
+                    name="agendaDuvFrom"
+                    className="min-w-[148px] flex-1 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                  />
+                  <span className="text-xs text-ink/50">ate</span>
+                  <input
+                    type="date"
+                    value={filters.dateRanges.data_da_ultima_visita.to ?? ""}
+                    onChange={(event) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        dateRanges: {
+                          ...prev.dateRanges,
+                          data_da_ultima_visita: {
+                            ...prev.dateRanges.data_da_ultima_visita,
+                            to: event.target.value || undefined,
+                            month: undefined,
+                            year: undefined,
+                          },
+                        },
+                      }))
+                    }
+                    id="agenda-duv-to"
+                    name="agendaDuvTo"
+                    className="min-w-[148px] flex-1 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                  />
+                  <span className="text-xs font-semibold text-ink/50">Ou</span>
+                  <select
+                    value={filters.dateRanges.data_da_ultima_visita.month ?? ""}
+                    onChange={(event) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        dateRanges: {
+                          ...prev.dateRanges,
+                          data_da_ultima_visita: {
+                            ...prev.dateRanges.data_da_ultima_visita,
+                            month: event.target.value || undefined,
+                            year:
+                              event.target.value && !prev.dateRanges.data_da_ultima_visita.year
+                                ? String(new Date().getFullYear())
+                                : prev.dateRanges.data_da_ultima_visita.year,
+                            from: undefined,
+                            to: undefined,
+                          },
+                        },
+                      }))
+                    }
+                    id="agenda-duv-month"
+                    name="agendaDuvMonth"
+                    className="min-w-[120px] rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                  >
+                    <option value="">Mes</option>
+                    {MONTH_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    placeholder="Ano"
+                    value={filters.dateRanges.data_da_ultima_visita.year ?? ""}
+                    onChange={(event) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        dateRanges: {
+                          ...prev.dateRanges,
+                          data_da_ultima_visita: {
+                            ...prev.dateRanges.data_da_ultima_visita,
+                            year: event.target.value || undefined,
+                            from: undefined,
+                            to: undefined,
+                          },
+                        },
+                      }))
+                    }
+                    id="agenda-duv-year"
+                    name="agendaDuvYear"
+                    className="w-20 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea sm:w-24"
+                  />
+                  <label className="ml-auto flex items-center gap-2 text-[11px] font-semibold text-ink/60">
+                    <button
+                      type="button"
+                      onClick={() =>
                         setFilters((prev) => ({
                           ...prev,
                           dateRanges: {
                             ...prev.dateRanges,
                             data_da_ultima_visita: {
                               ...prev.dateRanges.data_da_ultima_visita,
-                              from: event.target.value || undefined,
-                              month: undefined,
-                              year: undefined,
+                              invert: !prev.dateRanges.data_da_ultima_visita.invert,
                             },
                           },
                         }))
                       }
-                      id="agenda-duv-from"
-                      name="agendaDuvFrom"
-                      className="w-52 shrink-0 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                    />
-                    <span className="text-xs text-ink/50">ate</span>
-                    <input
-                      type="date"
-                      value={filters.dateRanges.data_da_ultima_visita.to ?? ""}
-                      onChange={(event) =>
-                        setFilters((prev) => ({
-                          ...prev,
-                          dateRanges: {
-                            ...prev.dateRanges,
-                            data_da_ultima_visita: {
-                              ...prev.dateRanges.data_da_ultima_visita,
-                              to: event.target.value || undefined,
-                              month: undefined,
-                              year: undefined,
-                            },
-                          },
-                        }))
-                      }
-                      id="agenda-duv-to"
-                      name="agendaDuvTo"
-                      className="w-52 shrink-0 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                    />
-                    <span className="w-full text-left text-xs font-semibold text-ink/50 md:w-auto md:pt-2">
-                      Ou
-                    </span>
-                    <select
-                      value={filters.dateRanges.data_da_ultima_visita.month ?? ""}
-                      onChange={(event) =>
-                        setFilters((prev) => ({
-                          ...prev,
-                          dateRanges: {
-                            ...prev.dateRanges,
-                            data_da_ultima_visita: {
-                              ...prev.dateRanges.data_da_ultima_visita,
-                              month: event.target.value || undefined,
-                              year:
-                                event.target.value && !prev.dateRanges.data_da_ultima_visita.year
-                                  ? String(new Date().getFullYear())
-                                  : prev.dateRanges.data_da_ultima_visita.year,
-                              from: undefined,
-                              to: undefined,
-                            },
-                          },
-                        }))
-                      }
-                      id="agenda-duv-month"
-                      name="agendaDuvMonth"
-                      className="min-w-[120px] rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                      aria-label="Alternar inversao do filtro de ultima visita"
+                      className={[
+                        "inline-flex h-6 w-6 items-center justify-center rounded-md border transition",
+                        filters.dateRanges.data_da_ultima_visita.invert
+                          ? "border-sea bg-sea/10 text-sea"
+                          : "border-sea/30 bg-white text-ink/50 hover:border-sea hover:text-sea",
+                      ].join(" ")}
                     >
-                      <option value="">Mes</option>
-                      {MONTH_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      placeholder="Ano"
-                      value={filters.dateRanges.data_da_ultima_visita.year ?? ""}
-                      onChange={(event) =>
-                        setFilters((prev) => ({
-                          ...prev,
-                          dateRanges: {
-                            ...prev.dateRanges,
-                            data_da_ultima_visita: {
-                              ...prev.dateRanges.data_da_ultima_visita,
-                              year: event.target.value || undefined,
-                              from: undefined,
-                              to: undefined,
-                            },
-                          },
-                        }))
-                      }
-                      id="agenda-duv-year"
-                      name="agendaDuvYear"
-                      className="w-24 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                    />
-                    <label className="flex items-center gap-2 text-[11px] font-semibold text-ink/60">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setFilters((prev) => ({
-                            ...prev,
-                            dateRanges: {
-                              ...prev.dateRanges,
-                              data_da_ultima_visita: {
-                                ...prev.dateRanges.data_da_ultima_visita,
-                                invert: !prev.dateRanges.data_da_ultima_visita.invert,
-                              },
-                            },
-                          }))
-                        }
-                        aria-label="Alternar inversao do filtro de ultima visita"
-                        className={[
-                          "inline-flex h-6 w-6 items-center justify-center rounded-md border transition",
-                          filters.dateRanges.data_da_ultima_visita.invert
-                            ? "border-sea bg-sea/10 text-sea"
-                            : "border-sea/30 bg-white text-ink/50 hover:border-sea hover:text-sea",
-                        ].join(" ")}
-                      >
-                        <SquareCenterlineDashedHorizontal size={14} />
-                      </button>
-                      Inverter
-                    </label>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1 md:ml-2">
-                  <label className="text-[11px] font-semibold text-ink/70">Vidas ultima visita</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      value={filters.ranges.vidas_ultima_visita.from ?? ""}
-                      onChange={(event) => {
-                        const nextValue = normalizeNumberInput(event.target.value);
-                        setFilters((prev) => ({
-                          ...prev,
-                          ranges: {
-                            ...prev.ranges,
-                            vidas_ultima_visita: {
-                              ...prev.ranges.vidas_ultima_visita,
-                              from: nextValue || undefined,
-                            },
-                          },
-                        }));
-                      }}
-                      placeholder="De"
-                      id="agenda-vidas-from"
-                      name="agendaVidasFrom"
-                      className="w-24 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                    />
-                    <span className="text-xs text-ink/50">ate</span>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      value={filters.ranges.vidas_ultima_visita.to ?? ""}
-                      onChange={(event) => {
-                        const nextValue = normalizeNumberInput(event.target.value);
-                        setFilters((prev) => ({
-                          ...prev,
-                          ranges: {
-                            ...prev.ranges,
-                            vidas_ultima_visita: {
-                              ...prev.ranges.vidas_ultima_visita,
-                              to: nextValue || undefined,
-                            },
-                          },
-                        }));
-                      }}
-                      placeholder="Ate"
-                      id="agenda-vidas-to"
-                      name="agendaVidasTo"
-                      className="w-24 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                    />
-                  </div>
-                </div>
-                <div className="ml-auto flex items-center gap-3 self-end">
-                  <button
-                    type="button"
-                    onClick={handleApplySearch}
-                    className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight"
-                  >
-                    Buscar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleClearFilters}
-                    className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
-                  >
-                    Limpar filtros
-                  </button>
+                      <SquareCenterlineDashedHorizontal size={14} />
+                    </button>
+                    Inverter
+                  </label>
                 </div>
               </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-semibold text-ink/70">Vidas ultima visita</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={filters.ranges.vidas_ultima_visita.from ?? ""}
+                    onChange={(event) => {
+                      const nextValue = normalizeNumberInput(event.target.value);
+                      setFilters((prev) => ({
+                        ...prev,
+                        ranges: {
+                          ...prev.ranges,
+                          vidas_ultima_visita: {
+                            ...prev.ranges.vidas_ultima_visita,
+                            from: nextValue || undefined,
+                          },
+                        },
+                      }));
+                    }}
+                    placeholder="De"
+                    id="agenda-vidas-from"
+                    name="agendaVidasFrom"
+                    className="w-full rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                  />
+                  <span className="text-xs text-ink/50">ate</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={filters.ranges.vidas_ultima_visita.to ?? ""}
+                    onChange={(event) => {
+                      const nextValue = normalizeNumberInput(event.target.value);
+                      setFilters((prev) => ({
+                        ...prev,
+                        ranges: {
+                          ...prev.ranges,
+                          vidas_ultima_visita: {
+                            ...prev.ranges.vidas_ultima_visita,
+                            to: nextValue || undefined,
+                          },
+                        },
+                      }));
+                    }}
+                    placeholder="Ate"
+                    id="agenda-vidas-to"
+                    name="agendaVidasTo"
+                    className="w-full rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+              <button
+                type="button"
+                onClick={handleApplySearch}
+                className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight"
+              >
+                Buscar
+              </button>
+              <button
+                type="button"
+                onClick={handleClearFilters}
+                className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+              >
+                Limpar filtros
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-1">
               {canGenerate && (
                 <div className="mt-2 flex items-center justify-start gap-3">
                   <button

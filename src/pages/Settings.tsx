@@ -1,7 +1,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
-import { LoaderCircle, Pencil, Plus, RotateCcw, Trash, UploadCloud } from "lucide-react";
+import { LoaderCircle, LogOut, Moon, Pencil, Plus, RotateCcw, Sun, Trash, UploadCloud } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import {
   createManagedUser,
@@ -225,10 +225,16 @@ const parseCodesFromWorkbook = (workbook: XLSX.WorkBook) => {
 };
 
 export default function Settings() {
-  const { role, session, loading: authLoading } = useAuth();
+  const { role, session, loading: authLoading, signOut } = useAuth();
   const canManageUsers = role === "SUPERVISOR";
   const canManageEvents = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canAccessSettings = canManageUsers || canManageEvents;
+  const [themeMode, setThemeMode] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "light";
+    const stored = localStorage.getItem("theme");
+    if (stored === "dark" || stored === "light") return stored;
+    return document.documentElement.classList.contains("dark") ? "dark" : "light";
+  });
 
   const [activeTab, setActiveTab] = useState<TabKey>(() => readSettingsViewState()?.activeTab ?? "SUPERVISORES");
   const [loading, setLoading] = useState(true);
@@ -318,6 +324,31 @@ export default function Settings() {
     email: "",
     password: "",
   });
+
+  const applyThemeMode = (next: "light" | "dark") => {
+    if (typeof window === "undefined") return;
+    setThemeMode(next);
+    document.documentElement.classList.toggle("dark", next === "dark");
+    document.body.classList.toggle("dark", next === "dark");
+    localStorage.setItem("theme", next);
+    window.dispatchEvent(new CustomEvent("odontoart-theme-changed", { detail: next }));
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const syncTheme = () => {
+      const stored = localStorage.getItem("theme");
+      if (stored === "dark" || stored === "light") {
+        setThemeMode(stored);
+      }
+    };
+    window.addEventListener("odontoart-theme-changed", syncTheme as EventListener);
+    window.addEventListener("storage", syncTheme);
+    return () => {
+      window.removeEventListener("odontoart-theme-changed", syncTheme as EventListener);
+      window.removeEventListener("storage", syncTheme);
+    };
+  }, []);
 
   const supervisors = useMemo(() => sortByName(filterByRole(profiles, "SUPERVISOR")), [profiles]);
   const vendors = useMemo(() => sortByName(filterByRole(profiles, "VENDEDOR")), [profiles]);
@@ -1119,7 +1150,7 @@ export default function Settings() {
 
   if (!canAccessSettings) {
     return (
-      <div className="rounded-2xl border border-sea/20 bg-white/90 p-6">
+      <div className="glass-pane rounded-2xl p-4 md:p-6">
         <h2 className="font-display text-2xl text-ink">Configuracoes</h2>
         <p className="mt-2 text-sm text-ink/60">Acesso restrito.</p>
       </div>
@@ -1127,12 +1158,32 @@ export default function Settings() {
   }
 
   return (
-    <div className="space-y-6">
-      <header>
-        <h2 className="font-display text-2xl text-ink">Configuracoes</h2>
-        <p className="mt-2 text-sm text-ink/60">
-          Cadastre supervisores, vendedores e assistentes.
-        </p>
+    <div className="space-y-4 md:space-y-6">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-display text-2xl text-ink">Configuracoes</h2>
+          <p className="mt-2 text-sm text-ink/60">
+            Cadastre supervisores, vendedores e assistentes.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => applyThemeMode(themeMode === "dark" ? "light" : "dark")}
+            className="inline-flex items-center gap-2 rounded-lg border border-sea/25 bg-white px-3 py-2 text-xs font-semibold text-ink/80 transition hover:border-sea hover:text-sea"
+          >
+            {themeMode === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+            {themeMode === "dark" ? "Modo claro" : "Modo escuro"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            className="inline-flex items-center gap-2 rounded-lg border border-sea/25 bg-white px-3 py-2 text-xs font-semibold text-ink/80 transition hover:border-sea hover:text-sea"
+          >
+            <LogOut size={14} />
+            Sair
+          </button>
+        </div>
       </header>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1252,9 +1303,9 @@ export default function Settings() {
       {loading ? (
         <p className="text-sm text-ink/60">Carregando...</p>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-4 md:space-y-6">
           {canManageUsers && activeTab === "SUPERVISORES" && (
-            <section className="rounded-2xl border border-sea/20 bg-sand/20 p-4">
+            <section className="rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
               <h3 className="font-display text-lg text-ink">Supervisores</h3>
               <form onSubmit={handleCreateSupervisor} className="mt-4 grid gap-3 md:grid-cols-4">
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
@@ -1400,7 +1451,7 @@ export default function Settings() {
             </section>
           )}
           {canManageUsers && activeTab === "VENDEDORES" && (
-            <section className="rounded-2xl border border-sea/20 bg-sand/20 p-4">
+            <section className="rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
               <h3 className="font-display text-lg text-ink">Vendedores</h3>
               <form onSubmit={handleCreateVendor} className="mt-4 grid gap-3 md:grid-cols-5">
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
@@ -1566,7 +1617,7 @@ export default function Settings() {
           )}
 
           {canManageUsers && activeTab === "ASSISTENTES" && (
-            <section className="rounded-2xl border border-sea/20 bg-sand/20 p-4">
+            <section className="rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
               <h3 className="font-display text-lg text-ink">Assistentes</h3>
               <form onSubmit={handleCreateAssistant} className="mt-4 grid gap-3 md:grid-cols-4">
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
@@ -1703,7 +1754,7 @@ export default function Settings() {
           )}
 
           {canManageUsers && activeTab === "SINCRONIZACAO_ERP" && (
-            <section className="space-y-4 rounded-2xl border border-sea/20 bg-sand/20 p-4">
+            <section className="space-y-4 rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
               <header>
                 <h3 className="font-display text-lg text-ink">Sincronizacao ERP</h3>
                 <p className="mt-1 text-xs text-ink/60">
@@ -1902,7 +1953,7 @@ export default function Settings() {
           )}
 
           {canManageEvents && activeTab === "EVENTOS" && (
-            <section className="rounded-2xl border border-sea/20 bg-sand/20 p-4">
+            <section className="rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
               <h3 className="font-display text-lg text-ink">Eventos</h3>
               <p className="mt-1 text-xs text-ink/60">
                 Cadastre eventos que devem gerar aviso ao criar rota na mesma data.
@@ -2166,4 +2217,5 @@ export default function Settings() {
     </div>
   );
 }
+
 

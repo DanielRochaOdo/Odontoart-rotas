@@ -1340,14 +1340,14 @@ export default function KPI() {
 
   if (!canAccess) {
     return (
-      <div className="rounded-2xl border border-sea/20 bg-sand/30 p-6 text-sm text-ink/70">
+      <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-6">
         Este modulo e restrito a supervisao e assistencia.
       </div>
     );
   }
 
   return (
-    <div id="kpi-export-root" className="space-y-6">
+    <div id="kpi-export-root" className="space-y-4 md:space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-display text-2xl text-ink">KPI</h2>
@@ -1366,7 +1366,7 @@ export default function KPI() {
         </button>
       </header>
 
-      <section className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
+      <section className="rounded-2xl border border-sea/20 bg-sand/30 p-3 md:p-4">
         <div data-pdf-exclude="true" className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-end">
           <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
             Arquivo
@@ -1475,7 +1475,7 @@ export default function KPI() {
       </section>
 
       {parseSummary && (
-        <section className="rounded-2xl border border-sea/20 bg-white/90 p-4">
+        <section className="rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="font-display text-lg text-ink">Resumo da validacao</h3>
@@ -1584,7 +1584,7 @@ export default function KPI() {
       )}
 
       {applySummary && (
-        <section className="rounded-2xl border border-sea/20 bg-white/90 p-4">
+        <section className="rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
           <h3 className="font-display text-lg text-ink">Resultado da aplicacao</h3>
           <div className="mt-3 grid gap-3 md:grid-cols-5">
             <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-xs text-ink/70">
@@ -1614,7 +1614,7 @@ export default function KPI() {
         </section>
       )}
 
-      <section data-pdf-exclude="true" className="rounded-2xl border border-sea/20 bg-white/90 p-4">
+      <section data-pdf-exclude="true" className="rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <button
             type="button"
@@ -1696,7 +1696,7 @@ export default function KPI() {
         )}
       </section>
 
-      <section className="rounded-2xl border border-sea/20 bg-white/90 p-4">
+      <section className="rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
         <h3 className="font-display text-lg text-ink">Codigos nao validados</h3>
         <p className="mt-1 text-xs text-ink/60">
           Esta lista inclui codigos nao cadastrados ou com situacao de cadastro nao ativa.

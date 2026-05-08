@@ -1902,7 +1902,11 @@ export default function Dashboard() {
         const blocks: HTMLElement[] = [];
         Array.from(clonedRoot.children).forEach((child) => {
           if (!(child instanceof HTMLElement)) return;
-          if (child.tagName === "DIV" && child.classList.contains("space-y-6") && child.children.length > 0) {
+          if (
+            child.tagName === "DIV" &&
+            (child.classList.contains("space-y-6") || child.classList.contains("space-y-4")) &&
+            child.children.length > 0
+          ) {
             const nested = Array.from(child.children).filter((node): node is HTMLElement => node instanceof HTMLElement);
             if (nested.length > 0) {
               blocks.push(...nested);
@@ -2010,7 +2014,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div id="dashboard-export-root" className="space-y-6">
+    <div id="dashboard-export-root" className="space-y-4 md:space-y-6">
       <header className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -2098,7 +2102,7 @@ export default function Dashboard() {
       </header>
 
       {loading ? (
-        <div className="rounded-2xl border border-sea/20 bg-sand/30 p-6 text-sm text-ink/70">
+        <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-6">
           Carregando indicadores...
         </div>
       ) : error ? (
@@ -2106,14 +2110,14 @@ export default function Dashboard() {
           {error}
         </div>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-4 md:space-y-6">
           {scheduledCountsError && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
               {scheduledCountsError}
             </div>
           )}
           <section className={`grid gap-4 ${isVendor ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
-            <div className="rounded-2xl border border-sea/20 bg-sand/40 p-5">
+            <div className="rounded-2xl border border-sea/20 bg-sand/40 p-4 md:p-5">
               <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Hoje</p>
               <p className="mt-2 font-display text-3xl text-ink">
                 {formatNumber(scheduledCounts.today.scheduled)}
@@ -2124,7 +2128,7 @@ export default function Dashboard() {
                 {formatNumber(scheduledCounts.today.scheduled)}
               </p>
             </div>
-            <div className="rounded-2xl border border-sea/20 bg-sand/40 p-5">
+            <div className="rounded-2xl border border-sea/20 bg-sand/40 p-4 md:p-5">
               <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Semana</p>
               <p className="mt-2 font-display text-3xl text-ink">
                 {formatNumber(scheduledCounts.week.scheduled)}
@@ -2135,7 +2139,7 @@ export default function Dashboard() {
                 {formatNumber(scheduledCounts.week.scheduled)}
               </p>
             </div>
-            <div className="rounded-2xl border border-sea/20 bg-sand/40 p-5">
+            <div className="rounded-2xl border border-sea/20 bg-sand/40 p-4 md:p-5">
               <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Mes</p>
               <p className="mt-2 font-display text-3xl text-ink">
                 {formatNumber(scheduledCounts.month.scheduled)}
@@ -2155,7 +2159,7 @@ export default function Dashboard() {
                   }
                 }}
                 disabled={!vendorNextRouteAccessAllowed || !nextRoutePreview}
-                className={`rounded-2xl border border-sea/20 bg-sand/40 p-5 text-left ${
+                className={`rounded-2xl border border-sea/20 bg-sand/40 p-4 text-left md:p-5 ${
                   !vendorNextRouteAccessAllowed || !nextRoutePreview
                     ? "cursor-not-allowed opacity-80"
                     : "transition hover:border-sea hover:bg-sand/55"
@@ -2182,7 +2186,7 @@ export default function Dashboard() {
           ) : null}
 
           {canViewTeamStats && (
-            <section className="rounded-2xl border border-sea/15 bg-white/90 p-5">
+            <section className="rounded-2xl border border-sea/15 bg-white/90 p-4 md:p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="font-display text-lg text-ink">Aceite digital</h3>
@@ -2280,7 +2284,7 @@ export default function Dashboard() {
           )}
 
           {canViewTeamStats && (
-            <section className="rounded-2xl border border-violet-200 bg-violet-50/40 p-5">
+            <section className="rounded-2xl border border-violet-200 bg-violet-50/40 p-4 md:p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="font-display text-lg text-ink">Visitas de supervisor</h3>
@@ -2409,7 +2413,7 @@ export default function Dashboard() {
           )}
 
           <section className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-sea/15 bg-white/90 p-5">
+            <div className="rounded-2xl border border-sea/15 bg-white/90 p-4 md:p-5">
               <div className="flex items-center justify-between">
                 <h3 className="font-display text-lg text-ink">Por bairro</h3>
                 <span className="text-xs text-ink/60">Top 6</span>
@@ -2439,7 +2443,7 @@ export default function Dashboard() {
                     setShowVendorVisitsModal(true);
                   }
                 }}
-                className="cursor-pointer rounded-2xl border border-sea/15 bg-white/90 p-5 transition hover:border-sea/40 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-sea/40"
+                className="cursor-pointer rounded-2xl border border-sea/15 bg-white/90 p-4 transition hover:border-sea/40 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-sea/40 md:p-5"
               >
                 <div className="flex items-center justify-between">
                   <h3 className="font-display text-lg text-ink">Visitas por vendedor</h3>
@@ -2465,7 +2469,7 @@ export default function Dashboard() {
           </section>
 
           {canViewTeamStats && (
-            <section className="rounded-2xl border border-sea/15 bg-white/90 p-5">
+            <section className="rounded-2xl border border-sea/15 bg-white/90 p-4 md:p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="font-display text-lg text-ink">Vidas por vendedor</h3>
@@ -2583,7 +2587,7 @@ export default function Dashboard() {
           {isVendor && (
             <section className="grid gap-4 lg:grid-cols-3">
               {visitStatsError ? (
-                <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-600">
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-600 md:p-5">
                   {visitStatsError}
                 </div>
               ) : visitStats ? (
@@ -2623,7 +2627,7 @@ export default function Dashboard() {
                   )}
                 </>
               ) : (
-                <div className="rounded-2xl border border-sea/20 bg-sand/30 p-5 text-sm text-ink/70">
+                <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-5">
                   Carregando dados do vendedor...
                 </div>
               )}
@@ -2633,7 +2637,7 @@ export default function Dashboard() {
           {canViewTeamStats && (
             <section className="grid gap-4 lg:grid-cols-3">
               {teamStatsError ? (
-                <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-600">
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-600 md:p-5">
                   {teamStatsError}
                 </div>
               ) : teamStats ? (
@@ -2673,7 +2677,7 @@ export default function Dashboard() {
                   )}
                 </>
               ) : (
-                <div className="rounded-2xl border border-sea/20 bg-sand/30 p-5 text-sm text-ink/70">
+                <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-5">
                   Carregando dados da equipe...
                 </div>
               )}

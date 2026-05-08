@@ -9,7 +9,7 @@ import {
   Building2,
   Menu,
   X,
-  CheckSquare,
+  ClipboardCheck,
   Sun,
   Moon,
   History,
@@ -33,13 +33,19 @@ const navItems: NavItem[] = [
   { label: "Dashboard", to: "/", icon: LayoutDashboard, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
   { label: "Rotas", to: "/agenda", icon: MapPin, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Agenda", to: "/visitas", icon: CalendarCheck, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
-  { label: "Aceite digital", to: "/aceite-digital", icon: CheckSquare, roles: ["VENDEDOR"] },
+  { label: "Aceite digital", to: "/aceite-digital", icon: ClipboardCheck, roles: ["VENDEDOR"] },
   { label: "Empresas", to: "/clientes", icon: Building2, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Modulo Fila", to: "/fila", icon: ListChecks, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "KPI", to: "/kpi", icon: ChartNoAxesCombined, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Logs", to: "/logs", icon: History, roles: ["SUPERVISOR"] },
   { label: "Configuracoes", to: "/configuracoes", icon: Settings, roles: ["SUPERVISOR"] },
 ];
+
+const ANDROID_ASSETS_HOST = "appassets.androidplatform.net";
+const isAndroidAppHost = () => {
+  if (typeof window === "undefined") return false;
+  return window.location.hostname === ANDROID_ASSETS_HOST;
+};
 
 export default function AppLayout() {
   const { profile, profileError, role, session, signOut } = useAuth();
@@ -63,6 +69,7 @@ export default function AppLayout() {
     }
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [vendorSettingsOpen, setVendorSettingsOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -83,6 +90,14 @@ export default function AppLayout() {
       // ignore
     }
   }, [theme]);
+  const isVendor = role === "VENDEDOR";
+  const enableVendorSettingsInSidebar = isVendor && isAndroidAppHost();
+
+  useEffect(() => {
+    if (!enableVendorSettingsInSidebar && vendorSettingsOpen) {
+      setVendorSettingsOpen(false);
+    }
+  }, [enableVendorSettingsInSidebar, vendorSettingsOpen]);
 
   const initials = useMemo(() => {
     const name = profile?.nome ?? profile?.display_name ?? "Odontoart";
@@ -212,6 +227,7 @@ export default function AppLayout() {
                         key={item.to}
                         to={item.to}
                         end={item.to === "/"}
+                        onClick={() => setVendorSettingsOpen(false)}
                         title={collapsed ? item.label : undefined}
                         className={({ isActive }) =>
                           [
@@ -249,11 +265,79 @@ export default function AppLayout() {
                       </NavLink>
                     );
                   })}
+                {enableVendorSettingsInSidebar ? (
+                  <button
+                    type="button"
+                    onClick={() => setVendorSettingsOpen((prev) => !prev)}
+                    title={collapsed ? "Configuracoes" : undefined}
+                    className={[
+                      "group relative flex items-center transition",
+                      collapsed
+                        ? "h-11 w-11 justify-center rounded-2xl"
+                        : "w-full gap-3 rounded-xl px-3 py-2.5 text-[1.05rem] font-semibold",
+                      vendorSettingsOpen
+                        ? collapsed
+                          ? isDarkTheme
+                            ? "bg-sea/15 text-seaLight"
+                            : "bg-sea/12 text-sea"
+                          : isDarkTheme
+                            ? "border border-sea/30 bg-sea/10 text-seaLight"
+                            : "border border-sea/25 bg-sea/12 text-sea"
+                        : collapsed
+                          ? isDarkTheme
+                            ? "text-ink/70 hover:bg-white/8 hover:text-ink"
+                            : "text-ink/70 hover:bg-sea/10 hover:text-sea"
+                          : isDarkTheme
+                            ? "text-ink/70 hover:bg-white/8 hover:text-ink"
+                            : "text-ink/70 hover:bg-sea/10 hover:text-sea",
+                    ].join(" ")}
+                    aria-label="Configuracoes"
+                  >
+                    {collapsed && vendorSettingsOpen ? (
+                      <span className={["absolute -left-2 h-7 w-1 rounded-full", isDarkTheme ? "bg-seaLight" : "bg-sea"].join(" ")} />
+                    ) : null}
+                    <Settings size={18} className={vendorSettingsOpen ? (isDarkTheme ? "text-seaLight" : "text-sea") : ""} />
+                    {!collapsed ? <span className="min-w-0 truncate">Configuracoes</span> : null}
+                  </button>
+                ) : null}
               </div>
             </nav>
 
             <div className={["mt-auto border-t p-3", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
-              {collapsed ? (
+              {enableVendorSettingsInSidebar ? (
+                vendorSettingsOpen ? (
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+                      className={[
+                        "inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
+                        isDarkTheme
+                          ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
+                          : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
+                      ].join(" ")}
+                      aria-label={theme === "dark" ? "Ativar modo claro" : "Ativar modo escuro"}
+                    >
+                      {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+                      {!collapsed ? <span className="ml-2 text-sm font-semibold">{theme === "dark" ? "Modo claro" : "Modo escuro"}</span> : null}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => signOut()}
+                      className={[
+                        "inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
+                        isDarkTheme
+                          ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
+                          : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
+                      ].join(" ")}
+                      aria-label="Sair"
+                    >
+                      <LogOut size={15} />
+                      {!collapsed ? <span className="ml-2 text-sm font-semibold">Sair</span> : null}
+                    </button>
+                  </div>
+                ) : null
+              ) : collapsed ? (
                 <div className="flex flex-col gap-2">
                   <button
                     type="button"
@@ -408,7 +492,10 @@ export default function AppLayout() {
                       key={item.to}
                       to={item.to}
                       end={item.to === "/"}
-                      onClick={() => setMobileMenuOpen(false)}
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        setVendorSettingsOpen(false);
+                      }}
                       className={({ isActive }) =>
                         [
                           "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold transition",
@@ -423,29 +510,75 @@ export default function AppLayout() {
                     </NavLink>
                   );
                 })}
+              {enableVendorSettingsInSidebar ? (
+                <button
+                  type="button"
+                  onClick={() => setVendorSettingsOpen((prev) => !prev)}
+                  className={[
+                    "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold transition",
+                    vendorSettingsOpen
+                      ? "bg-sea text-white shadow-lg shadow-sea/25"
+                      : "bg-white/70 text-ink/70 hover:bg-sea/10 hover:text-sea",
+                  ].join(" ")}
+                  aria-label="Configuracoes"
+                >
+                  <Settings size={18} />
+                  Configuracoes
+                </button>
+              ) : null}
             </nav>
 
             <div className="mt-auto pt-6">
-              <button
-                type="button"
-                onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
-              >
-                {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-                {theme === "dark" ? "Modo claro" : "Modo escuro"}
-              </button>
+              {enableVendorSettingsInSidebar ? (
+                vendorSettingsOpen ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+                    >
+                      {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+                      {theme === "dark" ? "Modo claro" : "Modo escuro"}
+                    </button>
 
-              <button
-                type="button"
-                onClick={async () => {
-                  setMobileMenuOpen(false);
-                  await signOut();
-                }}
-                className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
-              >
-                <LogOut size={16} />
-                Sair
-              </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setMobileMenuOpen(false);
+                        setVendorSettingsOpen(false);
+                        await signOut();
+                      }}
+                      className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+                    >
+                      <LogOut size={16} />
+                      Sair
+                    </button>
+                  </>
+                ) : null
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+                  >
+                    {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+                    {theme === "dark" ? "Modo claro" : "Modo escuro"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setMobileMenuOpen(false);
+                      await signOut();
+                    }}
+                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+                  >
+                    <LogOut size={16} />
+                    Sair
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

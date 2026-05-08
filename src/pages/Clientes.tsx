@@ -2905,14 +2905,14 @@ export default function Clientes() {
 
   if (!canView) {
     return (
-      <div className="rounded-2xl border border-sea/20 bg-sand/30 p-6 text-sm text-ink/70">
+      <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-6">
         Este modulo e restrito a supervisao e assistencia.
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-display text-2xl text-ink">Empresas</h2>
@@ -2948,7 +2948,7 @@ export default function Clientes() {
       {canCreate && (
         <form
           onSubmit={handleCreate}
-          className="grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-4 md:grid-cols-6"
+          className="grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-3 md:grid-cols-6 md:p-4"
         >
           <label className="min-w-0 flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
             Codigo
@@ -3442,7 +3442,7 @@ export default function Clientes() {
       </div>
 
       {loading ? (
-        <div className="rounded-2xl border border-sea/20 bg-sand/30 p-6 text-sm text-ink/70">
+        <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-6">
           Carregando empresas...
         </div>
       ) : (
@@ -3591,7 +3591,7 @@ export default function Clientes() {
             </div>
 
             {isEditing ? (
-              <div className="mt-6 grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-4 md:grid-cols-6">
+              <div className="mt-6 grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-3 md:grid-cols-6 md:p-4">
                 <label className="min-w-0 flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
                   Codigo
                   <input
@@ -4334,7 +4334,7 @@ export default function Clientes() {
             <p className="mt-1 text-xs text-ink/60">
               Ja existem {filialCadastroModal.existingCount} cadastro(s) com este codigo.
             </p>
-            <div className="mt-4 grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-4 md:grid-cols-6">
+            <div className="mt-4 grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-3 md:grid-cols-6 md:p-4">
               <label className="min-w-0 flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
                 Codigo
                 <div className="min-w-0 flex items-end gap-1">

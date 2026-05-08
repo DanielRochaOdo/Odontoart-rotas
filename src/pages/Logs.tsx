@@ -293,14 +293,14 @@ export default function Logs() {
 
   if (!isSupervisor) {
     return (
-      <div className="rounded-2xl border border-sea/20 bg-sand/30 p-6 text-sm text-ink/70">
+      <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-6">
         Este modulo e restrito a supervisores.
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       <header>
         <h2 className="font-display text-2xl text-ink">Logs</h2>
         <p className="mt-2 text-sm text-ink/60">
@@ -308,7 +308,7 @@ export default function Logs() {
         </p>
       </header>
 
-      <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-4">
+      <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-3 md:p-4">
         <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
           Acao
           <select
@@ -340,7 +340,7 @@ export default function Logs() {
       </div>
 
       {loading ? (
-        <div className="rounded-2xl border border-sea/20 bg-sand/30 p-6 text-sm text-ink/70">
+        <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-6">
           Carregando logs...
         </div>
       ) : error ? (
@@ -348,7 +348,7 @@ export default function Logs() {
           {error}
         </div>
       ) : groupedLogs.length === 0 ? (
-        <div className="rounded-2xl border border-sea/20 bg-sand/30 p-6 text-sm text-ink/70">
+        <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-6">
           Nenhum registro encontrado.
         </div>
       ) : (
@@ -369,7 +369,7 @@ export default function Logs() {
             const singleRecordId = group.logs.length === 1 ? group.logs[0].record_id : null;
 
             return (
-              <div key={group.id} className="rounded-2xl border border-sea/15 bg-white/95 p-4">
+              <div key={group.id} className="rounded-2xl border border-sea/15 bg-white/95 p-3 md:p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">

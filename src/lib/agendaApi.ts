@@ -148,17 +148,13 @@ const applyFilaRoutingExclusionsToClientesQuery = <T,>(
     if (!chunk.length) return;
     next = next.not("id", "in", buildStringInClause(chunk));
   });
-  chunkValues(blocks.blockedCodigos).forEach((chunk) => {
-    if (!chunk.length) return;
-    next = next.not("codigo", "in", buildStringInClause(chunk));
-  });
   return next as T;
 };
 
 const resolveFilaRoutingBlocks = async () => {
   try {
     const blocks = await fetchFilaRoutingBlockLists();
-    if (!blocks.blockedEmpresaIds.length && !blocks.blockedCodigos.length) return null;
+    if (!blocks.blockedEmpresaIds.length) return null;
     return blocks;
   } catch (error) {
     const maybeError = error as { code?: string; message?: string };
@@ -652,7 +648,7 @@ export const fetchAgenda = async (
 
   const runCountQuery = async (mode: "exact" | "planned") => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let countQuery: any = applySearchAndIds(
+    const countQuery: any = applySearchAndIds(
       applyFilters(
         supabase.from("clientes").select("id", { count: mode, head: true }),
         effectiveFilters,

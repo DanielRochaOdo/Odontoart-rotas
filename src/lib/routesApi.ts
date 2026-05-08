@@ -294,13 +294,10 @@ export const fetchEmpresasLookup = async (options?: EmpresasLookupOptions) => {
 
   try {
     const blocks = await fetchFilaRoutingBlockLists();
-    if (!blocks.blockedEmpresaIds.length && !blocks.blockedCodigos.length) return allRows;
+    if (!blocks.blockedEmpresaIds.length) return allRows;
     const blockedEmpresaIdSet = new Set(blocks.blockedEmpresaIds);
-    const blockedCodigoSet = new Set(blocks.blockedCodigos);
     return allRows.filter((row) => {
       if (blockedEmpresaIdSet.has(row.id)) return false;
-      const codigo = row.codigo?.trim();
-      if (codigo && blockedCodigoSet.has(codigo)) return false;
       return true;
     });
   } catch (error) {
@@ -365,13 +362,10 @@ export const fetchEmpresasLookupByIds = async (empresaIds: string[]) => {
   let filteredRows = Array.from(rowsById.values());
   try {
     const blocks = await fetchFilaRoutingBlockLists();
-    if (blocks.blockedEmpresaIds.length || blocks.blockedCodigos.length) {
+    if (blocks.blockedEmpresaIds.length) {
       const blockedEmpresaIdSet = new Set(blocks.blockedEmpresaIds);
-      const blockedCodigoSet = new Set(blocks.blockedCodigos);
       filteredRows = filteredRows.filter((row) => {
         if (blockedEmpresaIdSet.has(row.id)) return false;
-        const codigo = row.codigo?.trim();
-        if (codigo && blockedCodigoSet.has(codigo)) return false;
         return true;
       });
     }
