@@ -2685,7 +2685,7 @@ export default function Visitas() {
   }, [shouldLockSupervisorRegisterMode]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       <header className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -2744,12 +2744,12 @@ export default function Visitas() {
       </header>
 
       {!canAccess ? (
-        <div className="rounded-2xl border border-sea/20 bg-sand/30 p-6 text-sm text-ink/70">
+        <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-6">
           Este modulo e restrito a usuarios autorizados.
         </div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
-          <section className="rounded-2xl border border-sea/15 bg-white/95 p-4 shadow-card">
+        <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr] lg:gap-6">
+          <section className="rounded-2xl border border-sea/15 bg-white/95 p-3 shadow-card md:p-4">
             <div className="flex items-center justify-between">
               <button
                 type="button"
@@ -2847,7 +2847,7 @@ export default function Visitas() {
             )}
           </section>
 
-          <section className="rounded-2xl border border-sea/15 bg-white/95 p-4 shadow-card">
+          <section className="rounded-2xl border border-sea/15 bg-white/95 p-3 shadow-card md:p-4">
             <div className="flex items-center justify-between">
               <h3 className="font-display text-lg text-ink">Visitas do dia</h3>
               <span className="text-xs text-ink/60">
@@ -2948,6 +2948,11 @@ export default function Visitas() {
                               isSupervisorVisitForLoggedUser(item);
                             const mapAddress = buildMapAddress(item.agenda);
                             const instructionText = item.instructions?.trim() || "";
+                            const isEditRegisteredAction = isCompleted && !item.no_visit_reason;
+                            const registerVisitButtonClass = [
+                              "rounded-lg px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-60",
+                              isEditRegisteredAction ? "bg-orange-500 hover:bg-orange-400" : "bg-sea hover:bg-seaLight",
+                            ].join(" ");
                             const supervisorReasonLabel = item.supervisor_reason
                               ? SUPERVISOR_REASON_LABEL_BY_VALUE.get(item.supervisor_reason) ?? item.supervisor_reason
                               : null;
@@ -3161,7 +3166,7 @@ export default function Visitas() {
                                         type="button"
                                         onClick={() => handleStartRegister(item)}
                                         disabled={Boolean(item.no_visit_reason)}
-                                        className="rounded-lg bg-sea px-3 py-2 text-[11px] font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                                        className={registerVisitButtonClass}
                                       >
                                         {isCompleted
                                           ? item.no_visit_reason
@@ -3192,7 +3197,7 @@ export default function Visitas() {
                                       type="button"
                                       onClick={() => handleStartRegister(item)}
                                       disabled={Boolean(item.no_visit_reason)}
-                                      className="rounded-lg bg-sea px-3 py-2 text-[11px] font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                                      className={registerVisitButtonClass}
                                     >
                                       {isCompleted
                                         ? item.no_visit_reason

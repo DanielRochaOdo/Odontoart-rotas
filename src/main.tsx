@@ -9,10 +9,22 @@ import { initPwaInstall } from "./lib/pwaInstall";
 
 const PWA_RESET_VERSION = "2026-04-30-codigo-lookup-draft-restore-hotfix-1";
 const PWA_RESET_STORAGE_KEY = `odontoart-pwa-reset:${PWA_RESET_VERSION}`;
+const ANDROID_ASSETS_HOST = "appassets.androidplatform.net";
+const THEME_STORAGE_KEY = "theme";
 
-const forcePwaResetOnce = async () => {
+const isAndroidWebViewHost = () =>
+  typeof window !== "undefined" && window.location.hostname === ANDROID_ASSETS_HOST;
+
+const applyStoredTheme = () => {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+  const useDark = storedTheme === "dark";
+  document.documentElement.classList.toggle("dark", useDark);
+  document.body.classList.toggle("dark", useDark);
+};
+
+const clearServiceWorkersAndCaches = async () => {
   if (typeof window === "undefined") return;
-  if (window.localStorage.getItem(PWA_RESET_STORAGE_KEY) === "done") return;
 
   try {
     if ("serviceWorker" in navigator) {
@@ -26,21 +38,44 @@ const forcePwaResetOnce = async () => {
     }
   } catch (error) {
     console.warn("Falha ao limpar cache/PWA legado:", error);
+  }
+};
+
+const forcePwaResetOnce = async () => {
+  if (typeof window === "undefined") return;
+  if (window.localStorage.getItem(PWA_RESET_STORAGE_KEY) === "done") return;
+
+  try {
+    await clearServiceWorkersAndCaches();
   } finally {
     window.localStorage.setItem(PWA_RESET_STORAGE_KEY, "done");
   }
 };
 
-void forcePwaResetOnce();
+if (isAndroidWebViewHost()) {
+  void clearServiceWorkersAndCaches();
+} else {
+  void forcePwaResetOnce();
+}
 
-const updateSW = registerSW({
-  immediate: true,
-  onNeedRefresh() {
-    void updateSW(true);
-  },
-});
+if (!isAndroidWebViewHost()) {
+  const updateSW = registerSW({
+    immediate: true,
+    onNeedRefresh() {
+      void updateSW(true);
+    },
+  });
 
-initPwaInstall();
+  initPwaInstall();
+}
+
+if (typeof window !== "undefined") {
+  applyStoredTheme();
+  window.addEventListener("storage", (event) => {
+    if (event.key === THEME_STORAGE_KEY) applyStoredTheme();
+  });
+  window.addEventListener("odontoart-theme-changed", applyStoredTheme as EventListener);
+}
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   LogOut,
@@ -9,7 +9,7 @@ import {
   Building2,
   Menu,
   X,
-  CheckSquare,
+  ClipboardCheck,
   Sun,
   Moon,
   History,
@@ -29,11 +29,18 @@ type NavItem = {
   roles?: Array<"SUPERVISOR" | "ASSISTENTE" | "VENDEDOR">;
 };
 
+type MobileNavSection = {
+  id: "dashboard" | "operacao" | "clientes" | "fila" | "gestao" | "ajustes";
+  label: string;
+  icon: typeof LayoutDashboard;
+  items: NavItem[];
+};
+
 const navItems: NavItem[] = [
   { label: "Dashboard", to: "/", icon: LayoutDashboard, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
   { label: "Rotas", to: "/agenda", icon: MapPin, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Agenda", to: "/visitas", icon: CalendarCheck, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
-  { label: "Aceite digital", to: "/aceite-digital", icon: CheckSquare, roles: ["VENDEDOR"] },
+  { label: "Aceite digital", to: "/aceite-digital", icon: ClipboardCheck, roles: ["VENDEDOR"] },
   { label: "Empresas", to: "/clientes", icon: Building2, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Modulo Fila", to: "/fila", icon: ListChecks, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "KPI", to: "/kpi", icon: ChartNoAxesCombined, roles: ["SUPERVISOR", "ASSISTENTE"] },
@@ -41,8 +48,21 @@ const navItems: NavItem[] = [
   { label: "Configuracoes", to: "/configuracoes", icon: Settings, roles: ["SUPERVISOR"] },
 ];
 
+const ANDROID_ASSETS_HOST = "appassets.androidplatform.net";
+const isAndroidAppHost = () => {
+  if (typeof window === "undefined") return false;
+  return window.location.hostname === ANDROID_ASSETS_HOST;
+};
+
+const isPathActive = (pathname: string, to: string) => {
+  if (to === "/") return pathname === "/";
+  return pathname === to || pathname.startsWith(`${to}/`);
+};
+
 export default function AppLayout() {
   const { profile, profileError, role, session, signOut } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   useAutoFormDraftPersistence(session?.user?.id ?? "anonymous");
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
@@ -63,6 +83,9 @@ export default function AppLayout() {
     }
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [vendorSettingsOpen, setVendorSettingsOpen] = useState(false);
+  const [mobileExpandedSectionId, setMobileExpandedSectionId] = useState<MobileNavSection["id"] | null>(null);
+  const isAndroidHost = isAndroidAppHost();
 
   useEffect(() => {
     try {
@@ -83,6 +106,14 @@ export default function AppLayout() {
       // ignore
     }
   }, [theme]);
+  const isVendor = role === "VENDEDOR";
+  const enableVendorSettingsInSidebar = isVendor && isAndroidAppHost();
+
+  useEffect(() => {
+    if (!enableVendorSettingsInSidebar && vendorSettingsOpen) {
+      setVendorSettingsOpen(false);
+    }
+  }, [enableVendorSettingsInSidebar, vendorSettingsOpen]);
 
   const initials = useMemo(() => {
     const name = profile?.nome ?? profile?.display_name ?? "Odontoart";
@@ -114,7 +145,79 @@ export default function AppLayout() {
       }),
     [role],
   );
+
+  const mobileNavSections = useMemo<MobileNavSection[]>(() => {
+    const byRoute = new Map(visibleNavItems.map((item) => [item.to, item]));
+    const routeItem = (to: string) => byRoute.get(to);
+
+    const sections: MobileNavSection[] = [
+      { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, items: [routeItem("/")].filter(Boolean) as NavItem[] },
+      { id: "operacao", label: "Operacao", icon: MapPin, items: [routeItem("/agenda"), routeItem("/visitas")].filter(Boolean) as NavItem[] },
+      { id: "clientes", label: "Clientes", icon: Building2, items: [routeItem("/clientes"), routeItem("/aceite-digital")].filter(Boolean) as NavItem[] },
+      { id: "fila", label: "Fila", icon: ListChecks, items: [routeItem("/fila")].filter(Boolean) as NavItem[] },
+      { id: "gestao", label: "Gestao", icon: ChartNoAxesCombined, items: [routeItem("/kpi"), routeItem("/logs")].filter(Boolean) as NavItem[] },
+      { id: "ajustes", label: "Ajustes", icon: Settings, items: [routeItem("/configuracoes")].filter(Boolean) as NavItem[] },
+    ];
+
+    return sections.filter(
+      (section) => section.items.length > 0 || (section.id === "ajustes" && isVendor && isAndroidHost),
+    );
+  }, [isAndroidHost, isVendor, visibleNavItems]);
+
+  const activeMobileSectionId = useMemo<MobileNavSection["id"] | null>(() => {
+    if (mobileExpandedSectionId === "ajustes" && isVendor && isAndroidHost && vendorSettingsOpen) {
+      return "ajustes";
+    }
+    const byPath = mobileNavSections.find((section) =>
+      section.items.some((item) => isPathActive(location.pathname, item.to)),
+    );
+    return byPath?.id ?? (mobileNavSections[0]?.id ?? null);
+  }, [isAndroidHost, isVendor, location.pathname, mobileExpandedSectionId, mobileNavSections, vendorSettingsOpen]);
+
+  const expandedMobileSection = useMemo(
+    () => mobileNavSections.find((section) => section.id === mobileExpandedSectionId) ?? null,
+    [mobileExpandedSectionId, mobileNavSections],
+  );
+  const expandedMobileItems = expandedMobileSection && expandedMobileSection.items.length > 1
+    ? expandedMobileSection.items
+    : [];
+
+  const openVendorSettingsFromBottomBar = isAndroidHost && isVendor && mobileExpandedSectionId === "ajustes";
+  const safeBottomInsetExpr = "env(safe-area-inset-bottom, 0px)";
   const isDarkTheme = theme === "dark";
+
+  useEffect(() => {
+    if (!isAndroidHost && mobileExpandedSectionId) {
+      setMobileExpandedSectionId(null);
+    }
+  }, [isAndroidHost, mobileExpandedSectionId]);
+
+  const handleSelectMobileSection = (section: MobileNavSection) => {
+    if (!isAndroidHost) return;
+
+    if (section.id === "ajustes" && isVendor) {
+      setMobileExpandedSectionId((current) => (current === "ajustes" ? null : "ajustes"));
+      setVendorSettingsOpen((current) => !current);
+      return;
+    }
+
+    setVendorSettingsOpen(false);
+    const primary = section.items[0];
+    if (!primary) return;
+
+    if (section.items.length > 1) {
+      setMobileExpandedSectionId((current) => (current === section.id ? null : section.id));
+      return;
+    }
+
+    if (isPathActive(location.pathname, primary.to)) {
+      setMobileExpandedSectionId(null);
+      return;
+    }
+
+    setMobileExpandedSectionId(null);
+    navigate(primary.to);
+  };
 
   return (
     <div className="min-h-screen bg-hero-gradient overflow-x-hidden text-ink">
@@ -212,6 +315,7 @@ export default function AppLayout() {
                         key={item.to}
                         to={item.to}
                         end={item.to === "/"}
+                        onClick={() => setVendorSettingsOpen(false)}
                         title={collapsed ? item.label : undefined}
                         className={({ isActive }) =>
                           [
@@ -249,11 +353,79 @@ export default function AppLayout() {
                       </NavLink>
                     );
                   })}
+                {enableVendorSettingsInSidebar ? (
+                  <button
+                    type="button"
+                    onClick={() => setVendorSettingsOpen((prev) => !prev)}
+                    title={collapsed ? "Configuracoes" : undefined}
+                    className={[
+                      "group relative flex items-center transition",
+                      collapsed
+                        ? "h-11 w-11 justify-center rounded-2xl"
+                        : "w-full gap-3 rounded-xl px-3 py-2.5 text-[1.05rem] font-semibold",
+                      vendorSettingsOpen
+                        ? collapsed
+                          ? isDarkTheme
+                            ? "bg-sea/15 text-seaLight"
+                            : "bg-sea/12 text-sea"
+                          : isDarkTheme
+                            ? "border border-sea/30 bg-sea/10 text-seaLight"
+                            : "border border-sea/25 bg-sea/12 text-sea"
+                        : collapsed
+                          ? isDarkTheme
+                            ? "text-ink/70 hover:bg-white/8 hover:text-ink"
+                            : "text-ink/70 hover:bg-sea/10 hover:text-sea"
+                          : isDarkTheme
+                            ? "text-ink/70 hover:bg-white/8 hover:text-ink"
+                            : "text-ink/70 hover:bg-sea/10 hover:text-sea",
+                    ].join(" ")}
+                    aria-label="Configuracoes"
+                  >
+                    {collapsed && vendorSettingsOpen ? (
+                      <span className={["absolute -left-2 h-7 w-1 rounded-full", isDarkTheme ? "bg-seaLight" : "bg-sea"].join(" ")} />
+                    ) : null}
+                    <Settings size={18} className={vendorSettingsOpen ? (isDarkTheme ? "text-seaLight" : "text-sea") : ""} />
+                    {!collapsed ? <span className="min-w-0 truncate">Configuracoes</span> : null}
+                  </button>
+                ) : null}
               </div>
             </nav>
 
             <div className={["mt-auto border-t p-3", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
-              {collapsed ? (
+              {enableVendorSettingsInSidebar ? (
+                vendorSettingsOpen ? (
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+                      className={[
+                        "inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
+                        isDarkTheme
+                          ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
+                          : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
+                      ].join(" ")}
+                      aria-label={theme === "dark" ? "Ativar modo claro" : "Ativar modo escuro"}
+                    >
+                      {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+                      {!collapsed ? <span className="ml-2 text-sm font-semibold">{theme === "dark" ? "Modo claro" : "Modo escuro"}</span> : null}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => signOut()}
+                      className={[
+                        "inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
+                        isDarkTheme
+                          ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
+                          : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
+                      ].join(" ")}
+                      aria-label="Sair"
+                    >
+                      <LogOut size={15} />
+                      {!collapsed ? <span className="ml-2 text-sm font-semibold">Sair</span> : null}
+                    </button>
+                  </div>
+                ) : null
+              ) : collapsed ? (
                 <div className="flex flex-col gap-2">
                   <button
                     type="button"
@@ -408,7 +580,10 @@ export default function AppLayout() {
                       key={item.to}
                       to={item.to}
                       end={item.to === "/"}
-                      onClick={() => setMobileMenuOpen(false)}
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        setVendorSettingsOpen(false);
+                      }}
                       className={({ isActive }) =>
                         [
                           "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold transition",
@@ -423,29 +598,75 @@ export default function AppLayout() {
                     </NavLink>
                   );
                 })}
+              {enableVendorSettingsInSidebar ? (
+                <button
+                  type="button"
+                  onClick={() => setVendorSettingsOpen((prev) => !prev)}
+                  className={[
+                    "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold transition",
+                    vendorSettingsOpen
+                      ? "bg-sea text-white shadow-lg shadow-sea/25"
+                      : "bg-white/70 text-ink/70 hover:bg-sea/10 hover:text-sea",
+                  ].join(" ")}
+                  aria-label="Configuracoes"
+                >
+                  <Settings size={18} />
+                  Configuracoes
+                </button>
+              ) : null}
             </nav>
 
             <div className="mt-auto pt-6">
-              <button
-                type="button"
-                onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
-              >
-                {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-                {theme === "dark" ? "Modo claro" : "Modo escuro"}
-              </button>
+              {enableVendorSettingsInSidebar ? (
+                vendorSettingsOpen ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+                    >
+                      {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+                      {theme === "dark" ? "Modo claro" : "Modo escuro"}
+                    </button>
 
-              <button
-                type="button"
-                onClick={async () => {
-                  setMobileMenuOpen(false);
-                  await signOut();
-                }}
-                className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
-              >
-                <LogOut size={16} />
-                Sair
-              </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setMobileMenuOpen(false);
+                        setVendorSettingsOpen(false);
+                        await signOut();
+                      }}
+                      className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+                    >
+                      <LogOut size={16} />
+                      Sair
+                    </button>
+                  </>
+                ) : null
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+                  >
+                    {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+                    {theme === "dark" ? "Modo claro" : "Modo escuro"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setMobileMenuOpen(false);
+                      await signOut();
+                    }}
+                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+                  >
+                    <LogOut size={16} />
+                    Sair
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

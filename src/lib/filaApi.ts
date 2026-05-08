@@ -246,28 +246,27 @@ export const updateFilaSettings = async (payload: {
 export const fetchFilaControls = async (params?: {
   state?: FilaState | "";
   search?: string;
+  searchMode?: "codigo" | "empresa";
 }) => {
   let query = supabase
     .from("queue_release_controls_view")
     .select(
       "empresa_id, codigo, empresa, cnpj, data_contrato, waiting_days_snapshot, eligible_at, state, effective_state, manual_block_until, manual_reason, manual_override_by, manual_override_at, created_at, updated_at, days_remaining",
     )
-    .order("created_at", { ascending: false })
-    .gte("data_contrato", FILA_ANO_MES_PRIMEIRO_PAGAMENTO_CORTE);
+    .order("created_at", { ascending: false });
 
   if (params?.state) {
     query = query.eq("effective_state", params.state);
   }
 
   const search = (params?.search ?? "").replace(/%/g, "").trim();
+  const searchMode = params?.searchMode ?? "codigo";
   if (search) {
-    query = query.or(
-      [
-        `codigo.ilike.%${search}%`,
-        `empresa.ilike.%${search}%`,
-        `cnpj.ilike.%${search}%`,
-      ].join(","),
-    );
+    if (searchMode === "codigo") {
+      query = query.eq("codigo", search);
+    } else {
+      query = query.ilike("empresa", search);
+    }
   }
 
   const { data, error } = await query;
@@ -410,7 +409,6 @@ export const fetchFilaRoutingBlockLists = async (options?: { force?: boolean }) 
     if (error) throw error;
 
     const blockedEmpresaIds = new Set<string>();
-    const blockedCodigos = new Set<string>();
 
     ((data ?? []) as Array<{
       empresa_id: string;
@@ -421,14 +419,12 @@ export const fetchFilaRoutingBlockLists = async (options?: { force?: boolean }) 
       const eligible = isFilaControlEligibleForRoutes(row);
       if (!eligible) {
         blockedEmpresaIds.add(row.empresa_id);
-        const codigo = row.codigo?.trim();
-        if (codigo) blockedCodigos.add(codigo);
       }
     });
 
     const snapshot: FilaRoutingBlockLists = {
       blockedEmpresaIds: Array.from(blockedEmpresaIds),
-      blockedCodigos: Array.from(blockedCodigos),
+      blockedCodigos: [],
       cachedAt: Date.now(),
     };
     filaRoutingBlocksCache = snapshot;

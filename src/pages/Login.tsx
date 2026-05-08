@@ -1,44 +1,16 @@
-﻿import { useEffect, useState } from "react";
-import { Navigate, useLocation } from "react-router-dom";
-import { MonitorDown } from "lucide-react";
+import { useState } from "react";
+import { Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import PwaInstallHint from "../components/PwaInstallHint";
-import {
-  getInstallGuide,
-  initPwaInstall,
-  subscribePwaInstall,
-  triggerPwaInstall,
-  waitForInstallPrompt,
-} from "../lib/pwaInstall";
-
-type InstallGuide = {
-  title: string;
-  steps: string[];
-};
 
 export default function Login() {
   const { session, signIn } = useAuth();
-  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [canInstall, setCanInstall] = useState(false);
-  const [isStandalone, setIsStandalone] = useState(false);
-  const [installGuide, setInstallGuide] = useState<InstallGuide | null>(null);
-
-  const from = (location.state as { from?: Location })?.from?.pathname ?? "/";
-
-  useEffect(() => {
-    initPwaInstall();
-    return subscribePwaInstall((state) => {
-      setCanInstall(state.canInstall);
-      setIsStandalone(state.isStandalone);
-    });
-  }, []);
 
   if (session) {
-    return <Navigate to={from} replace />;
+    return <Navigate to="/" replace />;
   }
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -58,32 +30,8 @@ export default function Login() {
     }
   };
 
-  const handleDownloadApp = async () => {
-    setInstallGuide(null);
-
-    if (isStandalone) {
-      setInstallGuide({ title: "App ja instalado", steps: ["Este dispositivo ja tem o app instalado."] });
-      return;
-    }
-
-    const promptReady = canInstall || (await waitForInstallPrompt(1200));
-    if (promptReady) {
-      const outcome = await triggerPwaInstall();
-      if (outcome === "dismissed") {
-        setInstallGuide({ title: "Instalacao cancelada", steps: ["Clique em Instalar app para tentar novamente."] });
-      }
-      return;
-    }
-
-    setInstallGuide(getInstallGuide());
-  };
-
   return (
     <div className="min-h-screen bg-hero-gradient">
-      <div className="mx-auto w-full max-w-6xl px-4 pt-4 md:px-6 md:pt-6">
-        <PwaInstallHint />
-      </div>
-
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col items-center justify-center px-4 py-8 lg:flex-row lg:gap-12">
         <div className="max-w-md">
           <p className="text-xs uppercase tracking-[0.35em] text-muted">Odontoart</p>
@@ -138,27 +86,6 @@ export default function Login() {
             >
               {loading ? "Entrando..." : "Entrar"}
             </button>
-
-            <button
-              type="button"
-              disabled={isStandalone}
-              onClick={() => void handleDownloadApp()}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white px-4 py-2 text-sm font-semibold text-sea transition hover:border-sea disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              <MonitorDown size={16} />
-              {isStandalone ? "App instalado" : "Instalar app"}
-            </button>
-
-            {installGuide ? (
-              <div className="rounded-xl border border-sea/20 bg-sand/40 p-3 text-xs text-ink/80">
-                <p className="font-semibold text-ink">{installGuide.title}</p>
-                <ul className="mt-2 list-disc space-y-1 pl-4">
-                  {installGuide.steps.map((step) => (
-                    <li key={step}>{step}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
           </form>
         </div>
       </div>

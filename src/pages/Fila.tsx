@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Download, LoaderCircle, RefreshCw, Unlock } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
@@ -73,6 +73,7 @@ export default function Fila() {
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<FilaControlRow[]>([]);
   const [search, setSearch] = useState("");
+  const [searchMode, setSearchMode] = useState<"codigo" | "empresa">("codigo");
   const [stateFilter, setStateFilter] = useState<FilaState | "">("");
   const [savingSettings, setSavingSettings] = useState(false);
   const [defaultWaitingDaysInput, setDefaultWaitingDaysInput] = useState("30");
@@ -80,9 +81,11 @@ export default function Fila() {
   const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
 
   const [waitingDraftByEmpresa, setWaitingDraftByEmpresa] = useState<Record<string, string>>({});
+  const loadRequestSeqRef = useRef(0);
 
   const loadData = useCallback(async () => {
     if (!canManage) return;
+    const requestSeq = ++loadRequestSeqRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -90,8 +93,9 @@ export default function Fila() {
       await generateFilaCountdownEvents();
       const [settingsRow, controlRows] = await Promise.all([
         fetchFilaSettings(),
-        fetchFilaControls({ state: stateFilter, search }),
+        fetchFilaControls({ state: stateFilter, search, searchMode }),
       ]);
+      if (requestSeq !== loadRequestSeqRef.current) return;
       if (settingsRow) {
         setDefaultWaitingDaysInput(String(settingsRow.default_waiting_days));
         setReminderDaysInput(settingsRow.reminder_days.join(","));
@@ -99,6 +103,7 @@ export default function Fila() {
       setRows(controlRows);
       setUnavailable(false);
     } catch (err) {
+      if (requestSeq !== loadRequestSeqRef.current) return;
       const maybeError = err as { code?: string; message?: string };
       if (isMissingFilaBackendError(maybeError)) {
         setUnavailable(true);
@@ -108,9 +113,11 @@ export default function Fila() {
       }
       setError(maybeError.message ?? "Erro ao carregar modulo fila.");
     } finally {
-      setLoading(false);
+      if (requestSeq === loadRequestSeqRef.current) {
+        setLoading(false);
+      }
     }
-  }, [canManage, search, stateFilter]);
+  }, [canManage, search, searchMode, stateFilter]);
 
   useEffect(() => {
     void loadData();
@@ -162,7 +169,7 @@ export default function Fila() {
 
   if (!canManage) {
     return (
-      <div className="rounded-2xl border border-sea/20 bg-sand/30 p-6 text-sm text-ink/70">
+      <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-6">
         Este modulo e restrito a supervisao e assistencia.
       </div>
     );
@@ -170,37 +177,37 @@ export default function Fila() {
 
   if (unavailable) {
     return (
-      <div className="rounded-2xl border border-amber-300 bg-amber-50 p-6 text-sm text-amber-900">
+      <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 md:p-6">
         Modulo Fila indisponivel. Aplique a migration do banco para habilitar este recurso.
       </div>
     );
   }
 
   return (
-    <div className="space-y-5">
-      <header className="rounded-3xl border border-sea/15 bg-white/95 p-4 shadow-card sm:p-5">
+    <div className="space-y-4 md:space-y-5">
+      <header className="rounded-3xl border border-sea/15 bg-white/95 p-3 shadow-card sm:p-4 md:p-5">
         <h2 className="mt-1 font-display text-2xl text-ink">Fila</h2>
         <p className="mt-2 max-w-3xl text-sm text-ink/70">
           Controle de carencia e liberacao de novas empresas para o modulo de rotas.
         </p>
       </header>
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <article className="rounded-2xl border border-sea/20 bg-white/90 p-4">
+      <section className="grid gap-3 md:grid-cols-3 md:gap-4">
+        <article className="rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
           <p className="text-xs uppercase tracking-wide text-ink/60">Aguardando prazo</p>
           <p className="mt-2 text-2xl font-semibold text-ink">{pendingCount}</p>
         </article>
-        <article className="rounded-2xl border border-sea/20 bg-white/90 p-4">
+        <article className="rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
           <p className="text-xs uppercase tracking-wide text-ink/60">Liberada automatica</p>
           <p className="mt-2 text-2xl font-semibold text-emerald-700">{readyAutoCount}</p>
         </article>
-        <article className="rounded-2xl border border-sea/20 bg-white/90 p-4">
+        <article className="rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
           <p className="text-xs uppercase tracking-wide text-ink/60">Liberada manual</p>
           <p className="mt-2 text-2xl font-semibold text-teal-700">{releasedManualCount}</p>
         </article>
       </section>
 
-      <section className="rounded-2xl border border-sea/20 bg-white/90 p-4">
+      <section className="rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-ink/70">Configuracao padrao</h3>
           <button
@@ -270,14 +277,25 @@ export default function Fila() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-sea/20 bg-white/95 p-4 shadow-card">
-        <div className="grid gap-3 md:grid-cols-5">
+      <section className="rounded-2xl border border-sea/20 bg-white/95 p-3 shadow-card md:p-4">
+        <div className="grid gap-3 md:grid-cols-6">
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold text-ink/70">Buscar por</span>
+            <select
+              value={searchMode}
+              onChange={(event) => setSearchMode(event.target.value as "codigo" | "empresa")}
+              className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm outline-none focus:border-sea"
+            >
+              <option value="codigo">Codigo (exato)</option>
+              <option value="empresa">Nome (exato)</option>
+            </select>
+          </label>
           <label className="flex flex-col gap-1 md:col-span-2">
             <span className="text-[11px] font-semibold text-ink/70">Buscar na fila</span>
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Codigo, empresa ou cnpj"
+              placeholder={searchMode === "codigo" ? "Digite o codigo exato" : "Digite o nome exato"}
               className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm outline-none focus:border-sea"
             />
           </label>
