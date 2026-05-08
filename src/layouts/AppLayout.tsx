@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 import {
   LayoutDashboard,
   LogOut,
@@ -29,13 +29,6 @@ type NavItem = {
   roles?: Array<"SUPERVISOR" | "ASSISTENTE" | "VENDEDOR">;
 };
 
-type MobileNavSection = {
-  id: "dashboard" | "operacao" | "clientes" | "fila" | "gestao" | "ajustes";
-  label: string;
-  icon: typeof LayoutDashboard;
-  items: NavItem[];
-};
-
 const navItems: NavItem[] = [
   { label: "Dashboard", to: "/", icon: LayoutDashboard, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
   { label: "Rotas", to: "/agenda", icon: MapPin, roles: ["SUPERVISOR", "ASSISTENTE"] },
@@ -54,15 +47,8 @@ const isAndroidAppHost = () => {
   return window.location.hostname === ANDROID_ASSETS_HOST;
 };
 
-const isPathActive = (pathname: string, to: string) => {
-  if (to === "/") return pathname === "/";
-  return pathname === to || pathname.startsWith(`${to}/`);
-};
-
 export default function AppLayout() {
   const { profile, profileError, role, session, signOut } = useAuth();
-  const location = useLocation();
-  const navigate = useNavigate();
   useAutoFormDraftPersistence(session?.user?.id ?? "anonymous");
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
@@ -84,8 +70,6 @@ export default function AppLayout() {
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [vendorSettingsOpen, setVendorSettingsOpen] = useState(false);
-  const [mobileExpandedSectionId, setMobileExpandedSectionId] = useState<MobileNavSection["id"] | null>(null);
-  const isAndroidHost = isAndroidAppHost();
 
   useEffect(() => {
     try {
@@ -145,79 +129,7 @@ export default function AppLayout() {
       }),
     [role],
   );
-
-  const mobileNavSections = useMemo<MobileNavSection[]>(() => {
-    const byRoute = new Map(visibleNavItems.map((item) => [item.to, item]));
-    const routeItem = (to: string) => byRoute.get(to);
-
-    const sections: MobileNavSection[] = [
-      { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, items: [routeItem("/")].filter(Boolean) as NavItem[] },
-      { id: "operacao", label: "Operacao", icon: MapPin, items: [routeItem("/agenda"), routeItem("/visitas")].filter(Boolean) as NavItem[] },
-      { id: "clientes", label: "Clientes", icon: Building2, items: [routeItem("/clientes"), routeItem("/aceite-digital")].filter(Boolean) as NavItem[] },
-      { id: "fila", label: "Fila", icon: ListChecks, items: [routeItem("/fila")].filter(Boolean) as NavItem[] },
-      { id: "gestao", label: "Gestao", icon: ChartNoAxesCombined, items: [routeItem("/kpi"), routeItem("/logs")].filter(Boolean) as NavItem[] },
-      { id: "ajustes", label: "Ajustes", icon: Settings, items: [routeItem("/configuracoes")].filter(Boolean) as NavItem[] },
-    ];
-
-    return sections.filter(
-      (section) => section.items.length > 0 || (section.id === "ajustes" && isVendor && isAndroidHost),
-    );
-  }, [isAndroidHost, isVendor, visibleNavItems]);
-
-  const activeMobileSectionId = useMemo<MobileNavSection["id"] | null>(() => {
-    if (mobileExpandedSectionId === "ajustes" && isVendor && isAndroidHost && vendorSettingsOpen) {
-      return "ajustes";
-    }
-    const byPath = mobileNavSections.find((section) =>
-      section.items.some((item) => isPathActive(location.pathname, item.to)),
-    );
-    return byPath?.id ?? (mobileNavSections[0]?.id ?? null);
-  }, [isAndroidHost, isVendor, location.pathname, mobileExpandedSectionId, mobileNavSections, vendorSettingsOpen]);
-
-  const expandedMobileSection = useMemo(
-    () => mobileNavSections.find((section) => section.id === mobileExpandedSectionId) ?? null,
-    [mobileExpandedSectionId, mobileNavSections],
-  );
-  const expandedMobileItems = expandedMobileSection && expandedMobileSection.items.length > 1
-    ? expandedMobileSection.items
-    : [];
-
-  const openVendorSettingsFromBottomBar = isAndroidHost && isVendor && mobileExpandedSectionId === "ajustes";
-  const safeBottomInsetExpr = "env(safe-area-inset-bottom, 0px)";
   const isDarkTheme = theme === "dark";
-
-  useEffect(() => {
-    if (!isAndroidHost && mobileExpandedSectionId) {
-      setMobileExpandedSectionId(null);
-    }
-  }, [isAndroidHost, mobileExpandedSectionId]);
-
-  const handleSelectMobileSection = (section: MobileNavSection) => {
-    if (!isAndroidHost) return;
-
-    if (section.id === "ajustes" && isVendor) {
-      setMobileExpandedSectionId((current) => (current === "ajustes" ? null : "ajustes"));
-      setVendorSettingsOpen((current) => !current);
-      return;
-    }
-
-    setVendorSettingsOpen(false);
-    const primary = section.items[0];
-    if (!primary) return;
-
-    if (section.items.length > 1) {
-      setMobileExpandedSectionId((current) => (current === section.id ? null : section.id));
-      return;
-    }
-
-    if (isPathActive(location.pathname, primary.to)) {
-      setMobileExpandedSectionId(null);
-      return;
-    }
-
-    setMobileExpandedSectionId(null);
-    navigate(primary.to);
-  };
 
   return (
     <div className="min-h-screen bg-hero-gradient overflow-x-hidden text-ink">
