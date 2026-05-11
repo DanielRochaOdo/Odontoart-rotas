@@ -9,16 +9,7 @@ import {
   syncFilaAutoRegistration,
   type FilaPendingNotificationRow,
 } from "../lib/filaApi";
-
-const formatDateTime = (value: string | null | undefined) => {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("pt-BR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
-};
+import { formatDateTimeBr } from "../lib/dateFormat";
 
 const buildAlertText = (row: FilaPendingNotificationRow) => {
   const payload = row.payload ?? {};
@@ -32,7 +23,7 @@ const buildAlertText = (row: FilaPendingNotificationRow) => {
       : typeof payload.new_eligible_at === "string"
         ? payload.new_eligible_at
         : null;
-  const eligibleAt = formatDateTime(eligibleAtRaw);
+  const eligibleAt = formatDateTimeBr(eligibleAtRaw);
   const actorName =
     typeof payload.actor_name === "string" && payload.actor_name.trim()
       ? payload.actor_name.trim()
@@ -139,7 +130,9 @@ export default function FilaAlertsModal() {
     if (!canView || unavailable) return;
     setLoading(true);
     try {
-      await syncFilaAutoRegistration();
+      void syncFilaAutoRegistration().catch((error) => {
+        console.warn("Falha na sincronizacao de fila em background (alertas):", error);
+      });
       await generateFilaCountdownEvents();
       const data = await fetchFilaPendingNotifications(50);
       const dismissed = dismissedIdsRef.current;
@@ -184,7 +177,7 @@ export default function FilaAlertsModal() {
         message: buildAlertText(row),
         codigo: getDisplayCodigo(row),
         empresa: getDisplayEmpresa(row),
-        createdAt: formatDateTime(row.created_at),
+        createdAt: formatDateTimeBr(row.created_at),
       })),
     [rows],
   );

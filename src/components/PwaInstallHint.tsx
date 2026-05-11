@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { MonitorDown, Share2, X } from "lucide-react";
+import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import { initPwaInstall, subscribePwaInstall, triggerPwaInstall } from "../lib/pwaInstall";
 
 const IOS_DISMISS_KEY = "pwa_install_ios_dismissed";
@@ -8,14 +9,22 @@ const ANDROID_DISMISS_KEY = "pwa_install_android_dismissed";
 export default function PwaInstallHint() {
   const [canInstall, setCanInstall] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
-  const [iosDismissed, setIosDismissed] = useState(false);
-  const [androidDismissed, setAndroidDismissed] = useState(false);
+  const [iosDismissed, setIosDismissed] = useLocalStorageState<boolean>(IOS_DISMISS_KEY, false, {
+    parse: (raw) => raw === "1",
+    serialize: (value) => (value ? "1" : "0"),
+  });
+  const [androidDismissed, setAndroidDismissed] = useLocalStorageState<boolean>(
+    ANDROID_DISMISS_KEY,
+    false,
+    {
+      parse: (raw) => raw === "1",
+      serialize: (value) => (value ? "1" : "0"),
+    },
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     initPwaInstall();
-    setIosDismissed(localStorage.getItem(IOS_DISMISS_KEY) === "1");
-    setAndroidDismissed(localStorage.getItem(ANDROID_DISMISS_KEY) === "1");
     return subscribePwaInstall((state) => {
       setCanInstall(state.canInstall);
       setIsStandalone(state.isStandalone);
@@ -32,22 +41,19 @@ export default function PwaInstallHint() {
   }, []);
 
   const dismissIos = useCallback(() => {
-    localStorage.setItem(IOS_DISMISS_KEY, "1");
     setIosDismissed(true);
-  }, []);
+  }, [setIosDismissed]);
 
   const dismissAndroid = useCallback(() => {
-    localStorage.setItem(ANDROID_DISMISS_KEY, "1");
     setAndroidDismissed(true);
-  }, []);
+  }, [setAndroidDismissed]);
 
   const installApp = useCallback(async () => {
     const outcome = await triggerPwaInstall();
     if (outcome === "dismissed") {
-      localStorage.setItem(ANDROID_DISMISS_KEY, "1");
       setAndroidDismissed(true);
     }
-  }, []);
+  }, [setAndroidDismissed]);
 
   if (isStandalone) return null;
 

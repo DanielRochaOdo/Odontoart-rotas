@@ -385,10 +385,11 @@ export const upsertClientes = async (
     cidade?: string | null;
     uf?: string | null;
   }>,
-  _options?: {
+  options?: {
     skipDataUltimaVisitaSync?: boolean;
   },
 ) => {
+  void options;
   if (payloads.length === 0) return [];
   const normalized = payloads.map((payload) => ({
     codigo: payload.codigo ?? null,

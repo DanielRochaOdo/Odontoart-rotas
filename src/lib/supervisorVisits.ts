@@ -3,8 +3,6 @@ export const VISIT_TYPE = {
   SUPERVISOR_RELACIONAMENTO: "SUPERVISOR_RELACIONAMENTO",
 } as const;
 
-export type VisitType = (typeof VISIT_TYPE)[keyof typeof VISIT_TYPE];
-
 export const SUPERVISOR_VISIT_REASON_OPTIONS = [
   { value: "RETENCAO", label: "Retencao" },
   { value: "RELACIONAMENTO", label: "Relacionamento" },
@@ -18,8 +16,6 @@ export const VISIT_REGISTER_MODE = {
   PADRAO: "PADRAO",
   SUPERVISOR_DIFERENCIADO: "SUPERVISOR_DIFERENCIADO",
 } as const;
-
-export type VisitRegisterMode = (typeof VISIT_REGISTER_MODE)[keyof typeof VISIT_REGISTER_MODE];
 
 export const SUPERVISOR_DESCRICAO_VISITA_OPTIONS = [
   { value: "REUNIAO_REALIZADA", label: "Reuniao realizada" },

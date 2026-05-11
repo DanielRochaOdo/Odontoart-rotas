@@ -51,6 +51,3 @@ export const normalizeText = (
 
 export const normalizeSearchText = (value: string | null | undefined) =>
   normalizeText(value, { letterCase: "lower" });
-
-export const normalizeSearchTokenText = (value: string | null | undefined) =>
-  normalizeText(value, { letterCase: "upper", stripNonAlphanumeric: true });

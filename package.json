@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "backfill:clientes-cnpj": "tsx scripts/backfill_clientes_cnpj.ts"
+    "backfill:clientes-cnpj": "tsx scripts/backfill_clientes_cnpj.ts",
+    "test:fila-data-contrato": "tsx scripts/test_fila_data_contrato.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",

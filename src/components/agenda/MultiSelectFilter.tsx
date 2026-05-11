@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, Filter } from "lucide-react";
+import { useAnchoredPopover } from "../../hooks/useAnchoredPopover";
 import { normalizeSearchText } from "../../lib/textNormalize";
 
 type MultiSelectFilterProps = {
@@ -45,7 +46,6 @@ export default function MultiSelectFilter({
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const fieldId = useMemo(() => makeFieldId(label), [label]);
   const optionsByKey = useMemo(() => {
     const map = new Map<string, string>();
@@ -57,34 +57,43 @@ export default function MultiSelectFilter({
     });
     return map;
   }, [options]);
-  const canonicalizeValue = (valueToCanonicalize: string) => {
-    const key = normalizeOptionKey(valueToCanonicalize);
-    if (!key) return valueToCanonicalize;
-    return optionsByKey.get(key) ?? valueToCanonicalize;
-  };
+  const canonicalizeValue = useCallback(
+    (valueToCanonicalize: string) => {
+      const key = normalizeOptionKey(valueToCanonicalize);
+      if (!key) return valueToCanonicalize;
+      return optionsByKey.get(key) ?? valueToCanonicalize;
+    },
+    [optionsByKey],
+  );
   const normalizedExternalValue = useMemo(
     () => dedupeOptions(value.map((item) => canonicalizeValue(item))),
-    [optionsByKey, value],
+    [canonicalizeValue, value],
   );
   const mergedOptions = useMemo(
     () => dedupeOptions([...options, ...value.map((item) => canonicalizeValue(item))]),
-    [options, optionsByKey, value],
+    [options, canonicalizeValue, value],
   );
-
-  const computePosition = () => {
-    const button = buttonRef.current;
-    if (!button) return;
-    const rect = button.getBoundingClientRect();
-    const width = 256;
-    const gap = 8;
-    const padding = 12;
-    let left = rect.left;
-    if (left + width > window.innerWidth - padding) {
-      left = Math.max(padding, window.innerWidth - width - padding);
-    }
-    const top = rect.bottom + gap;
-    setPosition({ top, left });
-  };
+  const getPosition = useCallback(
+    (rect: DOMRect, viewport: { width: number }) => {
+      const width = 256;
+      const gap = 8;
+      const padding = 12;
+      let left = rect.left;
+      if (left + width > viewport.width - padding) {
+        left = Math.max(padding, viewport.width - width - padding);
+      }
+      const top = rect.bottom + gap;
+      return { top, left };
+    },
+    [],
+  );
+  const { position, recomputePosition } = useAnchoredPopover({
+    open,
+    anchorRef: buttonRef,
+    popoverRef,
+    onRequestClose: () => setOpen(false),
+    getPosition,
+  });
 
   const openMenu = (event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -93,11 +102,11 @@ export default function MultiSelectFilter({
       setOpen(false);
       return;
     }
-    setDraft(dedupeOptions(value.map((item) => canonicalizeValue(item))));
+    setDraft(normalizedExternalValue);
     setQuery("");
     onOpen?.();
     setOpen(true);
-    computePosition();
+    recomputePosition();
   };
 
   const filteredOptions = useMemo(() => {
@@ -114,56 +123,6 @@ export default function MultiSelectFilter({
         : dedupeOptions([...prev, canonical]),
     );
   };
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (!target) return;
-      const path = event.composedPath?.() ?? [];
-      const isInside = [buttonRef, popoverRef].some((ref) => {
-        const element = ref.current;
-        if (!element) return false;
-        return element.contains(target) || path.includes(element);
-      });
-      if (isInside) return;
-      setOpen(false);
-    };
-    document.addEventListener("pointerdown", handler, true);
-    return () => {
-      document.removeEventListener("pointerdown", handler, true);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => {
-      window.removeEventListener("keydown", handleKey);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    computePosition();
-    const handler = () => computePosition();
-    window.addEventListener("resize", handler);
-    window.addEventListener("scroll", handler, true);
-    return () => {
-      window.removeEventListener("resize", handler);
-      window.removeEventListener("scroll", handler, true);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    setDraft(normalizedExternalValue);
-  }, [normalizedExternalValue, open]);
 
   return (
     <div
@@ -195,7 +154,7 @@ export default function MultiSelectFilter({
 
       {open && position
         ? createPortal(
-          <div
+            <div
               ref={popoverRef}
               className="fixed z-[9999] w-64 rounded-2xl border border-sea/20 bg-white p-3 shadow-xl"
               style={{ top: position.top, left: position.left }}

@@ -18,3 +18,17 @@ export const formatDateBr = (value: string | null | undefined, fallback = "-") =
     year: "numeric",
   }).format(parsed);
 };
+
+export const formatDateTimeBr = (value: string | null | undefined, fallback = "-") => {
+  if (!value) return fallback;
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return trimmed;
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(parsed);
+};

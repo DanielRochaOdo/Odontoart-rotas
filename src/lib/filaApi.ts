@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import { fetchEmpresaByEmpresaId } from "./odontoartEmpresaApi";
+import { DATA_CORTE_FILA, evaluateDataContratoForFila } from "./filaDataContrato";
 
 export type FilaState = "PENDING_WAIT" | "READY_AUTO" | "RELEASED_MANUAL" | "BLOCKED_MANUAL";
 
@@ -70,87 +71,11 @@ type SupabaseLikeError = { code?: string; message?: string } | null;
 const FILA_AUTO_SYNC_STORAGE_KEY = "filaAutoSyncAtMsV1";
 const FILA_AUTO_SYNC_DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
 const FILA_ROUTING_BLOCKS_CACHE_MS = 60 * 1000;
-export const FILA_ANO_MES_PRIMEIRO_PAGAMENTO_CORTE = "2026-01-01";
-export const FILA_DATA_CONTRATO_CORTE = FILA_ANO_MES_PRIMEIRO_PAGAMENTO_CORTE;
+export const FILA_ANO_MES_PRIMEIRO_PAGAMENTO_CORTE = DATA_CORTE_FILA;
 let filaAutoSyncPromise: Promise<number> | null = null;
 let filaAutoSyncLastRunAt = 0;
 let filaRoutingBlocksCache: FilaRoutingBlockLists | null = null;
 let filaRoutingBlocksPromise: Promise<FilaRoutingBlockLists> | null = null;
-
-const toDateOnlyFromTimestamp = (value: string | null | undefined) => {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
-
-const parseDataContratoToIsoDate = (value: string | null | undefined) => {
-  const trimmed = (value ?? "").trim();
-  if (!trimmed) return null;
-
-  const ymdSlash = trimmed.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
-  if (ymdSlash) return `${ymdSlash[1]}-${ymdSlash[2]}-${ymdSlash[3]}`;
-
-  const ymdDash = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (ymdDash) return `${ymdDash[1]}-${ymdDash[2]}-${ymdDash[3]}`;
-
-  const dmySlash = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (dmySlash) return `${dmySlash[3]}-${dmySlash[2]}-${dmySlash[1]}`;
-
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString().slice(0, 10);
-};
-
-const parseAnoMesPrimeiroPagamentoToIsoDate = (
-  value: string | number | null | undefined,
-) => {
-  if (value === null || value === undefined) return null;
-  const raw = String(value).trim();
-  if (!raw) return null;
-
-  const yyyymm = raw.match(/^(\d{4})(\d{2})$/);
-  if (yyyymm) return `${yyyymm[1]}-${yyyymm[2]}-01`;
-
-  const yyyyDashMm = raw.match(/^(\d{4})-(\d{2})$/);
-  if (yyyyDashMm) return `${yyyyDashMm[1]}-${yyyyDashMm[2]}-01`;
-
-  const mmSlashYyyy = raw.match(/^(\d{2})\/(\d{4})$/);
-  if (mmSlashYyyy) return `${mmSlashYyyy[2]}-${mmSlashYyyy[1]}-01`;
-
-  const yyyymmdd = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
-  if (yyyymmdd) return `${yyyymmdd[1]}-${yyyymmdd[2]}-${yyyymmdd[3]}`;
-
-  return parseDataContratoToIsoDate(raw);
-};
-
-const resolveAnoMesPrimeiroPagamentoToIsoDate = (empresa: unknown) => {
-  if (!empresa || typeof empresa !== "object") return null;
-  const record = empresa as Record<string, unknown>;
-  const candidates = [
-    record.AnoMesPrimeiroPagamento,
-    record.anoMesPrimeiroPagamento,
-    record.AnoMesPrimeiroPgto,
-    record.anoMesPrimeiroPgto,
-    record.ANO_MES_PRIMEIRO_PAGAMENTO,
-  ];
-  for (const candidate of candidates) {
-    const parsed = parseAnoMesPrimeiroPagamentoToIsoDate(
-      candidate as string | number | null | undefined,
-    );
-    if (parsed) return parsed;
-  }
-  return null;
-};
-
-const isBeforePrimeiroPagamentoCutoff = (dateIso: string | null | undefined) => {
-  const normalized = (dateIso ?? "").trim();
-  if (!normalized) return false;
-  return normalized < FILA_ANO_MES_PRIMEIRO_PAGAMENTO_CORTE;
-};
 
 const readAutoSyncStorageTimestamp = () => {
   if (typeof window === "undefined") return 0;
@@ -274,40 +199,106 @@ export const fetchFilaControls = async (params?: {
   return (data ?? []) as FilaControlRow[];
 };
 
-export const searchFilaClientesByCodigo = async (codigo: string) => {
-  const normalized = codigo.trim();
-  if (!normalized) return [] as FilaClienteCandidate[];
-
-  const { data, error } = await supabase
-    .from("clientes")
-    .select("id, codigo, empresa, cnpj, created_at")
-    .eq("codigo", normalized)
-    .order("created_at", { ascending: false })
-    .limit(20);
-
-  if (error) throw error;
-  return (data ?? []) as FilaClienteCandidate[];
-};
-
 export const registerFilaEmpresa = async (payload: {
   empresa_id: string;
   data_contrato: string;
   waiting_days?: number | null;
 }) => {
-  if (isBeforePrimeiroPagamentoCutoff(payload.data_contrato)) {
+  const evaluation = evaluateDataContratoForFila(payload.data_contrato);
+  if (!evaluation.eligible) {
     throw new Error(
-      "Empresa fora do escopo do modulo fila (AnoMesPrimeiroPagamento anterior a 01/2026).",
+      `Empresa nao adicionada a fila. Motivo: ${evaluation.reason}.`,
     );
   }
 
   const { data, error } = await supabase.rpc("queue_release_register_company", {
     p_empresa_id: payload.empresa_id,
-    p_data_contrato: payload.data_contrato,
+    p_data_contrato: evaluation.dataContratoIso,
     p_waiting_days: payload.waiting_days ?? null,
   });
   if (error) throw error;
   if (Array.isArray(data)) return (data[0] ?? null) as FilaControlRow | null;
   return (data ?? null) as FilaControlRow | null;
+};
+
+export const removeFilaEmpresa = async (payload: {
+  empresa_id: string;
+  reason?: string | null;
+}) => {
+  const { data, error } = await supabase.rpc("queue_release_remove_company", {
+    p_empresa_id: payload.empresa_id,
+    p_reason: payload.reason ?? null,
+  });
+  if (error) throw error;
+  return Boolean(data);
+};
+
+export const reconcileFilaEmpresaByCodigo = async (codigo: string) => {
+  const normalized = codigo.trim();
+  if (!normalized) {
+    return { found: false, changed: false } as const;
+  }
+
+  const { data: clienteData, error: clienteError } = await supabase
+    .from("clientes")
+    .select("id, codigo")
+    .eq("codigo", normalized)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (clienteError) throw clienteError;
+  if (!clienteData?.id) {
+    return { found: false, changed: false } as const;
+  }
+
+  const { data: controlData, error: controlError } = await supabase
+    .from("queue_release_controls_view")
+    .select("empresa_id, data_contrato")
+    .eq("empresa_id", clienteData.id)
+    .maybeSingle();
+  if (controlError) throw controlError;
+
+  let empresa: Awaited<ReturnType<typeof fetchEmpresaByEmpresaId>>;
+  try {
+    empresa = await fetchEmpresaByEmpresaId(normalized);
+  } catch {
+    // Sem dado confiavel de DataContrato da API, nao altera estado atual.
+    return { found: true, changed: false, reason: "API_DATA_CONTRATO_NAO_RETORNADA" } as const;
+  }
+
+  const dataContratoRaw = empresa?.DataContrato ?? empresa?.dataContrato ?? null;
+  const evaluation = evaluateDataContratoForFila(dataContratoRaw);
+  const hasQueueEntry = Boolean(controlData?.empresa_id);
+  const currentQueueDataContrato = controlData?.data_contrato ?? null;
+
+  if (!evaluation.eligible) {
+    if (hasQueueEntry) {
+      await removeFilaEmpresa({
+        empresa_id: clienteData.id,
+        reason: evaluation.reason,
+      });
+      return { found: true, changed: true, reason: evaluation.reason } as const;
+    }
+    return { found: true, changed: false, reason: evaluation.reason } as const;
+  }
+
+  if (!hasQueueEntry) {
+    return { found: true, changed: false, reason: evaluation.reason } as const;
+  }
+
+  if (currentQueueDataContrato !== evaluation.dataContratoIso) {
+    await removeFilaEmpresa({
+      empresa_id: clienteData.id,
+      reason: "DATA_CONTRATO_ELEGIVEL",
+    });
+    await registerFilaEmpresa({
+      empresa_id: clienteData.id,
+      data_contrato: evaluation.dataContratoIso,
+    });
+    return { found: true, changed: true, reason: "DATA_CONTRATO_ELEGIVEL" } as const;
+  }
+
+  return { found: true, changed: false, reason: "DATA_CONTRATO_ELEGIVEL" } as const;
 };
 
 export const applyFilaAction = async (payload: {
@@ -386,10 +377,6 @@ const isFilaControlEligibleForRoutes = (row: {
   return row.effective_state !== "PENDING_WAIT";
 };
 
-export const clearFilaRoutingBlocksCache = () => {
-  filaRoutingBlocksCache = null;
-};
-
 export const fetchFilaRoutingBlockLists = async (options?: { force?: boolean }) => {
   const force = Boolean(options?.force);
   if (!force && filaRoutingBlocksCache) {
@@ -440,10 +427,12 @@ export const syncFilaAutoRegistration = async (options?: {
   minIntervalMs?: number;
   maxCandidates?: number;
   maxRegistrations?: number;
+  reconcileExisting?: boolean;
 }) => {
   const minIntervalMs = options?.minIntervalMs ?? FILA_AUTO_SYNC_DEFAULT_INTERVAL_MS;
   const maxCandidates = Math.max(1, Math.min(options?.maxCandidates ?? 120, 500));
   const maxRegistrations = Math.max(1, Math.min(options?.maxRegistrations ?? 30, 200));
+  const reconcileExisting = Boolean(options?.reconcileExisting);
   const nowMs = Date.now();
   const lastStorageRunAt = readAutoSyncStorageTimestamp();
   const lastRunAt = Math.max(filaAutoSyncLastRunAt, lastStorageRunAt);
@@ -472,43 +461,98 @@ export const syncFilaAutoRegistration = async (options?: {
       const controls = await fetchFilaControlsByEmpresaIds(candidates.map((row) => row.id));
       const controlledIds = new Set(controls.map((row) => row.empresa_id));
       const missing = candidates.filter((row) => !controlledIds.has(row.id));
-      if (!missing.length) return 0;
+      const targetCandidates = reconcileExisting ? candidates : missing;
+      if (!targetCandidates.length) return 0;
 
       let registered = 0;
+      let removed = 0;
 
-      for (const candidate of missing) {
-        if (registered >= maxRegistrations) break;
-
-        const createdAtDate = toDateOnlyFromTimestamp(candidate.created_at);
-        if (!createdAtDate) continue;
-
-        let dataContratoIso = createdAtDate;
+      for (const candidate of targetCandidates) {
         const codigo = (candidate.codigo ?? "").trim();
-        if (codigo) {
-          try {
-            const empresa = await fetchEmpresaByEmpresaId(codigo);
-            const parsedAnoMesPrimeiroPagamento =
-              resolveAnoMesPrimeiroPagamentoToIsoDate(empresa);
-            if (parsedAnoMesPrimeiroPagamento) {
-              dataContratoIso = parsedAnoMesPrimeiroPagamento;
-            } else {
-              const dataContratoRaw = empresa?.DataContrato ?? empresa?.dataContrato ?? null;
-              const parsedDataContrato = parseDataContratoToIsoDate(dataContratoRaw);
-              if (parsedDataContrato) dataContratoIso = parsedDataContrato;
+        const baseLog = `[fila:auto-register] empresa_id=${candidate.id} codigo=${codigo || "-"}`;
+        const alreadyInQueue = controlledIds.has(candidate.id);
+        if (registered >= maxRegistrations) break;
+        if (!codigo) {
+          console.warn(`${baseLog} bloqueada. Motivo: API_DATA_CONTRATO_NAO_RETORNADA`);
+          if (reconcileExisting && alreadyInQueue) {
+            try {
+              await removeFilaEmpresa({
+                empresa_id: candidate.id,
+                reason: "API_DATA_CONTRATO_NAO_RETORNADA",
+              });
+              removed += 1;
+              console.info(`${baseLog} removida da fila. Motivo: API_DATA_CONTRATO_NAO_RETORNADA`);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error ?? "");
+              console.warn(`${baseLog} falha ao remover da fila. Erro: ${message}`);
             }
-          } catch {
-            // fallback para created_at quando ERP estiver indisponivel
           }
+          continue;
         }
 
-        if (isBeforePrimeiroPagamentoCutoff(dataContratoIso)) {
+        let empresa: Awaited<ReturnType<typeof fetchEmpresaByEmpresaId>>;
+        try {
+          empresa = await fetchEmpresaByEmpresaId(codigo);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error ?? "");
+          console.warn(
+            `${baseLog} bloqueada. Motivo: API_DATA_CONTRATO_NAO_RETORNADA. Erro: ${message}`,
+          );
+          if (reconcileExisting && alreadyInQueue) {
+            try {
+              await removeFilaEmpresa({
+                empresa_id: candidate.id,
+                reason: "API_DATA_CONTRATO_NAO_RETORNADA",
+              });
+              removed += 1;
+              console.info(`${baseLog} removida da fila. Motivo: API_DATA_CONTRATO_NAO_RETORNADA`);
+            } catch (removeError) {
+              const removeMessage =
+                removeError instanceof Error ? removeError.message : String(removeError ?? "");
+              console.warn(`${baseLog} falha ao remover da fila. Erro: ${removeMessage}`);
+            }
+          }
+          continue;
+        }
+
+        const dataContratoRaw = empresa?.DataContrato ?? empresa?.dataContrato ?? null;
+        const evaluation = evaluateDataContratoForFila(dataContratoRaw);
+        if (!evaluation.eligible) {
+          const detail =
+            evaluation.detailReason === "DATA_CONTRATO_FORA_DO_CORTE"
+              ? `dataContratoIso=${evaluation.dataContratoIso}`
+              : `dataContratoRaw=${String(dataContratoRaw ?? "")}`;
+          console.info(
+            `${baseLog} bloqueada. Motivo: ${evaluation.reason}. Detalhe: ${evaluation.detailReason}. ${detail}`,
+          );
+          if (reconcileExisting && alreadyInQueue) {
+            try {
+              await removeFilaEmpresa({
+                empresa_id: candidate.id,
+                reason: evaluation.reason,
+              });
+              removed += 1;
+              console.info(`${baseLog} removida da fila. Motivo: ${evaluation.reason}`);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error ?? "");
+              console.warn(`${baseLog} falha ao remover da fila. Erro: ${message}`);
+            }
+          }
+          continue;
+        }
+
+        console.info(
+          `${baseLog} elegivel. Motivo: ${evaluation.reason}. dataContratoIso=${evaluation.dataContratoIso}`,
+        );
+
+        if (alreadyInQueue) {
           continue;
         }
 
         try {
           await registerFilaEmpresa({
             empresa_id: candidate.id,
-            data_contrato: dataContratoIso,
+            data_contrato: evaluation.dataContratoIso,
           });
           registered += 1;
         } catch (error) {
@@ -525,6 +569,9 @@ export const syncFilaAutoRegistration = async (options?: {
         }
       }
 
+      if (removed > 0) {
+        console.info(`[fila:auto-register] remocoes por DataContrato: ${removed}`);
+      }
       return registered;
     } finally {
       const finishedAt = Date.now();
