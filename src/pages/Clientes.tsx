@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { createPortal } from "react-dom";
 import { BrushCleaning, Building2, DollarSign, LoaderCircle, Plus, Search } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
@@ -149,6 +150,24 @@ type FilialCadastroModalState = {
   error: string | null;
 };
 
+type ClientesViewState = {
+  search: string;
+  searchMode: ClienteSearchMode;
+  situacaoFilter: "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado";
+  currentPage: number;
+  selectedId: string | null;
+  isEditing: boolean;
+  historySupervisorId: string;
+  historyDateFrom: string;
+  historyDateTo: string;
+  createFlowId: number;
+  form: CadastroFormState;
+  perfilCreate: ReturnType<typeof buildPerfilState>;
+  createPlanoValores: OdontoartPlanoValor[];
+  filialConfirmModal: FilialConfirmModalState | null;
+  filialCadastroModal: FilialCadastroModalState | null;
+};
+
 type ImportPayload = {
   codigo?: string | null;
   cnpj?: string | null;
@@ -251,6 +270,14 @@ const IMPORT_NUMERIC_FIELDS = new Set(["corte", "venc"]);
 const IMPORT_BATCH_SIZE = 80;
 const CLIENTES_DEFAULT_PAGE_SIZE = 50;
 const CLIENTES_VIEW_STATE_KEY = "clientesViewStateV2";
+const isClienteSearchMode = (value: unknown): value is ClienteSearchMode =>
+  value === "codigo" || value === "empresa" || value === "geral";
+const isSituacaoFilterValue = (
+  value: unknown,
+): value is "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado" =>
+  value === "" || value === "Ativo" || value === "Suspenso/Inadimplente" || value === "Cancelado";
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const sanitizeDigits = (value: string) => value.replace(/\D/g, "");
 const sanitizeCnpjDigits = (value: string) => sanitizeDigits(value).slice(0, 14);
 const formatCnpjInput = (value: string) => {
@@ -663,6 +690,124 @@ const buildInitialCadastroForm = (): CadastroFormState => ({
   uf: "",
 });
 
+const restoreCadastroForm = (value: unknown): CadastroFormState => {
+  const next = buildInitialCadastroForm();
+  if (!isRecord(value)) return next;
+
+  for (const key of Object.keys(next) as Array<keyof CadastroFormState>) {
+    const candidate = value[key];
+    if (typeof candidate === "string") {
+      next[key] = candidate;
+    }
+  }
+
+  return next;
+};
+
+const restorePerfilState = (value: unknown) => {
+  const next = buildPerfilState(null);
+  if (!isRecord(value)) return next;
+
+  if (typeof value.perfil === "string") next.perfil = value.perfil;
+  if (typeof value.customEnabled === "boolean") next.customEnabled = value.customEnabled;
+  if (Array.isArray(value.customTimes)) {
+    next.customTimes = value.customTimes.filter((item): item is string => typeof item === "string");
+  }
+  if (typeof value.singleTimeBase === "string") next.singleTimeBase = value.singleTimeBase;
+  if (typeof value.singleTimeValue === "string") next.singleTimeValue = value.singleTimeValue;
+
+  return next;
+};
+
+const restorePlanoValores = (value: unknown): OdontoartPlanoValor[] => {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const planoCodigo = item.planoCodigo;
+    const planoNome = item.planoNome;
+    const valorTitular = item.valorTitular;
+    const valorDependente = item.valorDependente;
+
+    if (
+      (planoCodigo !== 2 && planoCodigo !== 18 && planoCodigo !== 19 && planoCodigo !== 20) ||
+      (planoNome !== "ODONTOART PJ INDIVIDUAL" &&
+        planoNome !== "Multimaster" &&
+        planoNome !== "Multiplus" &&
+        planoNome !== "Multiprev") ||
+      (valorTitular !== null && typeof valorTitular !== "number") ||
+      (valorDependente !== null && typeof valorDependente !== "number")
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        planoCodigo,
+        planoNome,
+        valorTitular: valorTitular ?? null,
+        valorDependente: valorDependente ?? null,
+      },
+    ];
+  });
+};
+
+const restoreFilialConfirmModal = (value: unknown): FilialConfirmModalState | null => {
+  if (!isRecord(value)) return null;
+  return {
+    flowId: Number.isInteger(value.flowId) ? Number(value.flowId) : 0,
+    codigo: typeof value.codigo === "string" ? value.codigo : "",
+    empresa: typeof value.empresa === "string" ? value.empresa : "",
+    existingCount: Number.isInteger(value.existingCount) ? Number(value.existingCount) : 0,
+    draft: restoreCadastroForm(value.draft),
+    source: value.source === "cnpj" ? "cnpj" : "codigo",
+    lookupError: typeof value.lookupError === "string" ? value.lookupError : null,
+  };
+};
+
+const restoreFilialCadastroModal = (value: unknown): FilialCadastroModalState | null => {
+  if (!isRecord(value)) return null;
+  return {
+    flowId: Number.isInteger(value.flowId) ? Number(value.flowId) : 0,
+    form: restoreCadastroForm(value.form),
+    existingCount: Number.isInteger(value.existingCount) ? Number(value.existingCount) : 0,
+    error: typeof value.error === "string" ? value.error : null,
+  };
+};
+
+const readClientesViewState = (): ClientesViewState | null => {
+  try {
+    const raw = sessionStorage.getItem(CLIENTES_VIEW_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ClientesViewState>;
+    return {
+      search: typeof parsed.search === "string" ? parsed.search : "",
+      searchMode: isClienteSearchMode(parsed.searchMode) ? parsed.searchMode : "codigo",
+      situacaoFilter: isSituacaoFilterValue(parsed.situacaoFilter) ? parsed.situacaoFilter : "",
+      currentPage:
+        typeof parsed.currentPage === "number" && Number.isInteger(parsed.currentPage) && parsed.currentPage > 0
+          ? parsed.currentPage
+          : 1,
+      selectedId: typeof parsed.selectedId === "string" ? parsed.selectedId : null,
+      isEditing: parsed.isEditing === true,
+      historySupervisorId: typeof parsed.historySupervisorId === "string" ? parsed.historySupervisorId : "all",
+      historyDateFrom: typeof parsed.historyDateFrom === "string" ? parsed.historyDateFrom : "",
+      historyDateTo: typeof parsed.historyDateTo === "string" ? parsed.historyDateTo : "",
+      createFlowId:
+        typeof parsed.createFlowId === "number" && Number.isInteger(parsed.createFlowId) && parsed.createFlowId >= 0
+          ? parsed.createFlowId
+          : 0,
+      form: restoreCadastroForm(parsed.form),
+      perfilCreate: restorePerfilState(parsed.perfilCreate),
+      createPlanoValores: restorePlanoValores(parsed.createPlanoValores),
+      filialConfirmModal: restoreFilialConfirmModal(parsed.filialConfirmModal),
+      filialCadastroModal: restoreFilialCadastroModal(parsed.filialCadastroModal),
+    };
+  } catch {
+    return null;
+  }
+};
+
 const mergeLookupIntoCadastroForm = (
   current: CadastroFormState,
   incoming: Partial<CadastroFormState>,
@@ -743,6 +888,7 @@ const preserveFilialCommonFields = (
 });
 
 export default function Clientes() {
+  const initialViewState = useMemo(() => readClientesViewState(), []);
   const { role, session } = useAuth();
   const canView = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canCreate = canView;
@@ -753,14 +899,18 @@ export default function Clientes() {
   const [error, setError] = useState<string | null>(null);
   const [clientes, setClientes] = useState<ClienteRow[]>([]);
   const [totalCount, setTotalCount] = useState(0);
-  const [search, setSearch] = useState("");
-  const [searchMode, setSearchMode] = useState<ClienteSearchMode>("codigo");
-  const [situacaoFilter, setSituacaoFilter] = useState<"" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado">("");
+  const [search, setSearch] = useState(() => initialViewState?.search ?? "");
+  const [searchMode, setSearchMode] = useState<ClienteSearchMode>(() => initialViewState?.searchMode ?? "codigo");
+  const [situacaoFilter, setSituacaoFilter] = useState<"" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado">(
+    () => initialViewState?.situacaoFilter ?? "",
+  );
 
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState<CadastroFormState>(buildInitialCadastroForm);
-  const [perfilCreate, setPerfilCreate] = useState(() => buildPerfilState(null));
-  const [createPlanoValores, setCreatePlanoValores] = useState<OdontoartPlanoValor[]>([]);
+  const [form, setForm] = useState<CadastroFormState>(() => initialViewState?.form ?? buildInitialCadastroForm());
+  const [perfilCreate, setPerfilCreate] = useState(() => initialViewState?.perfilCreate ?? buildPerfilState(null));
+  const [createPlanoValores, setCreatePlanoValores] = useState<OdontoartPlanoValor[]>(
+    () => initialViewState?.createPlanoValores ?? [],
+  );
 
   const [selected, setSelected] = useState<ClienteRow | null>(null);
   const [history, setHistory] = useState<ClienteHistoryRow[]>([]);
@@ -768,12 +918,14 @@ export default function Clientes() {
   const [historySupervisores, setHistorySupervisores] = useState<
     { user_id: string; display_name: string | null }[]
   >([]);
-  const [historySupervisorId, setHistorySupervisorId] = useState<string>("all");
-  const [historyDateFrom, setHistoryDateFrom] = useState("");
-  const [historyDateTo, setHistoryDateTo] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const restoredViewRef = useRef(false);
-  const pendingEditRestoreRef = useRef<boolean | null>(null);
+  const [historySupervisorId, setHistorySupervisorId] = useState<string>(
+    () => initialViewState?.historySupervisorId ?? "all",
+  );
+  const [historyDateFrom, setHistoryDateFrom] = useState(() => initialViewState?.historyDateFrom ?? "");
+  const [historyDateTo, setHistoryDateTo] = useState(() => initialViewState?.historyDateTo ?? "");
+  const [selectedId, setSelectedId] = useState<string | null>(() => initialViewState?.selectedId ?? null);
+  const pendingEditRestoreRef = useRef<boolean | null>(initialViewState?.isEditing ?? null);
+  const skipInitialFilterResetRef = useRef(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<CadastroFormState>(buildInitialCadastroForm);
   const [perfilEdit, setPerfilEdit] = useState(() => buildPerfilState(null));
@@ -832,13 +984,19 @@ export default function Clientes() {
   const [importStageLabel, setImportStageLabel] = useState("Aguardando arquivo");
   const [importStartedAt, setImportStartedAt] = useState<number | null>(null);
   const [importTick, setImportTick] = useState(0);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => initialViewState?.currentPage ?? 1);
   const [duplicateModal, setDuplicateModal] = useState<DuplicateEntry | null>(null);
   const [duplicateQueue, setDuplicateQueue] = useState<DuplicateEntry[]>([]);
   const [duplicateResolving, setDuplicateResolving] = useState(false);
   const [duplicateComplemento, setDuplicateComplemento] = useState("");
-  const [filialConfirmModal, setFilialConfirmModal] = useState<FilialConfirmModalState | null>(null);
-  const [filialCadastroModal, setFilialCadastroModal] = useState<FilialCadastroModalState | null>(null);
+  const [filialConfirmModal, setFilialConfirmModal] = useState<FilialConfirmModalState | null>(
+    () => initialViewState?.filialConfirmModal ?? null,
+  );
+  const [filialCadastroModal, setFilialCadastroModal] = useState<FilialCadastroModalState | null>(
+    () => initialViewState?.filialCadastroModal ?? null,
+  );
+  const filialConfirmModalRef = useRef<HTMLDivElement | null>(null);
+  const filialCadastroModalRef = useRef<HTMLDivElement | null>(null);
   const [filialCnpjLoading, setFilialCnpjLoading] = useState(false);
   const [filialCepLoading, setFilialCepLoading] = useState(false);
   const [filialBairroLoading, setFilialBairroLoading] = useState(false);
@@ -853,7 +1011,13 @@ export default function Clientes() {
   const filialCnpjLookupRequestRef = useRef(0);
   const filialCepLookupRequestRef = useRef(0);
   const filialEnderecoLookupRequestRef = useRef(0);
-  const createFlowIdRef = useRef(0);
+  const createFlowIdRef = useRef(
+    Math.max(
+      initialViewState?.createFlowId ?? 0,
+      initialViewState?.filialConfirmModal?.flowId ?? 0,
+      initialViewState?.filialCadastroModal?.flowId ?? 0,
+    ),
+  );
 
   const startNewCreateFlow = () => {
     createFlowIdRef.current += 1;
@@ -1055,40 +1219,6 @@ export default function Clientes() {
   }, [canView, currentPage, search, searchMode, situacaoFilter]);
 
   useEffect(() => {
-    if (restoredViewRef.current) return;
-    try {
-      const raw = sessionStorage.getItem(CLIENTES_VIEW_STATE_KEY);
-      if (!raw) {
-        restoredViewRef.current = true;
-        return;
-      }
-      const parsed = JSON.parse(raw) as Partial<{
-        selectedId: string | null;
-        isEditing: boolean;
-        historySupervisorId: string;
-        historyDateFrom: string;
-        historyDateTo: string;
-      }>;
-      if (typeof parsed.selectedId === "string") setSelectedId(parsed.selectedId);
-      if (typeof parsed.historySupervisorId === "string") {
-        setHistorySupervisorId(parsed.historySupervisorId);
-      }
-      if (typeof parsed.historyDateFrom === "string") {
-        setHistoryDateFrom(parsed.historyDateFrom);
-      }
-      if (typeof parsed.historyDateTo === "string") {
-        setHistoryDateTo(parsed.historyDateTo);
-      }
-      if (typeof parsed.isEditing === "boolean") {
-        pendingEditRestoreRef.current = parsed.isEditing;
-      }
-      restoredViewRef.current = true;
-    } catch {
-      restoredViewRef.current = true;
-    }
-  }, []);
-
-  useEffect(() => {
     if (duplicateModal || duplicateQueue.length === 0) return;
     setDuplicateModal(duplicateQueue[0]);
     setDuplicateQueue((prev) => prev.slice(1));
@@ -1107,20 +1237,44 @@ export default function Clientes() {
   }, [duplicateModal]);
 
   useEffect(() => {
-    if (!restoredViewRef.current) return;
-    const payload = {
+    const payload: ClientesViewState = {
+      search,
+      searchMode,
+      situacaoFilter,
+      currentPage,
       selectedId,
       isEditing,
       historySupervisorId,
       historyDateFrom,
       historyDateTo,
+      createFlowId: createFlowIdRef.current,
+      form,
+      perfilCreate,
+      createPlanoValores,
+      filialConfirmModal,
+      filialCadastroModal,
     };
     try {
       sessionStorage.setItem(CLIENTES_VIEW_STATE_KEY, JSON.stringify(payload));
     } catch {
       // ignore
     }
-  }, [historyDateFrom, historyDateTo, historySupervisorId, isEditing, selectedId]);
+  }, [
+    createPlanoValores,
+    currentPage,
+    filialCadastroModal,
+    filialConfirmModal,
+    form,
+    historyDateFrom,
+    historyDateTo,
+    historySupervisorId,
+    isEditing,
+    perfilCreate,
+    search,
+    searchMode,
+    selectedId,
+    situacaoFilter,
+  ]);
 
   useEffect(() => {
     if (!canView) return;
@@ -1211,6 +1365,19 @@ export default function Clientes() {
     };
   }, [selected?.id, selectedId]);
 
+  const filialModalOpen = Boolean(filialConfirmModal || filialCadastroModal);
+
+  useEffect(() => {
+    if (!filialModalOpen) return;
+
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+    };
+  }, [filialModalOpen]);
+
   const filteredHistory = useMemo(() => {
     let next = history;
 
@@ -1249,15 +1416,10 @@ export default function Clientes() {
   };
 
   useEffect(() => {
-    resetClientesListView();
-    try {
-      sessionStorage.removeItem(CLIENTES_VIEW_STATE_KEY);
-    } catch {
-      // ignore
+    if (!skipInitialFilterResetRef.current) {
+      skipInitialFilterResetRef.current = true;
+      return;
     }
-  }, []);
-
-  useEffect(() => {
     setCurrentPage(1);
   }, [search, searchMode, situacaoFilter]);
 
@@ -4270,63 +4432,76 @@ export default function Clientes() {
         </div>
       )}
 
-      {filialConfirmModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-ink/30"
-            onClick={handleCancelFilialFlow}
-          />
-          <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
-            <h3 className="font-display text-lg text-ink">Codigo ja cadastrado</h3>
-            <p className="mt-2 text-sm text-ink/70">
-              Ja existe empresa cadastrada com este codigo. Deseja cadastrar como filial?
-            </p>
-            <div className="mt-4 grid gap-2 rounded-xl border border-sea/15 bg-sand/30 p-3 text-sm text-ink/80">
-              <p>
-                <span className="font-semibold">Codigo:</span> {filialConfirmModal.codigo}
+      {filialConfirmModal &&
+        createPortal(
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center px-4">
+            <button
+              type="button"
+              className="absolute inset-0 bg-ink/30"
+              onClick={handleCancelFilialFlow}
+              aria-label="Fechar modal de filial"
+            />
+            <div
+              ref={filialConfirmModalRef}
+              className="relative z-10 w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h3 className="font-display text-lg text-ink">Codigo ja cadastrado</h3>
+              <p className="mt-2 text-sm text-ink/70">
+                Ja existe empresa cadastrada com este codigo. Deseja cadastrar como filial?
               </p>
-              <p>
-                <span className="font-semibold">Empresa:</span> {filialConfirmModal.empresa}
-              </p>
-              <p>
-                <span className="font-semibold">Cadastros com este codigo:</span> {filialConfirmModal.existingCount}
-              </p>
+              <div className="mt-4 grid gap-2 rounded-xl border border-sea/15 bg-sand/30 p-3 text-sm text-ink/80">
+                <p>
+                  <span className="font-semibold">Codigo:</span> {filialConfirmModal.codigo}
+                </p>
+                <p>
+                  <span className="font-semibold">Empresa:</span> {filialConfirmModal.empresa}
+                </p>
+                <p>
+                  <span className="font-semibold">Cadastros com este codigo:</span> {filialConfirmModal.existingCount}
+                </p>
+              </div>
+              {filialConfirmModal.lookupError && (
+                <p className="mt-3 text-xs font-semibold text-amber-700">
+                  Aviso: {filialConfirmModal.lookupError}
+                </p>
+              )}
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleCancelFilialFlow}
+                  className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+                >
+                  Nao
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAcceptFilialConfirm}
+                  disabled={createFlowBusy}
+                  className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight"
+                >
+                  Sim, cadastrar filial
+                </button>
+              </div>
             </div>
-            {filialConfirmModal.lookupError && (
-              <p className="mt-3 text-xs font-semibold text-amber-700">
-                Aviso: {filialConfirmModal.lookupError}
-              </p>
-            )}
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={handleCancelFilialFlow}
-                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
-              >
-                Nao
-              </button>
-              <button
-                type="button"
-                onClick={handleAcceptFilialConfirm}
-                disabled={createFlowBusy}
-                className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight"
-              >
-                Sim, cadastrar filial
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
 
-      {filialCadastroModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-ink/30"
-            onClick={handleCancelFilialFlow}
-          />
-          <div className="relative max-h-[92vh] w-[98vw] max-w-[96rem] overflow-y-auto overflow-x-hidden rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+      {filialCadastroModal &&
+        createPortal(
+          <div className="fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto px-4 py-4 md:py-8">
+            <button
+              type="button"
+              className="absolute inset-0 bg-ink/30"
+              onClick={handleCancelFilialFlow}
+              aria-label="Fechar modal de cadastro de filial"
+            />
+            <div
+              ref={filialCadastroModalRef}
+              className="relative z-10 my-0 max-h-[calc(100vh-2rem)] w-[98vw] max-w-[96rem] overflow-y-auto overflow-x-hidden rounded-3xl border border-sea/20 bg-white p-6 shadow-card md:max-h-[calc(100vh-4rem)]"
+              onClick={(event) => event.stopPropagation()}
+            >
             <h3 className="font-display text-lg text-ink">Cadastro de filial</h3>
             <p className="mt-2 text-sm text-ink/70">
               Preencha os dados da filial. O codigo ja esta definido e nao pode ser alterado.
@@ -4843,9 +5018,10 @@ export default function Clientes() {
                 </span>
               )}
             </div>
-          </div>
-        </div>
-      )}
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {duplicateModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
