@@ -364,11 +364,6 @@ const fetchColumnValuesPaged = async (
   return rows;
 };
 
-export const clearAgendaOptionsCache = () => {
-  optionsCache.clear();
-  clientesOptionsBuildPromise = null;
-};
-
 const expandFilterValues = (key: string, values: string[]) => {
   const entry = optionsCache.get(key);
   if (!entry) {

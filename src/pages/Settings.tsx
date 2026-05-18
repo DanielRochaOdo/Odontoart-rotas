@@ -1166,7 +1166,7 @@ export default function Settings() {
             Cadastre supervisores, vendedores e assistentes.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 hidden">
           <button
             type="button"
             onClick={() => applyThemeMode(themeMode === "dark" ? "light" : "dark")}

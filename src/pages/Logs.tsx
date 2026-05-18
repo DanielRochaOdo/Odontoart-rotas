@@ -1,16 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
-
-const formatDateTime = (value: string | null) => {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("pt-BR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
-};
+import { formatDateTimeBr } from "../lib/dateFormat";
 
 const ACTION_LABELS: Record<string, string> = {
   INSERT: "Cadastro",
@@ -84,12 +75,12 @@ const formatValue = (value: unknown, field?: string) => {
   if (value === null || value === undefined || value === "") return "-";
   if (typeof value === "boolean") return value ? "Sim" : "Nao";
   if (typeof value === "number") return new Intl.NumberFormat("pt-BR").format(value);
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return formatDateTime(value.toISOString());
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return formatDateTimeBr(value.toISOString());
   if (typeof value === "string") {
     const trimmed = value.trim();
     const isDateLike = /^\d{4}-\d{2}-\d{2}/.test(trimmed);
     if (isDateLike) {
-      return formatDateTime(trimmed);
+      return formatDateTimeBr(trimmed);
     }
     if (field === "valor") {
       const numeric = Number(trimmed.replace(",", "."));
@@ -393,7 +384,7 @@ export default function Logs() {
                       )}
                     </div>
                     <p className="mt-1 text-xs text-ink/60">
-                      {formatDateTime(group.created_at)} • {userLabel}
+                      {formatDateTimeBr(group.created_at)} • {userLabel}
                     </p>
                   </div>
                   <button

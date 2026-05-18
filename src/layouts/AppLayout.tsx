@@ -20,6 +20,7 @@ import { useAuth } from "../context/AuthContext";
 import { ROLE_LABELS } from "../types/roles";
 import PwaInstallHint from "../components/PwaInstallHint";
 import { useAutoFormDraftPersistence } from "../hooks/useAutoFormDraftPersistence";
+import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import FilaAlertsModal from "../components/FilaAlertsModal";
 
 type NavItem = {
@@ -50,54 +51,26 @@ const isAndroidAppHost = () => {
 export default function AppLayout() {
   const { profile, profileError, role, session, signOut } = useAuth();
   useAutoFormDraftPersistence(session?.user?.id ?? "anonymous");
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    if (typeof window === "undefined") return "light";
-    try {
-      const stored = localStorage.getItem("theme");
-      if (stored === "light" || stored === "dark") return stored;
-      return "light";
-    } catch {
-      return "light";
-    }
+  const [theme, setTheme] = useLocalStorageState<"light" | "dark">("theme", "light", {
+    parse: (raw) => (raw === "dark" ? "dark" : "light"),
+    serialize: (value) => value,
   });
-  const [collapsed, setCollapsed] = useState(() => {
-    try {
-      const stored = localStorage.getItem("sidebarCollapsed");
-      return stored ? stored === "true" : true;
-    } catch {
-      return true;
-    }
+  const [collapsed, setCollapsed] = useLocalStorageState<boolean>("sidebarCollapsed", true, {
+    parse: (raw) => raw === "true",
+    serialize: (value) => String(value),
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [vendorSettingsOpen, setVendorSettingsOpen] = useState(false);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("sidebarCollapsed", String(collapsed));
-    } catch {
-      // ignore
-    }
-  }, [collapsed]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
     const root = document.documentElement;
     root.classList.toggle("dark", theme === "dark");
     document.body.classList.toggle("dark", theme === "dark");
-    try {
-      localStorage.setItem("theme", theme);
-    } catch {
-      // ignore
-    }
   }, [theme]);
   const isVendor = role === "VENDEDOR";
   const enableVendorSettingsInSidebar = isVendor && isAndroidAppHost();
-
-  useEffect(() => {
-    if (!enableVendorSettingsInSidebar && vendorSettingsOpen) {
-      setVendorSettingsOpen(false);
-    }
-  }, [enableVendorSettingsInSidebar, vendorSettingsOpen]);
+  const effectiveVendorSettingsOpen = enableVendorSettingsInSidebar && vendorSettingsOpen;
 
   const initials = useMemo(() => {
     const name = profile?.nome ?? profile?.display_name ?? "Odontoart";
@@ -275,7 +248,7 @@ export default function AppLayout() {
                       collapsed
                         ? "h-11 w-11 justify-center rounded-2xl"
                         : "w-full gap-3 rounded-xl px-3 py-2.5 text-[1.05rem] font-semibold",
-                      vendorSettingsOpen
+                      effectiveVendorSettingsOpen
                         ? collapsed
                           ? isDarkTheme
                             ? "bg-sea/15 text-seaLight"
@@ -293,10 +266,10 @@ export default function AppLayout() {
                     ].join(" ")}
                     aria-label="Configuracoes"
                   >
-                    {collapsed && vendorSettingsOpen ? (
+                    {collapsed && effectiveVendorSettingsOpen ? (
                       <span className={["absolute -left-2 h-7 w-1 rounded-full", isDarkTheme ? "bg-seaLight" : "bg-sea"].join(" ")} />
                     ) : null}
-                    <Settings size={18} className={vendorSettingsOpen ? (isDarkTheme ? "text-seaLight" : "text-sea") : ""} />
+                    <Settings size={18} className={effectiveVendorSettingsOpen ? (isDarkTheme ? "text-seaLight" : "text-sea") : ""} />
                     {!collapsed ? <span className="min-w-0 truncate">Configuracoes</span> : null}
                   </button>
                 ) : null}
@@ -305,7 +278,7 @@ export default function AppLayout() {
 
             <div className={["mt-auto border-t p-3", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
               {enableVendorSettingsInSidebar ? (
-                vendorSettingsOpen ? (
+                effectiveVendorSettingsOpen ? (
                   <div className="flex flex-col gap-2">
                     <button
                       type="button"
@@ -516,7 +489,7 @@ export default function AppLayout() {
                   onClick={() => setVendorSettingsOpen((prev) => !prev)}
                   className={[
                     "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold transition",
-                    vendorSettingsOpen
+                    effectiveVendorSettingsOpen
                       ? "bg-sea text-white shadow-lg shadow-sea/25"
                       : "bg-white/70 text-ink/70 hover:bg-sea/10 hover:text-sea",
                   ].join(" ")}
@@ -530,7 +503,7 @@ export default function AppLayout() {
 
             <div className="mt-auto pt-6">
               {enableVendorSettingsInSidebar ? (
-                vendorSettingsOpen ? (
+                effectiveVendorSettingsOpen ? (
                   <>
                     <button
                       type="button"

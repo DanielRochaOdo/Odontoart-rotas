@@ -8,21 +8,13 @@ import {
   fetchFilaSettings,
   generateFilaCountdownEvents,
   isMissingFilaBackendError,
+  reconcileFilaEmpresaByCodigo,
   syncFilaAutoRegistration,
   updateFilaSettings,
   type FilaControlRow,
   type FilaState,
 } from "../lib/filaApi";
-
-const formatDateTime = (value: string | null | undefined) => {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("pt-BR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
-};
+import { formatDateTimeBr } from "../lib/dateFormat";
 
 const formatMonthYear = (value: string | null | undefined) => {
   if (!value) return "-";
@@ -75,13 +67,18 @@ export default function Fila() {
   const [search, setSearch] = useState("");
   const [searchMode, setSearchMode] = useState<"codigo" | "empresa">("codigo");
   const [stateFilter, setStateFilter] = useState<FilaState | "">("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const [appliedSearchMode, setAppliedSearchMode] = useState<"codigo" | "empresa">("codigo");
+  const [appliedStateFilter, setAppliedStateFilter] = useState<FilaState | "">("");
   const [savingSettings, setSavingSettings] = useState(false);
   const [defaultWaitingDaysInput, setDefaultWaitingDaysInput] = useState("30");
   const [reminderDaysInput, setReminderDaysInput] = useState("30,15,7,1");
   const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
+  const [isApplyingFilters, setIsApplyingFilters] = useState(false);
 
   const [waitingDraftByEmpresa, setWaitingDraftByEmpresa] = useState<Record<string, string>>({});
   const loadRequestSeqRef = useRef(0);
+  const initialMaintenanceRef = useRef(false);
 
   const loadData = useCallback(async () => {
     if (!canManage) return;
@@ -89,11 +86,9 @@ export default function Fila() {
     setLoading(true);
     setError(null);
     try {
-      await syncFilaAutoRegistration({ minIntervalMs: 0, maxCandidates: 300, maxRegistrations: 100 });
-      await generateFilaCountdownEvents();
       const [settingsRow, controlRows] = await Promise.all([
         fetchFilaSettings(),
-        fetchFilaControls({ state: stateFilter, search, searchMode }),
+        fetchFilaControls({ state: appliedStateFilter, search: appliedSearch, searchMode: appliedSearchMode }),
       ]);
       if (requestSeq !== loadRequestSeqRef.current) return;
       if (settingsRow) {
@@ -115,13 +110,59 @@ export default function Fila() {
     } finally {
       if (requestSeq === loadRequestSeqRef.current) {
         setLoading(false);
+        setIsApplyingFilters(false);
       }
     }
-  }, [canManage, search, searchMode, stateFilter]);
+  }, [appliedSearch, appliedSearchMode, appliedStateFilter, canManage]);
+
+  const hasPendingFilterChanges =
+    search !== appliedSearch ||
+    searchMode !== appliedSearchMode ||
+    stateFilter !== appliedStateFilter;
+
+  const runMaintenance = useCallback(
+    async (options?: { force?: boolean; reconcileByCode?: string | null }) => {
+      if (!canManage) return;
+      const shouldForce = Boolean(options?.force);
+      const reconcileByCode = (options?.reconcileByCode ?? "").trim();
+
+      await syncFilaAutoRegistration({
+        minIntervalMs: shouldForce ? 0 : undefined,
+        maxCandidates: shouldForce ? 120 : undefined,
+        maxRegistrations: shouldForce ? 30 : undefined,
+        reconcileExisting: shouldForce,
+      });
+
+      if (reconcileByCode) {
+        await reconcileFilaEmpresaByCodigo(reconcileByCode);
+      }
+
+      await generateFilaCountdownEvents();
+    },
+    [canManage],
+  );
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!canManage) {
+      initialMaintenanceRef.current = false;
+      return;
+    }
+    if (initialMaintenanceRef.current) return;
+    initialMaintenanceRef.current = true;
+
+    void (async () => {
+      try {
+        await runMaintenance();
+      } catch (err) {
+        const maybeError = err as { message?: string };
+        console.warn("Falha ao sincronizar fila em segundo plano:", maybeError.message ?? err);
+      }
+    })();
+  }, [canManage, loadData, runMaintenance]);
 
   const pendingCount = useMemo(
     () => rows.filter((row) => row.effective_state === "PENDING_WAIT").length,
@@ -143,14 +184,14 @@ export default function Fila() {
       Empresa: row.empresa ?? "",
       CNPJ: row.cnpj ?? "",
       "1º Pagto": formatMonthYear(row.data_contrato),
-      "Liberação prevista": formatDateTime(row.eligible_at),
+      "Liberação prevista": formatDateTimeBr(row.eligible_at),
       DiasRestantes: row.days_remaining,
       Estado: getFriendlyStateLabel(row.effective_state),
       "Estado original": getFriendlyStateLabel(row.state),
       "Prazo (dias)": row.waiting_days_snapshot,
       "Motivo manual": row.manual_reason ?? "-",
-      "Bloqueio manual até": formatDateTime(row.manual_block_until),
-      "Atualizado em": formatDateTime(row.updated_at),
+      "Bloqueio manual até": formatDateTimeBr(row.manual_block_until),
+      "Atualizado em": formatDateTimeBr(row.updated_at),
     }));
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
@@ -212,7 +253,16 @@ export default function Fila() {
           <h3 className="text-sm font-semibold uppercase tracking-wide text-ink/70">Configuracao padrao</h3>
           <button
             type="button"
-            onClick={() => void loadData()}
+            onClick={() => {
+              void (async () => {
+                await loadData();
+                await runMaintenance({
+                  force: true,
+                  reconcileByCode: appliedSearchMode === "codigo" ? appliedSearch : null,
+                });
+                await loadData();
+              })();
+            }}
             className="inline-flex items-center gap-2 rounded-lg border border-sea/25 bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:border-sea"
           >
             <RefreshCw size={14} />
@@ -316,10 +366,17 @@ export default function Fila() {
           <div className="flex items-end">
             <button
               type="button"
-              onClick={() => void loadData()}
-              className="w-full rounded-lg border border-sea/25 bg-white px-3 py-2 text-sm font-semibold text-ink hover:border-sea"
+              disabled={isApplyingFilters || loading || !hasPendingFilterChanges}
+              onClick={() => {
+                if (isApplyingFilters || loading || !hasPendingFilterChanges) return;
+                setIsApplyingFilters(true);
+                setAppliedSearch(search);
+                setAppliedSearchMode(searchMode);
+                setAppliedStateFilter(stateFilter);
+              }}
+              className="w-full rounded-lg border border-sea/25 bg-white px-3 py-2 text-sm font-semibold text-ink hover:border-sea disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Aplicar filtros
+              {isApplyingFilters ? "Aplicando..." : "Aplicar filtros"}
             </button>
           </div>
           <div className="flex items-end">
@@ -375,7 +432,7 @@ export default function Fila() {
                       <td className="px-2 py-2 font-semibold">{row.codigo ?? "-"}</td>
                       <td className="px-2 py-2">{row.empresa ?? "-"}</td>
                       <td className="px-2 py-2">{formatMonthYear(row.data_contrato)}</td>
-                      <td className="px-2 py-2">{formatDateTime(row.eligible_at)}</td>
+                      <td className="px-2 py-2">{formatDateTimeBr(row.eligible_at)}</td>
                       <td className="px-2 py-2">{row.days_remaining}</td>
                       <td className="px-2 py-2">
                         <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold ${stateClass[row.effective_state]}`}>
