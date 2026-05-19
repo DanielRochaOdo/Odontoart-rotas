@@ -5,7 +5,6 @@ import { VISIT_TYPE, parseDateKey } from "./supervisorVisits";
 import {
   fetchFilaRoutingBlockLists,
   isMissingFilaBackendError,
-  syncFilaAutoRegistration,
 } from "./filaApi";
 
 export type EmpresaLookupRow = {
@@ -259,15 +258,6 @@ export const deleteRouteStop = async (stopId: string) => {
 };
 
 export const fetchEmpresasLookup = async (options?: EmpresasLookupOptions) => {
-  try {
-    await syncFilaAutoRegistration();
-  } catch (error) {
-    const maybeError = error as { code?: string; message?: string };
-    if (!isMissingFilaBackendError(maybeError)) {
-      console.warn("Falha ao sincronizar modulo fila automaticamente:", error);
-    }
-  }
-
   const pageSize = 1000;
   let from = 0;
   const allRows: EmpresaLookupRow[] = [];
