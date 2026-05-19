@@ -2,7 +2,16 @@ const ODONTOART_EMPRESA_URL = "https://odontoart.s4e.com.br/api/empresa/BuscaEmp
 const ODONTOART_DEFAULT_TOKEN = "7DqKKmNcZDWY2Pie35tbKwY6hAKXzS5wWl7hNLAmPWBIljmfeX";
 const ODONTOART_TIMEOUT_MS = 12000;
 const ODONTOART_MAX_ATTEMPTS = 3;
+const ODONTOART_CACHE_TTL_MS = 5 * 60 * 1000;
 const ODONTOART_PROXY_URL = (import.meta.env.VITE_ODONTOART_PROXY_URL as string | undefined)?.trim() ?? "";
+
+type OdontoartPayloadCacheEntry = {
+  payload: unknown;
+  expiresAt: number;
+};
+
+const odontoartPayloadCache = new Map<string, OdontoartPayloadCacheEntry>();
+const odontoartInFlightRequests = new Map<string, Promise<unknown>>();
 
 export type OdontoartPlanoCodigo = 2 | 18 | 19 | 20;
 
@@ -304,108 +313,134 @@ const fetchEmpresaPayloadById = async (empresaId: string) => {
   const trimmedEmpresaId = empresaId.trim();
   if (!trimmedEmpresaId) return null as unknown;
 
-  const fetchViaProxy = async () => {
-    const response = await fetch(ODONTOART_PROXY_URL, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      cache: "no-store",
-      body: JSON.stringify({ empresaId: trimmedEmpresaId }),
-    });
-    if (!response.ok) {
-      throw new Error(`Falha ao consultar proxy Odontoart (${response.status}).`);
-    }
-    return (await response.json()) as unknown;
-  };
-
-  if (ODONTOART_PROXY_URL) {
-    return fetchViaProxy();
+  const cached = odontoartPayloadCache.get(trimmedEmpresaId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.payload;
   }
 
-  const token = (import.meta.env.VITE_ODONTOART_TOKEN as string | undefined)?.trim() || ODONTOART_DEFAULT_TOKEN;
-  const isNumericCode = /^\d+$/.test(trimmedEmpresaId);
-  const codeCandidates = Array.from(
-    new Set(
-      [
-        trimmedEmpresaId,
-        isNumericCode ? trimmedEmpresaId.replace(/^0+/, "") : "",
-        isNumericCode ? String(Number(trimmedEmpresaId)) : "",
-      ].filter(Boolean),
-    ),
-  );
+  const runningRequest = odontoartInFlightRequests.get(trimmedEmpresaId);
+  if (runningRequest) {
+    return runningRequest;
+  }
 
-  const sleep = (ms: number) =>
-    new Promise<void>((resolve) => {
-      setTimeout(resolve, ms);
-    });
-
-  const shouldRetryStatus = (status: number) =>
-    status === 408 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
-
-  const fetchCandidate = async (candidate: string) => {
-    let lastError: Error | null = null;
-
-    for (let attempt = 1; attempt <= ODONTOART_MAX_ATTEMPTS; attempt += 1) {
-      const search = new URLSearchParams({
-        token,
-        empresaId: candidate,
+  const loadPayload = async () => {
+    const remember = (payload: unknown) => {
+      odontoartPayloadCache.set(trimmedEmpresaId, {
+        payload,
+        expiresAt: Date.now() + ODONTOART_CACHE_TTL_MS,
       });
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), ODONTOART_TIMEOUT_MS);
+      return payload;
+    };
 
-      try {
-        const response = await fetch(`${ODONTOART_EMPRESA_URL}?${search.toString()}`, {
-          method: "GET",
-          headers: {
-            Accept: "application/json",
-          },
-          signal: controller.signal,
+    const fetchViaProxy = async () => {
+      const response = await fetch(ODONTOART_PROXY_URL, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        cache: "no-store",
+        body: JSON.stringify({ empresaId: trimmedEmpresaId }),
+      });
+      if (!response.ok) {
+        throw new Error(`Falha ao consultar proxy Odontoart (${response.status}).`);
+      }
+      return (await response.json()) as unknown;
+    };
+
+    if (ODONTOART_PROXY_URL) {
+      return remember(await fetchViaProxy());
+    }
+
+    const token = (import.meta.env.VITE_ODONTOART_TOKEN as string | undefined)?.trim() || ODONTOART_DEFAULT_TOKEN;
+    const isNumericCode = /^\d+$/.test(trimmedEmpresaId);
+    const codeCandidates = Array.from(
+      new Set(
+        [
+          trimmedEmpresaId,
+          isNumericCode ? trimmedEmpresaId.replace(/^0+/, "") : "",
+          isNumericCode ? String(Number(trimmedEmpresaId)) : "",
+        ].filter(Boolean),
+      ),
+    );
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+      });
+
+    const shouldRetryStatus = (status: number) =>
+      status === 408 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+
+    const fetchCandidate = async (candidate: string) => {
+      let lastError: Error | null = null;
+
+      for (let attempt = 1; attempt <= ODONTOART_MAX_ATTEMPTS; attempt += 1) {
+        const search = new URLSearchParams({
+          token,
+          empresaId: candidate,
         });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), ODONTOART_TIMEOUT_MS);
 
-        if (!response.ok) {
-          const retriable = shouldRetryStatus(response.status);
-          if (!retriable || attempt >= ODONTOART_MAX_ATTEMPTS) {
-            throw new Error(`Falha ao consultar empresa (${response.status}).`);
+        try {
+          const response = await fetch(`${ODONTOART_EMPRESA_URL}?${search.toString()}`, {
+            method: "GET",
+            headers: {
+              Accept: "application/json",
+            },
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            const retriable = shouldRetryStatus(response.status);
+            if (!retriable || attempt >= ODONTOART_MAX_ATTEMPTS) {
+              throw new Error(`Falha ao consultar empresa (${response.status}).`);
+            }
+            await sleep(250 * attempt);
+            continue;
+          }
+
+          return (await response.json()) as unknown;
+        } catch (error) {
+          const isAbort = error instanceof Error && error.name === "AbortError";
+          const transient =
+            isAbort ||
+            (error instanceof TypeError && /network|fetch|failed/i.test(error.message));
+          lastError = isAbort
+            ? new Error("Tempo limite excedido ao consultar API da Odontoart.")
+            : error instanceof Error
+              ? error
+              : new Error("Erro de comunicacao com API da Odontoart.");
+          if (!transient || attempt >= ODONTOART_MAX_ATTEMPTS) {
+            throw lastError;
           }
           await sleep(250 * attempt);
-          continue;
+        } finally {
+          clearTimeout(timeoutId);
         }
-
-        return (await response.json()) as unknown;
-      } catch (error) {
-        const isAbort = error instanceof Error && error.name === "AbortError";
-        const transient =
-          isAbort ||
-          (error instanceof TypeError && /network|fetch|failed/i.test(error.message));
-        lastError = isAbort
-          ? new Error("Tempo limite excedido ao consultar API da Odontoart.")
-          : error instanceof Error
-            ? error
-            : new Error("Erro de comunicacao com API da Odontoart.");
-        if (!transient || attempt >= ODONTOART_MAX_ATTEMPTS) {
-          throw lastError;
-        }
-        await sleep(250 * attempt);
-      } finally {
-        clearTimeout(timeoutId);
       }
+
+      if (lastError) throw lastError;
+      throw new Error("Falha ao consultar API da Odontoart.");
+    };
+
+    let lastPayload: unknown = null;
+    for (const candidate of codeCandidates) {
+      const payload = await fetchCandidate(candidate);
+      lastPayload = payload;
+      const empresa = extractEmpresaFromPayload(payload);
+      if (empresa) return remember(payload);
     }
 
-    if (lastError) throw lastError;
-    throw new Error("Falha ao consultar API da Odontoart.");
+    return remember(lastPayload);
   };
 
-  let lastPayload: unknown = null;
-  for (const candidate of codeCandidates) {
-    const payload = await fetchCandidate(candidate);
-    lastPayload = payload;
-    const empresa = extractEmpresaFromPayload(payload);
-    if (empresa) return payload;
-  }
-
-  return lastPayload;
+  const request = loadPayload().finally(() => {
+    odontoartInFlightRequests.delete(trimmedEmpresaId);
+  });
+  odontoartInFlightRequests.set(trimmedEmpresaId, request);
+  return request;
 };
 
 export const fetchEmpresaByEmpresaId = async (empresaId: string) => {

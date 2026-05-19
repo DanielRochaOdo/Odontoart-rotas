@@ -6,7 +6,6 @@ import {
   fetchFilaPendingNotifications,
   generateFilaCountdownEvents,
   isMissingFilaBackendError,
-  syncFilaAutoRegistration,
   type FilaPendingNotificationRow,
 } from "../lib/filaApi";
 import { formatDateTimeBr } from "../lib/dateFormat";
@@ -130,9 +129,6 @@ export default function FilaAlertsModal() {
     if (!canView || unavailable) return;
     setLoading(true);
     try {
-      void syncFilaAutoRegistration().catch((error) => {
-        console.warn("Falha na sincronizacao de fila em background (alertas):", error);
-      });
       await generateFilaCountdownEvents();
       const data = await fetchFilaPendingNotifications(50);
       const dismissed = dismissedIdsRef.current;

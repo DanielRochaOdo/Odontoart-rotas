@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { createPortal } from "react-dom";
-import { BrushCleaning, Building2, DollarSign, LoaderCircle, Plus, Search } from "lucide-react";
+import { BrushCleaning, Building2, ChevronLeft, ChevronRight, DollarSign, LoaderCircle, Plus, Search } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -989,6 +989,7 @@ export default function Clientes() {
   const [duplicateQueue, setDuplicateQueue] = useState<DuplicateEntry[]>([]);
   const [duplicateResolving, setDuplicateResolving] = useState(false);
   const [duplicateComplemento, setDuplicateComplemento] = useState("");
+  const [duplicateExistingPage, setDuplicateExistingPage] = useState(1);
   const [filialConfirmModal, setFilialConfirmModal] = useState<FilialConfirmModalState | null>(
     () => initialViewState?.filialConfirmModal ?? null,
   );
@@ -1227,6 +1228,7 @@ export default function Clientes() {
   useEffect(() => {
     if (!duplicateModal) {
       setDuplicateComplemento("");
+      setDuplicateExistingPage(1);
       return;
     }
     setDuplicateComplemento(
@@ -1234,6 +1236,7 @@ export default function Clientes() {
         duplicateModal.newCliente.complemento ??
         "",
     );
+    setDuplicateExistingPage(1);
   }, [duplicateModal]);
 
   useEffect(() => {
@@ -3061,6 +3064,17 @@ export default function Clientes() {
   const createValoresLoading = planosModalState?.loading && planosModalState.source === "create";
   const editValoresLoading = planosModalState?.loading && planosModalState.source === "edit";
   const hasPendingDuplicates = Boolean(duplicateModal || duplicateQueue.length > 0);
+  const DUPLICATE_EXISTING_PAGE_SIZE = 3;
+  const duplicateExistingTotalPages = duplicateModal
+    ? Math.max(1, Math.ceil(duplicateModal.existing.length / DUPLICATE_EXISTING_PAGE_SIZE))
+    : 1;
+  const duplicateExistingStart = (duplicateExistingPage - 1) * DUPLICATE_EXISTING_PAGE_SIZE;
+  const duplicateExistingItems = duplicateModal
+    ? duplicateModal.existing.slice(
+        duplicateExistingStart,
+        duplicateExistingStart + DUPLICATE_EXISTING_PAGE_SIZE,
+      )
+    : [];
   const importElapsedSeconds = importStartedAt ? Math.max(0, (importTick - importStartedAt) / 1000) : 0;
   const importRemaining = Math.max(0, importTotal - importProgress);
   const importEstimatedSeconds = importProgress > 0 ? (importElapsedSeconds / importProgress) * importRemaining : null;
@@ -5023,10 +5037,14 @@ export default function Clientes() {
           document.body,
         )}
 
-      {duplicateModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
-          <div className="absolute inset-0 bg-ink/30" />
-          <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+      {duplicateModal &&
+        createPortal(
+          <div className="fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto px-4 py-4 md:py-8">
+            <div className="absolute inset-0 bg-ink/30" />
+            <div
+              className="relative z-10 my-0 w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card"
+              onClick={(event) => event.stopPropagation()}
+            >
             <h3 className="font-display text-lg text-ink">Endereco duplicado</h3>
             <p className="mt-2 text-sm text-ink/70">
               O endereco informado ja existe para {duplicateModal.existing.length} empresa(s).
@@ -5050,7 +5068,7 @@ export default function Clientes() {
               </div>
               <div className="rounded-2xl border border-sea/15 bg-white/90 p-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-ink/50">Cadastro existente</p>
-                {duplicateModal.existing.map((item) => (
+                {duplicateExistingItems.map((item) => (
                   <div key={item.id} className="mt-2">
                     <p className="text-sm font-semibold text-ink">
                       {item.empresa ?? "Sem nome"}
@@ -5061,6 +5079,36 @@ export default function Clientes() {
                     </p>
                   </div>
                 ))}
+                {duplicateModal.existing.length > DUPLICATE_EXISTING_PAGE_SIZE && (
+                  <div className="mt-3 flex items-center justify-between gap-2 border-t border-sea/10 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setDuplicateExistingPage((prev) => Math.max(1, prev - 1))}
+                      disabled={duplicateExistingPage === 1 || duplicateResolving}
+                      aria-label="Pagina anterior"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sea/30 bg-white text-ink/70 hover:border-sea disabled:opacity-60"
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    <span className="text-[11px] text-ink/50">
+                      Pagina {duplicateExistingPage} de {duplicateExistingTotalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDuplicateExistingPage((prev) =>
+                          Math.min(duplicateExistingTotalPages, prev + 1),
+                        )}
+                      disabled={
+                        duplicateExistingPage === duplicateExistingTotalPages || duplicateResolving
+                      }
+                      aria-label="Proxima pagina"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sea/30 bg-white text-ink/70 hover:border-sea disabled:opacity-60"
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -5099,9 +5147,10 @@ export default function Clientes() {
                 Manter os dois
               </button>
             </div>
-          </div>
-        </div>
-      )}
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {showImportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
