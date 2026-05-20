@@ -395,10 +395,23 @@ export default function Dashboard() {
     const load = async () => {
       setLoading(true);
       setError(null);
-      const { data, error: supabaseError } = await supabase
+      let query = supabase
         .from("clientes")
         .select("data_da_ultima_visita, situacao, bairro, cidade, uf, vendedor")
         .limit(5000);
+
+      if (isVendor) {
+        const vendorDisplayName = profile?.display_name ? normalizeKey(profile.display_name) : null;
+        if (!vendorDisplayName) {
+          setRows([]);
+          setError("Perfil de vendedor sem nome de exibicao. Faca login novamente.");
+          setLoading(false);
+          return;
+        }
+        query = query.eq("vendedor", vendorDisplayName);
+      }
+
+      const { data, error: supabaseError } = await query;
 
       if (supabaseError) {
         const errorMessage = supabaseError.message ?? "";
@@ -418,7 +431,7 @@ export default function Dashboard() {
     };
 
     void load();
-  }, [signOut]);
+  }, [isVendor, profile?.display_name, signOut]);
 
   useEffect(() => {
     let active = true;
