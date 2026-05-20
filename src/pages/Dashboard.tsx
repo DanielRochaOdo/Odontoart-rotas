@@ -43,6 +43,21 @@ const applyVendorVisitTypeScope = <TQuery,>(query: TQuery) =>
   );
 
 const SHOW_NEXT_ROUTE_BLOCK = false;
+const SESSION_EXPIRED_FRIENDLY_MESSAGE = "Sua sessao foi encerrada. Faca login novamente.";
+
+const isSessionExpiredError = (message: string) => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("invalid refresh token") ||
+    normalized.includes("refresh token not found") ||
+    normalized.includes("jwt") ||
+    normalized.includes("unauthorized") ||
+    normalized.includes("status 401") ||
+    normalized.includes("session not found") ||
+    normalized.includes("sessao invalida") ||
+    normalized.includes("sessao expirada")
+  );
+};
 
 type VisitStats = {
   totalVidas: number;
@@ -204,7 +219,7 @@ const buildDailyVidasSeries = (
 };
 
 export default function Dashboard() {
-  const { role, profile, session } = useAuth();
+  const { role, profile, session, signOut } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<
@@ -386,7 +401,15 @@ export default function Dashboard() {
         .limit(5000);
 
       if (supabaseError) {
-        setError(supabaseError.message);
+        const errorMessage = supabaseError.message ?? "";
+        if (isSessionExpiredError(errorMessage)) {
+          await signOut();
+          setError(SESSION_EXPIRED_FRIENDLY_MESSAGE);
+          setRows([]);
+          setLoading(false);
+          return;
+        }
+        setError(errorMessage);
         setRows([]);
       } else {
         setRows(data ?? []);
@@ -394,8 +417,8 @@ export default function Dashboard() {
       setLoading(false);
     };
 
-    load();
-  }, []);
+    void load();
+  }, [signOut]);
 
   useEffect(() => {
     let active = true;
