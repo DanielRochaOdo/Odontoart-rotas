@@ -124,18 +124,8 @@ export const fetchClientesCount = async (params: {
       situacao: params.situacao,
     });
 
-  const headExactQuery = applyFilters(
-    supabase
-      .from("clientes")
-      .select("id", { count: "exact", head: true }),
-  );
-
-  const headExactResult = await headExactQuery;
-  if (!headExactResult.error) {
-    return headExactResult.count ?? 0;
-  }
-
-  // Fallback resiliente para ambientes/proxies que falham em HEAD + exact count.
+  // Evita timeout frequente em bases grandes com RLS pesada.
+  // `planned` usa estimativa do planner e costuma responder muito mais rapido.
   const getPlannedQuery = applyFilters(
     supabase
       .from("clientes")
@@ -148,9 +138,19 @@ export const fetchClientesCount = async (params: {
     return getPlannedResult.count ?? 0;
   }
 
-  throw new Error(
-    `${headExactResult.error.message} | fallback: ${getPlannedResult.error.message}`,
+  // Fallback para exatidao quando a estimativa falhar por algum motivo.
+  const headExactQuery = applyFilters(
+    supabase
+      .from("clientes")
+      .select("id", { count: "exact", head: true }),
   );
+
+  const headExactResult = await headExactQuery;
+  if (!headExactResult.error) {
+    return headExactResult.count ?? 0;
+  }
+
+  throw new Error(`${getPlannedResult.error.message} | fallback: ${headExactResult.error.message}`);
 };
 
 export const fetchClienteById = async (id: string) => {
