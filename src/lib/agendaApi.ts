@@ -536,7 +536,7 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
 
 export type AgendaFetchResult = {
   data: AgendaRow[];
-  count: number;
+  count: number | null;
 };
 
 export type AgendaSearchFilters = {
@@ -626,8 +626,6 @@ export const fetchAgenda = async (
 
   const pageFrom = pageIndex * pageSize;
   const pageTo = pageFrom + pageSize - 1;
-  const estimateCountFromPage = (rowsLength: number) =>
-    rowsLength < pageSize ? pageFrom + rowsLength : pageTo + 2;
   const hasColumnFilters = Object.values(effectiveFilters.columns).some((values) => values.length > 0);
   const hasDateFilters = Boolean(
     effectiveFilters.dateRanges.data_da_ultima_visita.from ||
@@ -641,11 +639,11 @@ export const fetchAgenda = async (
   const shouldUseExactCount = !hasColumnFilters && !hasDateFilters && !hasSearchFilters && !restrictedAgendaIds;
   const shouldSkipCountQuery = !shouldUseExactCount;
 
-  const runCountQuery = async (mode: "exact" | "planned") => {
+  const runCountQuery = async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const countQuery: any = applySearchAndIds(
       applyFilters(
-        supabase.from("clientes").select("id", { count: mode, head: true }),
+        supabase.from("clientes").select("id", { count: "exact", head: true }),
         effectiveFilters,
       ),
     );
@@ -684,28 +682,16 @@ export const fetchAgenda = async (
   let count: number | null = null;
   if (!shouldSkipCountQuery) {
     try {
-      count = await runCountQuery("exact");
+      count = await runCountQuery();
     } catch (countError) {
-      const message = countError instanceof Error ? countError.message : String(countError ?? "");
-      if (isStatementTimeoutError(message)) {
-        try {
-          count = await runCountQuery("planned");
-        } catch (plannedError) {
-          console.warn("fetchAgenda count fallback failed:", plannedError);
-        }
-      } else {
-        console.warn("fetchAgenda count query failed:", countError);
-      }
+      console.warn("fetchAgenda count query failed:", countError);
     }
-  }
-  if (count === null) {
-    count = estimateCountFromPage(data?.length ?? 0);
   }
 
   const pageRows = (data ?? []) as AgendaRow[];
   const deduped = dedupeAgendaRows(pageRows);
 
-  return { data: deduped, count: count ?? deduped.length };
+  return { data: deduped, count };
 };
 
 export const fetchAgendaScheduledVisits = async (clienteIds: string[]) => {

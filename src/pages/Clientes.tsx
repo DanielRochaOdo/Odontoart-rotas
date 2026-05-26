@@ -898,7 +898,7 @@ export default function Clientes() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [clientes, setClientes] = useState<ClienteRow[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
+  const [totalCount, setTotalCount] = useState<number | null>(null);
   const [search, setSearch] = useState(() => initialViewState?.search ?? "");
   const [searchMode, setSearchMode] = useState<ClienteSearchMode>(() => initialViewState?.searchMode ?? "codigo");
   const [situacaoFilter, setSituacaoFilter] = useState<"" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado">(
@@ -1130,6 +1130,8 @@ export default function Clientes() {
         situacao: situacaoFilter,
       });
       setClientes(pageData as unknown as ClienteRow[]);
+      console.info("WEB_EMPRESAS_RENDERED_COUNT", pageData.length);
+      console.info("WEB_EMPRESAS_PAGE_SIZE", CLIENTES_DEFAULT_PAGE_SIZE);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar empresas.");
       setClientes([]);
@@ -1147,8 +1149,19 @@ export default function Clientes() {
         situacao: situacaoFilter,
       });
       setTotalCount(count);
+      console.info("WEB_EMPRESAS_COUNTER_FIX_2026_05_25", { active: true });
+      console.info("WEB_EMPRESAS_TOTAL_COUNT_REAL", count);
+      console.info("WEB_EMPRESAS_TOTAL_SOURCE", "supabase_count_exact_clientes");
+      console.info("WEB_EMPRESAS_CARD_VALUE", count);
+      console.info("WEB_EMPRESAS_QUERY_FILTERS", {
+        search,
+        searchMode,
+        situacao: situacaoFilter,
+      });
+      console.info("WEB_EMPRESAS_USING_CACHE", false);
     } catch (err) {
       console.warn("Falha ao contar empresas:", err);
+      setTotalCount(null);
     }
   };
 
@@ -1202,6 +1215,7 @@ export default function Clientes() {
       .catch((err) => {
         if (!active) return;
         console.warn("Falha ao contar empresas:", err);
+        setTotalCount(null);
       });
     return () => {
       active = false;
@@ -1410,7 +1424,7 @@ export default function Clientes() {
   const isSearching = Boolean(search.trim());
   const displayClientes = clientes;
   const resultCount = totalCount;
-  const totalPages = Math.max(1, Math.ceil(totalCount / CLIENTES_DEFAULT_PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil((totalCount ?? 0) / CLIENTES_DEFAULT_PAGE_SIZE));
   const resetClientesListView = () => {
     setSearch("");
     setSearchMode("codigo");
@@ -3570,7 +3584,7 @@ export default function Clientes() {
         <div>
           <h3 className="font-display text-lg text-ink">Empresas cadastradas</h3>
           <p className="text-xs text-ink/60">
-            {resultCount} empresa(s).
+            {resultCount ?? "..."} empresa(s).
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
