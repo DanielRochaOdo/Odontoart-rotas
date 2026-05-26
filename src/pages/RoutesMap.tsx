@@ -23,6 +23,7 @@ import type { Feature, GeoJsonObject } from "geojson";
 import { useAuth } from "../context/AuthContext";
 import {
   fetchEmpresaScheduledVisits,
+  fetchEmpresasLookupCountExact,
   fetchEmpresasLookupByIds,
   fetchEmpresasLookup,
   fetchSupervisorLatestVisitByEmpresa,
@@ -406,6 +407,7 @@ export default function RoutesMap() {
   const restoredDraftRef = useRef(false);
 
   const [empresaRows, setEmpresaRows] = useState<EmpresaLookupRow[]>([]);
+  const [totalEmpresasReal, setTotalEmpresasReal] = useState<number | null>(null);
   const [scheduledVisitsByEmpresa, setScheduledVisitsByEmpresa] = useState<
     Record<string, EmpresaScheduledVisit[]>
   >({});
@@ -620,6 +622,7 @@ export default function RoutesMap() {
   useEffect(() => {
     if (!canGenerate || !hasSearched) {
       setEmpresaRows([]);
+      setTotalEmpresasReal(0);
       setScheduledVisitsByEmpresa({});
       setLoadingEmpresas(false);
       return;
@@ -631,18 +634,32 @@ export default function RoutesMap() {
 
     const loadCompanies = async () => {
       try {
-        const empresas = await fetchEmpresasLookup({
+        const queryFilters = {
           filters: appliedFilters,
           search: {
             companyName: appliedCompanyNameQuery,
             companyCode: appliedCompanyCodeQuery,
           },
-        });
+        };
+        const [empresas, totalReal] = await Promise.all([
+          fetchEmpresasLookup(queryFilters),
+          fetchEmpresasLookupCountExact(queryFilters),
+        ]);
         if (!active) return;
         setEmpresaRows(empresas);
+        setTotalEmpresasReal(totalReal);
+        console.info("WEB_ROTAS_COUNTER_FIX_2026_05_25", { active: true });
+        console.info("WEB_ROTAS_TOTAL_COUNT_REAL", totalReal);
+        console.info("WEB_ROTAS_TOTAL_SOURCE", "supabase_count_exact_clientes");
+        console.info("WEB_ROTAS_RENDERED_COUNT", empresas.length);
+        console.info("WEB_ROTAS_PAGE_SIZE", null);
+        console.info("WEB_ROTAS_CARD_VALUE", totalReal);
+        console.info("WEB_ROTAS_QUERY_FILTERS", queryFilters);
+        console.info("WEB_ROTAS_USING_CACHE", false);
       } catch (error) {
         if (!active) return;
         setEmpresaRows([]);
+        setTotalEmpresasReal(null);
         setMessage(error instanceof Error ? error.message : "Erro ao buscar empresas.");
       } finally {
         if (active) setLoadingEmpresas(false);
@@ -1944,7 +1961,7 @@ export default function RoutesMap() {
               </button>
 
               <div className="ml-auto text-right text-xs text-ink/60">
-                <div>Empresas: {rowsMatchingFilters.length}</div>
+                <div>Empresas: {totalEmpresasReal ?? "..."}</div>
                 {missingFromFiltersCount > 0 && <div>Sem coordenada real: {missingFromFiltersCount}</div>}
                 <div className="flex items-center justify-end gap-1">
                   <span>Selecionadas: {effectiveSelectedEmpresaIds.length}</span>

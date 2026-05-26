@@ -459,7 +459,7 @@ const sameStringArray = (left: string[], right: string[]) =>
 type AgendaPageCacheEntry = {
   requestKey: string;
   data: AgendaRow[];
-  count: number;
+  count: number | null;
   cachedAt: number;
 };
 
@@ -477,7 +477,7 @@ const readAgendaPageCache = (requestKey: string): AgendaPageCacheEntry | null =>
     if (
       parsed.requestKey !== requestKey ||
       !Array.isArray(parsed.data) ||
-      typeof parsed.count !== "number"
+      (typeof parsed.count !== "number" && parsed.count !== null)
     ) {
       return null;
     }
@@ -543,7 +543,7 @@ export default function Agenda() {
   const [appliedCompanyCodeQuery, setAppliedCompanyCodeQuery] = useState("");
   const [hasSearched, setHasSearched] = useState(true);
   const [data, setData] = useState<AgendaRow[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
+  const [totalCount, setTotalCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -1157,6 +1157,7 @@ export default function Agenda() {
     if (cached) {
       setData(cached.data);
       setTotalCount(cached.count);
+      console.info("WEB_ROTAS_USING_CACHE", true);
       setLoading(false);
       setError(null);
     } else {
@@ -1166,7 +1167,7 @@ export default function Agenda() {
 
     if (!hasSearched) {
       setData([]);
-      setTotalCount(0);
+      setTotalCount(null);
       setError(null);
       setLoading(false);
       return () => {
@@ -1183,6 +1184,21 @@ export default function Agenda() {
         if (!active) return;
         setData(result.data);
         setTotalCount(result.count);
+        console.info("WEB_ROTAS_COUNTER_FIX_2026_05_25", { active: true });
+        console.info("WEB_ROTAS_TOTAL_COUNT_REAL", result.count);
+        console.info("WEB_ROTAS_TOTAL_SOURCE", "supabase_count_exact_clientes");
+        console.info("WEB_ROTAS_RENDERED_COUNT", result.data.length);
+        console.info("WEB_ROTAS_PAGE_SIZE", pageSize);
+        console.info("WEB_ROTAS_CARD_VALUE", result.count);
+        console.info("WEB_ROTAS_QUERY_FILTERS", {
+          pageIndex,
+          pageSize,
+          sorting,
+          filters: appliedFilters,
+          companyNameQuery: appliedCompanyNameQuery.trim(),
+          companyCodeQuery: appliedCompanyCodeQuery.trim(),
+        });
+        console.info("WEB_ROTAS_USING_CACHE", false);
         setError(null);
         writeAgendaPageCache({
           requestKey,
@@ -1198,7 +1214,7 @@ export default function Agenda() {
         }
         setError(err instanceof Error ? err.message : "Erro ao carregar agenda");
         setData([]);
-        setTotalCount(0);
+        setTotalCount(null);
       } finally {
         if (active) {
           setLoading(false);
@@ -2784,7 +2800,7 @@ export default function Agenda() {
     manualSorting: true,
     state: { sorting },
     onSortingChange: setSorting,
-    pageCount: Math.ceil(totalCount / pageSize),
+    pageCount: Math.ceil((totalCount ?? 0) / pageSize),
   });
 
   const compactColumnWidths: Record<string, number> = {
@@ -3514,7 +3530,7 @@ export default function Agenda() {
                     Gerar rota
                   </button>
                   <div className="text-xs text-ink/60 text-right">
-                    <div>Empresas: {totalCount}</div>
+                    <div>Empresas: {totalCount ?? "..."}</div>
                     <div className="flex items-center justify-end gap-1">
                       <span>Selecionadas: {selectedAgendaIds.length}</span>
                       <button
@@ -4817,7 +4833,7 @@ export default function Agenda() {
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-sea/15 px-4 py-3 text-xs text-ink/60">
             <div>
-              Pagina {pageIndex + 1} de {Math.max(1, Math.ceil(totalCount / pageSize))}
+              Pagina {pageIndex + 1} de {Math.max(1, Math.ceil((totalCount ?? 0) / pageSize))}
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -4831,7 +4847,7 @@ export default function Agenda() {
               <button
                 type="button"
                 onClick={() => setPageIndex((prev) => prev + 1)}
-                disabled={(pageIndex + 1) * pageSize >= totalCount}
+                disabled={totalCount !== null && (pageIndex + 1) * pageSize >= totalCount}
                 className="rounded-lg border border-sea/30 bg-white/80 px-2 py-1 disabled:opacity-50"
               >
                 Proxima
@@ -4950,7 +4966,7 @@ export default function Agenda() {
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-sea/15 px-4 py-3 text-xs text-ink/60">
             <div>
-              Pagina {pageIndex + 1} de {Math.max(1, Math.ceil(totalCount / pageSize))}
+              Pagina {pageIndex + 1} de {Math.max(1, Math.ceil((totalCount ?? 0) / pageSize))}
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -4964,7 +4980,7 @@ export default function Agenda() {
               <button
                 type="button"
                 onClick={() => setPageIndex((prev) => prev + 1)}
-                disabled={(pageIndex + 1) * pageSize >= totalCount}
+                disabled={totalCount !== null && (pageIndex + 1) * pageSize >= totalCount}
                 className="rounded-lg border border-sea/30 bg-white/80 px-2 py-1 disabled:opacity-50"
               >
                 Proxima

@@ -124,21 +124,6 @@ export const fetchClientesCount = async (params: {
       situacao: params.situacao,
     });
 
-  // Evita timeout frequente em bases grandes com RLS pesada.
-  // `planned` usa estimativa do planner e costuma responder muito mais rapido.
-  const getPlannedQuery = applyFilters(
-    supabase
-      .from("clientes")
-      .select("id", { count: "planned", head: false })
-      .limit(1),
-  );
-
-  const getPlannedResult = await getPlannedQuery;
-  if (!getPlannedResult.error) {
-    return getPlannedResult.count ?? 0;
-  }
-
-  // Fallback para exatidao quando a estimativa falhar por algum motivo.
   const headExactQuery = applyFilters(
     supabase
       .from("clientes")
@@ -150,7 +135,19 @@ export const fetchClientesCount = async (params: {
     return headExactResult.count ?? 0;
   }
 
-  throw new Error(`${getPlannedResult.error.message} | fallback: ${headExactResult.error.message}`);
+  const getExactQuery = applyFilters(
+    supabase
+      .from("clientes")
+      .select("id", { count: "exact", head: false })
+      .limit(1),
+  );
+
+  const getExactResult = await getExactQuery;
+  if (!getExactResult.error) {
+    return getExactResult.count ?? 0;
+  }
+
+  throw new Error(`${headExactResult.error.message} | fallback: ${getExactResult.error.message}`);
 };
 
 export const fetchClienteById = async (id: string) => {

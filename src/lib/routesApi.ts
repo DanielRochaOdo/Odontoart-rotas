@@ -80,6 +80,28 @@ const parseOptionalNumber = (value?: string) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const CHUNK_FILTER_SIZE = 120;
+const chunkValues = <T,>(values: T[], size = CHUNK_FILTER_SIZE) => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+};
+
+const buildStringInClause = (values: string[]) =>
+  `(${values.map((value) => `"${value.replace(/"/g, '\\"')}"`).join(",")})`;
+
+const applyBlockedEmpresaIdsExclusion = <T,>(query: T, blockedEmpresaIds: string[]): T => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let next: any = query;
+  chunkValues(blockedEmpresaIds).forEach((chunk) => {
+    if (!chunk.length) return;
+    next = next.not("id", "in", buildStringInClause(chunk));
+  });
+  return next as T;
+};
+
 const applyLookupFilters = <T,>(query: T, filters?: AgendaFilters, search?: EmpresasLookupSearch): T => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let next: any = query;
@@ -297,6 +319,30 @@ export const fetchEmpresasLookup = async (options?: EmpresasLookupOptions) => {
     }
     throw error;
   }
+};
+
+export const fetchEmpresasLookupCountExact = async (options?: EmpresasLookupOptions) => {
+  let blockedEmpresaIds: string[] = [];
+  try {
+    const blocks = await fetchFilaRoutingBlockLists();
+    blockedEmpresaIds = blocks.blockedEmpresaIds;
+  } catch (error) {
+    const maybeError = error as { code?: string; message?: string };
+    if (!isMissingFilaBackendError(maybeError)) {
+      throw error;
+    }
+  }
+
+  let query = supabase
+    .from("clientes")
+    .select("id", { count: "exact", head: true });
+
+  query = applyLookupFilters(query, options?.filters, options?.search);
+  query = applyBlockedEmpresaIdsExclusion(query, blockedEmpresaIds);
+
+  const { count, error } = await query;
+  if (error) throw new Error(error.message);
+  return count ?? 0;
 };
 
 export const fetchEmpresaScheduledVisits = async (empresaIds: string[]) => {
