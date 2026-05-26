@@ -648,6 +648,20 @@ export default function RoutesMap() {
         if (!active) return;
         setEmpresaRows(empresas);
         setTotalEmpresasReal(totalReal);
+        console.info("ROTAS_COUNTER_DIAG_2026_05_25", { module: "routes-map", phase: "network" });
+        console.info("ROTAS_TOTAL_SOURCE", "supabase_count_exact_clientes");
+        console.info("ROTAS_CARD_VALUE", totalReal);
+        console.info("ROTAS_RENDERED_COUNT", empresas.length);
+        console.info("ROTAS_PAGE_SIZE", null);
+        console.info("ROTAS_QUERY_FILTERS", queryFilters);
+        console.info("ROTAS_USING_CACHE", false);
+        if (Number.isFinite(totalReal) && empresas.length > 0 && totalReal === empresas.length) {
+          console.warn("COUNTER_SUSPECT_PAGE_SIZE_MATCH", {
+            module: "routes-map",
+            total: totalReal,
+            rendered: empresas.length,
+          });
+        }
         console.info("WEB_ROTAS_COUNTER_FIX_2026_05_25", { active: true });
         console.info("WEB_ROTAS_TOTAL_COUNT_REAL", totalReal);
         console.info("WEB_ROTAS_TOTAL_SOURCE", "supabase_count_exact_clientes");
