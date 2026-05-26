@@ -85,6 +85,10 @@ type VisitRow = {
   cliente?: ClienteCanonicalModalRow | null;
 };
 
+type VisitRowJoin = VisitRow & {
+  cliente?: VisitRow["cliente"] | VisitRow["cliente"][] | null;
+};
+
 const isVisitRegistered = (
   visit: Pick<VisitRow, "completed_at" | "completed_vidas" | "no_visit_reason">,
 ) =>
@@ -199,13 +203,20 @@ type AddVendorsModalState = {
 };
 
 const formatDateKey = (value: string) => {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const directDateMatch = value.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (directDateMatch) return directDateMatch[1];
   return format(new Date(value), "yyyy-MM-dd");
 };
 
 const getDateKey = (date: Date) => {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 10);
+};
+
+const toYmd = (year: number, monthIndexZeroBased: number, day: number) => {
+  const mm = String(monthIndexZeroBased + 1).padStart(2, "0");
+  const dd = String(day).padStart(2, "0");
+  return `${year}-${mm}-${dd}`;
 };
 
 const toDateInput = (value: string | null) => {
@@ -215,6 +226,15 @@ const toDateInput = (value: string | null) => {
   if (Number.isNaN(date.getTime())) return "";
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 10);
+};
+
+const extractVisitDateKey = (value: string | null | undefined) => {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(value)) return value.slice(0, 10);
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return toYmd(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
 };
 
 const normalize = (value: string | null) => normalizeSearchText(value);
@@ -233,7 +253,6 @@ const NO_VISIT_REASONS = [
   "ENDERECO NAO LOCALIZADO",
   "AUSENTE NO DIA",
 ];
-const VISITS_FETCH_BATCH_SIZE = 1000;
 const SUPERVISOR_REASON_LABEL_BY_VALUE = new Map<string, string>(
   SUPERVISOR_VISIT_REASON_OPTIONS.map((option) => [option.value, option.label]),
 );
@@ -328,6 +347,10 @@ export default function Visitas() {
   >([]);
   const [selectedSupervisorId, setSelectedSupervisorId] = useState<string>("all");
   const [selectedVendorId, setSelectedVendorId] = useState<string>("all");
+  const [monthSummaryCounts, setMonthSummaryCounts] = useState<Map<string, number>>(new Map());
+  const [dayDetailsByDate, setDayDetailsByDate] = useState<Record<string, VisitRow[]>>({});
+  const [dayDetailsLoadingDateKey, setDayDetailsLoadingDateKey] = useState<string | null>(null);
+  const [dayDetailsErrorByDate, setDayDetailsErrorByDate] = useState<Record<string, string | null>>({});
   const restoredViewRef = useRef(false);
   const pendingModalRestoreRef = useRef<{
     confirmVisitId: string | null;
@@ -356,6 +379,59 @@ export default function Visitas() {
         }
       | null;
   } | null>(null);
+
+  const hydrateVisitsWithClientes = useCallback(async (rows: VisitRowJoin[]) => {
+    const clienteIds = Array.from(
+      new Set(
+        rows
+          .map((item) => item.cliente_id)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    const clientesById = new Map<string, ClienteCanonicalModalRow>();
+    for (let index = 0; index < clienteIds.length; index += 500) {
+      const chunk = clienteIds.slice(index, index + 500);
+      const { data: clientesChunk, error: clientesError } = await supabase
+        .from("clientes")
+        .select(CLIENTE_CANONICAL_MODAL_SELECT)
+        .in("id", chunk);
+      if (clientesError) throw new Error(clientesError.message);
+      (clientesChunk ?? []).forEach((cliente) => {
+        const row = cliente as ClienteCanonicalModalRow;
+        clientesById.set(row.id, row);
+      });
+    }
+
+    const agendaFromCliente = (cliente: ClienteCanonicalModalRow): NonNullable<VisitRow["agenda"]> => ({
+      id: cliente.id,
+      empresa: cliente.empresa,
+      nome_fantasia: cliente.nome_fantasia,
+      cod_1: cliente.codigo,
+      corte: cliente.corte,
+      venc: cliente.venc,
+      valor: cliente.valor,
+      obs_contrato_1: cliente.obs_comercial,
+      pessoa: cliente.pessoa,
+      contato: cliente.contato,
+      instructions: null,
+      endereco: cliente.endereco,
+      complemento: cliente.complemento,
+      bairro: cliente.bairro,
+      cidade: cliente.cidade,
+      uf: cliente.uf,
+      situacao: cliente.situacao,
+      categoria: cliente.categoria,
+      perfil_visita: cliente.perfil_visita,
+      supervisor: null,
+    });
+
+    return rows.map((row) => {
+      const item = row as VisitRowJoin;
+      const cliente = item.cliente_id ? clientesById.get(item.cliente_id) ?? null : null;
+      return { ...item, agenda: cliente ? agendaFromCliente(cliente) : null, cliente };
+    }) as VisitRow[];
+  }, []);
 
   useEffect(() => {
     if (restoredViewRef.current) return;
@@ -548,14 +624,17 @@ export default function Visitas() {
       setLoading(true);
       setError(null);
 
-      const start = startOfMonth(currentMonth);
-      const end = endOfMonth(currentMonth);
-      const startDate = format(start, "yyyy-MM-dd");
-      const endDate = format(end, "yyyy-MM-dd");
+      const year = currentMonth.getFullYear();
+      const monthIndex = currentMonth.getMonth();
+      const startDate = toYmd(year, monthIndex, 1);
+      const nextMonthYear = monthIndex === 11 ? year + 1 : year;
+      const nextMonthIndex = monthIndex === 11 ? 0 : monthIndex + 1;
+      const monthEndExclusive = toYmd(nextMonthYear, nextMonthIndex, 1);
+      const endInclusive = format(addDays(new Date(`${monthEndExclusive}T12:00:00`), -1), "yyyy-MM-dd");
       const now = new Date();
       const todayKey = getDateKey(now);
       const canUnlockNextRouteByTime = now.getHours() >= 19;
-      let maxDate = endDate;
+      let maxDate = endInclusive;
       const assigneeClauses = [
         session?.user.id ? `assigned_to_user_id.eq.${session.user.id}` : null,
         profile?.display_name ? `assigned_to_name.eq.${profile.display_name}` : null,
@@ -665,7 +744,7 @@ export default function Visitas() {
         try {
           const routeDates = await fetchVendorRouteDates();
           if (routeDates.length === 0) {
-            maxDate = endDate;
+            maxDate = endInclusive;
           } else {
             const pastOrTodayDates = routeDates.filter((dateKey) => dateKey <= todayKey);
             if (pastOrTodayDates.length === 0) {
@@ -710,7 +789,7 @@ export default function Visitas() {
                     maxDate = nextRouteDate;
                   }
                 } else {
-                  maxDate = endDate;
+                  maxDate = endInclusive;
                 }
               }
             }
@@ -731,20 +810,89 @@ export default function Visitas() {
 
         if (!active) return;
         setMaxVisibleDate(maxDate);
+        console.info("VISITS_VENDOR_MAX_VISIBLE_DATE", maxDate);
+        console.info("VISITS_VENDOR_BLOCK_MESSAGE", blockReason ?? null);
       } else {
         if (!active) return;
         setMaxVisibleDate(null);
         setBlockMessage(null);
+        console.info("VISITS_VENDOR_MAX_VISIBLE_DATE", null);
+        console.info("VISITS_VENDOR_BLOCK_MESSAGE", null);
       }
+
+      const monthSummaryStart = performance.now();
+      const rpcAssignedToUserId =
+        isVendor
+          ? session?.user.id ?? null
+          : canManage && selectedVendorId !== "all"
+            ? selectedVendorId
+            : null;
+      const rpcVisitType = isVendor ? VISIT_TYPE.VENDEDOR : null;
+      const rpcCompletedOnly: boolean | null = null;
+      console.info("VISITS_SELECTED_SUPERVISOR", selectedSupervisorId);
+      console.info("VISITS_SELECTED_VENDOR", selectedVendorId);
+      console.info("VISITS_RPC_SUPERVISOR_PARAM", null);
+      console.info("VISITS_RPC_VENDOR_PARAM", selectedVendorId === "all" ? null : selectedVendorId);
+      console.info("VISITS_RPC_ASSIGNED_TO_USER_ID", rpcAssignedToUserId);
+      console.info("VISITS_RPC_VISIT_TYPE", rpcVisitType);
+      console.info("VISITS_RPC_COMPLETED_ONLY", rpcCompletedOnly);
+      const { data: monthSummaryData, error: monthSummaryError } = await supabase.rpc(
+        "get_visits_month_summary_v1",
+        {
+          p_month_start: startDate,
+          p_month_end_exclusive: monthEndExclusive,
+          p_assigned_to_user_id: rpcAssignedToUserId,
+          p_visit_type: rpcVisitType,
+          p_completed_only: rpcCompletedOnly,
+        },
+      );
+      console.info("VISITS_MONTH_RANGE_FIX_2026_05_26", { active: true });
+      console.info("VISITS_MONTH_SUMMARY_FIX_2026_05_25", { active: true });
+      console.info("VISITS_MONTH_QUERY_SOURCE", "rpc_get_visits_month_summary_v1");
+      console.info("VISITS_MONTH_START", startDate);
+      console.info("VISITS_MONTH_END_EXCLUSIVE", monthEndExclusive);
+      console.info("VISITS_MONTH_QUERY_DURATION_MS", Math.round(performance.now() - monthSummaryStart));
+      console.info("VISITS_MONTH_ROWS_RETURNED", (monthSummaryData ?? []).length);
+      console.info("VISITS_MONTH_USES_HEAVY_EMBED=false");
+      console.info("VISITS_MONTH_OLD_PAGINATED_EMBED_DISABLED=true");
+      console.info("VISITS_RPC_RAW_RESULT", monthSummaryData ?? []);
+      const rpcRawDays = (monthSummaryData ?? []).map((row: { visit_day?: string | null }) => row.visit_day ?? null);
+      console.info("VISITS_RPC_RAW_DAYS", rpcRawDays);
+      const monthDaysAfterMay21 = (monthSummaryData ?? []).filter((row: { visit_day?: string | null }) => {
+        const day = String((row as { visit_day?: string | null }).visit_day ?? "");
+        return day >= "2026-05-22" && day < "2026-06-01";
+      });
+      console.info("VISITS_DAYS_AFTER_2026_05_21", monthDaysAfterMay21.length);
+      if (monthSummaryError) {
+        console.warn("VISITS_MONTH_SUMMARY_ERROR_SAFE", monthSummaryError.message);
+      }
+      const summaryMap = new Map<string, number>();
+      (monthSummaryData ?? []).forEach((row: { visit_day?: string | null; total_visits?: number | null }) => {
+        const day = String((row as { visit_day?: string | null }).visit_day ?? "");
+        const total = Number((row as { total_visits?: number | null }).total_visits ?? 0);
+        if (!day) return;
+        summaryMap.set(day, total);
+      });
+      if (!active) return;
+      setMonthSummaryCounts(summaryMap);
+      const calendarKeys = Array.from(summaryMap.keys()).sort();
+      console.info("VISITS_CALENDAR_KEYS", calendarKeys);
+      console.info("VISITS_DAY_2026_05_22_TOTAL", summaryMap.get("2026-05-22") ?? 0);
+      console.info("VISITS_DAY_2026_05_23_TOTAL", summaryMap.get("2026-05-23") ?? 0);
+      console.info("VISITS_DAY_2026_05_24_TOTAL", summaryMap.get("2026-05-24") ?? 0);
+      console.info("VISITS_DAY_2026_05_25_TOTAL", summaryMap.get("2026-05-25") ?? 0);
+      console.info("VISITS_DAY_2026_05_26_TOTAL", summaryMap.get("2026-05-26") ?? 0);
+      console.info("VISITS_DAY_2026_05_27_TOTAL", summaryMap.get("2026-05-27") ?? 0);
+      console.info("VISITS_DAY_2026_05_28_TOTAL", summaryMap.get("2026-05-28") ?? 0);
 
       const buildVisitsQuery = () => {
         let query = supabase
           .from("visits")
           .select(
-            "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, visit_type, supervisor_reason, register_mode, visit_time, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, visit_supervisors(supervisor_user_id), cliente:cliente_id (id, codigo, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf)",
+            "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, visit_type, supervisor_reason, register_mode, visit_time, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, visit_supervisors(supervisor_user_id)",
           )
           .gte("visit_date", startDate)
-          .lte("visit_date", endDate)
+          .lt("visit_date", monthEndExclusive)
           .order("visit_date", { ascending: true });
 
         if (isVendor) {
@@ -755,63 +903,19 @@ export default function Visitas() {
         return query;
       };
 
-      type VisitRowJoin = VisitRow & {
-        cliente?: VisitRow["cliente"] | VisitRow["cliente"][] | null;
-      };
-      const data: VisitRowJoin[] = [];
-      let pageStart = 0;
-      let supaError: { message: string } | null = null;
-
-      while (true) {
-        const { data: batchData, error: batchError } = await buildVisitsQuery().range(
-          pageStart,
-          pageStart + VISITS_FETCH_BATCH_SIZE - 1,
-        );
-        if (batchError) {
-          supaError = batchError;
-          break;
-        }
-        const batch = (batchData ?? []) as VisitRowJoin[];
-        data.push(...batch);
-        if (batch.length < VISITS_FETCH_BATCH_SIZE) {
-          break;
-        }
-        pageStart += VISITS_FETCH_BATCH_SIZE;
-      }
+      const { data: rawVisits, error: supaError } = await buildVisitsQuery();
+      const data = (rawVisits ?? []) as VisitRowJoin[];
+      const recordsAfterMay21 = data.filter((row) => row.visit_date >= "2026-05-22" && row.visit_date < "2026-06-01").length;
+      console.info("VISITS_RECORDS_AFTER_2026_05_21", recordsAfterMay21);
 
       if (!active) return;
 
       if (supaError) {
         setError(supaError.message);
         setVisits([]);
+        setMonthSummaryCounts(new Map());
       } else {
-        const agendaFromCliente = (cliente: ClienteCanonicalModalRow): NonNullable<VisitRow["agenda"]> => ({
-          id: cliente.id,
-          empresa: cliente.empresa,
-          nome_fantasia: cliente.nome_fantasia,
-          cod_1: cliente.codigo,
-          corte: cliente.corte,
-          venc: cliente.venc,
-          valor: cliente.valor,
-          obs_contrato_1: cliente.obs_comercial,
-          pessoa: cliente.pessoa,
-          contato: cliente.contato,
-          instructions: null,
-          endereco: cliente.endereco,
-          complemento: cliente.complemento,
-          bairro: cliente.bairro,
-          cidade: cliente.cidade,
-          uf: cliente.uf,
-          situacao: cliente.situacao,
-          categoria: cliente.categoria,
-          perfil_visita: cliente.perfil_visita,
-          supervisor: null,
-        });
-        const normalized = (data ?? []).map((row) => {
-          const item = row as VisitRowJoin;
-          const cliente = Array.isArray(item.cliente) ? item.cliente[0] ?? null : item.cliente ?? null;
-          return { ...item, agenda: cliente ? agendaFromCliente(cliente) : null, cliente };
-        }) as VisitRow[];
+        const normalized = await hydrateVisitsWithClientes(data);
         setVisits(normalized);
       }
 
@@ -823,13 +927,14 @@ export default function Visitas() {
       if (!active) return;
       setError(err instanceof Error ? err.message : "Erro ao carregar visitas.");
       setVisits([]);
+      setMonthSummaryCounts(new Map());
       setLoading(false);
     });
 
     return () => {
       active = false;
     };
-  }, [currentMonth, refreshKey, isVendor, profile?.display_name, session?.user.email, session?.user.id]);
+  }, [currentMonth, refreshKey, isVendor, profile?.display_name, session?.user.email, session?.user.id, canManage, selectedSupervisorId, selectedVendorId, hydrateVisitsWithClientes]);
 
   const calendarCells = useMemo(() => {
     const firstDayOfMonth = startOfMonth(currentMonth);
@@ -1004,9 +1109,50 @@ export default function Visitas() {
 
   const selectedVisits = useMemo(() => {
     if (!selectedDate) return [] as VisitRow[];
-    const key = format(selectedDate, "yyyy-MM-dd");
-    const visitsForDate = visitsByDate.get(key) ?? [];
-    return [...visitsForDate].sort((a, b) => {
+    const selectedDayStart = toYmd(
+      selectedDate.getFullYear(),
+      selectedDate.getMonth(),
+      selectedDate.getDate(),
+    );
+    const nextDay = addDays(new Date(`${selectedDayStart}T12:00:00`), 1);
+    const selectedDayEndExclusive = toYmd(
+      nextDay.getFullYear(),
+      nextDay.getMonth(),
+      nextDay.getDate(),
+    );
+    const visitsForDate = filteredVisits.filter((visit) => {
+      const visitKey = extractVisitDateKey(visit.visit_date);
+      return visitKey >= selectedDayStart && visitKey < selectedDayEndExclusive;
+    });
+    const fallbackVisitsForDate = dayDetailsByDate[selectedDayStart] ?? [];
+    const resolvedVisits = visitsForDate.length > 0 ? visitsForDate : fallbackVisitsForDate;
+    const daySummaryTotal = monthSummaryCounts.get(selectedDayStart) ?? 0;
+    const isLoadingDayDetails = dayDetailsLoadingDateKey === selectedDayStart;
+    const dayDetailsError = dayDetailsErrorByDate[selectedDayStart] ?? null;
+    const emptyStateReason =
+      daySummaryTotal === 0
+        ? "month_summary_zero"
+        : isLoadingDayDetails
+          ? "loading_day_details"
+          : dayDetailsError
+            ? "day_details_error"
+            : resolvedVisits.length > 0
+              ? "day_details_loaded_with_data"
+              : "day_details_loaded_empty";
+    console.info("VISITS_DAY_DETAILS_FIX_2026_05_26", { active: true });
+    console.info("VISITS_SELECTED_DAY", selectedDayStart);
+    console.info("VISITS_DAY_START", selectedDayStart);
+    console.info("VISITS_DAY_END_EXCLUSIVE", selectedDayEndExclusive);
+    console.info(
+      "VISITS_DAY_QUERY_SOURCE",
+      visitsForDate.length > 0 ? "filtered_visits_day_range" : "rest_selected_day_light",
+    );
+    console.info("VISITS_DAY_QUERY_DURATION_MS", 0);
+    console.info("VISITS_DAY_RAW_ROWS_RETURNED", resolvedVisits.length);
+    console.info("VISITS_DAY_TOTAL_FROM_DETAILS", resolvedVisits.length);
+    console.info("VISITS_DAY_TOTAL_FROM_MONTH_SUMMARY", daySummaryTotal);
+    console.info("VISITS_DAY_EMPTY_STATE_REASON", emptyStateReason);
+    return [...resolvedVisits].sort((a, b) => {
       const aSupervisor = isSupervisorVisitType(a.visit_type);
       const bSupervisor = isSupervisorVisitType(b.visit_type);
       if (aSupervisor !== bSupervisor) return aSupervisor ? -1 : 1;
@@ -1014,7 +1160,105 @@ export default function Visitas() {
       const bName = b.assigned_to_name ?? b.agenda?.empresa ?? "";
       return aName.localeCompare(bName, "pt-BR");
     });
-  }, [selectedDate, visitsByDate]);
+  }, [dayDetailsByDate, dayDetailsErrorByDate, dayDetailsLoadingDateKey, filteredVisits, monthSummaryCounts, selectedDate]);
+
+  useEffect(() => {
+    if (!selectedDate) return;
+
+    const selectedDayStart = toYmd(
+      selectedDate.getFullYear(),
+      selectedDate.getMonth(),
+      selectedDate.getDate(),
+    );
+    const daySummaryTotal = monthSummaryCounts.get(selectedDayStart) ?? 0;
+    const localDayVisits = filteredVisits.filter((visit) => extractVisitDateKey(visit.visit_date) === selectedDayStart);
+
+    if (daySummaryTotal <= 0 || localDayVisits.length > 0 || dayDetailsByDate[selectedDayStart]) {
+      return;
+    }
+
+    let active = true;
+    const loadDayDetails = async () => {
+      const nextDay = addDays(new Date(`${selectedDayStart}T12:00:00`), 1);
+      const selectedDayEndExclusive = toYmd(
+        nextDay.getFullYear(),
+        nextDay.getMonth(),
+        nextDay.getDate(),
+      );
+
+      setDayDetailsLoadingDateKey(selectedDayStart);
+      setDayDetailsErrorByDate((prev) => ({ ...prev, [selectedDayStart]: null }));
+      console.info("VISITS_DAY_EMPTY_STATE_REASON", "local_cache_incomplete_fetching_day");
+      console.info("VISITS_DAY_SELECTED_SUPERVISOR", selectedSupervisorId);
+      console.info("VISITS_DAY_SELECTED_VENDOR", selectedVendorId);
+      console.info("VISITS_DAY_SUPERVISOR_PARAM", selectedSupervisorId === "all" ? null : selectedSupervisorId);
+      console.info("VISITS_DAY_VENDOR_PARAM", selectedVendorId === "all" ? null : selectedVendorId);
+      console.info("VISITS_DAY_ASSIGNED_TO_USER_ID", isVendor ? session?.user.id ?? null : selectedVendorId === "all" ? null : selectedVendorId);
+      console.info("VISITS_DAY_VISIT_TYPE", isVendor ? VISIT_TYPE.VENDEDOR : null);
+      console.info("VISITS_DAY_COMPLETED_ONLY", null);
+
+      const startedAt = performance.now();
+      let query = supabase
+        .from("visits")
+        .select(
+          "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, visit_type, supervisor_reason, register_mode, visit_time, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, visit_supervisors(supervisor_user_id)",
+        )
+        .gte("visit_date", selectedDayStart)
+        .lt("visit_date", selectedDayEndExclusive)
+        .order("visit_date", { ascending: true });
+
+      if (isVendor) {
+        query = applyVendorVisitTypeScope(query);
+        if (session?.user.id) {
+          query = query.eq("assigned_to_user_id", session.user.id);
+        }
+      }
+
+      if (canManage && selectedVendorId !== "all") {
+        query = query.eq("assigned_to_user_id", selectedVendorId);
+      }
+
+      const { data, error: dayError } = await query;
+      if (!active) return;
+
+      console.info("VISITS_DAY_QUERY_SOURCE", "rest_selected_day_light");
+      console.info("VISITS_SELECTED_DAY", selectedDayStart);
+      console.info("VISITS_DAY_START", selectedDayStart);
+      console.info("VISITS_DAY_END_EXCLUSIVE", selectedDayEndExclusive);
+      console.info("VISITS_DAY_QUERY_DURATION_MS", Math.round(performance.now() - startedAt));
+
+      if (dayError) {
+        setDayDetailsErrorByDate((prev) => ({ ...prev, [selectedDayStart]: dayError.message }));
+        setDayDetailsLoadingDateKey((current) => (current === selectedDayStart ? null : current));
+        console.warn("VISITS_DAY_DETAILS_ERROR_SAFE", dayError.message);
+        return;
+      }
+
+      const normalized = await hydrateVisitsWithClientes((data ?? []) as VisitRowJoin[]);
+      setDayDetailsByDate((prev) => ({ ...prev, [selectedDayStart]: normalized }));
+      setDayDetailsLoadingDateKey((current) => (current === selectedDayStart ? null : current));
+      console.info("VISITS_DAY_RAW_ROWS_RETURNED", normalized.length);
+      console.info(
+        "VISITS_DAY_GROUPS_RETURNED",
+        new Set(
+          normalized.map((visit) => visit.assigned_to_name ?? visit.agenda?.supervisor ?? visit.agenda?.empresa ?? "Sem nome"),
+        ).size,
+      );
+    };
+
+    void loadDayDetails().catch((error) => {
+      if (!active) return;
+      setDayDetailsErrorByDate((prev) => ({
+        ...prev,
+        [selectedDayStart]: error instanceof Error ? error.message : "Erro ao carregar detalhes do dia.",
+      }));
+      setDayDetailsLoadingDateKey((current) => (current === selectedDayStart ? null : current));
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [canManage, dayDetailsByDate, filteredVisits, hydrateVisitsWithClientes, isVendor, monthSummaryCounts, selectedDate, selectedVendorId, session?.user.id]);
 
   useEffect(() => {
     if (!restoredModalState) return;
@@ -2785,7 +3029,7 @@ export default function Visitas() {
                 }
 
                 const key = format(day, "yyyy-MM-dd");
-                const count = visitsByDate.get(key)?.length ?? 0;
+                const count = monthSummaryCounts.get(key) ?? visitsByDate.get(key)?.length ?? 0;
                 const hasVisits = count > 0;
                 const hasSupervisorVisitForLoggedUser = supervisorPinDates.has(key);
                 const isSelected = selectedDate ? isSameDay(day, selectedDate) : false;
@@ -2856,7 +3100,13 @@ export default function Visitas() {
             </div>
 
             {selectedVisits.length === 0 ? (
-              <p className="mt-4 text-sm text-ink/60">Nenhuma visita para esta data.</p>
+              dayDetailsLoadingDateKey === selectedDateKey && (monthSummaryCounts.get(selectedDateKey) ?? 0) > 0 ? (
+                <p className="mt-4 text-sm text-ink/60">Carregando visitas do dia...</p>
+              ) : (dayDetailsErrorByDate[selectedDateKey] && (monthSummaryCounts.get(selectedDateKey) ?? 0) > 0) ? (
+                <p className="mt-4 text-sm text-red-500">Erro ao carregar visitas do dia.</p>
+              ) : (
+                <p className="mt-4 text-sm text-ink/60">Nenhuma visita para esta data.</p>
+              )
             ) : (
               <div className="mt-4 space-y-4">
                 {groupedBySeller.map(([seller, items]) => {

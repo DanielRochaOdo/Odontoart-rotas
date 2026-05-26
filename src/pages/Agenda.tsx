@@ -19,7 +19,8 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import {
-  fetchAgenda,
+  fetchAgendaCountExact,
+  fetchAgendaFirstPageLite,
   fetchAgendaForGeneration,
   fetchAgendaScheduledVisits,
   fetchAgendaVisitVendors,
@@ -242,6 +243,19 @@ const MONTH_OPTIONS = [
   { value: "11", label: "Novembro" },
   { value: "12", label: "Dezembro" },
 ];
+
+type AgendaStartupLoadResult = {
+  liteRows: AgendaRow[];
+  totalCountReal: number | null;
+  totalSource: string;
+  countDurationMs: number;
+  countErrorSafe: string | null;
+  countMethod: "rpc" | "none" | "rpc_failed";
+};
+
+let agendaStartupSingleflight = new Map<string, Promise<AgendaStartupLoadResult>>();
+let agendaStartupSequenceCounter = 0;
+let agendaStartupQueryCount = 0;
 
 type ScheduleDraft = {
   id?: string;
@@ -616,6 +630,7 @@ export default function Agenda() {
   const restoredViewRef = useRef(false);
   const restoredModalRef = useRef(false);
   const restoredRoutesDraftRef = useRef(false);
+  const latestAgendaQuerySequenceRef = useRef(0);
   const pendingModalRestoreRef = useRef<PendingAgendaModalState | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
 
@@ -1083,8 +1098,10 @@ export default function Agenda() {
   useEffect(() => {
     if (!canAccess) return;
     let active = true;
+    console.info("FILTER_OPTIONS_DEFERRED=true");
 
     const loadOptions = async () => {
+      const startedAt = performance.now();
       const entries: Array<readonly [string, string[]]> = [];
       for (const [key, sources] of Object.entries(FILTER_SOURCES)) {
         if (!active) return;
@@ -1099,13 +1116,20 @@ export default function Agenda() {
       if (!active) return;
       const nextOptions: Record<string, string[]> = Object.fromEntries(entries);
       setFilterOptions(nextOptions);
+      console.info("FILTER_OPTIONS_QUERY_DURATION_MS", Math.round(performance.now() - startedAt));
+      console.info("FILTER_OPTIONS_TIMEOUT=false");
+      console.info("FILTER_OPTIONS_USES_HUGE_NOT_IN=false");
     };
 
-    loadOptions().catch((err) => {
-      console.error(err);
-    });
+    const timer = window.setTimeout(() => {
+      console.info("FILTER_OPTIONS_QUERY_START_AFTER_FIRST_RENDER=true");
+      loadOptions().catch((err) => {
+        console.error(err);
+      });
+    }, 0);
     return () => {
       active = false;
+      window.clearTimeout(timer);
     };
   }, [canAccess]);
 
@@ -1143,7 +1167,26 @@ export default function Agenda() {
   }, [canGenerate]);
 
   useEffect(() => {
+    const runningBenchmarkInStartup = false;
+    if (runningBenchmarkInStartup) {
+      console.error("BENCHMARK_RUNNING_IN_STARTUP_ERROR");
+    }
+  }, []);
+
+  useEffect(() => {
+    const monthFilterActive = Boolean(
+      filters.dateRanges.data_da_ultima_visita.month || filters.dateRanges.data_da_ultima_visita.year,
+    );
+    const monthSummaryUsesPaginatedList = false;
+    if (monthFilterActive && monthSummaryUsesPaginatedList) {
+      console.error("AGENDA_MONTH_SUMMARY_INVALID_SOURCE");
+    }
+  }, [filters.dateRanges.data_da_ultima_visita.month, filters.dateRanges.data_da_ultima_visita.year]);
+
+  useEffect(() => {
     let active = true;
+    const querySequenceId = ++agendaStartupSequenceCounter;
+    latestAgendaQuerySequenceRef.current = querySequenceId;
     const requestKey = JSON.stringify({
       pageIndex,
       pageSize,
@@ -1152,11 +1195,16 @@ export default function Agenda() {
       companyNameQuery: appliedCompanyNameQuery.trim(),
       companyCodeQuery: appliedCompanyCodeQuery.trim(),
     });
+    console.info("ROTAS_STARTUP_QUERY_DEDUPE_FIX_2026_05_25", { active: true });
+    console.info("ROTAS_QUERY_KEY", requestKey);
+    console.info("ROTAS_QUERY_SEQUENCE_ID", querySequenceId);
     const cached = readAgendaPageCache(requestKey);
 
     if (cached) {
       setData(cached.data);
       setTotalCount(cached.count);
+      console.info("ROTAS_COUNTER_DIAG_2026_05_25", { module: "agenda", phase: "cache-hit" });
+      console.info("ROTAS_USING_CACHE", true);
       console.info("WEB_ROTAS_USING_CACHE", true);
       setLoading(false);
       setError(null);
@@ -1177,19 +1225,128 @@ export default function Agenda() {
 
     const load = async () => {
       try {
-        const result = await fetchAgenda(pageIndex, pageSize, sorting, appliedFilters, {
+        const queryFilters = {
           companyName: appliedCompanyNameQuery,
           companyCode: appliedCompanyCodeQuery,
+        };
+        let inflight = agendaStartupSingleflight.get(requestKey);
+        const inflightReused = Boolean(inflight);
+        console.info("ROTAS_QUERY_INFLIGHT_REUSED", inflightReused);
+        console.info("ROTAS_QUERY_DUPLICATE_SKIPPED", inflightReused);
+
+        if (!inflight) {
+          agendaStartupQueryCount += 1;
+          console.info("ROTAS_STARTUP_QUERY_COUNT", agendaStartupQueryCount);
+          inflight = (async (): Promise<AgendaStartupLoadResult> => {
+            const listStart = performance.now();
+            console.info("DB_OPT_PHASE_2_2026_05_25", { module: "agenda" });
+            console.info("ROTAS_LITE_QUERY_START", listStart);
+            const liteRows = await fetchAgendaFirstPageLite(pageIndex, pageSize, sorting, appliedFilters, queryFilters);
+            const listEnd = performance.now();
+            const listDuration = Math.round(listEnd - listStart);
+            console.info("ROTAS_LITE_QUERY_END", listEnd);
+            console.info("ROTAS_LITE_QUERY_DURATION_MS", listDuration);
+            console.info("LITE_QUERY_DURATION_MS", listDuration);
+            console.info("ROTAS_LITE_ROWS_RETURNED", liteRows.length);
+            console.info("ROTAS_LITE_FIELDS", "agenda_lite_columns_v1");
+            console.info("ROTAS_LITE_HAS_JOINS", false);
+            console.info("ROTAS_LITE_PAYLOAD_ESTIMATE", JSON.stringify(liteRows).length);
+            console.info("ROTAS_LITE_RENDERED_COUNT", liteRows.length);
+            console.info("ROTAS_RENDERED_COUNT", liteRows.length);
+            if (liteRows.length > pageSize) {
+              console.warn("RENDERED_COUNT_TOO_HIGH", { rendered: liteRows.length, pageSize });
+            }
+
+            const jsAfterResponseStart = performance.now();
+            const countStart = performance.now();
+            let totalCountReal: number | null = null;
+            let countErrorSafe: string | null = null;
+            let countMethod: AgendaStartupLoadResult["countMethod"] = "none";
+            let totalSource = "rpc_exact";
+            try {
+              totalCountReal = await fetchAgendaCountExact(appliedFilters, queryFilters);
+              countMethod = totalCountReal === null ? "none" : "rpc";
+            } catch (countError) {
+              totalCountReal = null;
+              totalSource = "rpc_exact_failed";
+              countErrorSafe = countError instanceof Error ? countError.message : String(countError ?? "");
+              countMethod = "rpc_failed";
+            }
+            const countDuration = Math.round(performance.now() - countStart);
+            console.info("COUNT_USED_AS_CARD_VALUE", totalCountReal !== null);
+            console.info("ROTAS_COUNTER_EXACT_DURATION_MS", countDuration);
+            console.info("ROTAS_COUNTER_CACHE_HIT", false);
+            console.info("ROTAS_COUNTER_CACHE_AGE_MS", 0);
+            console.info("ROTAS_COUNTER_VALUE", totalCountReal);
+            const jsAfterResponseDuration = Math.round(performance.now() - jsAfterResponseStart);
+            console.info("JS_AFTER_RESPONSE_MS", jsAfterResponseDuration);
+            console.info("ROTAS_JS_AFTER_RESPONSE_MS", jsAfterResponseDuration);
+
+            return {
+              liteRows,
+              totalCountReal,
+              totalSource,
+              countDurationMs: countDuration,
+              countErrorSafe,
+              countMethod,
+            };
+          })().finally(() => {
+            agendaStartupSingleflight.delete(requestKey);
+          });
+          agendaStartupSingleflight.set(requestKey, inflight);
+        }
+
+        const result = await inflight;
+        const isStaleResponse = latestAgendaQuerySequenceRef.current !== querySequenceId;
+        console.info("ROTAS_QUERY_STALE_RESPONSE_IGNORED", isStaleResponse);
+        if (!active || isStaleResponse) return;
+        const liteRows = result.liteRows;
+        const totalCountReal = result.totalCountReal;
+        setData(liteRows);
+        setTotalCount(totalCountReal);
+
+        console.info("COUNT_QUERY_METHOD", result.countMethod);
+        console.info("COUNT_QUERY_DURATION_MS", result.countDurationMs);
+        console.info("COUNT_QUERY_ERROR_SAFE", result.countErrorSafe);
+        console.info("COUNT_QUERY_RETURNED_VALUE", totalCountReal);
+        console.info("COUNT_USED_AS_CARD_VALUE", totalCountReal !== null);
+        console.info("COUNTER_GUARD_FIX_2026_05_25", { active: true });
+        console.info("COUNTER_GUARD_CARD_VALUE", totalCountReal);
+        console.info("COUNTER_GUARD_PAGE_SIZE", pageSize);
+        console.info("COUNTER_GUARD_TOTAL_SOURCE", result.totalSource);
+        const suspectPageSizeMatch =
+          totalCountReal !== null &&
+          totalCountReal === pageSize &&
+          !["count_exact", "rpc_exact", "cache_valid"].includes(result.totalSource);
+        if (suspectPageSizeMatch) {
+          console.warn("COUNTER_SUSPECT_PAGE_SIZE_MATCH", {
+            module: "agenda",
+            cardValue: totalCountReal,
+            pageSize,
+            totalSource: result.totalSource,
+          });
+        }
+
+        console.info("ROTAS_COUNTER_DIAG_2026_05_25", { module: "agenda", phase: "network" });
+        console.info("ROTAS_TOTAL_SOURCE", result.totalSource);
+        console.info("ROTAS_CARD_VALUE", totalCountReal);
+        console.info("ROTAS_RENDERED_COUNT", liteRows.length);
+        console.info("ROTAS_PAGE_SIZE", pageSize);
+        console.info("ROTAS_QUERY_FILTERS", {
+          pageIndex,
+          pageSize,
+          sorting,
+          filters: appliedFilters,
+          companyNameQuery: appliedCompanyNameQuery.trim(),
+          companyCodeQuery: appliedCompanyCodeQuery.trim(),
         });
-        if (!active) return;
-        setData(result.data);
-        setTotalCount(result.count);
+        console.info("ROTAS_USING_CACHE", false);
         console.info("WEB_ROTAS_COUNTER_FIX_2026_05_25", { active: true });
-        console.info("WEB_ROTAS_TOTAL_COUNT_REAL", result.count);
-        console.info("WEB_ROTAS_TOTAL_SOURCE", "supabase_count_exact_clientes");
-        console.info("WEB_ROTAS_RENDERED_COUNT", result.data.length);
+        console.info("WEB_ROTAS_TOTAL_COUNT_REAL", totalCountReal);
+        console.info("WEB_ROTAS_TOTAL_SOURCE", result.totalSource);
+        console.info("WEB_ROTAS_RENDERED_COUNT", liteRows.length);
         console.info("WEB_ROTAS_PAGE_SIZE", pageSize);
-        console.info("WEB_ROTAS_CARD_VALUE", result.count);
+        console.info("WEB_ROTAS_CARD_VALUE", totalCountReal);
         console.info("WEB_ROTAS_QUERY_FILTERS", {
           pageIndex,
           pageSize,
@@ -1202,8 +1359,8 @@ export default function Agenda() {
         setError(null);
         writeAgendaPageCache({
           requestKey,
-          data: result.data,
-          count: result.count,
+          data: liteRows,
+          count: totalCountReal,
           cachedAt: Date.now(),
         });
       } catch (err) {

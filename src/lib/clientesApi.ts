@@ -2,15 +2,13 @@ import { supabase } from "./supabase";
 import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import { extractCustomTimes } from "./perfilVisita";
 const DEFAULT_SITUACAO = "Ativo";
-const CLIENTES_LIST_SELECT_COLUMNS =
-  "id, codigo, empresa, pessoa, contato, grupo, obs_comercial, obs, perfil_visita, situacao, cep, cidade, uf, created_at";
 const CLIENTES_SELECT_COLUMNS =
   "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf, latitude, longitude, geocode_source, geocode_updated_at, created_at";
 const MAX_CLIENTES_PAGE_SIZE = 100;
 
 export type ClienteListRow = Pick<
   ClienteRow,
-  "id" | "codigo" | "empresa" | "pessoa" | "contato" | "grupo" | "obs_comercial" | "obs" | "perfil_visita" | "situacao" | "cep" | "cidade" | "uf" | "created_at"
+  "id" | "codigo" | "empresa" | "pessoa" | "contato" | "grupo" | "perfil_visita" | "situacao" | "cep" | "cidade" | "uf" | "created_at"
 >;
 
 const clampPageSize = (value: number) => {
@@ -23,54 +21,6 @@ const clampPageSize = (value: number) => {
 
 const sanitizeSearchTerm = (value: string | null | undefined) =>
   (value ?? "").replace(/%/g, "").trim();
-
-const applyClientesListFilters = <T,>(
-  query: T,
-  params: {
-    search?: string;
-    searchMode?: "codigo" | "empresa" | "geral";
-    situacao?: "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado";
-  },
-): T => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let next: any = query;
-  const searchTerm = sanitizeSearchTerm(params.search);
-  const mode = params.searchMode ?? "codigo";
-
-  if (params.situacao) {
-    next = next.eq("situacao", params.situacao);
-  }
-
-  if (!searchTerm) return next as T;
-
-  if (mode === "codigo") {
-    next = next.eq("codigo", searchTerm);
-    return next as T;
-  }
-
-  if (mode === "empresa") {
-    next = next.ilike("empresa", `%${searchTerm}%`);
-    return next as T;
-  }
-
-  const conditions = [
-    `codigo.ilike.%${searchTerm}%`,
-    `cep.ilike.%${searchTerm}%`,
-    `empresa.ilike.%${searchTerm}%`,
-    `nome_fantasia.ilike.%${searchTerm}%`,
-    `pessoa.ilike.%${searchTerm}%`,
-    `contato.ilike.%${searchTerm}%`,
-    `grupo.ilike.%${searchTerm}%`,
-    `obs_comercial.ilike.%${searchTerm}%`,
-    `obs.ilike.%${searchTerm}%`,
-    `situacao.ilike.%${searchTerm}%`,
-    `cidade.ilike.%${searchTerm}%`,
-    `uf.ilike.%${searchTerm}%`,
-    `bairro.ilike.%${searchTerm}%`,
-  ];
-  next = next.or(conditions.join(","));
-  return next as T;
-};
 
 const normalizePerfilTimes = (value: string | null) => {
   if (!value) return { perfil: null as string | null, opcoes: null as string | null };
@@ -91,24 +41,17 @@ export const fetchClientesPage = async (params: {
 }) => {
   const page = Number.isFinite(params.page) && params.page > 0 ? Math.floor(params.page) : 1;
   const pageSize = clampPageSize(params.pageSize ?? 50);
-  const from = (page - 1) * pageSize;
-  const to = from + pageSize - 1;
-
-  let query = supabase
-    .from("clientes")
-    .select(CLIENTES_LIST_SELECT_COLUMNS)
-    .order("empresa", { ascending: true, nullsFirst: false })
-    .order("id", { ascending: true })
-    .range(from, to);
-
-  query = applyClientesListFilters(query, {
-    search: params.search,
-    searchMode: params.searchMode,
-    situacao: params.situacao,
+  const offset = (page - 1) * pageSize;
+  const searchTerm = sanitizeSearchTerm(params.search);
+  const { data, error } = await supabase.rpc("get_empresas_first_page_v1", {
+    p_page_size: pageSize,
+    p_page_offset: offset,
+    p_search: searchTerm || null,
+    p_search_mode: params.searchMode ?? "codigo",
+    p_situacao: params.situacao || null,
   });
-
-  const { data, error } = await query;
   if (error) throw new Error(error.message);
+  console.info("EMPRESAS_QUERY_SOURCE", "rpc_get_empresas_first_page_v1");
   return (data ?? []) as ClienteListRow[];
 };
 
@@ -117,37 +60,40 @@ export const fetchClientesCount = async (params: {
   searchMode?: "codigo" | "empresa" | "geral";
   situacao?: "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado";
 }) => {
-  const applyFilters = <T,>(query: T) =>
-    applyClientesListFilters(query, {
-      search: params.search,
-      searchMode: params.searchMode,
-      situacao: params.situacao,
+  console.info("COUNT_EXACT_FIX_2026_05_25", { module: "empresas", active: true });
+  console.info("COUNT_QUERY_FILTERS", {
+    module: "empresas",
+    search: params.search ?? "",
+    searchMode: params.searchMode ?? "codigo",
+    situacao: params.situacao ?? "",
+  });
+  const startedAt = performance.now();
+  const searchTerm = sanitizeSearchTerm(params.search);
+  const { data, error } = await supabase.rpc("get_empresas_count_v1", {
+    p_search: searchTerm || null,
+    p_search_mode: params.searchMode ?? "codigo",
+    p_situacao: params.situacao || null,
+  });
+  const duration = Math.round(performance.now() - startedAt);
+  if (error) {
+    console.warn("COUNTER_REJECTED_ESTIMATED_TOTAL", {
+      module: "empresas",
+      reason: "rpc_count_failed_and_estimated_not_allowed",
     });
-
-  const headExactQuery = applyFilters(
-    supabase
-      .from("clientes")
-      .select("id", { count: "exact", head: true }),
-  );
-
-  const headExactResult = await headExactQuery;
-  if (!headExactResult.error) {
-    return headExactResult.count ?? 0;
+    console.info("COUNT_QUERY_SOURCE", "get_empresas_count_v1");
+    console.info("COUNT_QUERY_METHOD", "rpc_failed");
+    console.info("COUNT_QUERY_DURATION_MS", duration);
+    console.info("COUNT_QUERY_ERROR_SAFE", error.message);
+    console.info("COUNT_QUERY_RETURNED_VALUE", null);
+    throw new Error(error.message);
   }
-
-  const getExactQuery = applyFilters(
-    supabase
-      .from("clientes")
-      .select("id", { count: "exact", head: false })
-      .limit(1),
-  );
-
-  const getExactResult = await getExactQuery;
-  if (!getExactResult.error) {
-    return getExactResult.count ?? 0;
-  }
-
-  throw new Error(`${headExactResult.error.message} | fallback: ${getExactResult.error.message}`);
+  const total = typeof data === "number" ? data : Number(data ?? 0);
+  console.info("COUNT_QUERY_SOURCE", "get_empresas_count_v1");
+  console.info("COUNT_QUERY_METHOD", "rpc");
+  console.info("COUNT_QUERY_DURATION_MS", duration);
+  console.info("COUNT_QUERY_ERROR_SAFE", null);
+  console.info("COUNT_QUERY_RETURNED_VALUE", total);
+  return total;
 };
 
 export const fetchClienteById = async (id: string) => {

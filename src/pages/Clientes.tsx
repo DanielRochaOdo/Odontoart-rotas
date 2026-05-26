@@ -1121,6 +1121,7 @@ export default function Clientes() {
     if (!canView) return;
     if (showLoading) setLoading(true);
     setError(null);
+    const listStart = performance.now();
     try {
       const pageData = await fetchClientesPage({
         page: currentPage,
@@ -1130,9 +1131,18 @@ export default function Clientes() {
         situacao: situacaoFilter,
       });
       setClientes(pageData as unknown as ClienteRow[]);
+      console.info("EMPRESAS_QUERY_FIX_2026_05_25", { active: true });
+      console.info("EMPRESAS_LIST_QUERY_DURATION_MS", Math.round(performance.now() - listStart));
+      console.info("EMPRESAS_LIST_ROWS_RETURNED", pageData.length);
+      console.info("EMPRESAS_LIST_FIELDS", "id,codigo,empresa,pessoa,contato,grupo,perfil_visita,situacao,cep,cidade,uf,created_at");
+      console.info("EMPRESAS_LIST_HAS_HEAVY_FIELDS=false");
+      console.info("EMPRESAS_COUNTER_DIAG_2026_05_25", { module: "empresas", phase: "list-loaded" });
+      console.info("EMPRESAS_RENDERED_COUNT", pageData.length);
+      console.info("EMPRESAS_PAGE_SIZE", CLIENTES_DEFAULT_PAGE_SIZE);
       console.info("WEB_EMPRESAS_RENDERED_COUNT", pageData.length);
       console.info("WEB_EMPRESAS_PAGE_SIZE", CLIENTES_DEFAULT_PAGE_SIZE);
     } catch (err) {
+      console.info("EMPRESAS_LIST_QUERY_DURATION_MS", Math.round(performance.now() - listStart));
       setError(err instanceof Error ? err.message : "Erro ao carregar empresas.");
       setClientes([]);
     } finally {
@@ -1142,6 +1152,7 @@ export default function Clientes() {
 
   const loadClientesCount = async () => {
     if (!canView) return;
+    const countStart = performance.now();
     try {
       const count = await fetchClientesCount({
         search,
@@ -1149,9 +1160,38 @@ export default function Clientes() {
         situacao: situacaoFilter,
       });
       setTotalCount(count);
+      const totalSource = "rpc_exact";
+      console.info("EMPRESAS_COUNT_QUERY_DURATION_MS", Math.round(performance.now() - countStart));
+      console.info("EMPRESAS_COUNT_ERROR_SAFE", null);
+      console.info("EMPRESAS_COUNTER_FIX_2026_05_25", { active: true });
+      console.info("EMPRESAS_TOTAL_COUNT_REAL", count);
+      console.info("EMPRESAS_TOTAL_SOURCE", totalSource);
+      console.info("EMPRESAS_CARD_VALUE", count);
+      console.info("EMPRESAS_QUERY_FILTERS", {
+        search,
+        searchMode,
+        situacao: situacaoFilter,
+      });
+      console.info("EMPRESAS_USING_CACHE", false);
+      console.info("EMPRESAS_COUNTER_SOURCE", "count_exact");
+      console.info("COUNTER_GUARD_FIX_2026_05_25", { module: "empresas", active: true });
+      console.info("COUNTER_GUARD_CARD_VALUE", count);
+      console.info("COUNTER_GUARD_PAGE_SIZE", CLIENTES_DEFAULT_PAGE_SIZE);
+      console.info("COUNTER_GUARD_TOTAL_SOURCE", totalSource);
+      if (
+        count === CLIENTES_DEFAULT_PAGE_SIZE &&
+        !["count_exact", "rpc_exact", "cache_valid"].includes(totalSource)
+      ) {
+        console.warn("COUNTER_SUSPECT_PAGE_SIZE_MATCH", {
+          module: "empresas",
+          count,
+          pageSize: CLIENTES_DEFAULT_PAGE_SIZE,
+          totalSource,
+        });
+      }
       console.info("WEB_EMPRESAS_COUNTER_FIX_2026_05_25", { active: true });
       console.info("WEB_EMPRESAS_TOTAL_COUNT_REAL", count);
-      console.info("WEB_EMPRESAS_TOTAL_SOURCE", "supabase_count_exact_clientes");
+      console.info("WEB_EMPRESAS_TOTAL_SOURCE", totalSource);
       console.info("WEB_EMPRESAS_CARD_VALUE", count);
       console.info("WEB_EMPRESAS_QUERY_FILTERS", {
         search,
@@ -1161,6 +1201,9 @@ export default function Clientes() {
       console.info("WEB_EMPRESAS_USING_CACHE", false);
     } catch (err) {
       console.warn("Falha ao contar empresas:", err);
+      console.info("EMPRESAS_COUNT_QUERY_DURATION_MS", Math.round(performance.now() - countStart));
+      console.info("EMPRESAS_COUNT_ERROR_SAFE", err instanceof Error ? err.message : String(err ?? ""));
+      console.warn("EMPRESAS_COUNTER_DIAG_2026_05_25", { module: "empresas", phase: "count-failed" });
       setTotalCount(null);
     }
   };

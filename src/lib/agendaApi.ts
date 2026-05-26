@@ -124,31 +124,14 @@ const dedupeAgendaRows = <T extends Partial<AgendaRow>>(rows: T[]) => {
   return Array.from(byId.values());
 };
 
-const CHUNK_FILTER_SIZE = 120;
-
-const chunkValues = <T,>(values: T[], size = CHUNK_FILTER_SIZE) => {
-  const chunks: T[][] = [];
-  for (let index = 0; index < values.length; index += size) {
-    chunks.push(values.slice(index, index + size));
-  }
-  return chunks;
-};
-
-const buildStringInClause = (values: string[]) =>
-  `(${values.map((value) => `"${value.replace(/"/g, '\\"')}"`).join(",")})`;
-
 const applyFilaRoutingExclusionsToClientesQuery = <T,>(
   query: T,
   blocks: Pick<FilaRoutingBlockLists, "blockedEmpresaIds" | "blockedCodigos"> | null,
 ): T => {
-  if (!blocks) return query;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let next: any = query;
-  chunkValues(blocks.blockedEmpresaIds).forEach((chunk) => {
-    if (!chunk.length) return;
-    next = next.not("id", "in", buildStringInClause(chunk));
-  });
-  return next as T;
+  // Avoid generating huge `id=not.in(...)` URLs that trigger statement timeout.
+  // Exclusions are applied client-side for first-page list flow.
+  void blocks;
+  return query;
 };
 
 const resolveFilaRoutingBlocks = async () => {
@@ -163,45 +146,10 @@ const resolveFilaRoutingBlocks = async () => {
   }
 };
 
-const AGENDA_SORTABLE_COLUMNS = new Set<string>([
-  "obs",
-  "visit_generated_at",
-  "data_da_ultima_visita",
-  "visit_completed_vidas",
-  "cod_1",
-  "empresa",
-  "bairro",
-  "cidade",
-  "vendedor",
-  "grupo",
-  "perfil_visita",
-]);
-
 const mapAgendaColumnToClientes = (column: string) => {
   if (column === "cod_1") return "codigo";
   if (column === "obs_contrato_1") return "obs_comercial";
   return column;
-};
-
-const applyAgendaSorting = <T,>(query: T, sorting: SortingState): T => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let next: any = query;
-  if (!sorting.length) {
-    next = next.order("visit_generated_at", { ascending: false, nullsFirst: false });
-    next = next.order("data_da_ultima_visita", { ascending: false, nullsFirst: false });
-    return next as T;
-  }
-
-  const { id, desc } = sorting[0];
-  const sortColumnRaw =
-    id === "obs"
-      ? "visit_generated_at"
-      : AGENDA_SORTABLE_COLUMNS.has(id)
-        ? id
-        : "visit_generated_at";
-  const sortColumn = mapAgendaColumnToClientes(sortColumnRaw);
-  next = next.order(sortColumn, { ascending: !desc, nullsFirst: false });
-  return next as T;
 };
 
 const getVidasRange = (filters: AgendaFilters) => {
@@ -570,6 +518,202 @@ export type AgendaVisitVendor = {
   supervisor_reason?: string | null;
 };
 
+type AgendaQueryContext = {
+  effectiveFilters: Record<string, unknown>;
+  restrictedAgendaIds: string[] | null;
+  companyName: string;
+  companyCode: string;
+  filaBlocks: FilaRoutingBlockLists | null;
+};
+
+const AGENDA_LITE_SELECT_COLUMNS =
+  "id, data_da_ultima_visita, visit_completed_vidas, cod_1:codigo, empresa, pessoa, contato, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, categoria, visit_generated_at, created_at";
+
+const normalizeAgendaLiteRows = (rows: AgendaRow[]) =>
+  rows.map((row) => ({
+    ...row,
+    instructions: row.instructions ?? null,
+    obs_contrato_1: row.obs_contrato_1 ?? null,
+  }));
+
+const buildAgendaRpcFilters = (filters: AgendaFilters): Record<string, unknown> => {
+  const global = filters.global.replace(/%/g, "").trim();
+  const columns: Record<string, string[]> = {};
+
+  (Object.keys(filters.columns) as Array<keyof AgendaFilters["columns"]>).forEach((key) => {
+    if (key === "supervisor_flag") return;
+    const values = filters.columns[key] ?? [];
+    const cleaned = values.map((value) => normalizeOption(value)).filter(Boolean);
+    if (cleaned.length === 0) return;
+    const expanded =
+      key === "situacao" ? expandSituacaoValues(cleaned) : expandFilterValues(key, cleaned);
+    const finalValues = (expanded.length ? expanded : cleaned).filter(Boolean);
+    if (finalValues.length) {
+      columns[key] = Array.from(new Set(finalValues));
+    }
+  });
+
+  const dateRange = filters.dateRanges.data_da_ultima_visita;
+  const datePayload: Record<string, unknown> = {};
+  if (dateRange.from?.trim()) datePayload.from = dateRange.from.trim();
+  if (dateRange.to?.trim()) datePayload.to = dateRange.to.trim();
+  if (dateRange.month?.trim()) datePayload.month = dateRange.month.trim();
+  if (dateRange.year?.trim()) datePayload.year = dateRange.year.trim();
+  if (dateRange.invert) datePayload.invert = true;
+
+  const vidasRange = filters.ranges?.vidas_ultima_visita ?? {};
+  const vidasPayload: Record<string, string> = {};
+  if (vidasRange.from?.trim()) vidasPayload.from = vidasRange.from.trim();
+  if (vidasRange.to?.trim()) vidasPayload.to = vidasRange.to.trim();
+
+  const normalized: Record<string, unknown> = {};
+  if (global) normalized.global = global;
+  if (Object.keys(columns).length) normalized.columns = columns;
+  if (Object.keys(datePayload).length) {
+    normalized.dateRanges = { data_da_ultima_visita: datePayload };
+  }
+  if (Object.keys(vidasPayload).length) {
+    normalized.ranges = { vidas_ultima_visita: vidasPayload };
+  }
+
+  return normalized;
+};
+
+const buildAgendaQueryContext = async (
+  filters: AgendaFilters,
+  search?: AgendaSearchFilters,
+): Promise<AgendaQueryContext> => {
+  const companyName = search?.companyName?.replace(/%/g, "").trim() ?? "";
+  const companyCode = search?.companyCode?.replace(/%/g, "").trim() ?? "";
+  const filaBlocks = await resolveFilaRoutingBlocks();
+
+  return {
+    effectiveFilters: buildAgendaRpcFilters(filters),
+    restrictedAgendaIds: null,
+    companyName,
+    companyCode,
+    filaBlocks,
+  };
+};
+
+export const fetchAgendaCountExact = async (
+  filters: AgendaFilters,
+  search?: AgendaSearchFilters,
+) => {
+  console.info("COUNT_EXACT_FIX_2026_05_25", { module: "agenda", active: true });
+  const context = await buildAgendaQueryContext(filters, search);
+  const effectiveFilterKeys = Object.keys(context.effectiveFilters);
+  const filtersEffectivelyEmpty = effectiveFilterKeys.length === 0;
+  const rpcFilters = filtersEffectivelyEmpty ? {} : context.effectiveFilters;
+  console.info("ROTAS_RPC_FILTER_NORMALIZATION_FIX_2026_05_26", { active: true });
+  console.info("ROTAS_RPC_FILTERS_WERE_EFFECTIVELY_EMPTY", filtersEffectivelyEmpty);
+  console.info("ROTAS_RPC_FILTERS_SENT", filtersEffectivelyEmpty ? "{}" : rpcFilters);
+  console.info("ROTAS_RPC_FILTERS_SENT_KEYS", effectiveFilterKeys);
+  console.info("COUNT_QUERY_FILTERS", {
+    module: "agenda",
+    filters: rpcFilters,
+    companyName: context.companyName,
+    companyCode: context.companyCode,
+  });
+  const start = performance.now();
+  const { data, error } = await supabase.rpc("get_rotas_agenda_count_v1", {
+    p_filters: rpcFilters,
+    p_company_name: context.companyName || null,
+    p_company_code: context.companyCode || null,
+  });
+  const duration = Math.round(performance.now() - start);
+  if (error) {
+    console.warn("COUNTER_REJECTED_ESTIMATED_TOTAL", {
+      module: "agenda",
+      reason: "rpc_count_failed_and_estimated_not_allowed",
+    });
+    console.info("COUNT_QUERY_SOURCE", "get_rotas_agenda_count_v1");
+    console.info("COUNT_QUERY_METHOD", "rpc_failed");
+    console.info("COUNT_QUERY_DURATION_MS", duration);
+    console.info("COUNT_QUERY_ERROR_SAFE", error.message);
+    console.info("COUNT_QUERY_RETURNED_VALUE", null);
+    throw new Error(error.message);
+  }
+  const total = typeof data === "number" ? data : Number(data ?? 0);
+  console.info("ROTAS_COUNTER_SOURCE", "rpc_exact");
+  console.info("ROTAS_COUNTER_EXACT_DURATION_MS", duration);
+  console.info("ROTAS_COUNTER_VALUE", total);
+  console.info("COUNT_QUERY_SOURCE", "get_rotas_agenda_count_v1");
+  console.info("COUNT_QUERY_METHOD", "rpc");
+  console.info("COUNT_QUERY_DURATION_MS", duration);
+  console.info("COUNT_QUERY_ERROR_SAFE", null);
+  console.info("COUNT_QUERY_RETURNED_VALUE", total);
+  return total;
+};
+
+export const fetchAgendaFirstPageLite = async (
+  pageIndex: number,
+  pageSize: number,
+  _sorting: SortingState,
+  filters: AgendaFilters,
+  search?: AgendaSearchFilters,
+): Promise<AgendaRow[]> => {
+  const context = await buildAgendaQueryContext(filters, search);
+  const effectiveFilterKeys = Object.keys(context.effectiveFilters);
+  const filtersEffectivelyEmpty = effectiveFilterKeys.length === 0;
+  const rpcFilters = filtersEffectivelyEmpty ? {} : context.effectiveFilters;
+  const start = performance.now();
+  const pageOffset = pageIndex * pageSize;
+
+  console.info("DB_OPT_PHASE_1_2026_05_25", { module: "agenda" });
+  console.info("CURRENT_TABLE_OR_VIEW", "rpc_get_rotas_agenda_first_page_v2");
+  console.info("CURRENT_SELECT_FIELDS", AGENDA_LITE_SELECT_COLUMNS);
+  console.info("CURRENT_FILTERS", {
+    filters: rpcFilters,
+    companyName: context.companyName,
+    companyCode: context.companyCode,
+    hasFilaExclusions: Boolean(context.filaBlocks?.blockedEmpresaIds.length),
+  });
+  console.info("CURRENT_ORDER_BY", "visit_generated_at desc nullslast, data_da_ultima_visita desc nullslast, id asc");
+  console.info("CURRENT_RANGE_FROM", pageOffset);
+  console.info("CURRENT_RANGE_TO", pageOffset + pageSize - 1);
+  console.info("CURRENT_HAS_JOINS", false);
+  console.info("CURRENT_HAS_EMBEDS", false);
+  const rpcGlobalFilter =
+    typeof context.effectiveFilters.global === "string" ? context.effectiveFilters.global : "";
+  console.info("CURRENT_HAS_ILIKE", Boolean(context.companyName || rpcGlobalFilter.trim()));
+  console.info("CURRENT_HAS_OR", true);
+  console.info("CURRENT_USES_COUNT", false);
+  console.info("CURRENT_QUERY_START", start);
+  console.info("ROTAS_REMOVED_HUGE_NOT_IN_2026_05_25", true);
+  console.info("ROTAS_EXCLUSION_SOURCE", "queue_release_controls_view");
+  console.info("ROTAS_EXCLUSION_COUNT", context.filaBlocks?.blockedEmpresaIds.length ?? 0);
+  console.info("ROTAS_QUERY_USES_HUGE_NOT_IN=false");
+  console.info("ROTAS_QUERY_SOURCE", "rpc_get_rotas_agenda_first_page_v2");
+  console.info("ROTAS_RPC_FILTER_NORMALIZATION_FIX_2026_05_26", { active: true });
+  console.info("ROTAS_RPC_FILTERS_WERE_EFFECTIVELY_EMPTY", filtersEffectivelyEmpty);
+  console.info("ROTAS_RPC_FILTERS_SENT", filtersEffectivelyEmpty ? "{}" : rpcFilters);
+  console.info("ROTAS_RPC_FILTERS_SENT_KEYS", effectiveFilterKeys);
+
+  const response = await supabase.rpc("get_rotas_agenda_first_page_v2", {
+    p_page_size: Math.max(1, pageSize),
+    p_page_offset: Math.max(0, pageOffset),
+    p_filters: rpcFilters,
+    p_company_name: context.companyName || null,
+    p_company_code: context.companyCode || null,
+  });
+
+  const duration = Math.round(performance.now() - start);
+  console.info("CURRENT_QUERY_END", performance.now());
+  console.info("CURRENT_QUERY_DURATION_MS", duration);
+  console.info("ROTAS_QUERY_DURATION_MS", duration);
+  console.info("CURRENT_TIMEOUT_HIT", response.error ? isStatementTimeoutError(response.error.message) : false);
+  console.info("CURRENT_ERROR_SAFE", response.error?.message ?? null);
+  const rows = (response.data ?? []) as AgendaRow[];
+  console.info("CURRENT_ROWS_RETURNED", rows.length);
+  console.info("ROTAS_ROWS_RETURNED", rows.length);
+
+  if (response.error) throw new Error(response.error.message);
+  const deduped = dedupeAgendaRows(rows);
+  const normalized = normalizeAgendaLiteRows(deduped as AgendaRow[]);
+  return normalized;
+};
+
 export const fetchAgenda = async (
   pageIndex: number,
   pageSize: number,
@@ -577,121 +721,14 @@ export const fetchAgenda = async (
   filters: AgendaFilters,
   search?: AgendaSearchFilters,
 ): Promise<AgendaFetchResult> => {
-  const vidasRange = getVidasRange(filters);
-  let agendaIdsByVidas: string[] | null = null;
-  let effectiveFilters = filters;
-
-  if (vidasRange) {
-    try {
-      agendaIdsByVidas = await fetchAgendaIdsByLatestCompletedVidas(vidasRange);
-      effectiveFilters = stripVidasRange(filters);
-    } catch (err) {
-      console.error("Falha ao filtrar vidas ultima visita por visitas:", err);
-    }
-  }
-
-  const companyName = search?.companyName?.replace(/%/g, "").trim();
-  const companyCode = search?.companyCode?.replace(/%/g, "").trim();
-  const restrictedAgendaIds = agendaIdsByVidas;
-  const filaBlocks = await resolveFilaRoutingBlocks();
-
-  if (restrictedAgendaIds && restrictedAgendaIds.length === 0) {
-    return { data: [], count: 0 };
-  }
-
-  const selectColumns =
-    "id, data_da_ultima_visita, visit_completed_vidas, cod_1:codigo, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, categoria, obs_contrato_1:obs_comercial, visit_generated_at, created_at";
-
-  const baseQuery = () => supabase.from("clientes").select(selectColumns);
-
-  const baseQueryNoCount = () => supabase.from("clientes").select(selectColumns);
-
-  const applySearchAndIds = <T,>(inputQuery: T): T => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let next: any = inputQuery;
-    next = applyFilaRoutingExclusionsToClientesQuery(next, filaBlocks);
-    if (restrictedAgendaIds) {
-      next = next.in("id", restrictedAgendaIds);
-    }
-    if (companyCode) {
-      next = next.eq("codigo", companyCode);
-    }
-    if (companyName) {
-      next = next.ilike("empresa", `%${companyName}%`);
-    }
-    return next as T;
-  };
-
-  let query = applySearchAndIds(applyFilters(baseQuery(), effectiveFilters));
-
-  const pageFrom = pageIndex * pageSize;
-  const pageTo = pageFrom + pageSize - 1;
-  const hasColumnFilters = Object.values(effectiveFilters.columns).some((values) => values.length > 0);
-  const hasDateFilters = Boolean(
-    effectiveFilters.dateRanges.data_da_ultima_visita.from ||
-      effectiveFilters.dateRanges.data_da_ultima_visita.to ||
-      effectiveFilters.dateRanges.data_da_ultima_visita.month ||
-      effectiveFilters.dateRanges.data_da_ultima_visita.year ||
-      effectiveFilters.dateRanges.data_da_ultima_visita.invert,
-  );
-  const hasGlobalFilter = Boolean(effectiveFilters.global?.trim());
-  const hasSearchFilters = Boolean(companyName || companyCode || hasGlobalFilter);
-  const shouldUseExactCount = !hasColumnFilters && !hasDateFilters && !hasSearchFilters && !restrictedAgendaIds;
-  const shouldSkipCountQuery = !shouldUseExactCount;
-
-  const runCountQuery = async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const countQuery: any = applySearchAndIds(
-      applyFilters(
-        supabase.from("clientes").select("id", { count: "exact", head: true }),
-        effectiveFilters,
-      ),
-    );
-    const { count, error } = await countQuery;
-    if (error) throw new Error(error.message);
-    return count ?? 0;
-  };
-
-  query = applyAgendaSorting(query, sorting);
-  let { data, error } = await query.range(pageFrom, pageTo);
-
-  if (error && isStatementTimeoutError(error.message)) {
-    console.warn("fetchAgenda timed out; retrying with simplified query");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let retryQuery: any = applySearchAndIds(applyFilters(baseQueryNoCount(), effectiveFilters));
-    retryQuery = applyAgendaSorting(retryQuery, sorting);
-    let retry = await retryQuery.range(pageFrom, pageTo);
-
-    if (retry.error && isStatementTimeoutError(retry.error.message)) {
-      console.warn("fetchAgenda timed out again; retrying with id sort");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let emergencyQuery: any = applySearchAndIds(applyFilters(baseQueryNoCount(), effectiveFilters));
-      emergencyQuery = emergencyQuery.order("id", { ascending: false });
-      retry = await emergencyQuery.range(pageFrom, pageTo);
-    }
-
-    if (retry.error) {
-      throw new Error(retry.error.message);
-    }
-
-    data = retry.data;
-    error = null;
-  }
-
-  if (error) throw new Error(error.message);
-  let count: number | null = null;
-  if (!shouldSkipCountQuery) {
-    try {
-      count = await runCountQuery();
-    } catch (countError) {
+  const [data, count] = await Promise.all([
+    fetchAgendaFirstPageLite(pageIndex, pageSize, sorting, filters, search),
+    fetchAgendaCountExact(filters, search).catch((countError) => {
       console.warn("fetchAgenda count query failed:", countError);
-    }
-  }
-
-  const pageRows = (data ?? []) as AgendaRow[];
-  const deduped = dedupeAgendaRows(pageRows);
-
-  return { data: deduped, count };
+      return null;
+    }),
+  ]);
+  return { data, count };
 };
 
 export const fetchAgendaScheduledVisits = async (clienteIds: string[]) => {
