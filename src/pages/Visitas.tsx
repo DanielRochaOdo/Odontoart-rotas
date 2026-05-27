@@ -433,6 +433,50 @@ export default function Visitas() {
     }) as VisitRow[];
   }, []);
 
+  const invalidateDayDetailsCache = useCallback((dayKey?: string) => {
+    if (!dayKey) {
+      setDayDetailsByDate({});
+      setDayDetailsErrorByDate({});
+      setDayDetailsLoadingDateKey(null);
+      return;
+    }
+    setDayDetailsByDate((prev) => {
+      if (!prev[dayKey]) return prev;
+      const next = { ...prev };
+      delete next[dayKey];
+      return next;
+    });
+    setDayDetailsErrorByDate((prev) => {
+      if (!(dayKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[dayKey];
+      return next;
+    });
+    setDayDetailsLoadingDateKey((current) => (current === dayKey ? null : current));
+  }, []);
+
+  const patchVisitLocally = useCallback((visitId: string, patch: Partial<VisitRow>) => {
+    setVisits((prev) => prev.map((row) => (row.id === visitId ? { ...row, ...patch } : row)));
+    setDayDetailsByDate((prev) => {
+      const next: Record<string, VisitRow[]> = {};
+      Object.entries(prev).forEach(([key, rows]) => {
+        next[key] = rows.map((row) => (row.id === visitId ? { ...row, ...patch } : row));
+      });
+      return next;
+    });
+  }, []);
+
+  const removeVisitLocally = useCallback((visitId: string) => {
+    setVisits((prev) => prev.filter((row) => row.id !== visitId));
+    setDayDetailsByDate((prev) => {
+      const next: Record<string, VisitRow[]> = {};
+      Object.entries(prev).forEach(([key, rows]) => {
+        next[key] = rows.filter((row) => row.id !== visitId);
+      });
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     if (restoredViewRef.current) return;
     try {
@@ -1012,10 +1056,6 @@ export default function Visitas() {
     let scopedVisits = visits;
 
     if (canManage && canFilterBySupervisor && selectedSupervisorId !== "all") {
-      const supervisor = supervisores.find(
-        (item) => item.id === selectedSupervisorId || item.user_id === selectedSupervisorId,
-      );
-      const supervisorName = supervisor?.display_name ? normalize(supervisor.display_name) : "";
       const vendorIdSet = new Set(selectableVendors.map((vendor) => vendor.user_id).filter(Boolean));
       const vendorNameSet = new Set(
         selectableVendors
@@ -1028,9 +1068,6 @@ export default function Visitas() {
         if (isSupervisorVisitForSelectedSupervisor(visit)) return true;
         if (visit.assigned_to_user_id && vendorIdSet.has(visit.assigned_to_user_id)) return true;
         if (visit.assigned_to_name && vendorNameSet.has(normalize(visit.assigned_to_name))) return true;
-        if (supervisorName && visit.agenda?.supervisor) {
-          return normalize(visit.agenda.supervisor) === supervisorName;
-        }
         return false;
       });
     }
@@ -1054,7 +1091,6 @@ export default function Visitas() {
     selectedSupervisorId,
     selectedVendorId,
     selectableVendors,
-    supervisores,
     isSupervisorVisitForSelectedSupervisor,
     vendors,
     visits,
@@ -1124,7 +1160,10 @@ export default function Visitas() {
       const visitKey = extractVisitDateKey(visit.visit_date);
       return visitKey >= selectedDayStart && visitKey < selectedDayEndExclusive;
     });
-    const fallbackVisitsForDate = dayDetailsByDate[selectedDayStart] ?? [];
+    const fallbackVisitsForDate = (dayDetailsByDate[selectedDayStart] ?? []).filter((visit) => {
+      const visitKey = extractVisitDateKey(visit.visit_date);
+      return visitKey >= selectedDayStart && visitKey < selectedDayEndExclusive;
+    });
     const resolvedVisits = visitsForDate.length > 0 ? visitsForDate : fallbackVisitsForDate;
     const daySummaryTotal = monthSummaryCounts.get(selectedDayStart) ?? 0;
     const isLoadingDayDetails = dayDetailsLoadingDateKey === selectedDayStart;
@@ -1161,6 +1200,51 @@ export default function Visitas() {
       return aName.localeCompare(bName, "pt-BR");
     });
   }, [dayDetailsByDate, dayDetailsErrorByDate, dayDetailsLoadingDateKey, filteredVisits, monthSummaryCounts, selectedDate]);
+
+  const selectedVisitsDayScoped = useMemo(() => {
+    if (!canManage || !canFilterBySupervisor) return selectedVisits;
+    let scopedVisits = selectedVisits;
+
+    if (selectedSupervisorId !== "all") {
+      const vendorIdSet = new Set(selectableVendors.map((vendor) => vendor.user_id).filter(Boolean));
+      const vendorNameSet = new Set(
+        selectableVendors
+          .map((vendor) => vendor.display_name)
+          .filter((value): value is string => Boolean(value))
+          .map((value) => normalize(value)),
+      );
+
+      scopedVisits = scopedVisits.filter((visit) => {
+        if (isSupervisorVisitForSelectedSupervisor(visit)) return true;
+        if (visit.assigned_to_user_id && vendorIdSet.has(visit.assigned_to_user_id)) return true;
+        if (visit.assigned_to_name && vendorNameSet.has(normalize(visit.assigned_to_name))) return true;
+        return false;
+      });
+    }
+
+    if (selectedVendorId !== "all") {
+      const selectedVendor = vendors.find((vendor) => vendor.user_id === selectedVendorId);
+      const selectedVendorName = selectedVendor?.display_name ? normalize(selectedVendor.display_name) : "";
+      scopedVisits = scopedVisits.filter((visit) => {
+        if (visit.assigned_to_user_id && visit.assigned_to_user_id === selectedVendorId) return true;
+        if (selectedVendorName && visit.assigned_to_name) {
+          return normalize(visit.assigned_to_name) === selectedVendorName;
+        }
+        return false;
+      });
+    }
+
+    return scopedVisits;
+  }, [
+    canFilterBySupervisor,
+    canManage,
+    isSupervisorVisitForSelectedSupervisor,
+    selectableVendors,
+    selectedSupervisorId,
+    selectedVendorId,
+    selectedVisits,
+    vendors,
+  ]);
 
   useEffect(() => {
     if (!selectedDate) return;
@@ -1235,13 +1319,32 @@ export default function Visitas() {
       }
 
       const normalized = await hydrateVisitsWithClientes((data ?? []) as VisitRowJoin[]);
-      setDayDetailsByDate((prev) => ({ ...prev, [selectedDayStart]: normalized }));
+      let scopedDayDetails = normalized;
+      if (canManage && canFilterBySupervisor && selectedSupervisorId !== "all") {
+        const vendorIdSet = new Set(selectableVendors.map((vendor) => vendor.user_id).filter(Boolean));
+        const vendorNameSet = new Set(
+          selectableVendors
+            .map((vendor) => vendor.display_name)
+            .filter((value): value is string => Boolean(value))
+            .map((value) => normalize(value)),
+        );
+
+        scopedDayDetails = scopedDayDetails.filter((visit) => {
+          if (isSupervisorVisitForSelectedSupervisor(visit)) return true;
+          if (visit.assigned_to_user_id && vendorIdSet.has(visit.assigned_to_user_id)) return true;
+          if (visit.assigned_to_name && vendorNameSet.has(normalize(visit.assigned_to_name))) return true;
+          return false;
+        });
+      }
+      setDayDetailsByDate((prev) => ({ ...prev, [selectedDayStart]: scopedDayDetails }));
       setDayDetailsLoadingDateKey((current) => (current === selectedDayStart ? null : current));
-      console.info("VISITS_DAY_RAW_ROWS_RETURNED", normalized.length);
+      console.info("VISITS_DAY_RAW_ROWS_RETURNED", scopedDayDetails.length);
       console.info(
         "VISITS_DAY_GROUPS_RETURNED",
         new Set(
-          normalized.map((visit) => visit.assigned_to_name ?? visit.agenda?.supervisor ?? visit.agenda?.empresa ?? "Sem nome"),
+          scopedDayDetails.map(
+            (visit) => visit.assigned_to_name ?? visit.agenda?.supervisor ?? visit.agenda?.empresa ?? "Sem nome",
+          ),
         ).size,
       );
     };
@@ -1258,7 +1361,22 @@ export default function Visitas() {
     return () => {
       active = false;
     };
-  }, [canManage, dayDetailsByDate, filteredVisits, hydrateVisitsWithClientes, isVendor, monthSummaryCounts, selectedDate, selectedVendorId, session?.user.id]);
+  }, [
+    canFilterBySupervisor,
+    canManage,
+    dayDetailsByDate,
+    filteredVisits,
+    hydrateVisitsWithClientes,
+    isSupervisorVisitForSelectedSupervisor,
+    isVendor,
+    monthSummaryCounts,
+    selectableVendors,
+    selectedDate,
+    selectedSupervisorId,
+    selectedVendorId,
+    session?.user.id,
+    supervisores,
+  ]);
 
   useEffect(() => {
     if (!restoredModalState) return;
@@ -1390,9 +1508,13 @@ export default function Visitas() {
     () => (selectedDate ? format(selectedDate, "yyyy-MM-dd") : ""),
     [selectedDate],
   );
+
+  useEffect(() => {
+    invalidateDayDetailsCache();
+  }, [invalidateDayDetailsCache, selectedSupervisorId, selectedVendorId, currentMonth]);
   const groupedBySeller = useMemo(() => {
     const groups: Record<string, VisitRow[]> = {};
-    selectedVisits.forEach((visit) => {
+    selectedVisitsDayScoped.forEach((visit) => {
       const seller =
         visit.assigned_to_name ??
         (visit.assigned_to_user_id
@@ -1420,7 +1542,7 @@ export default function Visitas() {
         if (aHasSupervisor !== bHasSupervisor) return aHasSupervisor ? -1 : 1;
         return a[0].localeCompare(b[0], "pt-BR");
       });
-  }, [selectedVisits, vendorById]);
+  }, [selectedVisitsDayScoped, vendorById]);
   const releasedVendorIdSet = useMemo(
     () => new Set(releasedVendorIdsForDate),
     [releasedVendorIdsForDate],
@@ -1612,16 +1734,21 @@ export default function Visitas() {
     if (insertError) throw new Error(insertError.message);
   };
 
-  const handleSaveVisit = async (visitId: string) => {
-    const state = editState[visitId];
-    if (!state) return;
+  const handleSaveVisit = async (visitId: string, visitInput?: VisitRow) => {
+    const visit = visitInput ?? visits.find((item) => item.id === visitId);
+    if (!visit) {
+      setError("Visita nao encontrada para edicao.");
+      return;
+    }
+    const state = editState[visitId] ?? {
+      vendorId: visit.assigned_to_user_id ?? "",
+      date: toDateInput(visit.visit_date),
+    };
+    const previousDateKey = toDateInput(visit.visit_date);
     if (!state.date) {
       setError("Selecione a data da visita.");
       return;
     }
-
-    const visit = visits.find((item) => item.id === visitId);
-    if (!visit) return;
     const isSupervisorVisit = isSupervisorVisitType(visit.visit_type);
     if (!state.vendorId) {
       setError(isSupervisorVisit ? "Selecione o responsavel." : "Selecione o vendedor.");
@@ -1715,6 +1842,9 @@ export default function Visitas() {
         const { error: deleteError } = await supabase.from("visits").delete().eq("id", visitId);
         if (deleteError) throw new Error(deleteError.message);
 
+        removeVisitLocally(visitId);
+        invalidateDayDetailsCache(previousDateKey);
+        invalidateDayDetailsCache(state.date);
         setRefreshKey((prev) => prev + 1);
         return;
       }
@@ -1743,6 +1873,14 @@ export default function Visitas() {
       if (updateError) throw new Error(updateError.message);
       await syncSupervisorLinks(visitId);
 
+      patchVisitLocally(visitId, {
+        assigned_to_user_id: state.vendorId,
+        assigned_to_name: assigneeName,
+        visit_date: state.date,
+        route_id: routeId,
+      });
+      invalidateDayDetailsCache(previousDateKey);
+      invalidateDayDetailsCache(state.date);
       setRefreshKey((prev) => prev + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao atualizar visita.");
@@ -1751,16 +1889,20 @@ export default function Visitas() {
     }
   };
 
-  const handleAddVendorToVisit = async (visitId: string) => {
-    const state = editState[visitId];
-    if (!state) return;
+  const handleAddVendorToVisit = async (visitId: string, visitInput?: VisitRow) => {
+    const visit = visitInput ?? visits.find((item) => item.id === visitId);
+    if (!visit) {
+      setError("Visita nao encontrada para adicionar responsavel.");
+      return;
+    }
+    const state = editState[visitId] ?? {
+      vendorId: visit.assigned_to_user_id ?? "",
+      date: toDateInput(visit.visit_date),
+    };
     if (!state.date) {
       setError("Selecione a data da visita.");
       return;
     }
-
-    const visit = visits.find((item) => item.id === visitId);
-    if (!visit) return;
     const isSupervisorVisit = isSupervisorVisitType(visit.visit_type);
     const companyId = visit.cliente_id ?? null;
     if (!companyId) {
@@ -1973,6 +2115,7 @@ export default function Visitas() {
 
       setAddVendorsModal(null);
       setAddVendorsQuery("");
+      invalidateDayDetailsCache(addVendorsModal.date);
       setRefreshKey((prev) => prev + 1);
     } catch (err) {
       setAddVendorsError(err instanceof Error ? err.message : "Erro ao adicionar responsaveis.");
@@ -1981,16 +2124,40 @@ export default function Visitas() {
     }
   };
 
-  const handleRemoveVisit = async (visitId: string) => {
+  const handleRemoveVisit = async (visitId: string, visitInput?: VisitRow) => {
     const confirmRemove = window.confirm("Remover esta visita e voltar para a agenda?");
     if (!confirmRemove) return;
     setRemovingId(visitId);
     setError(null);
     try {
-      const visit = visits.find((item) => item.id === visitId);
+      let visit = visitInput ?? visits.find((item) => item.id === visitId);
       if (!visit) {
-        setRemovingId(null);
-        return;
+        const { data: fetchedVisit, error: fetchedVisitError } = await supabase
+          .from("visits")
+          .select("id, cliente_id, route_id")
+          .eq("id", visitId)
+          .maybeSingle();
+        if (fetchedVisitError) throw new Error(fetchedVisitError.message);
+        if (!fetchedVisit) {
+          setError("Visita nao encontrada.");
+          setRemovingId(null);
+          return;
+        }
+        visit = {
+          id: fetchedVisit.id,
+          cliente_id: fetchedVisit.cliente_id ?? null,
+          route_id: fetchedVisit.route_id ?? null,
+          visit_date: "",
+          assigned_to_user_id: null,
+          assigned_to_name: null,
+          perfil_visita: null,
+          completed_at: null,
+          completed_vidas: null,
+          no_visit_reason: null,
+          instructions: null,
+          agenda: null,
+          cliente: null,
+        };
       }
 
       if (visit.route_id && visit.cliente_id) {
@@ -2022,6 +2189,8 @@ export default function Visitas() {
         }
       }
 
+      removeVisitLocally(visitId);
+      invalidateDayDetailsCache(toDateInput(visit.visit_date));
       setRefreshKey((prev) => prev + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao remover visita.");
@@ -3099,7 +3268,7 @@ export default function Visitas() {
               </span>
             </div>
 
-            {selectedVisits.length === 0 ? (
+            {groupedBySeller.length === 0 ? (
               dayDetailsLoadingDateKey === selectedDateKey && (monthSummaryCounts.get(selectedDateKey) ?? 0) > 0 ? (
                 <p className="mt-4 text-sm text-ink/60">Carregando visitas do dia...</p>
               ) : (dayDetailsErrorByDate[selectedDateKey] && (monthSummaryCounts.get(selectedDateKey) ?? 0) > 0) ? (
@@ -3285,6 +3454,14 @@ export default function Visitas() {
                                         type="button"
                                         onClick={() => {
                                           if (isCompleted) return;
+                                          setEditState((prev) => ({
+                                            ...prev,
+                                            [item.id]:
+                                              prev[item.id] ?? {
+                                                vendorId: item.assigned_to_user_id ?? "",
+                                                date: toDateInput(item.visit_date),
+                                              },
+                                          }));
                                           setEditingVisits((prev) => ({
                                             ...prev,
                                             [item.id]: !isEditing,
@@ -3347,7 +3524,7 @@ export default function Visitas() {
                                     <div className="flex flex-wrap items-end gap-2">
                                       <button
                                         type="button"
-                                        onClick={() => handleSaveVisit(item.id)}
+                                        onClick={() => handleSaveVisit(item.id, item)}
                                         disabled={savingId === item.id || addingVendorId === item.id}
                                         className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-sea text-white hover:bg-seaLight disabled:opacity-60"
                                         aria-label="Salvar visita"
@@ -3361,7 +3538,7 @@ export default function Visitas() {
                                       </button>
                                       <button
                                         type="button"
-                                        onClick={() => handleAddVendorToVisit(item.id)}
+                                        onClick={() => handleAddVendorToVisit(item.id, item)}
                                         disabled={addingVendorId === item.id || savingId === item.id}
                                         className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sea/30 bg-white text-sea hover:border-sea hover:bg-sea/5 disabled:opacity-60"
                                         aria-label={isSupervisorVisit ? "Adicionar responsavel" : "Adicionar vendedor"}
@@ -3375,7 +3552,7 @@ export default function Visitas() {
                                       </button>
                                       <button
                                         type="button"
-                                        onClick={() => handleRemoveVisit(item.id)}
+                                        onClick={() => handleRemoveVisit(item.id, item)}
                                         disabled={removingId === item.id || addingVendorId === item.id}
                                         className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600 hover:border-red-300 disabled:opacity-60"
                                         aria-label="Remover visita"
