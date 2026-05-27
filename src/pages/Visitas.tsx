@@ -1842,7 +1842,14 @@ export default function Visitas() {
         const { error: deleteError } = await supabase.from("visits").delete().eq("id", visitId);
         if (deleteError) throw new Error(deleteError.message);
 
+        patchVisitLocally(targetVisit.id, {
+          assigned_to_user_id: state.vendorId,
+          assigned_to_name: assigneeName,
+          visit_date: state.date,
+          route_id: routeId,
+        });
         removeVisitLocally(visitId);
+        setEditingVisits((prev) => ({ ...prev, [visitId]: false }));
         invalidateDayDetailsCache(previousDateKey);
         invalidateDayDetailsCache(state.date);
         setRefreshKey((prev) => prev + 1);
@@ -1879,6 +1886,7 @@ export default function Visitas() {
         visit_date: state.date,
         route_id: routeId,
       });
+      setEditingVisits((prev) => ({ ...prev, [visitId]: false }));
       invalidateDayDetailsCache(previousDateKey);
       invalidateDayDetailsCache(state.date);
       setRefreshKey((prev) => prev + 1);
