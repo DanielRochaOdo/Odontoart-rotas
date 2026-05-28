@@ -407,7 +407,7 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
 
   const { month, year, from, to, invert } = filters.dateRanges.data_da_ultima_visita;
   const hasMonthYear = Boolean(month || year);
-  const invertRange = Boolean(invert);
+  const excludeRange = Boolean(invert);
   const applyOutsideRange = (startValue: string | null, endValue: string | null) => {
     const conditions: string[] = [];
     if (startValue) {
@@ -423,7 +423,7 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
   };
 
   if (!hasMonthYear) {
-    if (invertRange) {
+    if (!excludeRange) {
       if (from) {
         next = next.gte("data_da_ultima_visita", from);
       }
@@ -446,7 +446,7 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
             const endDate = new Date(numericYear, numericMonth, 0);
             const startValue = startDate.toISOString().slice(0, 10);
             const endValue = endDate.toISOString().slice(0, 10);
-            if (invertRange) {
+            if (!excludeRange) {
               next = next.gte("data_da_ultima_visita", startValue);
               next = next.lte("data_da_ultima_visita", `${endValue}T23:59:59`);
             } else {
@@ -458,7 +458,7 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
           const endDate = new Date(numericYear, 11, 31);
           const startValue = startDate.toISOString().slice(0, 10);
           const endValue = endDate.toISOString().slice(0, 10);
-          if (invertRange) {
+          if (!excludeRange) {
             next = next.gte("data_da_ultima_visita", startValue);
             next = next.lte("data_da_ultima_visita", `${endValue}T23:59:59`);
           } else {
@@ -536,6 +536,52 @@ const normalizeAgendaLiteRows = (rows: AgendaRow[]) =>
     obs_contrato_1: row.obs_contrato_1 ?? null,
   }));
 
+const hasActiveLastVisitDateRange = (filters: AgendaFilters) => {
+  const dateRange = filters.dateRanges.data_da_ultima_visita;
+  return Boolean(
+    dateRange.from?.trim() ||
+      dateRange.to?.trim() ||
+      dateRange.month?.trim() ||
+      dateRange.year?.trim(),
+  );
+};
+
+const fetchAgendaFirstPageLiteDirect = async (
+  pageIndex: number,
+  pageSize: number,
+  filters: AgendaFilters,
+  context: AgendaQueryContext,
+) => {
+  const pageOffset = pageIndex * pageSize;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let query: any = supabase
+    .from("clientes")
+    .select(AGENDA_LITE_SELECT_COLUMNS)
+    .order("visit_generated_at", { ascending: false, nullsFirst: false })
+    .order("data_da_ultima_visita", { ascending: false, nullsFirst: false })
+    .order("id", { ascending: true });
+
+  query = applyFilaRoutingExclusionsToClientesQuery(query, context.filaBlocks);
+  query = applyFilters(query, filters);
+
+  if (context.companyName) {
+    const term = context.companyName.replace(/,/g, " ").trim();
+    if (term) {
+      query = query.or(`empresa.ilike.%${term}%,nome_fantasia.ilike.%${term}%`);
+    }
+  }
+
+  if (context.companyCode) {
+    query = query.eq("codigo", context.companyCode);
+  }
+
+  const response = await query.range(pageOffset, pageOffset + pageSize - 1);
+  if (response.error) throw new Error(response.error.message);
+  const rows = (response.data ?? []) as AgendaRow[];
+  const deduped = dedupeAgendaRows(rows);
+  return normalizeAgendaLiteRows(deduped as AgendaRow[]);
+};
+
 const buildAgendaRpcFilters = (filters: AgendaFilters): Record<string, unknown> => {
   const global = filters.global.replace(/%/g, "").trim();
   const columns: Record<string, string[]> = {};
@@ -559,7 +605,12 @@ const buildAgendaRpcFilters = (filters: AgendaFilters): Record<string, unknown> 
   if (dateRange.to?.trim()) datePayload.to = dateRange.to.trim();
   if (dateRange.month?.trim()) datePayload.month = dateRange.month.trim();
   if (dateRange.year?.trim()) datePayload.year = dateRange.year.trim();
-  if (dateRange.invert) datePayload.invert = true;
+  const hasDateRangeBounds = Object.keys(datePayload).length > 0;
+  if (hasDateRangeBounds) {
+    // Backend RPC currently interprets invert=true as "inside range".
+    // UI semantics: invert=true means "outside range". So we invert here.
+    datePayload.invert = !Boolean(dateRange.invert);
+  }
 
   const vidasRange = filters.ranges?.vidas_ultima_visita ?? {};
   const vidasPayload: Record<string, string> = {};
@@ -569,7 +620,7 @@ const buildAgendaRpcFilters = (filters: AgendaFilters): Record<string, unknown> 
   const normalized: Record<string, unknown> = {};
   if (global) normalized.global = global;
   if (Object.keys(columns).length) normalized.columns = columns;
-  if (Object.keys(datePayload).length) {
+  if (hasDateRangeBounds) {
     normalized.dateRanges = { data_da_ultima_visita: datePayload };
   }
   if (Object.keys(vidasPayload).length) {
@@ -659,6 +710,8 @@ export const fetchAgendaFirstPageLite = async (
   const rpcFilters = filtersEffectivelyEmpty ? {} : context.effectiveFilters;
   const start = performance.now();
   const pageOffset = pageIndex * pageSize;
+  const shouldUseDirectQuery =
+    hasActiveLastVisitDateRange(filters) || Boolean(context.companyCode.trim());
 
   console.info("DB_OPT_PHASE_1_2026_05_25", { module: "agenda" });
   console.info("CURRENT_TABLE_OR_VIEW", "rpc_get_rotas_agenda_first_page_v2");
@@ -690,13 +743,39 @@ export const fetchAgendaFirstPageLite = async (
   console.info("ROTAS_RPC_FILTERS_SENT", filtersEffectivelyEmpty ? "{}" : rpcFilters);
   console.info("ROTAS_RPC_FILTERS_SENT_KEYS", effectiveFilterKeys);
 
-  const response = await supabase.rpc("get_rotas_agenda_first_page_v2", {
-    p_page_size: Math.max(1, pageSize),
-    p_page_offset: Math.max(0, pageOffset),
-    p_filters: rpcFilters,
-    p_company_name: context.companyName || null,
-    p_company_code: context.companyCode || null,
-  });
+  if (shouldUseDirectQuery) {
+    console.info("ROTAS_QUERY_SOURCE", "clientes_direct_first_page_fallback");
+    const fallbackRows = await fetchAgendaFirstPageLiteDirect(pageIndex, pageSize, filters, context);
+    const duration = Math.round(performance.now() - start);
+    console.info("CURRENT_QUERY_END", performance.now());
+    console.info("CURRENT_QUERY_DURATION_MS", duration);
+    console.info("ROTAS_QUERY_DURATION_MS", duration);
+    console.info("CURRENT_TIMEOUT_HIT", false);
+    console.info("CURRENT_ERROR_SAFE", null);
+    console.info("CURRENT_ROWS_RETURNED", fallbackRows.length);
+    console.info("ROTAS_ROWS_RETURNED", fallbackRows.length);
+    return fallbackRows;
+  }
+
+  let response:
+    | { data: AgendaRow[] | null; error: { message: string } | null }
+    | { data: null; error: { message: string } };
+  try {
+    response = (await supabase.rpc("get_rotas_agenda_first_page_v2", {
+      p_page_size: Math.max(1, pageSize),
+      p_page_offset: Math.max(0, pageOffset),
+      p_filters: rpcFilters,
+      p_company_name: context.companyName || null,
+      p_company_code: context.companyCode || null,
+    })) as { data: AgendaRow[] | null; error: { message: string } | null };
+  } catch (rpcError) {
+    const safeMessage = rpcError instanceof Error ? rpcError.message : String(rpcError ?? "");
+    if (isStatementTimeoutError(safeMessage)) {
+      console.warn("ROTAS_RPC_TIMEOUT_FALLBACK_TO_DIRECT_QUERY", { safeMessage });
+      return fetchAgendaFirstPageLiteDirect(pageIndex, pageSize, filters, context);
+    }
+    throw rpcError;
+  }
 
   const duration = Math.round(performance.now() - start);
   console.info("CURRENT_QUERY_END", performance.now());
@@ -708,7 +787,15 @@ export const fetchAgendaFirstPageLite = async (
   console.info("CURRENT_ROWS_RETURNED", rows.length);
   console.info("ROTAS_ROWS_RETURNED", rows.length);
 
-  if (response.error) throw new Error(response.error.message);
+  if (response.error) {
+    if (isStatementTimeoutError(response.error.message)) {
+      console.warn("ROTAS_RPC_TIMEOUT_FALLBACK_TO_DIRECT_QUERY", {
+        safeMessage: response.error.message,
+      });
+      return fetchAgendaFirstPageLiteDirect(pageIndex, pageSize, filters, context);
+    }
+    throw new Error(response.error.message);
+  }
   const deduped = dedupeAgendaRows(rows);
   const normalized = normalizeAgendaLiteRows(deduped as AgendaRow[]);
   return normalized;
