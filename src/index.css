@@ -31,6 +31,10 @@
 
     --theme-accent: 62 207 142;
     --theme-accent-action: 0 197 115;
+    --theme-status-success: 21 128 61;
+    --theme-status-warning: 180 83 9;
+    --theme-status-danger: 185 28 28;
+    --theme-status-info: 14 116 144;
 
     --glass-blur: 16px;
     --glass-saturation: 145%;
@@ -94,6 +98,10 @@
 
     --theme-accent: 62 207 142;
     --theme-accent-action: 0 197 115;
+    --theme-status-success: 74 222 128;
+    --theme-status-warning: 251 191 36;
+    --theme-status-danger: 248 113 113;
+    --theme-status-info: 56 189 248;
 
     --glass-blur: 18px;
     --glass-saturation: 140%;
@@ -258,6 +266,28 @@
 
   .dark .bg-seaLight {
     background-color: rgb(var(--theme-accent)) !important;
+  }
+
+  .dashboard-card {
+    border: 1px solid rgb(var(--theme-border-subtle) / 0.9);
+    background-color: rgb(var(--theme-surface-strong) / 0.92);
+  }
+
+  .dashboard-card-soft {
+    border: 1px solid rgb(var(--theme-border-subtle) / 0.8);
+    background-color: rgb(var(--theme-surface) / 0.75);
+  }
+
+  .dashboard-status-warning {
+    border-color: rgb(var(--theme-status-warning) / 0.35);
+    background-color: rgb(var(--theme-status-warning) / 0.12);
+    color: rgb(var(--theme-status-warning));
+  }
+
+  .dashboard-status-danger {
+    border-color: rgb(var(--theme-status-danger) / 0.35);
+    background-color: rgb(var(--theme-status-danger) / 0.12);
+    color: rgb(var(--theme-status-danger));
   }
 
   .dark .border-sea\/15 {

@@ -29,7 +29,6 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const AUTH_REQUEST_TIMEOUT_MS = 12000;
-const PROFILE_SYNC_INTERVAL_MS = 20_000;
 const PROFILE_SELECT_WITH_FORCE_REAUTH =
   "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, force_reauth_after, created_at";
 const PROFILE_SELECT_FALLBACK =
@@ -260,17 +259,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       authListener.subscription.unsubscribe();
     };
   }, []);
-
-  useEffect(() => {
-    if (!session?.access_token) return;
-    const intervalId = window.setInterval(() => {
-      void fetchProfile(session);
-    }, PROFILE_SYNC_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [session?.access_token]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
