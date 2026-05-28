@@ -1039,8 +1039,8 @@ export default function Agenda() {
     const hasCompletedSupervisorVisit = visits.some(
       (visit) => !isVendorVisitTypeValue(visit.visit_type) && Boolean(visit.completed_at),
     );
-    if (hasCompletedSupervisorVisit) return "-";
     if (fallback !== null && fallback !== undefined) return String(fallback);
+    if (hasCompletedSupervisorVisit) return "-";
     return "-";
   };
 
@@ -1057,8 +1057,10 @@ export default function Agenda() {
     const hasCompletedSupervisorVisit = visits.some(
       (visit) => !isVendorVisitTypeValue(visit.visit_type) && Boolean(visit.completed_at),
     );
+    const fallbackFormatted = formatDate(fallback ?? null);
+    if (fallbackFormatted !== "-") return fallbackFormatted;
     if (hasCompletedSupervisorVisit) return "-";
-    return formatDate(fallback ?? null);
+    return fallbackFormatted;
   };
 
   const resolveScheduledObsVisit = (agendaId: string) => {
@@ -3039,12 +3041,12 @@ export default function Agenda() {
       const toLabel = filters.dateRanges.data_da_ultima_visita.to
         ? formatDate(filters.dateRanges.data_da_ultima_visita.to)
         : "";
-      const isInsideRange = Boolean(filters.dateRanges.data_da_ultima_visita.invert);
+      const isOutsideRange = Boolean(filters.dateRanges.data_da_ultima_visita.invert);
       chips.push({
         id: "chip-date-range",
-        label: isInsideRange
-          ? `Ultima visita: ${fromLabel} - ${toLabel}`
-          : `Ultima visita (fora): ${fromLabel} - ${toLabel}`,
+        label: isOutsideRange
+          ? `Ultima visita (fora): ${fromLabel} - ${toLabel}`
+          : `Ultima visita: ${fromLabel} - ${toLabel}`,
         onRemove: () =>
           setFilters((prev) => ({
             ...prev,
@@ -3057,14 +3059,14 @@ export default function Agenda() {
       const monthLabel = filters.dateRanges.data_da_ultima_visita.month
         ? MONTH_OPTIONS.find((option) => option.value === filters.dateRanges.data_da_ultima_visita.month)?.label
         : null;
-      const isInsideRange = Boolean(filters.dateRanges.data_da_ultima_visita.invert);
+      const isOutsideRange = Boolean(filters.dateRanges.data_da_ultima_visita.invert);
       chips.push({
         id: "chip-month-year",
         label: monthLabel
-          ? `${isInsideRange ? "Mes/Ano" : "Mes/Ano (fora)"}: ${monthLabel} ${
+          ? `${isOutsideRange ? "Mes/Ano (fora)" : "Mes/Ano"}: ${monthLabel} ${
               filters.dateRanges.data_da_ultima_visita.year
             }`
-          : `${isInsideRange ? "Ano" : "Ano (fora)"}: ${filters.dateRanges.data_da_ultima_visita.year}`,
+          : `${isOutsideRange ? "Ano (fora)" : "Ano"}: ${filters.dateRanges.data_da_ultima_visita.year}`,
         onRemove: () =>
           setFilters((prev) => ({
             ...prev,
@@ -3574,7 +3576,7 @@ export default function Agenda() {
                           },
                         }))
                       }
-                      aria-label="Alternar inversao do filtro de ultima visita"
+                      aria-label="Alternar exclusao do periodo do filtro de ultima visita"
                       className={[
                         "inline-flex h-6 w-6 items-center justify-center rounded-md border transition",
                         filters.dateRanges.data_da_ultima_visita.invert
@@ -3584,7 +3586,7 @@ export default function Agenda() {
                     >
                       <SquareCenterlineDashedHorizontal size={14} />
                     </button>
-                    Inverter
+                    Excluir periodo
                   </label>
                 </div>
               </div>
