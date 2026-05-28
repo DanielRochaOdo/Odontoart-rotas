@@ -88,6 +88,7 @@ type VisitRow = {
 type VisitRowJoin = VisitRow & {
   cliente?: VisitRow["cliente"] | VisitRow["cliente"][] | null;
 };
+const VISITS_FETCH_PAGE_SIZE = 1000;
 
 const isVisitRegistered = (
   visit: Pick<VisitRow, "completed_at" | "completed_vidas" | "no_visit_reason">,
@@ -329,10 +330,12 @@ export default function Visitas() {
   const [error, setError] = useState<string | null>(null);
   const [visits, setVisits] = useState<VisitRow[]>([]);
   const [vendors, setVendors] = useState<VendorOption[]>([]);
+  const [vendorsLoaded, setVendorsLoaded] = useState(false);
   const [editState, setEditState] = useState<Record<string, { vendorId: string; date: string }>>({});
   const [expandedVendor, setExpandedVendor] = useState<string | null>(null);
   const [editingVisits, setEditingVisits] = useState<Record<string, boolean>>({});
   const [refreshKey, setRefreshKey] = useState(0);
+  const [hasUpdatesAvailable, setHasUpdatesAvailable] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [addingVendorId, setAddingVendorId] = useState<string | null>(null);
@@ -621,17 +624,46 @@ export default function Visitas() {
   const [vendorDashboardAccessError, setVendorDashboardAccessError] = useState<string | null>(null);
   const [releasedVendorIdsForDate, setReleasedVendorIdsForDate] = useState<string[]>([]);
   const detailsObsRequestRef = useRef(0);
+  const ignoreRealtimeRef = useRef(0);
+  const isInteracting =
+    Boolean(confirmVisit) ||
+    Boolean(noVisit) ||
+    Boolean(completeVisit) ||
+    Boolean(detailsVisit) ||
+    Boolean(planoValoresModal) ||
+    Boolean(vendorDashboardAccessModal) ||
+    Boolean(addVendorsModal) ||
+    Object.values(editingVisits).some(Boolean) ||
+    savingId !== null ||
+    removingId !== null ||
+    addingVendorId !== null ||
+    detailsInstructionSaving ||
+    addVendorsSaving ||
+    vendorDashboardAccessSaving;
+  const requestRefresh = useCallback(() => {
+    ignoreRealtimeRef.current += 1;
+    setHasUpdatesAvailable(false);
+    setRefreshKey((prev) => prev + 1);
+    window.setTimeout(() => {
+      ignoreRealtimeRef.current = Math.max(0, ignoreRealtimeRef.current - 1);
+    }, 1200);
+  }, []);
 
   useEffect(() => {
     if (!canManage) return;
     let active = true;
+    setVendorsLoaded(false);
     const loadVendors = () => {
       fetchVendedores()
         .then((data) => {
-          if (active) setVendors(data as VendorOption[]);
+          if (active) {
+            setVendors(data as VendorOption[]);
+            setVendorsLoaded(true);
+          }
         })
         .catch((err) => {
           console.error(err);
+          if (active) setVendorsLoaded(true);
         });
     };
     const loadSupervisores = async () => {
@@ -947,10 +979,26 @@ export default function Visitas() {
         return query;
       };
 
-      const { data: rawVisits, error: supaError } = await buildVisitsQuery();
-      const data = (rawVisits ?? []) as VisitRowJoin[];
+      const data: VisitRowJoin[] = [];
+      let from = 0;
+      let supaError: { message: string } | null = null;
+      while (true) {
+        const { data: pageVisits, error: pageError } = await buildVisitsQuery().range(
+          from,
+          from + VISITS_FETCH_PAGE_SIZE - 1,
+        );
+        if (pageError) {
+          supaError = pageError;
+          break;
+        }
+        const page = (pageVisits ?? []) as VisitRowJoin[];
+        data.push(...page);
+        if (page.length < VISITS_FETCH_PAGE_SIZE) break;
+        from += VISITS_FETCH_PAGE_SIZE;
+      }
       const recordsAfterMay21 = data.filter((row) => row.visit_date >= "2026-05-22" && row.visit_date < "2026-06-01").length;
       console.info("VISITS_RECORDS_AFTER_2026_05_21", recordsAfterMay21);
+      console.info("VISITS_MONTH_ROWS_FETCHED_PAGED", data.length);
 
       if (!active) return;
 
@@ -979,6 +1027,37 @@ export default function Visitas() {
       active = false;
     };
   }, [currentMonth, refreshKey, isVendor, profile?.display_name, session?.user.email, session?.user.id, canManage, selectedSupervisorId, selectedVendorId, hydrateVisitsWithClientes]);
+
+  useEffect(() => {
+    const monthStart = toYmd(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+    const nextMonth = currentMonth.getMonth() === 11
+      ? new Date(currentMonth.getFullYear() + 1, 0, 1)
+      : new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
+    const monthEndExclusive = toYmd(nextMonth.getFullYear(), nextMonth.getMonth(), 1);
+    const channel = supabase
+      .channel(`visitas-month-updates-${monthStart}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "visits" },
+        (payload) => {
+          if (ignoreRealtimeRef.current > 0) return;
+          const candidateDate =
+            (payload.new as { visit_date?: string | null } | null)?.visit_date ??
+            (payload.old as { visit_date?: string | null } | null)?.visit_date ??
+            null;
+          const key = extractVisitDateKey(candidateDate);
+          if (!key) return;
+          if (key < monthStart || key >= monthEndExclusive) return;
+          if (isInteracting) return;
+          setHasUpdatesAvailable(true);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [currentMonth, isInteracting]);
 
   const calendarCells = useMemo(() => {
     const firstDayOfMonth = startOfMonth(currentMonth);
@@ -1054,8 +1133,20 @@ export default function Visitas() {
 
   const filteredVisits = useMemo(() => {
     let scopedVisits = visits;
+    const debugFilter = {
+      totalBefore: visits.length,
+      selectedSupervisorId,
+      selectedVendorId,
+      vendorsLoaded,
+      supervisorScopedBefore: 0,
+      supervisorScopedAfter: 0,
+      vendorScopedBefore: 0,
+      vendorScopedAfter: 0,
+    };
 
     if (canManage && canFilterBySupervisor && selectedSupervisorId !== "all") {
+      if (!vendorsLoaded) return scopedVisits;
+      debugFilter.supervisorScopedBefore = scopedVisits.length;
       const vendorIdSet = new Set(selectableVendors.map((vendor) => vendor.user_id).filter(Boolean));
       const vendorNameSet = new Set(
         selectableVendors
@@ -1070,9 +1161,11 @@ export default function Visitas() {
         if (visit.assigned_to_name && vendorNameSet.has(normalize(visit.assigned_to_name))) return true;
         return false;
       });
+      debugFilter.supervisorScopedAfter = scopedVisits.length;
     }
 
     if (canManage && canFilterBySupervisor && selectedVendorId !== "all") {
+      debugFilter.vendorScopedBefore = scopedVisits.length;
       const selectedVendor = vendors.find((vendor) => vendor.user_id === selectedVendorId);
       const selectedVendorName = selectedVendor?.display_name ? normalize(selectedVendor.display_name) : "";
       scopedVisits = scopedVisits.filter((visit) => {
@@ -1081,6 +1174,14 @@ export default function Visitas() {
           return normalize(visit.assigned_to_name) === selectedVendorName;
         }
         return false;
+      });
+      debugFilter.vendorScopedAfter = scopedVisits.length;
+    }
+
+    if (canManage && canFilterBySupervisor) {
+      console.info("VISITS_FILTER_DEBUG", {
+        ...debugFilter,
+        totalAfter: scopedVisits.length,
       });
     }
 
@@ -1092,6 +1193,7 @@ export default function Visitas() {
     selectedVendorId,
     selectableVendors,
     isSupervisorVisitForSelectedSupervisor,
+    vendorsLoaded,
     vendors,
     visits,
   ]);
@@ -1204,8 +1306,21 @@ export default function Visitas() {
   const selectedVisitsDayScoped = useMemo(() => {
     if (!canManage || !canFilterBySupervisor) return selectedVisits;
     let scopedVisits = selectedVisits;
+    const debugDayFilter = {
+      dayKey: selectedDate ? format(selectedDate, "yyyy-MM-dd") : null,
+      totalBefore: selectedVisits.length,
+      selectedSupervisorId,
+      selectedVendorId,
+      vendorsLoaded,
+      supervisorScopedBefore: 0,
+      supervisorScopedAfter: 0,
+      vendorScopedBefore: 0,
+      vendorScopedAfter: 0,
+    };
 
     if (selectedSupervisorId !== "all") {
+      if (!vendorsLoaded) return scopedVisits;
+      debugDayFilter.supervisorScopedBefore = scopedVisits.length;
       const vendorIdSet = new Set(selectableVendors.map((vendor) => vendor.user_id).filter(Boolean));
       const vendorNameSet = new Set(
         selectableVendors
@@ -1220,9 +1335,11 @@ export default function Visitas() {
         if (visit.assigned_to_name && vendorNameSet.has(normalize(visit.assigned_to_name))) return true;
         return false;
       });
+      debugDayFilter.supervisorScopedAfter = scopedVisits.length;
     }
 
     if (selectedVendorId !== "all") {
+      debugDayFilter.vendorScopedBefore = scopedVisits.length;
       const selectedVendor = vendors.find((vendor) => vendor.user_id === selectedVendorId);
       const selectedVendorName = selectedVendor?.display_name ? normalize(selectedVendor.display_name) : "";
       scopedVisits = scopedVisits.filter((visit) => {
@@ -1232,7 +1349,13 @@ export default function Visitas() {
         }
         return false;
       });
+      debugDayFilter.vendorScopedAfter = scopedVisits.length;
     }
+
+    console.info("VISITS_DAY_FILTER_DEBUG", {
+      ...debugDayFilter,
+      totalAfter: scopedVisits.length,
+    });
 
     return scopedVisits;
   }, [
@@ -1243,6 +1366,7 @@ export default function Visitas() {
     selectedSupervisorId,
     selectedVendorId,
     selectedVisits,
+    vendorsLoaded,
     vendors,
   ]);
 
@@ -1321,20 +1445,22 @@ export default function Visitas() {
       const normalized = await hydrateVisitsWithClientes((data ?? []) as VisitRowJoin[]);
       let scopedDayDetails = normalized;
       if (canManage && canFilterBySupervisor && selectedSupervisorId !== "all") {
-        const vendorIdSet = new Set(selectableVendors.map((vendor) => vendor.user_id).filter(Boolean));
-        const vendorNameSet = new Set(
-          selectableVendors
-            .map((vendor) => vendor.display_name)
-            .filter((value): value is string => Boolean(value))
-            .map((value) => normalize(value)),
-        );
+        if (vendorsLoaded) {
+          const vendorIdSet = new Set(selectableVendors.map((vendor) => vendor.user_id).filter(Boolean));
+          const vendorNameSet = new Set(
+            selectableVendors
+              .map((vendor) => vendor.display_name)
+              .filter((value): value is string => Boolean(value))
+              .map((value) => normalize(value)),
+          );
 
-        scopedDayDetails = scopedDayDetails.filter((visit) => {
-          if (isSupervisorVisitForSelectedSupervisor(visit)) return true;
-          if (visit.assigned_to_user_id && vendorIdSet.has(visit.assigned_to_user_id)) return true;
-          if (visit.assigned_to_name && vendorNameSet.has(normalize(visit.assigned_to_name))) return true;
-          return false;
-        });
+          scopedDayDetails = scopedDayDetails.filter((visit) => {
+            if (isSupervisorVisitForSelectedSupervisor(visit)) return true;
+            if (visit.assigned_to_user_id && vendorIdSet.has(visit.assigned_to_user_id)) return true;
+            if (visit.assigned_to_name && vendorNameSet.has(normalize(visit.assigned_to_name))) return true;
+            return false;
+          });
+        }
       }
       setDayDetailsByDate((prev) => ({ ...prev, [selectedDayStart]: scopedDayDetails }));
       setDayDetailsLoadingDateKey((current) => (current === selectedDayStart ? null : current));
@@ -1376,6 +1502,7 @@ export default function Visitas() {
     selectedVendorId,
     session?.user.id,
     supervisores,
+    vendorsLoaded,
   ]);
 
   useEffect(() => {
@@ -1852,7 +1979,7 @@ export default function Visitas() {
         setEditingVisits((prev) => ({ ...prev, [visitId]: false }));
         invalidateDayDetailsCache(previousDateKey);
         invalidateDayDetailsCache(state.date);
-        setRefreshKey((prev) => prev + 1);
+        requestRefresh();
         return;
       }
 
@@ -1889,7 +2016,7 @@ export default function Visitas() {
       setEditingVisits((prev) => ({ ...prev, [visitId]: false }));
       invalidateDayDetailsCache(previousDateKey);
       invalidateDayDetailsCache(state.date);
-      setRefreshKey((prev) => prev + 1);
+      requestRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao atualizar visita.");
     } finally {
@@ -2124,7 +2251,7 @@ export default function Visitas() {
       setAddVendorsModal(null);
       setAddVendorsQuery("");
       invalidateDayDetailsCache(addVendorsModal.date);
-      setRefreshKey((prev) => prev + 1);
+      requestRefresh();
     } catch (err) {
       setAddVendorsError(err instanceof Error ? err.message : "Erro ao adicionar responsaveis.");
     } finally {
@@ -2199,7 +2326,7 @@ export default function Visitas() {
 
       removeVisitLocally(visitId);
       invalidateDayDetailsCache(toDateInput(visit.visit_date));
-      setRefreshKey((prev) => prev + 1);
+      requestRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao remover visita.");
     } finally {
@@ -2815,7 +2942,7 @@ export default function Visitas() {
       if (updateError) throw new Error(updateError.message);
 
       setNoVisit(null);
-      setRefreshKey((prev) => prev + 1);
+      requestRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao registrar visita.");
     } finally {
@@ -3020,7 +3147,7 @@ export default function Visitas() {
       }
 
       setCompleteVisit(null);
-      setRefreshKey((prev) => prev + 1);
+      requestRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao registrar visita.");
     } finally {
@@ -3117,6 +3244,15 @@ export default function Visitas() {
           </div>
           {canFilterBySupervisor && (
             <div className="flex flex-wrap items-end gap-3">
+              {hasUpdatesAvailable && (
+                <button
+                  type="button"
+                  onClick={requestRefresh}
+                  className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:border-amber-400"
+                >
+                  Ha novas rotas disponiveis. Atualizar agenda
+                </button>
+              )}
               <label className="flex min-w-[220px] flex-col gap-1 text-xs font-semibold text-ink/70">
                 Supervisor
                 <select
@@ -3162,6 +3298,18 @@ export default function Visitas() {
             </div>
           )}
         </div>
+        {hasUpdatesAvailable && !canFilterBySupervisor && (
+          <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            Ha novas rotas disponiveis.
+            <button
+              type="button"
+              onClick={requestRefresh}
+              className="ml-2 font-semibold underline"
+            >
+              Atualizar agenda
+            </button>
+          </div>
+        )}
       </header>
 
       {!canAccess ? (
@@ -3206,7 +3354,7 @@ export default function Visitas() {
                 }
 
                 const key = format(day, "yyyy-MM-dd");
-                const count = monthSummaryCounts.get(key) ?? visitsByDate.get(key)?.length ?? 0;
+                const count = visitsByDate.get(key)?.length ?? monthSummaryCounts.get(key) ?? 0;
                 const hasVisits = count > 0;
                 const hasSupervisorVisitForLoggedUser = supervisorPinDates.has(key);
                 const isSelected = selectedDate ? isSameDay(day, selectedDate) : false;

@@ -44,6 +44,13 @@ const applyVendorVisitTypeScope = <TQuery,>(query: TQuery) =>
 
 const SHOW_NEXT_ROUTE_BLOCK = false;
 const SESSION_EXPIRED_FRIENDLY_MESSAGE = "Sua sessao foi encerrada. Faca login novamente.";
+const DASHBOARD_STATUS_COLORS = {
+  success: "#1f7a5a",
+  warning: "#f59e0b",
+  neutral: "#94a3b8",
+  info: "#0f766e",
+  accent: "#38bdf8",
+};
 
 const isSessionExpiredError = (message: string) => {
   const normalized = message.toLowerCase();
@@ -209,7 +216,15 @@ const buildDailyVidasSeries = (
     totals.set(key, (totals.get(key) ?? 0) + value);
   });
 
-  const palette = ["#0f766e", "#1f7a5a", "#22c55e", "#38bdf8", "#7dd3fc", "#94a3b8", "#e2e8f0"];
+  const palette = [
+    DASHBOARD_STATUS_COLORS.info,
+    DASHBOARD_STATUS_COLORS.success,
+    "#22c55e",
+    DASHBOARD_STATUS_COLORS.accent,
+    "#7dd3fc",
+    DASHBOARD_STATUS_COLORS.neutral,
+    "#e2e8f0",
+  ];
 
   return labels.map(({ key, label }, index) => ({
     label,
@@ -2142,13 +2157,13 @@ export default function Dashboard() {
           Carregando indicadores...
         </div>
       ) : error ? (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-600">
+        <div className="dashboard-status-danger rounded-2xl border p-6 text-sm">
           {error}
         </div>
       ) : (
         <div className="space-y-4 md:space-y-6">
           {scheduledCountsError && (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
+            <div className="dashboard-status-warning rounded-2xl border px-4 py-3 text-xs">
               {scheduledCountsError}
             </div>
           )}
@@ -2320,7 +2335,7 @@ export default function Dashboard() {
           )}
 
           {canViewTeamStats && (
-            <section className="rounded-2xl border border-violet-200 bg-violet-50/40 p-4 md:p-5">
+            <section className="dashboard-card rounded-2xl p-4 md:p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="font-display text-lg text-ink">Visitas de supervisor</h3>
@@ -2334,7 +2349,7 @@ export default function Dashboard() {
                     <select
                       value={supervisorVisitFilterUserId}
                       onChange={(event) => setSupervisorVisitFilterUserId(event.target.value || "all")}
-                      className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs text-ink outline-none focus:border-violet-400"
+                      className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
                     >
                       <option value="all">Todos</option>
                       {supervisores
@@ -2356,19 +2371,19 @@ export default function Dashboard() {
               ) : (
                 <>
                   <div className="mt-4 grid gap-3 md:grid-cols-3">
-                    <div className="rounded-xl border border-violet-200 bg-white px-4 py-3">
+                    <div className="dashboard-card-soft rounded-xl px-4 py-3">
                       <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Realizadas</p>
                       <p className="mt-2 text-2xl font-semibold text-ink">
                         {formatNumber(supervisorVisitSummary.realizadas)}
                       </p>
                     </div>
-                    <div className="rounded-xl border border-violet-200 bg-white px-4 py-3">
+                    <div className="dashboard-card-soft rounded-xl px-4 py-3">
                       <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Pendentes</p>
                       <p className="mt-2 text-2xl font-semibold text-ink">
                         {formatNumber(supervisorVisitSummary.pendentes)}
                       </p>
                     </div>
-                    <div className="rounded-xl border border-violet-200 bg-white px-4 py-3">
+                    <div className="dashboard-card-soft rounded-xl px-4 py-3">
                       <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Vidas</p>
                       <p className="mt-2 text-2xl font-semibold text-ink">
                         {formatNumber(supervisorVisitSummary.vidas)}
@@ -2378,7 +2393,7 @@ export default function Dashboard() {
                   </div>
 
                   <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1.5fr]">
-                    <div className="rounded-xl border border-violet-200 bg-white p-4">
+                    <div className="dashboard-card-soft rounded-xl p-4">
                       <p className="text-xs font-semibold text-ink/70">Motivos das visitas</p>
                       <div className="mt-3 space-y-2">
                         {supervisorVisitSummary.motivos.length === 0 ? (
@@ -2387,20 +2402,20 @@ export default function Dashboard() {
                           supervisorVisitSummary.motivos.map((item) => (
                             <div key={item.key} className="flex items-center justify-between text-xs">
                               <span className="text-ink/80">{item.label}</span>
-                              <span className="font-semibold text-violet-700">{formatNumber(item.count)}</span>
+                              <span className="font-semibold text-sea">{formatNumber(item.count)}</span>
                             </div>
                           ))
                         )}
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-violet-200 bg-white p-4">
+                    <div className="dashboard-card-soft rounded-xl p-4">
                       <p className="text-xs font-semibold text-ink/70">Detalhamento das visitas</p>
-                      <div className="mt-3 max-h-[300px] overflow-y-auto rounded-lg border border-violet-100">
+                      <div className="mt-3 max-h-[300px] overflow-y-auto rounded-lg border border-sea/10">
                         {supervisorVisitRowsPreview.length === 0 ? (
                           <p className="px-3 py-3 text-xs text-ink/60">Sem visitas no periodo selecionado.</p>
                         ) : (
-                          <div className="divide-y divide-violet-100">
+                          <div className="divide-y divide-sea/10">
                             {supervisorVisitRowsPreview.map((item) => {
                               const cliente = Array.isArray(item.cliente)
                                 ? item.cliente[0] ?? null
@@ -2623,7 +2638,7 @@ export default function Dashboard() {
           {isVendor && (
             <section className="grid gap-4 lg:grid-cols-3">
               {visitStatsError ? (
-                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-600 md:p-5">
+                <div className="dashboard-status-danger rounded-2xl border p-4 text-sm md:p-5">
                   {visitStatsError}
                 </div>
               ) : visitStats ? (
@@ -2632,9 +2647,9 @@ export default function Dashboard() {
                     "Visitas no periodo",
                     visitStats.visitasRealizadas + visitStats.visitasNaoRealizadas + visitStats.visitasPendentes,
                     [
-                      { label: "Realizadas", value: visitStats.visitasRealizadas, color: "#1f7a5a" },
-                      { label: "Nao realizadas", value: visitStats.visitasNaoRealizadas, color: "#f97316" },
-                      { label: "Pendentes", value: visitStats.visitasPendentes, color: "#94a3b8" },
+                      { label: "Realizadas", value: visitStats.visitasRealizadas, color: DASHBOARD_STATUS_COLORS.success },
+                      { label: "Nao realizadas", value: visitStats.visitasNaoRealizadas, color: DASHBOARD_STATUS_COLORS.warning },
+                      { label: "Pendentes", value: visitStats.visitasPendentes, color: DASHBOARD_STATUS_COLORS.neutral },
                     ],
                     globalPeriodLabel,
                   )}
@@ -2645,12 +2660,12 @@ export default function Dashboard() {
                       {
                         label: "Vidas em visitas",
                         value: visitStats.totalVidas,
-                        color: "#0f766e",
+                        color: DASHBOARD_STATUS_COLORS.info,
                       },
                       {
                         label: "Vidas em aceite digital",
                         value: vendorAceitePeriodVidas,
-                        color: "#38bdf8",
+                        color: DASHBOARD_STATUS_COLORS.accent,
                       },
                     ],
                     `${globalPeriodLabel} • Empresas visitadas: ${formatNumber(visitStats.empresasVisitadas)}`,
@@ -2673,7 +2688,7 @@ export default function Dashboard() {
           {canViewTeamStats && (
             <section className="grid gap-4 lg:grid-cols-3">
               {teamStatsError ? (
-                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-600 md:p-5">
+                <div className="dashboard-status-danger rounded-2xl border p-4 text-sm md:p-5">
                   {teamStatsError}
                 </div>
               ) : teamStats ? (
@@ -2682,9 +2697,9 @@ export default function Dashboard() {
                     "Visitas no periodo (equipe)",
                     teamStats.visitasRealizadas + teamStats.visitasNaoRealizadas + teamStats.visitasPendentes,
                     [
-                      { label: "Realizadas", value: teamStats.visitasRealizadas, color: "#1f7a5a" },
-                      { label: "Nao realizadas", value: teamStats.visitasNaoRealizadas, color: "#f97316" },
-                      { label: "Pendentes", value: teamStats.visitasPendentes, color: "#94a3b8" },
+                      { label: "Realizadas", value: teamStats.visitasRealizadas, color: DASHBOARD_STATUS_COLORS.success },
+                      { label: "Nao realizadas", value: teamStats.visitasNaoRealizadas, color: DASHBOARD_STATUS_COLORS.warning },
+                      { label: "Pendentes", value: teamStats.visitasPendentes, color: DASHBOARD_STATUS_COLORS.neutral },
                     ],
                     `${globalPeriodLabel} • ${teamVendorsCount} vendedor(es)`,
                   )}
@@ -2695,12 +2710,12 @@ export default function Dashboard() {
                       {
                         label: "Vidas em visitas",
                         value: teamStats.totalVidas,
-                        color: "#0f766e",
+                        color: DASHBOARD_STATUS_COLORS.info,
                       },
                       {
                         label: "Vidas em aceite digital",
                         value: digitalSummary?.periodTotalVidas ?? 0,
-                        color: "#38bdf8",
+                        color: DASHBOARD_STATUS_COLORS.accent,
                       },
                     ],
                     `${globalPeriodLabel} • Empresas visitadas: ${formatNumber(teamStats.empresasVisitadas)}`,
