@@ -8,6 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "sync:dashboard": "tsx scripts/sync_dashboard_from_primary.ts",
+    "monitor:dashboard-sync": "tsx scripts/monitor_dashboard_sync.ts",
     "backfill:clientes-cnpj": "tsx scripts/backfill_clientes_cnpj.ts",
     "test:fila-data-contrato": "tsx scripts/test_fila_data_contrato.ts"
   },

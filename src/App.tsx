@@ -4,7 +4,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import AppLayout from "./layouts/AppLayout";
 
 const Login = lazy(() => import("./pages/Login"));
-const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Dashboard = lazy(() => import("./pages/DashboardEstrategico"));
 const Agenda = lazy(() => import("./pages/Agenda"));
 const RoutesPage = lazy(() => import("./pages/Routes"));
 const Visitas = lazy(() => import("./pages/Visitas"));
@@ -29,6 +29,8 @@ function AppRoutes() {
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>
             <Route index element={<Dashboard />} />
+            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="dashboard-estrategico" element={<Navigate to="/dashboard" replace />} />
             <Route path="agenda" element={<Agenda />} />
             <Route path="rotas" element={<RoutesPage />} />
             <Route path="rotas/mapa" element={<Navigate to="/agenda" replace />} />

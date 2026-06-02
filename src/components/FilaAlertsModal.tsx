@@ -29,7 +29,7 @@ const buildAlertText = (row: FilaPendingNotificationRow) => {
       : "Usuario nao identificado";
 
   if (row.event_type === "NEW_COMPANY_WAITING") {
-    return `Nova empresa adicionada a fila. Liberacao prevista para ${eligibleAt}.`;
+    return `Nova empresa adicionada a fila. Fim do prazo previsto para ${eligibleAt}.`;
   }
   if (
     row.event_type === "COUNTDOWN_30" ||
@@ -38,7 +38,7 @@ const buildAlertText = (row: FilaPendingNotificationRow) => {
     row.event_type === "COUNTDOWN_1"
   ) {
     const safeDays = Number.isFinite(daysLeft) ? daysLeft : row.event_type.replace("COUNTDOWN_", "");
-    return `Faltam ${safeDays} dia(s) para liberacao automatica no modulo de rotas.`;
+    return `Faltam ${safeDays} dia(s) para a empresa ficar com liberacao pendente no modulo de rotas.`;
   }
   if (row.event_type === "RELEASED_MANUAL") {
     return `Empresa liberada manualmente por ${actorName}.`;
@@ -109,6 +109,8 @@ export default function FilaAlertsModal() {
   const [unavailable, setUnavailable] = useState(false);
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => readDismissedIds(currentUserId));
   const dismissedIdsRef = useRef<Set<string>>(dismissedIds);
+  const loadInFlightRef = useRef(false);
+  const lastGenerateAtRef = useRef(0);
 
   const setDismissedIdsSync = useCallback(
     (next: Set<string>) => {
@@ -127,9 +129,20 @@ export default function FilaAlertsModal() {
 
   const loadNotifications = useCallback(async () => {
     if (!canView || unavailable) return;
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
     setLoading(true);
     try {
-      await generateFilaCountdownEvents();
+      const now = Date.now();
+      // Avoid hammering countdown generation endpoint during outages/timeouts.
+      if (now - lastGenerateAtRef.current > 10 * 60_000) {
+        try {
+          await generateFilaCountdownEvents();
+          lastGenerateAtRef.current = now;
+        } catch (error) {
+          console.warn("Falha ao gerar eventos de contagem regressiva do modulo fila:", error);
+        }
+      }
       const data = await fetchFilaPendingNotifications(50);
       const dismissed = dismissedIdsRef.current;
       setRows(data.filter((item) => !dismissed.has(item.event_id)));
@@ -140,9 +153,10 @@ export default function FilaAlertsModal() {
         setRows([]);
         return;
       }
-      console.error("Falha ao carregar avisos do modulo fila:", error);
+      console.warn("Falha ao carregar avisos do modulo fila:", error);
     } finally {
       setLoading(false);
+      loadInFlightRef.current = false;
     }
   }, [canView, unavailable]);
 
@@ -158,7 +172,7 @@ export default function FilaAlertsModal() {
     };
     const intervalId = window.setInterval(() => {
       void loadNotifications();
-    }, 60_000);
+    }, 180_000);
     window.addEventListener("focus", handleFocus);
     return () => {
       window.removeEventListener("focus", handleFocus);

@@ -12,7 +12,7 @@ type ClienteRow = {
 type ControlRow = {
   empresa_id: string;
   codigo: string | null;
-  effective_state: "PENDING_WAIT" | "READY_AUTO" | "RELEASED_MANUAL" | "BLOCKED_MANUAL";
+  effective_state: "PENDING_WAIT" | "RELEASE_PENDING" | "READY_AUTO" | "RELEASED_MANUAL" | "BLOCKED_MANUAL";
   eligible_at: string;
   manual_block_until: string | null;
 };
@@ -29,6 +29,7 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 });
 
 const CUTOFF_ISO = "2026-01-01";
+const MANUAL_RELEASE_CUTOFF_MS = Date.parse("2026-06-02T00:00:00-03:00");
 const ODONTOART_EMPRESA_URL =
   "https://odontoart.s4e.com.br//api/empresa/BuscaEmpresas";
 const ODONTOART_DEFAULT_TOKEN =
@@ -222,25 +223,21 @@ const fetchControlsByEmpresaIds = async (empresaIds: string[]) => {
   return allRows;
 };
 
-const isControlEligible = (row: ControlRow, nowMs: number) => {
-  if (row.effective_state === "RELEASED_MANUAL" || row.effective_state === "READY_AUTO") {
-    return true;
-  }
-
+const isControlEligible = (row: ControlRow) => {
+  if (row.effective_state === "RELEASED_MANUAL") return true;
+  if (row.effective_state !== "READY_AUTO") return false;
   const eligibleAtMs = Date.parse(row.eligible_at);
-  if (Number.isFinite(eligibleAtMs)) return eligibleAtMs <= nowMs;
-  return row.effective_state !== "PENDING_WAIT";
+  return Number.isFinite(eligibleAtMs) && eligibleAtMs < MANUAL_RELEASE_CUTOFF_MS;
 };
 
 const filterVisibleInRoutes = (rows: ClienteRow[], controls: ControlRow[]) => {
   if (controls.length === 0) return rows;
 
-  const nowMs = Date.now();
   const eligibilityByEmpresaId = new Map<string, boolean>();
   const eligibilityByCodigo = new Map<string, boolean>();
 
   controls.forEach((row) => {
-    const eligible = isControlEligible(row, nowMs);
+    const eligible = isControlEligible(row);
     eligibilityByEmpresaId.set(row.empresa_id, eligible);
 
     const codigo = row.codigo?.trim();
@@ -392,7 +389,6 @@ const main = async () => {
   const controlsCandidates = await fetchControlsByEmpresaIds(candidates.map((row) => row.id));
   const controlledCandidateIds = new Set(controlsCandidates.map((row) => row.empresa_id));
 
-  const nowMs = Date.now();
   const rowsToInsert = candidates
     .filter((row) => !controlledCandidateIds.has(row.id))
     .map((row) => {
@@ -401,7 +397,13 @@ const main = async () => {
       const base = new Date(`${dataContrato}T12:00:00.000Z`);
       base.setUTCDate(base.getUTCDate() + defaultWaitingDays);
       const eligibleAt = base.toISOString();
-      const state = Date.parse(eligibleAt) <= nowMs ? "READY_AUTO" : "PENDING_WAIT";
+      const eligibleAtMs = Date.parse(eligibleAt);
+      const state =
+        eligibleAtMs < MANUAL_RELEASE_CUTOFF_MS
+          ? "READY_AUTO"
+          : eligibleAtMs <= Date.now()
+            ? "RELEASE_PENDING"
+            : "PENDING_WAIT";
 
       return {
         empresa_id: row.id,

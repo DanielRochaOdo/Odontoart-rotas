@@ -31,7 +31,7 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
-  { label: "Dashboard", to: "/", icon: LayoutDashboard, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
+  { label: "Dashboard", to: "/dashboard", icon: LayoutDashboard, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
   { label: "Rotas", to: "/agenda", icon: MapPin, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Agenda", to: "/visitas", icon: CalendarCheck, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
   { label: "Aceite digital", to: "/aceite-digital", icon: ClipboardCheck, roles: ["VENDEDOR"] },
