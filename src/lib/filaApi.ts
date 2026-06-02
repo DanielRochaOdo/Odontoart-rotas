@@ -2,7 +2,12 @@ import { supabase } from "./supabase";
 import { fetchEmpresaByEmpresaId } from "./odontoartEmpresaApi";
 import { DATA_CORTE_FILA, evaluateDataContratoForFila } from "./filaDataContrato";
 
-export type FilaState = "PENDING_WAIT" | "READY_AUTO" | "RELEASED_MANUAL" | "BLOCKED_MANUAL";
+export type FilaState =
+  | "PENDING_WAIT"
+  | "RELEASE_PENDING"
+  | "READY_AUTO"
+  | "RELEASED_MANUAL"
+  | "BLOCKED_MANUAL";
 
 export type FilaEventType =
   | "NEW_COMPANY_WAITING"
@@ -36,6 +41,7 @@ export type FilaControlRow = {
   manual_block_until: string | null;
   manual_reason: string | null;
   manual_override_by: string | null;
+  manual_override_name?: string | null;
   manual_override_at: string | null;
   created_at: string;
   updated_at: string;
@@ -68,6 +74,7 @@ export type FilaRoutingBlockLists = {
 };
 
 type SupabaseLikeError = { code?: string; message?: string } | null;
+const FILA_MANUAL_RELEASE_CUTOFF_MS = Date.parse("2026-06-02T00:00:00-03:00");
 const FILA_AUTO_SYNC_STORAGE_KEY = "filaAutoSyncAtMsV1";
 const FILA_AUTO_SYNC_DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
 const FILA_ROUTING_BLOCKS_CACHE_MS = 60 * 1000;
@@ -180,7 +187,7 @@ export const fetchFilaControls = async (params?: {
     )
     .order("created_at", { ascending: false });
 
-  if (params?.state) {
+  if (params?.state && params.state !== "RELEASE_PENDING") {
     query = query.eq("effective_state", params.state);
   }
 
@@ -196,7 +203,33 @@ export const fetchFilaControls = async (params?: {
 
   const { data, error } = await query;
   if (error) throw error;
-  return (data ?? []) as FilaControlRow[];
+  const rows = ((data ?? []) as FilaControlRow[]).filter((row) => {
+    if (params?.state !== "RELEASE_PENDING") return true;
+    if (row.effective_state === "RELEASE_PENDING") return true;
+    if (row.effective_state !== "READY_AUTO") return false;
+    const eligibleAtMs = Date.parse(row.eligible_at);
+    return Number.isFinite(eligibleAtMs) && eligibleAtMs >= FILA_MANUAL_RELEASE_CUTOFF_MS;
+  });
+  const userIds = Array.from(new Set(rows.map((row) => row.manual_override_by).filter((id): id is string => Boolean(id))));
+  if (!userIds.length) return rows;
+
+  const { data: profilesData, error: profilesError } = await supabase
+    .from("profiles")
+    .select("user_id, display_name")
+    .in("user_id", userIds);
+  if (profilesError) throw profilesError;
+
+  const profileNameByUserId = new Map(
+    ((profilesData ?? []) as Array<{ user_id: string; display_name: string | null }>).map((profile) => [
+      profile.user_id,
+      profile.display_name,
+    ]),
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    manual_override_name: row.manual_override_by ? (profileNameByUserId.get(row.manual_override_by) ?? null) : null,
+  }));
 };
 
 export const registerFilaEmpresa = async (payload: {
@@ -369,12 +402,10 @@ const isFilaControlEligibleForRoutes = (row: {
   effective_state: FilaState;
   eligible_at: string;
 }) => {
-  if (row.effective_state === "RELEASED_MANUAL" || row.effective_state === "READY_AUTO") {
-    return true;
-  }
+  if (row.effective_state === "RELEASED_MANUAL") return true;
+  if (row.effective_state !== "READY_AUTO") return false;
   const eligibleAtMs = Date.parse(row.eligible_at);
-  if (Number.isFinite(eligibleAtMs)) return eligibleAtMs <= Date.now();
-  return row.effective_state !== "PENDING_WAIT";
+  return Number.isFinite(eligibleAtMs) && eligibleAtMs < FILA_MANUAL_RELEASE_CUTOFF_MS;
 };
 
 export const fetchFilaRoutingBlockLists = async (options?: { force?: boolean }) => {

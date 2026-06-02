@@ -1,9 +1,11 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { supabaseDash } from "../lib/supabaseDashboard";
 import { useAuth } from "../context/AuthContext";
 import { formatDateBr } from "../lib/dateFormat";
 import { normalizeText } from "../lib/textNormalize";
 import { SUPERVISOR_VISIT_REASON_OPTIONS, VISIT_TYPE } from "../lib/supervisorVisits";
+import DashboardModal from "../components/DashboardModal";
 
 const formatNumber = (value: number) => new Intl.NumberFormat("pt-BR").format(value);
 const startOfWeek = (date: Date) => {
@@ -121,6 +123,7 @@ type ScheduledProgress = {
 
 type SupervisorVisitDashboardRow = {
   id: string;
+  cliente_id?: string | null;
   visit_date: string | null;
   completed_at: string | null;
   completed_vidas: number | null;
@@ -128,7 +131,6 @@ type SupervisorVisitDashboardRow = {
   assigned_to_user_id: string | null;
   assigned_to_name: string | null;
   register_mode: string | null;
-  visit_supervisors?: Array<{ supervisor_user_id: string | null }> | null;
   cliente?:
     | { empresa: string | null; nome_fantasia: string | null }
     | Array<{ empresa: string | null; nome_fantasia: string | null }>
@@ -334,8 +336,8 @@ export default function Dashboard() {
     if (!canSelectSupervisor) return;
     let active = true;
     const loadSupervisores = async () => {
-      const { data, error: supaError } = await supabase
-        .from("profiles")
+      const { data, error: supaError } = await supabaseDash
+        .from("v_dash_profiles_active")
         .select("id, user_id, display_name")
         .eq("role", "SUPERVISOR")
         .order("display_name", { ascending: true });
@@ -373,8 +375,8 @@ export default function Dashboard() {
     let active = true;
 
     const loadVendedores = async () => {
-      let query = supabase
-        .from("profiles")
+      let query = supabaseDash
+        .from("v_dash_profiles_active")
         .select("user_id, display_name")
         .eq("role", "VENDEDOR")
         .order("display_name", { ascending: true });
@@ -410,8 +412,8 @@ export default function Dashboard() {
     const load = async () => {
       setLoading(true);
       setError(null);
-      let query = supabase
-        .from("clientes")
+      let query = supabaseDash
+        .from("v_dash_clientes_active")
         .select("data_da_ultima_visita, situacao, bairro, cidade, uf, vendedor")
         .limit(5000);
 
@@ -485,8 +487,8 @@ export default function Dashboard() {
         const monthStartKeyLocal = toLocalDateInput(monthStart);
         const monthEndKeyLocal = toLocalDateInput(monthEnd);
 
-        let baseQuery = supabase
-          .from("visits")
+        let baseQuery = supabaseDash
+          .from("v_dash_visits_active")
           .select("visit_date, assigned_to_user_id, assigned_to_name, completed_at, no_visit_reason")
           .gte("visit_date", startKey)
           .lte("visit_date", endKey);
@@ -513,8 +515,8 @@ export default function Dashboard() {
             baseQuery = baseQuery.eq("assigned_to_name", activeVendorName);
           }
         } else if (activeSupervisorId) {
-          const vendorsQuery = supabase
-            .from("profiles")
+          const vendorsQuery = supabaseDash
+            .from("v_dash_profiles_active")
             .select("user_id, display_name")
             .eq("role", "VENDEDOR")
             .eq("supervisor_id", activeSupervisorId);
@@ -612,8 +614,8 @@ export default function Dashboard() {
       }
 
       try {
-        let visitsQuery = supabase
-          .from("visits")
+        let visitsQuery = supabaseDash
+          .from("v_dash_visits_active")
           .select(
             "assigned_to_user_id, assigned_to_name, completed_vidas, completed_at, no_visit_reason, visit_date, cliente:cliente_id (bairro)",
           )
@@ -644,8 +646,8 @@ export default function Dashboard() {
             visitsQuery = visitsQuery.eq("assigned_to_name", activeVendorName);
           }
         } else if (activeSupervisorId) {
-          const vendorsQuery = supabase
-            .from("profiles")
+          const vendorsQuery = supabaseDash
+            .from("v_dash_profiles_active")
             .select("user_id, display_name")
             .eq("role", "VENDEDOR")
             .eq("supervisor_id", activeSupervisorId);
@@ -746,8 +748,8 @@ export default function Dashboard() {
         }
 
         const todayRouteKey = toLocalDateInput(new Date());
-        let nextRouteQuery = supabase
-          .from("visits")
+        let nextRouteQuery = supabaseDash
+          .from("v_dash_visits_active")
           .select(
             "visit_date, perfil_visita, completed_at, assigned_to_user_id, assigned_to_name, cliente:cliente_id (empresa, nome_fantasia)",
           )
@@ -879,14 +881,14 @@ export default function Dashboard() {
         return;
       }
 
-      let visitsQuery = supabase
-        .from("visits")
+      let visitsQuery = supabaseDash
+        .from("v_dash_visits_active")
         .select("cliente_id, completed_at, completed_vidas, no_visit_reason, visit_date")
         .gte("visit_date", globalFrom)
         .lte("visit_date", globalTo);
       visitsQuery = applyVendorVisitTypeScope(visitsQuery);
-      let aceiteQuery = supabase
-        .from("aceite_digital")
+      let aceiteQuery = supabaseDash
+        .from("v_dash_aceite_digital_active")
         .select("vidas")
         .gte("entry_date", globalFrom)
         .lte("entry_date", globalTo);
@@ -964,8 +966,8 @@ export default function Dashboard() {
         return;
       }
 
-      const vendorsQuery = supabase
-        .from("profiles")
+      const vendorsQuery = supabaseDash
+        .from("v_dash_profiles_active")
         .select("user_id, display_name")
         .eq("role", "VENDEDOR");
 
@@ -999,8 +1001,8 @@ export default function Dashboard() {
       setTeamVendorsCount(vendorIds.length);
       setTeamVendorNames(vendorNames);
 
-      let visitsQuery = supabase
-        .from("visits")
+      let visitsQuery = supabaseDash
+        .from("v_dash_visits_active")
         .select("cliente_id, completed_at, completed_vidas, no_visit_reason, visit_date")
         .gte("visit_date", globalFrom)
         .lte("visit_date", globalTo);
@@ -1066,8 +1068,8 @@ export default function Dashboard() {
       setVendorVidasLoading(true);
       setVendorVidasError(null);
       try {
-        const vendorsQuery = supabase
-          .from("profiles")
+        const vendorsQuery = supabaseDash
+          .from("v_dash_profiles_active")
           .select("user_id, display_name")
           .eq("role", "VENDEDOR");
 
@@ -1102,8 +1104,8 @@ export default function Dashboard() {
             .map((vendor) => [vendor.user_id as string, vendor.display_name ?? vendor.user_id]),
         );
 
-        let visitsQuery = supabase
-          .from("visits")
+        let visitsQuery = supabaseDash
+          .from("v_dash_visits_active")
           .select("assigned_to_user_id, assigned_to_name, completed_vidas, completed_at, no_visit_reason, visit_date")
           .gte("visit_date", vendorVidasFrom)
           .lte("visit_date", vendorVidasTo)
@@ -1145,8 +1147,8 @@ export default function Dashboard() {
           visitasTotals.set(label, (visitasTotals.get(label) ?? 0) + value);
         });
 
-        let aceiteQuery = supabase
-          .from("aceite_digital")
+        let aceiteQuery = supabaseDash
+          .from("v_dash_aceite_digital_active")
           .select("vendor_user_id, vendor_name, vidas, entry_date")
           .gte("entry_date", vendorVidasFrom)
           .lte("entry_date", vendorVidasTo);
@@ -1227,8 +1229,8 @@ export default function Dashboard() {
       setDigitalLoading(true);
       setDigitalError(null);
       try {
-        const vendorsQuery = supabase
-          .from("profiles")
+        const vendorsQuery = supabaseDash
+          .from("v_dash_profiles_active")
           .select("user_id, display_name")
           .eq("role", "VENDEDOR");
 
@@ -1283,8 +1285,8 @@ export default function Dashboard() {
 
         const buildScheduledVisitsQuery = () =>
           applyVendorVisitTypeScope(
-            supabase
-              .from("visits")
+            supabaseDash
+              .from("v_dash_visits_active")
               .select("assigned_to_user_id, assigned_to_name")
               .gte("visit_date", globalFrom)
               .lte("visit_date", globalTo),
@@ -1325,8 +1327,8 @@ export default function Dashboard() {
         });
 
         const buildAceiteQuery = () =>
-          supabase
-            .from("aceite_digital")
+          supabaseDash
+            .from("v_dash_aceite_digital_active")
             .select("vendor_user_id, vendor_name, vidas, entry_date");
 
         const applyVendorFilter = (query: ReturnType<typeof buildAceiteQuery>) => {
@@ -1507,10 +1509,10 @@ export default function Dashboard() {
       setSupervisorVisitLoading(true);
       setSupervisorVisitError(null);
       try {
-        const { data, error: visitsError } = await supabase
-          .from("visits")
+        const { data, error: visitsError } = await supabaseDash
+          .from("v_dash_visits_active")
           .select(
-            "id, visit_date, completed_at, completed_vidas, supervisor_reason, assigned_to_user_id, assigned_to_name, register_mode, visit_supervisors(supervisor_user_id), cliente:cliente_id (empresa, nome_fantasia)",
+            "id, cliente_id, visit_date, completed_at, completed_vidas, supervisor_reason, assigned_to_user_id, assigned_to_name, register_mode",
           )
           .eq("visit_type", VISIT_TYPE.SUPERVISOR_RELACIONAMENTO)
           .gte("visit_date", globalFrom)
@@ -1521,13 +1523,34 @@ export default function Dashboard() {
         if (!active) return;
 
         const rows = (data ?? []) as unknown as SupervisorVisitDashboardRow[];
-        const filtered = rows.filter((row) => {
+        const clienteIds = Array.from(
+          new Set(
+            rows
+              .map((row) => row.cliente_id)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        );
+
+        const clientesById = new Map<string, { empresa: string | null; nome_fantasia: string | null }>();
+        if (clienteIds.length > 0) {
+          const { data: clientesData, error: clientesError } = await supabaseDash
+            .from("v_dash_clientes_active")
+            .select("id, empresa, nome_fantasia")
+            .in("id", clienteIds);
+          if (clientesError) throw new Error(clientesError.message);
+          (clientesData ?? []).forEach((row) => {
+            const item = row as { id: string; empresa: string | null; nome_fantasia: string | null };
+            clientesById.set(item.id, { empresa: item.empresa, nome_fantasia: item.nome_fantasia });
+          });
+        }
+
+        const rowsWithCliente = rows.map((row) => ({
+          ...row,
+          cliente: row.cliente_id ? clientesById.get(row.cliente_id) ?? null : null,
+        }));
+        const filtered = rowsWithCliente.filter((row) => {
           if (supervisorVisitFilterUserId === "all") return true;
-          if (row.assigned_to_user_id === supervisorVisitFilterUserId) return true;
-          const linkedSupervisors = (row.visit_supervisors ?? [])
-            .map((item) => item.supervisor_user_id)
-            .filter((value): value is string => Boolean(value));
-          return linkedSupervisors.includes(supervisorVisitFilterUserId);
+          return row.assigned_to_user_id === supervisorVisitFilterUserId;
         });
 
         const motivosCount = new Map<string, number>();
@@ -2737,142 +2760,89 @@ export default function Dashboard() {
         </div>
       )}
 
-      {showVendorVisitsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-ink/30"
-            onClick={() => setShowVendorVisitsModal(false)}
-            aria-label="Fechar modal"
-          />
-          <div className="relative w-full max-w-2xl rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="font-display text-lg text-ink">Visitas por vendedor</h3>
-                <p className="mt-1 text-xs text-ink/60">
-                  Lista completa de vendedores e quantidade de visitas.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowVendorVisitsModal(false)}
-                className="rounded-full border border-sea/30 bg-white px-3 py-1 text-xs text-ink/70 hover:border-sea"
-              >
-                Fechar
-              </button>
-            </div>
-
-            <div className="mt-4 max-h-[60vh] overflow-y-auto rounded-2xl border border-sea/15 bg-sand/20">
-              {vendorVisitsList.length === 0 ? (
-                <div className="px-4 py-6 text-sm text-ink/60">Sem dados.</div>
-              ) : (
-                <div className="divide-y divide-sea/10">
-                  {vendorVisitsList.map((item, index) => (
-                    <div key={item.label} className="flex items-center justify-between px-4 py-3 text-sm">
-                      <span className="text-ink">
-                        {index + 1}. {item.label}
-                      </span>
-                      <span className="font-semibold text-sea">{formatNumber(item.value)}</span>
-                    </div>
-                  ))}
+      <DashboardModal
+        open={showVendorVisitsModal}
+        title="Visitas por vendedor"
+        subtitle="Lista completa de vendedores e quantidade de visitas."
+        onClose={() => setShowVendorVisitsModal(false)}
+        maxWidthClassName="max-w-2xl"
+      >
+        <div className="rounded-2xl border border-sea/15 bg-sand/20">
+          {vendorVisitsList.length === 0 ? (
+            <div className="px-4 py-6 text-sm text-ink/60">Sem dados.</div>
+          ) : (
+            <div className="divide-y divide-sea/10">
+              {vendorVisitsList.map((item, index) => (
+                <div key={item.label} className="flex items-center justify-between px-4 py-3 text-sm">
+                  <span className="text-ink">
+                    {index + 1}. {item.label}
+                  </span>
+                  <span className="font-semibold text-sea">{formatNumber(item.value)}</span>
                 </div>
-              )}
+              ))}
             </div>
-          </div>
+          )}
         </div>
-      )}
+      </DashboardModal>
 
-      {showPendingModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-ink/30"
-            onClick={() => setShowPendingModal(false)}
-            aria-label="Fechar modal de pendencias"
-          />
-          <div className="relative w-full max-w-2xl rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="font-display text-lg text-ink">Pendencias por vendedor</h3>
-                <p className="mt-1 text-xs text-ink/60">Resumo rapido do que falta registrar.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowPendingModal(false)}
-                className="rounded-full border border-sea/30 bg-white px-3 py-1 text-xs text-ink/70 hover:border-sea"
-              >
-                Fechar
-              </button>
-            </div>
-
-            <div className="mt-4 max-h-[60vh] overflow-y-auto rounded-2xl border border-sea/15 bg-sand/20">
-              {!digitalSummary || digitalSummary.pendingByVendor.length === 0 ? (
-                <div className="px-4 py-6 text-sm text-ink/60">Sem pendencias.</div>
-              ) : (
-                <div className="divide-y divide-sea/10">
-                  {digitalSummary.pendingByVendor.map((item, index) => (
-                    <div key={`${item.name}-${index}`} className="flex items-center justify-between px-4 py-3 text-sm">
-                      <span className="text-ink">
-                        {index + 1}. {item.name}
-                      </span>
-                      <span className="font-semibold text-amber-700">{formatVendorPending(item)}</span>
-                    </div>
-                  ))}
+      <DashboardModal
+        open={showPendingModal}
+        title="Pendencias por vendedor"
+        subtitle="Resumo rapido do que falta registrar."
+        onClose={() => setShowPendingModal(false)}
+        maxWidthClassName="max-w-2xl"
+      >
+        <div className="rounded-2xl border border-sea/15 bg-sand/20">
+          {!digitalSummary || digitalSummary.pendingByVendor.length === 0 ? (
+            <div className="px-4 py-6 text-sm text-ink/60">Sem pendencias.</div>
+          ) : (
+            <div className="divide-y divide-sea/10">
+              {digitalSummary.pendingByVendor.map((item, index) => (
+                <div key={`${item.name}-${index}`} className="flex items-center justify-between px-4 py-3 text-sm">
+                  <span className="text-ink">
+                    {index + 1}. {item.name}
+                  </span>
+                  <span className="font-semibold text-amber-700">{formatVendorPending(item)}</span>
                 </div>
-              )}
+              ))}
             </div>
-          </div>
+          )}
         </div>
-      )}
+      </DashboardModal>
 
-      {SHOW_NEXT_ROUTE_BLOCK && isVendor && showNextRouteModal && nextRoutePreview && vendorNextRouteAccessAllowed && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-ink/30"
-            onClick={() => setShowNextRouteModal(false)}
-            aria-label="Fechar modal da proxima rota"
-          />
-          <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="font-display text-lg text-ink">Proxima rota</h3>
-                <p className="mt-1 text-xs text-ink/60">Visualizacao somente leitura.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowNextRouteModal(false)}
-                className="rounded-full border border-sea/30 bg-white px-3 py-1 text-xs text-ink/70 hover:border-sea"
-              >
-                Fechar
-              </button>
-            </div>
-            <div className="mt-4 space-y-2 rounded-2xl border border-sea/15 bg-sand/25 p-4 text-sm text-ink/80">
-              <p>
-                <span className="font-semibold text-ink">Data:</span> {nextRoutePreview.date}
-              </p>
-              <p>
-                <span className="font-semibold text-ink">Empresas:</span>{" "}
-                {nextRoutePreview.routes.length}
-              </p>
-              <div className="space-y-2">
-                {nextRoutePreview.routes.map((route, index) => (
-                  <div
-                    key={`${route.client}-${route.perfil}-${index}`}
-                    className="rounded-xl border border-sea/15 bg-white/80 p-3"
-                  >
-                    <p>
-                      <span className="font-semibold text-ink">Cliente:</span> {route.client}
-                    </p>
-                    <p>
-                      <span className="font-semibold text-ink">Perfil:</span> {route.perfil}
-                    </p>
-                  </div>
-                ))}
-              </div>
+      {SHOW_NEXT_ROUTE_BLOCK && isVendor && nextRoutePreview && vendorNextRouteAccessAllowed && (
+        <DashboardModal
+          open={showNextRouteModal}
+          title="Proxima rota"
+          subtitle="Visualizacao somente leitura."
+          onClose={() => setShowNextRouteModal(false)}
+          maxWidthClassName="max-w-md"
+        >
+          <div className="space-y-2 rounded-2xl border border-sea/15 bg-sand/25 p-4 text-sm text-ink/80">
+            <p>
+              <span className="font-semibold text-ink">Data:</span> {nextRoutePreview.date}
+            </p>
+            <p>
+              <span className="font-semibold text-ink">Empresas:</span>{" "}
+              {nextRoutePreview.routes.length}
+            </p>
+            <div className="space-y-2">
+              {nextRoutePreview.routes.map((route, index) => (
+                <div
+                  key={`${route.client}-${route.perfil}-${index}`}
+                  className="rounded-xl border border-sea/15 bg-white/80 p-3"
+                >
+                  <p>
+                    <span className="font-semibold text-ink">Cliente:</span> {route.client}
+                  </p>
+                  <p>
+                    <span className="font-semibold text-ink">Perfil:</span> {route.perfil}
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
-        </div>
+        </DashboardModal>
       )}
     </div>
   );

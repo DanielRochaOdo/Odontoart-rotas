@@ -29,6 +29,7 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const AUTH_REQUEST_TIMEOUT_MS = 12000;
+const PROFILE_REQUEST_TIMEOUT_MS = 8000;
 const PROFILE_SELECT_WITH_FORCE_REAUTH =
   "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, force_reauth_after, created_at";
 const PROFILE_SELECT_FALLBACK =
@@ -71,6 +72,13 @@ const toFriendlyAuthError = (error: unknown) => {
   const normalized = message.toLowerCase();
   if (normalized.includes("failed to fetch") || normalized.includes("network")) {
     return "Falha de conexao. Verifique sua internet e tente novamente.";
+  }
+  if (
+    normalized.includes("504") ||
+    normalized.includes("gateway timeout") ||
+    normalized.includes("upstream request timeout")
+  ) {
+    return "Servico de autenticacao indisponivel no momento (timeout no servidor). Tente novamente em instantes.";
   }
   if (normalized.includes("auth_timeout")) {
     return "Tempo esgotado ao validar sessao. Tente novamente.";
@@ -123,26 +131,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const primary = await supabase
-        .from("profiles")
-        .select(PROFILE_SELECT_WITH_FORCE_REAUTH)
-        .eq("user_id", activeSession.user.id)
-        .limit(1);
+      const primaryWithTimeout = await withTimeout(
+        supabase
+          .from("profiles")
+          .select(PROFILE_SELECT_WITH_FORCE_REAUTH)
+          .eq("user_id", activeSession.user.id)
+          .limit(1),
+        PROFILE_REQUEST_TIMEOUT_MS,
+      );
 
-      let data: Profile | null = ((primary.data as Profile[] | null) ?? [])[0] ?? null;
-      let error = primary.error;
+      let data: Profile | null = ((primaryWithTimeout.data as Profile[] | null) ?? [])[0] ?? null;
+      let error = primaryWithTimeout.error;
 
       if (error && isMissingForceReauthColumnError(error)) {
-        const fallback = await supabase
-          .from("profiles")
-          .select(PROFILE_SELECT_FALLBACK)
-          .eq("user_id", activeSession.user.id)
-          .limit(1);
-        const fallbackRow = ((fallback.data as Omit<Profile, "force_reauth_after">[] | null) ?? [])[0] ?? null;
+        const fallbackWithTimeout = await withTimeout(
+          supabase
+            .from("profiles")
+            .select(PROFILE_SELECT_FALLBACK)
+            .eq("user_id", activeSession.user.id)
+            .limit(1),
+          PROFILE_REQUEST_TIMEOUT_MS,
+        );
+        const fallbackRow = ((fallbackWithTimeout.data as Omit<Profile, "force_reauth_after">[] | null) ?? [])[0] ?? null;
         data = fallbackRow
           ? ({ ...fallbackRow, force_reauth_after: null } as Profile)
           : null;
-        error = fallback.error;
+        error = fallbackWithTimeout.error;
       }
 
       if (error || !data) {
@@ -241,16 +255,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
     void initializeAuth();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_, nextSession) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!isMounted) return;
       setSession(nextSession);
-      setLoading(true);
+      const shouldBlockUi = event === "SIGNED_IN" || event === "INITIAL_SESSION";
+      if (shouldBlockUi) setLoading(true);
       void fetchProfile(nextSession)
         .catch((error) => {
           console.error("Erro ao atualizar perfil apos evento de auth:", error);
         })
         .finally(() => {
-          if (isMounted) setLoading(false);
+          if (isMounted && shouldBlockUi) setLoading(false);
         });
     });
 
