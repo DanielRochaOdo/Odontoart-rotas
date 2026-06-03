@@ -409,14 +409,18 @@ export default function Routes() {
                 <p className="text-sm text-ink/60">Nenhuma parada cadastrada.</p>
               ) : (
                 <div className="space-y-3">
-                  {stops.map((stop) => {
+          {stops.map((stop) => {
                     const address = buildStopAddress(stop);
                     return (
-                      <div key={stop.id} className="rounded-2xl border border-sea/15 bg-white/90 p-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-semibold text-ink">{stop.cliente?.empresa ?? "Parada"}</p>
-                            <p className="text-xs text-ink/60">{address || "Endereco nao informado"}</p>
+                      <div key={stop.id} className="rounded-2xl border border-sea/15 bg-white/90 p-2.5">
+                        <div className="flex min-w-0 items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="break-words text-[12px] font-semibold leading-tight text-ink">
+                              {stop.cliente?.empresa ?? "Parada"}
+                            </p>
+                            <p className="break-words text-[11px] leading-tight text-ink/60">
+                              {address || "Endereco nao informado"}
+                            </p>
                           </div>
                           <button
                             type="button"
@@ -426,17 +430,17 @@ export default function Routes() {
                             <Trash size={14} />
                           </button>
                         </div>
-                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink/60">
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-ink/60">
                           <span>Ordem: {stop.stop_order ?? "-"}</span>
                           {stop.notes ? <span>Obs: {stop.notes}</span> : null}
                         </div>
                         {address && (
-                          <div className="mt-3 flex flex-wrap gap-2">
+                          <div className="mt-2 flex flex-wrap gap-2">
                             <a
                               href={googleMapsUrl(address)}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-1 rounded-lg border border-sea/30 bg-white/80 px-2 py-1 text-xs text-ink hover:border-sea hover:text-sea"
+                              className="inline-flex items-center gap-1 rounded-lg border border-sea/30 bg-white/80 px-2 py-1 text-[11px] text-ink hover:border-sea hover:text-sea"
                             >
                               <ExternalLink size={12} />
                               Google Maps
@@ -445,7 +449,7 @@ export default function Routes() {
                               href={wazeUrl(address)}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-1 rounded-lg border border-sea/30 bg-white/80 px-2 py-1 text-xs text-ink hover:border-sea hover:text-sea"
+                              className="inline-flex items-center gap-1 rounded-lg border border-sea/30 bg-white/80 px-2 py-1 text-[11px] text-ink hover:border-sea hover:text-sea"
                             >
                               <ExternalLink size={12} />
                               Waze

@@ -2655,7 +2655,7 @@ export default function Agenda() {
                 openScheduleModal(info.row.original);
               }}
               onPointerDown={(event) => event.stopPropagation()}
-              className="inline-flex min-h-6 items-center justify-center rounded-md border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-700 hover:border-red-300"
+              className="inline-flex max-w-full min-h-5 items-center justify-center rounded-md border border-red-200 bg-red-50 px-1 py-0.5 text-[9px] font-semibold uppercase leading-tight text-red-700 hover:border-red-300"
               title={titleText}
               aria-label={titleText}
             >
@@ -2713,19 +2713,19 @@ export default function Agenda() {
           const supervisorFlag = role === "SUPERVISOR" ? supervisorFlagByAgendaId[row.id] : undefined;
           return (
             <div className="space-y-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-sm font-semibold text-ink">{name}</p>
-                <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
+              <div className={tableFlexWrapClass}>
+                <p className={`${tableCellTextClass} text-[10px] font-semibold text-ink`}>{name}</p>
+                <span className="inline-flex max-w-full shrink-0 items-center rounded-full bg-sea/10 px-1.5 py-0.5 text-[9px] font-semibold leading-tight text-sea">
                   COD {codigo}
                 </span>
                 {role === "SUPERVISOR" ? (
                   <span
                     title={getSupervisorFlagTooltip(supervisorFlag)}
                     aria-label={getSupervisorFlagTooltip(supervisorFlag)}
-                    className="inline-flex items-center"
+                    className="inline-flex shrink-0 items-center"
                   >
                     <span
-                      className={`h-2.5 w-2.5 rounded-full border ${getSupervisorFlagDotStyles(
+                      className={`h-2 w-2 shrink-0 rounded-full border ${getSupervisorFlagDotStyles(
                         supervisorFlag?.color ?? "CINZA",
                       )}`}
                     />
@@ -2767,9 +2767,9 @@ export default function Agenda() {
             : "Empresa sem codigo para consulta no KPI";
           const badge = getCategoriaBadgeStyles(info.getValue<string | null>());
           return (
-            <div className="inline-flex items-center gap-1">
+            <div className="flex max-w-full flex-wrap items-center gap-1">
               <span
-                className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${badge.className}`}
+                className={`inline-flex max-w-full flex-wrap items-center justify-center rounded-full px-1.5 py-0.5 text-center text-[9px] font-semibold leading-tight ${badge.className}`}
               >
                 {badge.label}
               </span>
@@ -2784,7 +2784,7 @@ export default function Agenda() {
                 }}
                 onPointerDown={(event) => event.stopPropagation()}
                 disabled={!codigo}
-                className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 bg-indigo-50 text-indigo-600 hover:border-indigo-400 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-indigo-300 bg-indigo-50 text-indigo-600 hover:border-indigo-400 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
                 title={detailsTooltip}
                 aria-label={detailsTooltip}
               >
@@ -2793,7 +2793,7 @@ export default function Agenda() {
             </div>
           );
         },
-        size: 90,
+        size: 70,
       },
       {
         accessorKey: "bairro",
@@ -2817,7 +2817,7 @@ export default function Agenda() {
             />
           </div>
         ),
-        cell: (info) => info.getValue<string | null>() ?? "-",
+        cell: (info) => <span className={tableCellTextClass}>{info.getValue<string | null>() ?? "-"}</span>,
         size: 90,
       },
       {
@@ -2842,8 +2842,8 @@ export default function Agenda() {
             />
           </div>
         ),
-        cell: (info) => info.getValue<string | null>() ?? "-",
-        size: 84,
+        cell: (info) => <span className={tableCellTextClass}>{info.getValue<string | null>() ?? "-"}</span>,
+        size: 70,
       },
       {
         accessorKey: "vendedor",
@@ -2877,8 +2877,8 @@ export default function Agenda() {
           const historyTooltip = "Ver historico de atribuicao";
           const hasAnyHistoryDate = recentVendors.some((item) => Boolean(item.visitDate));
           return (
-            <div className="relative min-h-[28px] pr-6">
-              <p>{vendorLabel}</p>
+            <div className="relative min-h-[22px] pr-5">
+              <p className={`${tableCellTextClass} text-[9px]`}>{vendorLabel}</p>
               {hasAnyHistoryDate ? (
                 <button
                   type="button"
@@ -2894,7 +2894,7 @@ export default function Agenda() {
                     });
                   }}
                   onPointerDown={(event) => event.stopPropagation()}
-                  className="absolute right-0 top-0 inline-flex h-4 w-4 items-center justify-center rounded-full border border-orange-300 bg-orange-50 text-orange-600 hover:border-orange-400 hover:text-orange-700"
+                  className="absolute right-0 top-0 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-orange-300 bg-orange-50 text-orange-600 hover:border-orange-400 hover:text-orange-700"
                   title={historyTooltip}
                   aria-label={historyTooltip}
                 >
@@ -2904,7 +2904,7 @@ export default function Agenda() {
             </div>
           );
         },
-        size: 105,
+        size: 92,
       },
       {
         accessorKey: "grupo",
@@ -2928,8 +2928,8 @@ export default function Agenda() {
             />
           </div>
         ),
-        cell: (info) => info.getValue<string | null>() ?? "-",
-        size: 82,
+        cell: (info) => <span className={tableCellTextClass}>{info.getValue<string | null>() ?? "-"}</span>,
+        size: 68,
       },
       {
         accessorKey: "perfil_visita",
@@ -2953,8 +2953,8 @@ export default function Agenda() {
             />
           </div>
         ),
-        cell: (info) => formatPerfilVisitaDisplay(info.getValue<string | null>()),
-        size: 120,
+        cell: (info) => <span className={tableCellTextClass}>{formatPerfilVisitaDisplay(info.getValue<string | null>())}</span>,
+        size: 92,
       },
     ];
     },
@@ -2989,18 +2989,25 @@ export default function Agenda() {
     pageCount: Math.ceil((totalCount ?? 0) / pageSize),
   });
 
+  const tableCellTextClass =
+    "min-w-0 max-w-full whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word] leading-tight";
+  const tableCellInnerClass =
+    "min-w-0 max-w-full whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word]";
+  const tableFlexWrapClass =
+    "min-w-0 max-w-full flex flex-wrap items-center gap-1 whitespace-normal break-words [overflow-wrap:anywhere]";
+
   const compactColumnWidths: Record<string, number> = {
-    select: 30,
-    obs: 120,
-    data_da_ultima_visita: 92,
-    visit_completed_vidas: 86,
-    empresa: 180,
-    categoria: 90,
-    bairro: 90,
-    cidade: 84,
-    vendedor: 105,
-    grupo: 82,
-    perfil_visita: 120,
+    select: 3,
+    obs: 7,
+    data_da_ultima_visita: 8,
+    visit_completed_vidas: 7,
+    empresa: 18,
+    categoria: 8,
+    bairro: 8,
+    cidade: 8,
+    vendedor: 16,
+    grupo: 7,
+    perfil_visita: 10,
   };
 
   const activeChips = useMemo(() => {
@@ -5054,8 +5061,8 @@ export default function Agenda() {
         </div>
 
         <div className="hidden md:block">
-          <div className="overflow-x-auto">
-            <table className="w-full table-fixed border-collapse text-xs">
+          <div className="overflow-hidden">
+            <table className="w-full table-fixed border-collapse table-layout-fixed text-[9px] leading-tight">
               <thead className="sticky top-0 z-30 bg-sand/60 shadow-sm overflow-visible">
                 {table.getHeaderGroups().map((headerGroup) => (
                   <tr key={headerGroup.id}>
@@ -5064,17 +5071,15 @@ export default function Agenda() {
                       const explicitWidth = compactColumnWidths[header.column.id];
                       const columnStyles = explicitWidth
                         ? {
-                            width: explicitWidth,
-                            minWidth: explicitWidth,
-                            maxWidth: explicitWidth,
+                            width: `${explicitWidth}%`,
                           }
                         : undefined;
                       return (
                         <th
                           key={header.id}
                           style={columnStyles}
-                          className={`relative align-top whitespace-normal border-b border-sea/20 py-2 text-[11px] font-semibold text-ink/70 text-center overflow-visible ${
-                            isTight ? "px-1" : "px-2"
+                          className={`relative align-top whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word] border-b border-sea/20 py-1 text-[9px] font-semibold text-ink/70 text-center overflow-hidden ${
+                            isTight ? "px-1" : "px-1.5"
                           }`}
                         >
                           {header.isPlaceholder
@@ -5126,20 +5131,20 @@ export default function Agenda() {
                         const explicitWidth = compactColumnWidths[cell.column.id];
                         const columnStyles = explicitWidth
                           ? {
-                              width: explicitWidth,
-                              minWidth: explicitWidth,
-                              maxWidth: explicitWidth,
+                              width: `${explicitWidth}%`,
                             }
                           : undefined;
                         return (
                           <td
                             key={cell.id}
                             style={columnStyles}
-                            className={`whitespace-normal break-words py-2 text-xs text-ink ${
-                              isTight ? "px-1 text-center" : "px-2"
+                            className={`align-top whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word] py-1 text-[9px] leading-tight text-ink ${
+                              isTight ? "px-1 text-center" : "px-1.5"
                             }`}
                           >
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            <div className={tableCellInnerClass}>
+                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            </div>
                           </td>
                         );
                       })}
