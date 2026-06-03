@@ -173,6 +173,14 @@ type VisitCompletedRow = {
   completed_vidas: number | null;
   completed_at: string | null;
   visit_date: string | null;
+  visit_type?: string | null;
+};
+
+type LatestVisitDateBounds = {
+  from: string | null;
+  to: string | null;
+  invert: boolean;
+  active: boolean;
 };
 
 const fetchAgendaIdsByLatestCompletedVidas = async (range: { from: number | null; to: number | null }) => {
@@ -214,6 +222,155 @@ const fetchAgendaIdsByLatestCompletedVidas = async (range: { from: number | null
     if (range.from !== null && vidas < range.from) return;
     if (range.to !== null && vidas > range.to) return;
     clienteIds.push(clienteId);
+  });
+
+  return clienteIds;
+};
+
+const isVendorVisitTypeValue = (visitType?: string | null) =>
+  (visitType ?? "VENDEDOR") === "VENDEDOR";
+
+const resolveLastVisitDateBounds = (filters: AgendaFilters): LatestVisitDateBounds => {
+  const { month, year, from, to, invert } = filters.dateRanges.data_da_ultima_visita;
+  const hasMonthYear = Boolean(month || year);
+
+  if (!hasMonthYear) {
+    return {
+      from: from?.trim() || null,
+      to: to?.trim() || null,
+      invert: Boolean(invert),
+      active: Boolean(from?.trim() || to?.trim()),
+    };
+  }
+
+  const fallbackYear = year || (month ? String(new Date().getFullYear()) : undefined);
+  if (!fallbackYear) {
+    return { from: null, to: null, invert: Boolean(invert), active: false };
+  }
+
+  const numericYear = Number(fallbackYear);
+  if (!Number.isFinite(numericYear)) {
+    return { from: null, to: null, invert: Boolean(invert), active: false };
+  }
+
+  if (month) {
+    const numericMonth = Number(month);
+    if (!Number.isFinite(numericMonth) || numericMonth < 1 || numericMonth > 12) {
+      return { from: null, to: null, invert: Boolean(invert), active: false };
+    }
+    const startDate = new Date(numericYear, numericMonth - 1, 1);
+    const endDate = new Date(numericYear, numericMonth, 0);
+    return {
+      from: startDate.toISOString().slice(0, 10),
+      to: endDate.toISOString().slice(0, 10),
+      invert: Boolean(invert),
+      active: true,
+    };
+  }
+
+  return {
+    from: new Date(numericYear, 0, 1).toISOString().slice(0, 10),
+    to: new Date(numericYear, 11, 31).toISOString().slice(0, 10),
+    invert: Boolean(invert),
+    active: true,
+  };
+};
+
+const isDateWithinBounds = (dateKey: string, bounds: LatestVisitDateBounds) => {
+  const afterStart = !bounds.from || dateKey >= bounds.from;
+  const beforeEnd = !bounds.to || dateKey <= bounds.to;
+  const inside = afterStart && beforeEnd;
+  return bounds.invert ? !inside : inside;
+};
+
+const stripLastVisitDateRange = (filters: AgendaFilters): AgendaFilters => ({
+  ...filters,
+  dateRanges: {
+    ...filters.dateRanges,
+    data_da_ultima_visita: {},
+  },
+});
+
+const excludeFilaBlockedIds = (
+  ids: string[] | null,
+  filaBlocks: Pick<FilaRoutingBlockLists, "blockedEmpresaIds"> | null,
+) => {
+  if (!ids || !filaBlocks?.blockedEmpresaIds.length) return ids;
+  const blocked = new Set(filaBlocks.blockedEmpresaIds);
+  return ids.filter((id) => !blocked.has(id));
+};
+
+const fetchAgendaIdsByLatestRegisteredVisitDate = async (
+  filters: AgendaFilters,
+  candidateAgendaIds?: string[] | null,
+) => {
+  const bounds = resolveLastVisitDateBounds(filters);
+  if (!bounds.active) return null;
+  if (candidateAgendaIds && candidateAgendaIds.length === 0) return [];
+
+  const latestByCliente = new Map<string, string>();
+  const pageSize = 1000;
+  const visitPageSize = candidateAgendaIds ? 100 : pageSize;
+
+  const collectRows = (rows: VisitCompletedRow[]) => {
+    rows.forEach((row) => {
+      if (!row.cliente_id || !row.visit_date) return;
+      if (!isVendorVisitTypeValue(row.visit_type)) return;
+      if (latestByCliente.has(row.cliente_id)) return;
+      latestByCliente.set(row.cliente_id, row.visit_date.slice(0, 10));
+    });
+  };
+
+  if (candidateAgendaIds) {
+    for (let index = 0; index < candidateAgendaIds.length; index += visitPageSize) {
+      const chunk = candidateAgendaIds.slice(index, index + visitPageSize);
+      const { data, error } = await supabase
+        .from("visits")
+        .select("cliente_id, completed_vidas, completed_at, visit_date, visit_type")
+        .in("cliente_id", chunk)
+        .not("completed_at", "is", null)
+        .not("visit_date", "is", null)
+        .order("completed_at", { ascending: false })
+        .order("visit_date", { ascending: false });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      collectRows((data ?? []) as VisitCompletedRow[]);
+    }
+  } else {
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await supabase
+        .from("visits")
+        .select("cliente_id, completed_vidas, completed_at, visit_date, visit_type")
+        .not("cliente_id", "is", null)
+        .not("completed_at", "is", null)
+        .not("visit_date", "is", null)
+        .order("completed_at", { ascending: false })
+        .order("visit_date", { ascending: false })
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      const rows = (data ?? []) as VisitCompletedRow[];
+      if (rows.length === 0) break;
+      collectRows(rows);
+
+      if (rows.length < pageSize) break;
+      from += pageSize;
+    }
+  }
+
+  const clienteIds: string[] = [];
+  latestByCliente.forEach((dateKey, clienteId) => {
+    if (isDateWithinBounds(dateKey, bounds)) {
+      clienteIds.push(clienteId);
+    }
   });
 
   return clienteIds;
@@ -552,7 +709,12 @@ const fetchAgendaFirstPageLiteDirect = async (
   filters: AgendaFilters,
   context: AgendaQueryContext,
 ) => {
+  if (context.restrictedAgendaIds && context.restrictedAgendaIds.length === 0) {
+    return [] as AgendaRow[];
+  }
+
   const pageOffset = pageIndex * pageSize;
+  const queryFilters = context.restrictedAgendaIds ? stripLastVisitDateRange(filters) : filters;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let query: any = supabase
     .from("clientes")
@@ -562,7 +724,10 @@ const fetchAgendaFirstPageLiteDirect = async (
     .order("id", { ascending: true });
 
   query = applyFilaRoutingExclusionsToClientesQuery(query, context.filaBlocks);
-  query = applyFilters(query, filters);
+  query = applyFilters(query, queryFilters);
+  if (context.restrictedAgendaIds) {
+    query = query.in("id", context.restrictedAgendaIds);
+  }
 
   if (context.companyName) {
     const term = context.companyName.replace(/,/g, " ").trim();
@@ -630,6 +795,73 @@ const buildAgendaRpcFilters = (filters: AgendaFilters): Record<string, unknown> 
   return normalized;
 };
 
+const fetchAgendaCandidateIdsForLatestVisitFilter = async (
+  filters: AgendaFilters,
+  search: AgendaSearchFilters | undefined,
+  filaBlocks: FilaRoutingBlockLists | null,
+) => {
+  const bounds = resolveLastVisitDateBounds(filters);
+  if (!bounds.active) return null;
+
+  const companyName = search?.companyName?.replace(/%/g, "").trim() ?? "";
+  const companyCode = search?.companyCode?.replace(/%/g, "").trim() ?? "";
+  const queryFilters = stripLastVisitDateRange(filters);
+  const rows: string[] = [];
+  const pageSize = 1000;
+  let cursorId: string | null = null;
+  let guard = 0;
+  const maxBatches = 250;
+
+  while (true) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query: any = supabase
+      .from("clientes")
+      .select("id")
+      .order("id", { ascending: true })
+      .limit(pageSize);
+
+    query = applyFilaRoutingExclusionsToClientesQuery(query, filaBlocks);
+    query = applyFilters(query, queryFilters);
+
+    if (companyName) {
+      const term = companyName.replace(/,/g, " ").trim();
+      if (term) {
+        query = query.or(`empresa.ilike.%${term}%,nome_fantasia.ilike.%${term}%`);
+      }
+    }
+
+    if (companyCode) {
+      query = query.eq("codigo", companyCode);
+    }
+
+    if (cursorId) {
+      query = query.gt("id", cursorId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+
+    const batch = (data ?? []) as Array<{ id: string }>;
+    if (batch.length === 0) break;
+    batch.forEach((row) => {
+      if (row.id) rows.push(row.id);
+    });
+
+    if (batch.length < pageSize) break;
+    const nextCursor = batch[batch.length - 1]?.id ?? null;
+    if (!nextCursor || nextCursor === cursorId) break;
+    cursorId = nextCursor;
+
+    guard += 1;
+    if (guard >= maxBatches) {
+      console.warn("fetchAgendaCandidateIdsForLatestVisitFilter reached max batches.");
+      break;
+    }
+  }
+
+  return excludeFilaBlockedIds(rows, filaBlocks) ?? [];
+};
+
 const buildAgendaQueryContext = async (
   filters: AgendaFilters,
   search?: AgendaSearchFilters,
@@ -637,14 +869,54 @@ const buildAgendaQueryContext = async (
   const companyName = search?.companyName?.replace(/%/g, "").trim() ?? "";
   const companyCode = search?.companyCode?.replace(/%/g, "").trim() ?? "";
   const filaBlocks = await resolveFilaRoutingBlocks();
+  const candidateAgendaIds = await fetchAgendaCandidateIdsForLatestVisitFilter(filters, search, filaBlocks);
+  const rawRestrictedAgendaIds = await fetchAgendaIdsByLatestRegisteredVisitDate(
+    filters,
+    candidateAgendaIds,
+  );
+  const restrictedAgendaIds = excludeFilaBlockedIds(rawRestrictedAgendaIds, filaBlocks);
 
   return {
-    effectiveFilters: buildAgendaRpcFilters(filters),
-    restrictedAgendaIds: null,
+    effectiveFilters: buildAgendaRpcFilters(restrictedAgendaIds ? stripLastVisitDateRange(filters) : filters),
+    restrictedAgendaIds,
     companyName,
     companyCode,
     filaBlocks,
   };
+};
+
+const fetchAgendaCountExactDirect = async (
+  filters: AgendaFilters,
+  context: AgendaQueryContext,
+) => {
+  if (context.restrictedAgendaIds && context.restrictedAgendaIds.length === 0) {
+    return 0;
+  }
+
+  const queryFilters = context.restrictedAgendaIds ? stripLastVisitDateRange(filters) : filters;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let query: any = supabase.from("clientes").select("id", { count: "exact", head: true });
+  query = applyFilaRoutingExclusionsToClientesQuery(query, context.filaBlocks);
+  query = applyFilters(query, queryFilters);
+
+  if (context.restrictedAgendaIds) {
+    query = query.in("id", context.restrictedAgendaIds);
+  }
+
+  if (context.companyName) {
+    const term = context.companyName.replace(/,/g, " ").trim();
+    if (term) {
+      query = query.or(`empresa.ilike.%${term}%,nome_fantasia.ilike.%${term}%`);
+    }
+  }
+
+  if (context.companyCode) {
+    query = query.eq("codigo", context.companyCode);
+  }
+
+  const { count, error } = await query;
+  if (error) throw new Error(error.message);
+  return count ?? 0;
 };
 
 export const fetchAgendaCountExact = async (
@@ -667,6 +939,21 @@ export const fetchAgendaCountExact = async (
     companyCode: context.companyCode,
   });
   const start = performance.now();
+
+  if (context.restrictedAgendaIds) {
+    const total = await fetchAgendaCountExactDirect(filters, context);
+    const duration = Math.round(performance.now() - start);
+    console.info("ROTAS_COUNTER_SOURCE", "clientes_direct_latest_registered_visit");
+    console.info("ROTAS_COUNTER_EXACT_DURATION_MS", duration);
+    console.info("ROTAS_COUNTER_VALUE", total);
+    console.info("COUNT_QUERY_SOURCE", "clientes_direct_latest_registered_visit");
+    console.info("COUNT_QUERY_METHOD", "direct");
+    console.info("COUNT_QUERY_DURATION_MS", duration);
+    console.info("COUNT_QUERY_ERROR_SAFE", null);
+    console.info("COUNT_QUERY_RETURNED_VALUE", total);
+    return total;
+  }
+
   const { data, error } = await supabase.rpc("get_rotas_agenda_count_v1", {
     p_filters: rpcFilters,
     p_company_name: context.companyName || null,
@@ -1001,24 +1288,45 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
 
   const vidasRange = getVidasRange(filters);
   let agendaIdsByVidas: string[] | null = null;
+  let agendaIdsByLastVisit: string[] | null = null;
   let effectiveFilters = filters;
+
+  try {
+    const candidateAgendaIds = await fetchAgendaCandidateIdsForLatestVisitFilter(
+      filters,
+      undefined,
+      filaBlocks,
+    );
+    agendaIdsByLastVisit = await fetchAgendaIdsByLatestRegisteredVisitDate(filters, candidateAgendaIds);
+    if (agendaIdsByLastVisit) {
+      effectiveFilters = stripLastVisitDateRange(effectiveFilters);
+    }
+  } catch (err) {
+    console.error("Falha ao filtrar ultima visita por visitas:", err);
+  }
 
   if (vidasRange) {
     try {
       agendaIdsByVidas = await fetchAgendaIdsByLatestCompletedVidas(vidasRange);
-      effectiveFilters = stripVidasRange(filters);
+      effectiveFilters = stripVidasRange(effectiveFilters);
     } catch (err) {
       console.error("Falha ao filtrar vidas ultima visita por visitas:", err);
     }
   }
 
+  const restrictedAgendaIds =
+    agendaIdsByLastVisit && agendaIdsByVidas
+      ? agendaIdsByLastVisit.filter((id) => agendaIdsByVidas.includes(id))
+      : agendaIdsByLastVisit ?? agendaIdsByVidas;
+  const routeableRestrictedAgendaIds = excludeFilaBlockedIds(restrictedAgendaIds, filaBlocks);
+
   let query = buildQuery();
   query = applyFilters(query, effectiveFilters);
-  if (agendaIdsByVidas) {
-    if (agendaIdsByVidas.length === 0) {
+  if (routeableRestrictedAgendaIds) {
+    if (routeableRestrictedAgendaIds.length === 0) {
       return [];
     }
-    query = query.in("id", agendaIdsByVidas);
+    query = query.in("id", routeableRestrictedAgendaIds);
   }
 
   const results: AgendaPerfilRow[] = [];

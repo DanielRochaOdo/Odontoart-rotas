@@ -40,7 +40,7 @@ export default function DashboardModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[99999] flex items-start justify-center bg-black/50 px-4 pt-6"
       role="dialog"
       aria-modal="true"
       onMouseDown={onClose}

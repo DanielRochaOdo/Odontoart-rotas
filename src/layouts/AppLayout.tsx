@@ -36,7 +36,7 @@ const navItems: NavItem[] = [
   { label: "Agenda", to: "/visitas", icon: CalendarCheck, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
   { label: "Aceite digital", to: "/aceite-digital", icon: ClipboardCheck, roles: ["VENDEDOR"] },
   { label: "Empresas", to: "/clientes", icon: Building2, roles: ["SUPERVISOR", "ASSISTENTE"] },
-  { label: "Modulo Fila", to: "/fila", icon: ListChecks, roles: ["SUPERVISOR", "ASSISTENTE"] },
+  { label: "Fila", to: "/fila", icon: ListChecks, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "KPI", to: "/kpi", icon: ChartNoAxesCombined, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Logs", to: "/logs", icon: History, roles: ["SUPERVISOR"] },
   { label: "Configuracoes", to: "/configuracoes", icon: Settings, roles: ["SUPERVISOR"] },

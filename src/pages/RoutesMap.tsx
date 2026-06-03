@@ -2389,7 +2389,7 @@ export default function RoutesMap() {
 
       {/* MODAL GERAR VISITAS */}
       {showGenerateModal && (
-        <div className="fixed inset-0 z-[3000] flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-[3000] flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -2698,7 +2698,7 @@ export default function RoutesMap() {
       )}
 
       {eventWarning && (
-        <div className="fixed inset-0 z-[3300] flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-[3300] flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -2743,7 +2743,7 @@ export default function RoutesMap() {
       )}
 
       {inactiveCompaniesWarning && inactiveCompaniesWarning.length > 0 && (
-        <div className="fixed inset-0 z-[3100] flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-[3100] flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"

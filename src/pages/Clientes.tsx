@@ -3771,7 +3771,7 @@ export default function Clientes() {
 
       {selected && (
         <div
-          className={`fixed inset-0 z-50 flex ${isEditing ? "items-center justify-center p-4" : "justify-end"}`}
+          className={`fixed inset-0 z-50 flex ${isEditing ? "items-start justify-center px-4 pt-6" : "justify-end"}`}
         >
           <button
             type="button"
@@ -4447,7 +4447,7 @@ export default function Clientes() {
       )}
 
       {planosModalState && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-[70] flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4505,7 +4505,7 @@ export default function Clientes() {
 
       {filialConfirmModal &&
         createPortal(
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center px-4">
+          <div className="fixed inset-0 z-[9999] flex items-start justify-center px-4 pt-6">
             <button
               type="button"
               className="absolute inset-0 bg-ink/30"
@@ -4561,7 +4561,7 @@ export default function Clientes() {
 
       {filialCadastroModal &&
         createPortal(
-          <div className="fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto px-4 py-4 md:py-8">
+          <div className="fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto px-4 pt-6">
             <button
               type="button"
               className="absolute inset-0 bg-ink/30"
@@ -5096,7 +5096,7 @@ export default function Clientes() {
 
       {duplicateModal &&
         createPortal(
-          <div className="fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto px-4 py-4 md:py-8">
+          <div className="fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto px-4 pt-6">
             <div className="absolute inset-0 bg-ink/30" />
             <div
               className="relative z-10 my-0 w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card"
@@ -5210,7 +5210,7 @@ export default function Clientes() {
         )}
 
       {showImportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"

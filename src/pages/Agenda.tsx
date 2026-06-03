@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Clock3,
@@ -3721,7 +3721,7 @@ export default function Agenda() {
       )}
 
       {columnChipRemovalModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -3872,7 +3872,7 @@ export default function Agenda() {
       )}
 
       {showGenerateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4191,7 +4191,7 @@ export default function Agenda() {
       )}
 
       {eventWarning && (
-        <div className="fixed inset-0 z-[3300] flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-[3300] flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4237,7 +4237,7 @@ export default function Agenda() {
       )}
 
       {inactiveCompaniesWarning && inactiveCompaniesWarning.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4278,7 +4278,7 @@ export default function Agenda() {
       )}
 
       {scheduleModalRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4527,7 +4527,7 @@ export default function Agenda() {
       )}
 
       {detailsModalRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4642,7 +4642,7 @@ export default function Agenda() {
       )}
 
       {planoValoresModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4696,7 +4696,7 @@ export default function Agenda() {
       )}
 
       {vendorHistoryModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4741,7 +4741,7 @@ export default function Agenda() {
       )}
 
       {kpiImportValuesModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
