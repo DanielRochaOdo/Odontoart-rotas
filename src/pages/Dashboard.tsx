@@ -144,6 +144,15 @@ type SupervisorVisitDashboardSummary = {
   motivos: Array<{ key: string; label: string; count: number }>;
 };
 
+type DashboardPendingVisitRow = {
+  id: string;
+  cliente_id: string | null;
+  visit_date: string | null;
+  assigned_to_name: string | null;
+  assigned_to_user_id: string | null;
+  cliente: { empresa: string | null; nome_fantasia: string | null } | null;
+};
+
 const computeVisitStats = (
   data: Array<{
     cliente_id: string | null;
@@ -285,6 +294,11 @@ export default function Dashboard() {
   const [digitalError, setDigitalError] = useState<string | null>(null);
   const [showVendorVisitsModal, setShowVendorVisitsModal] = useState(false);
   const [showPendingModal, setShowPendingModal] = useState(false);
+  const [pendingVisitsModal, setPendingVisitsModal] = useState<{
+    title: string;
+    subtitle?: string;
+    rows: DashboardPendingVisitRow[];
+  } | null>(null);
   const [scheduledCounts, setScheduledCounts] = useState<{
     today: ScheduledProgress;
     week: ScheduledProgress;
@@ -883,7 +897,7 @@ export default function Dashboard() {
 
       let visitsQuery = supabaseDash
         .from("v_dash_visits_active")
-        .select("cliente_id, completed_at, completed_vidas, no_visit_reason, visit_date")
+        .select("id, cliente_id, assigned_to_user_id, assigned_to_name, completed_at, completed_vidas, no_visit_reason, visit_date")
         .gte("visit_date", globalFrom)
         .lte("visit_date", globalTo);
       visitsQuery = applyVendorVisitTypeScope(visitsQuery);
@@ -934,15 +948,55 @@ export default function Dashboard() {
       }, 0);
       setVendorAceitePeriodVidas(totalAceite);
       setVisitDailyVidas(buildDailyVidasSeries(visitsData ?? []));
+      const visits = (visitsData ?? []) as Array<{
+        id: string;
+        cliente_id: string | null;
+        assigned_to_user_id: string | null;
+        assigned_to_name: string | null;
+        completed_at: string | null;
+        completed_vidas: number | null;
+        no_visit_reason: string | null;
+        visit_date: string | null;
+      }>;
+      const pendingVisits = visits.filter((item) => !item.completed_at && !item.no_visit_reason);
+      const pendingClienteIds = Array.from(
+        new Set(pendingVisits.map((item) => item.cliente_id).filter((value): value is string => Boolean(value))),
+      );
+      const pendingClientesById = new Map<string, { empresa: string | null; nome_fantasia: string | null }>();
+      if (pendingClienteIds.length > 0) {
+        const { data: clientesData } = await supabaseDash
+          .from("v_dash_clientes_active")
+          .select("id, empresa, nome_fantasia")
+          .in("id", pendingClienteIds);
+        (clientesData ?? []).forEach((row) => {
+          const item = row as { id: string; empresa: string | null; nome_fantasia: string | null };
+          pendingClientesById.set(item.id, { empresa: item.empresa, nome_fantasia: item.nome_fantasia });
+        });
+      }
       setVisitStats(
         computeVisitStats(
-          (visitsData ?? []).map((item) => ({
+          visits.map((item) => ({
             cliente_id: item.cliente_id ?? null,
             completed_at: item.completed_at ?? null,
             completed_vidas: item.completed_vidas ?? null,
             no_visit_reason: item.no_visit_reason ?? null,
           })),
         ),
+      );
+      setPendingVisitsModal((prev) =>
+        prev?.title === "Visitas pendentes"
+          ? {
+              ...prev,
+              rows: pendingVisits.map((item) => ({
+                id: item.id,
+                cliente_id: item.cliente_id,
+                visit_date: item.visit_date,
+                assigned_to_name: item.assigned_to_name,
+                assigned_to_user_id: item.assigned_to_user_id,
+                cliente: item.cliente_id ? pendingClientesById.get(item.cliente_id) ?? null : null,
+              })),
+            }
+          : prev,
       );
     };
 
@@ -1003,7 +1057,7 @@ export default function Dashboard() {
 
       let visitsQuery = supabaseDash
         .from("v_dash_visits_active")
-        .select("cliente_id, completed_at, completed_vidas, no_visit_reason, visit_date")
+        .select("id, cliente_id, assigned_to_user_id, assigned_to_name, completed_at, completed_vidas, no_visit_reason, visit_date")
         .gte("visit_date", globalFrom)
         .lte("visit_date", globalTo);
       visitsQuery = applyVendorVisitTypeScope(visitsQuery);
@@ -1034,10 +1088,36 @@ export default function Dashboard() {
         return;
       }
 
-      setTeamDailyVidas(buildDailyVidasSeries(visitsData ?? []));
+      const visits = (visitsData ?? []) as Array<{
+        id: string;
+        cliente_id: string | null;
+        assigned_to_user_id: string | null;
+        assigned_to_name: string | null;
+        completed_at: string | null;
+        completed_vidas: number | null;
+        no_visit_reason: string | null;
+        visit_date: string | null;
+      }>;
+      const pendingVisits = visits.filter((item) => !item.completed_at && !item.no_visit_reason);
+      const pendingClienteIds = Array.from(
+        new Set(pendingVisits.map((item) => item.cliente_id).filter((value): value is string => Boolean(value))),
+      );
+      const pendingClientesById = new Map<string, { empresa: string | null; nome_fantasia: string | null }>();
+      if (pendingClienteIds.length > 0) {
+        const { data: clientesData } = await supabaseDash
+          .from("v_dash_clientes_active")
+          .select("id, empresa, nome_fantasia")
+          .in("id", pendingClienteIds);
+        (clientesData ?? []).forEach((row) => {
+          const item = row as { id: string; empresa: string | null; nome_fantasia: string | null };
+          pendingClientesById.set(item.id, { empresa: item.empresa, nome_fantasia: item.nome_fantasia });
+        });
+      }
+
+      setTeamDailyVidas(buildDailyVidasSeries(visits));
       setTeamStats(
         computeVisitStats(
-          (visitsData ?? []).map((item) => ({
+          visits.map((item) => ({
             cliente_id: item.cliente_id ?? null,
             completed_at: item.completed_at ?? null,
             completed_vidas: item.completed_vidas ?? null,
@@ -1045,6 +1125,18 @@ export default function Dashboard() {
           })),
         ),
       );
+      setPendingVisitsModal({
+        title: "Visitas pendentes",
+        subtitle: `Registros sem conclusao no periodo ${globalPeriodLabel}.`,
+        rows: pendingVisits.map((item) => ({
+          id: item.id,
+          cliente_id: item.cliente_id,
+          visit_date: item.visit_date,
+          assigned_to_name: item.assigned_to_name,
+          assigned_to_user_id: item.assigned_to_user_id,
+          cliente: item.cliente_id ? pendingClientesById.get(item.cliente_id) ?? null : null,
+        })),
+      });
     };
 
     loadTeamStats();
@@ -1705,6 +1797,7 @@ export default function Dashboard() {
     total: number,
     data: Array<{ label: string; value: number; color: string }>,
     subtitle?: string,
+    onSegmentClick?: (label: string) => void,
   ) => {
     const sum = data.reduce((acc, item) => acc + item.value, 0);
     let current = 0;
@@ -1735,11 +1828,17 @@ export default function Dashboard() {
           </div>
           <div className="space-y-2 text-xs text-ink/70">
             {data.map((item) => (
-              <div key={item.label} className="flex items-center gap-2">
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => onSegmentClick?.(item.label)}
+                disabled={!onSegmentClick}
+                className="flex w-full items-center gap-2 text-left disabled:cursor-default"
+              >
                 <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
                 <span className="min-w-[110px]">{item.label}</span>
                 <span className="font-semibold text-ink">{donutLabel(item.value)}</span>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -2675,6 +2774,15 @@ export default function Dashboard() {
                       { label: "Pendentes", value: visitStats.visitasPendentes, color: DASHBOARD_STATUS_COLORS.neutral },
                     ],
                     globalPeriodLabel,
+                    (label) => {
+                      if (label === "Pendentes") {
+                        setPendingVisitsModal({
+                          title: "Visitas pendentes",
+                          subtitle: `Registros sem conclusao no periodo ${globalPeriodLabel}.`,
+                          rows: pendingVisitsModal?.rows ?? [],
+                        });
+                      }
+                    },
                   )}
                   {renderDonut(
                     "Impacto no periodo",
@@ -2725,6 +2833,15 @@ export default function Dashboard() {
                       { label: "Pendentes", value: teamStats.visitasPendentes, color: DASHBOARD_STATUS_COLORS.neutral },
                     ],
                     `${globalPeriodLabel} • ${teamVendorsCount} vendedor(es)`,
+                    (label) => {
+                      if (label === "Pendentes") {
+                        setPendingVisitsModal({
+                          title: "Visitas pendentes",
+                          subtitle: `Registros sem conclusao no periodo ${globalPeriodLabel}.`,
+                          rows: pendingVisitsModal?.rows ?? [],
+                        });
+                      }
+                    },
                   )}
                   {renderDonut(
                     "Impacto no periodo (equipe)",
@@ -2805,6 +2922,43 @@ export default function Dashboard() {
                   <span className="font-semibold text-amber-700">{formatVendorPending(item)}</span>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      </DashboardModal>
+
+      <DashboardModal
+        open={Boolean(pendingVisitsModal)}
+        title={pendingVisitsModal?.title ?? "Visitas pendentes"}
+        subtitle={pendingVisitsModal?.subtitle}
+        onClose={() => setPendingVisitsModal(null)}
+        maxWidthClassName="max-w-3xl"
+      >
+        <div className="rounded-2xl border border-sea/15 bg-sand/20">
+          {!pendingVisitsModal || pendingVisitsModal.rows.length === 0 ? (
+            <div className="px-4 py-6 text-sm text-ink/60">Sem visitas pendentes.</div>
+          ) : (
+            <div className="divide-y divide-sea/10">
+              {pendingVisitsModal.rows.map((item, index) => {
+                const empresa = item.cliente?.empresa ?? item.cliente?.nome_fantasia ?? "Sem empresa";
+                return (
+                  <div key={item.id} className="px-4 py-3 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold text-ink">
+                        {index + 1}. {empresa}
+                      </span>
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                        Pendente
+                      </span>
+                    </div>
+                    <div className="mt-1 grid gap-1 text-xs text-ink/60">
+                      <span>Data: {item.visit_date ? formatDateBr(item.visit_date) : "-"}</span>
+                      <span>Vendedor: {item.assigned_to_name ?? item.assigned_to_user_id ?? "-"}</span>
+                      <span>Cliente: {item.cliente_id ?? "-"}</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
