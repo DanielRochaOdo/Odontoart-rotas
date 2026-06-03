@@ -195,7 +195,7 @@ export default function FilaAlertsModal() {
   if (!canView || notifications.length === 0) return null;
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-ink/55 px-4">
+    <div className="fixed inset-0 z-[120] flex items-start justify-center bg-ink/55 px-4 pt-6">
       <div className="w-full max-w-4xl rounded-2xl border border-sea/25 bg-white p-5 shadow-2xl">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 rounded-full bg-sea/15 p-2 text-sea">

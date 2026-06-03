@@ -975,7 +975,7 @@ export default function AgendaDrawer({
         )}
       </div>
       {planoValoresModal && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 px-4">
+        <div className="fixed inset-0 z-[70] flex items-start justify-center bg-slate-900/40 px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0"

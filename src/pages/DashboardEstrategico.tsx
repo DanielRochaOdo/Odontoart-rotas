@@ -1707,9 +1707,9 @@ export default function DashboardEstrategico() {
                 <article className={["dashboard-card rounded-2xl p-4", isSoftRefreshing ? "animate-pulse" : ""].join(" ")}>
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                    <h3 className="font-display text-lg text-ink">Nome vendedor por quantidade de vidas em visitas</h3>
+                    <h3 className="font-display text-lg text-ink">Nome vendedor x quantidade de vidas em visitas</h3>
                       <p className="mt-1 text-xs text-ink/65">
-                        Clique em um vendedor na rosca para isolar a analise comercial abaixo.
+                        Clique em um vendedor grafico para isolar a analise comercial abaixo.
                       </p>
                     </div>
                   {commercialHighlight ? (
@@ -1733,8 +1733,8 @@ export default function DashboardEstrategico() {
 
                 <aside className="dashboard-card rounded-2xl p-4 xl:self-start">
                   <div>
-                    <p className="max-w-[150px] truncate text-xs font-semibold text-ink/65" title="Quantidade de Vidas em Visitas">
-                      Quantidade de Vidas em Visitas
+                    <p className="max-w-[150px] truncate text-xs font-semibold text-ink/65" title="Quantidade de Vidas">
+                      Quantidade de Vidas
                     </p>
                     <p className="mt-1 font-display text-3xl text-ink">{formatNumber(commercialModel.total)}</p>
                     <p className="mt-2 text-[11px] text-ink/55">

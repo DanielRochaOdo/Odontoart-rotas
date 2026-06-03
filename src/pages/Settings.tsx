@@ -2119,7 +2119,7 @@ export default function Settings() {
 
       {isResetModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 pt-6"
           onClick={() => setIsResetModalOpen(false)}
         >
           <div
