@@ -21,8 +21,18 @@ export default function DashboardModal({
   useEffect(() => {
     if (!open || typeof document === "undefined") return undefined;
 
-    const previousOverflow = document.body.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousBodyPosition = document.body.style.position;
+    const previousBodyTop = document.body.style.top;
+    const previousBodyWidth = document.body.style.width;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const scrollY = window.scrollY;
+
+    document.documentElement.style.overflow = "hidden";
     document.body.style.overflow = "hidden";
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -31,7 +41,12 @@ export default function DashboardModal({
     window.addEventListener("keydown", handleKeyDown);
 
     return () => {
-      document.body.style.overflow = previousOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      document.body.style.overflow = previousBodyOverflow;
+      document.body.style.position = previousBodyPosition;
+      document.body.style.top = previousBodyTop;
+      document.body.style.width = previousBodyWidth;
+      window.scrollTo(0, scrollY);
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [open, onClose]);
@@ -40,7 +55,7 @@ export default function DashboardModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[99999] flex items-start justify-center bg-black/50 px-4 pt-6"
+      className="fixed inset-0 z-[99999] flex items-start justify-center bg-black/50 px-4 pt-6 overscroll-contain"
       role="dialog"
       aria-modal="true"
       onMouseDown={onClose}

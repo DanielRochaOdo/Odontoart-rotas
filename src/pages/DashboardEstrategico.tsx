@@ -3,6 +3,7 @@ import { AlertTriangle, BarChart3, Building2, CalendarDays, Check, CheckCircle2,
 import { supabaseDash } from "../lib/supabaseDashboard";
 import { useAuth } from "../context/AuthContext";
 import DashboardLegacy from "./Dashboard";
+import DashboardModal from "../components/DashboardModal";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 
 type TabKey = "visao" | "performance" | "comercial" | "cobertura" | "qualidade";
@@ -67,6 +68,8 @@ type DashboardEstrategicoUiState = {
   draftSelectedSupervisor: string;
   draftSelectedSeller: string;
 };
+
+type DashboardKpiDetailMode = "visitas" | "concluidas" | "pendentes" | "empresas" | "cobertura" | "vidas" | "taxa";
 
 type DashboardEstrategicoDataCache = {
   visits: VisitLite[];
@@ -552,6 +555,7 @@ export default function DashboardEstrategico() {
   const [selectedSupervisor, setSelectedSupervisor] = useState(persistedUiState.selectedSupervisor ?? "all");
   const [selectedSeller, setSelectedSeller] = useState(persistedUiState.selectedSeller);
   const [commercialHighlight, setCommercialHighlight] = useState<CommercialHighlight>(null);
+  const [kpiDetailMode, setKpiDetailMode] = useState<DashboardKpiDetailMode | null>(null);
   const [draftFrom, setDraftFrom] = useState(normalizeYmd(persistedUiState.draftFrom, monthStart));
   const [draftTo, setDraftTo] = useState(normalizeYmd(persistedUiState.draftTo, today));
   const [draftSelectedSupervisor, setDraftSelectedSupervisor] = useState(persistedUiState.draftSelectedSupervisor ?? "all");
@@ -1176,6 +1180,193 @@ export default function DashboardEstrategico() {
     };
   }, [allClientes, clientesMap, filteredAceites, filteredVisits, from, profilesMap, to, totalClientes]);
 
+  const kpiDetailItems = useMemo(() => {
+    const formatCompany = (visit: VisitLite) => {
+      const cliente = clientesMap.get(visit.cliente_id ?? "");
+      return `${cliente?.codigo ? `${cliente.codigo} - ` : ""}${cliente?.empresa ?? "Sem nome"}`;
+    };
+    const topSellers = Array.from(
+      filteredVisits.reduce((acc, visit) => {
+        const seller = getSellerLabelFromVisit(visit, profilesMap);
+        const current = acc.get(seller) ?? { visits: 0, companies: new Set<string>(), vidas: 0 };
+        current.visits += 1;
+        current.vidas += Number(visit.completed_vidas ?? 0);
+        if (visit.cliente_id) current.companies.add(visit.cliente_id);
+        acc.set(seller, current);
+        return acc;
+      }, new Map<string, { visits: number; companies: Set<string>; vidas: number }>()),
+    )
+      .map(([seller, value]) => ({
+        seller,
+        visits: value.visits,
+        companies: value.companies.size,
+        vidas: value.vidas,
+      }))
+      .sort((a, b) => b.visits - a.visits || b.vidas - a.vidas)
+      .slice(0, 8);
+
+    switch (kpiDetailMode) {
+      case "visitas":
+        return [
+          { title: "Total de visitas", subtitle: `${formatNumber(model.total)} registros no periodo.`, badge: "Resumo" },
+          { title: "Concluidas", subtitle: `${formatNumber(model.concluidas)} visitas finalizadas.`, badge: "Status" },
+          { title: "Pendentes", subtitle: `${formatNumber(model.pendentes)} sem conclusao.`, badge: "Alerta" },
+          ...filteredVisits.slice(0, 12).map((visit) => ({
+            title: formatCompany(visit),
+            subtitle: `${visit.visit_date ? formatMonthTick(visit.visit_date) : "-"} | ${getSellerLabelFromVisit(visit, profilesMap)}`,
+            badge: visit.completed_at ? "Concluida" : "Pendente",
+          })),
+        ];
+      case "concluidas":
+        return [
+          { title: "Visitas concluidas", subtitle: `${formatNumber(model.concluidas)} no periodo.`, badge: "Total" },
+          { title: "Nao realizadas", subtitle: `${formatNumber(model.naoRealizadas)} com motivo registrado.`, badge: "Motivo" },
+          ...filteredVisits
+            .filter((visit) => Boolean(visit.completed_at))
+            .slice(0, 12)
+            .map((visit) => ({
+              title: formatCompany(visit),
+              subtitle: `${visit.visit_date ? formatMonthTick(visit.visit_date) : "-"} | ${getSellerLabelFromVisit(visit, profilesMap)}`,
+              badge: visit.no_visit_reason ? "Nao visita" : "Concluida",
+            })),
+        ];
+      case "pendentes":
+        return [
+          { title: "Visitas pendentes", subtitle: `${formatNumber(model.pendentes)} sem conclusao.`, badge: "Alerta" },
+          { title: "Taxa de execucao", subtitle: formatPercent(model.taxaExecucao), badge: "Efetividade" },
+          ...filteredVisits
+            .filter((visit) => !visit.completed_at)
+            .slice(0, 12)
+            .map((visit) => ({
+              title: formatCompany(visit),
+              subtitle: `${visit.visit_date ? formatMonthTick(visit.visit_date) : "-"} | ${getSellerLabelFromVisit(visit, profilesMap)}`,
+              badge: "Pendente",
+            })),
+        ];
+      case "empresas":
+      case "cobertura":
+        return [
+          { title: "Cobertura", subtitle: `${formatPercent(model.coberturaInScope)} da carteira em escopo.`, badge: "Carteira" },
+          { title: "Empresas visitadas", subtitle: `${formatNumber(model.empresasVisitadas)} empresas distintas.`, badge: "Alcance" },
+          { title: "Empresas nunca visitadas", subtitle: `${formatNumber(model.totalClientesInScope - model.empresasVisitadas)} fora do radar.`, badge: "Gap" },
+          ...topSellers.map((item) => ({
+            title: item.seller,
+            subtitle: `${formatNumber(item.companies)} empresas distintas | ${formatNumber(item.visits)} visitas`,
+            badge: "Alcance",
+          })),
+        ];
+      case "vidas":
+        return [
+          { title: "Vidas em visitas", subtitle: `${formatNumber(model.vidasVisitas)} no periodo.`, badge: "Visitas" },
+          { title: "Vidas em aceite digital", subtitle: `${formatNumber(model.vidasAceite)} no periodo.`, badge: "Aceite" },
+          { title: "Vidas totais", subtitle: `${formatNumber(model.vidasTotal)} somadas.`, badge: "Total" },
+          ...topSellers.map((item) => ({
+            title: item.seller,
+            subtitle: `${formatNumber(item.vidas)} vidas | ${formatNumber(item.visits)} visitas`,
+            badge: "Top",
+          })),
+        ];
+      case "taxa":
+        return [
+          { title: "Taxa de execucao", subtitle: `${formatPercent(model.taxaExecucao)} concluídas sem não visita / total.`, badge: "Resumo" },
+          { title: "Realizadas", subtitle: `${formatNumber(model.realizadas)} visitas efetivas.`, badge: "Numerador" },
+          { title: "Pendentes", subtitle: `${formatNumber(model.pendentes)} sem conclusão.`, badge: "Gap" },
+          { title: "Nao realizadas", subtitle: `${formatNumber(model.naoRealizadas)} com motivo de não visita.`, badge: "Motivo" },
+          ...model.byReason.slice(0, 8).map((item) => ({
+            title: item.reason,
+            subtitle: `${formatNumber(item.count)} ocorrência(s)`,
+            badge: "Motivo",
+          })),
+        ];
+      default:
+        return [];
+    }
+  }, [clientesMap, filteredVisits, kpiDetailMode, model, profilesMap]);
+
+  const kpiDetailFrame = useMemo(() => {
+    if (!kpiDetailMode) return null;
+    switch (kpiDetailMode) {
+      case "cobertura":
+        return {
+          title: "Cobertura",
+          summary: `${formatPercent(model.coberturaInScope)} da carteira em escopo.`,
+          insight: `A cobertura é de ${formatNumber(model.empresasVisitadas)} empresas sobre ${formatNumber(model.totalClientesInScope)} no universo filtrado.`,
+          highlights: [
+            { label: "Empresas visitadas", value: formatNumber(model.empresasVisitadas) },
+            { label: "Empresas em aberto", value: formatNumber(model.totalClientesInScope - model.empresasVisitadas) },
+            { label: "Taxa em escopo", value: formatPercent(model.coberturaInScope) },
+          ],
+        };
+      case "vidas":
+        return {
+          title: "Vidas totais",
+          summary: `${formatNumber(model.vidasTotal)} vidas somadas no periodo.`,
+          insight: `As visitas responderam por ${formatNumber(model.vidasVisitas)} e o aceite digital por ${formatNumber(model.vidasAceite)}.`,
+          highlights: [
+            { label: "Visitas", value: formatNumber(model.vidasVisitas) },
+            { label: "Aceite digital", value: formatNumber(model.vidasAceite) },
+            { label: "Total", value: formatNumber(model.vidasTotal) },
+          ],
+        };
+      case "taxa":
+        return {
+          title: "Taxa de execução",
+          summary: `${formatPercent(model.taxaExecucao)} no recorte atual.`,
+          insight: `Foram ${formatNumber(model.realizadas)} realizadas, ${formatNumber(model.pendentes)} pendentes e ${formatNumber(model.naoRealizadas)} não realizadas.`,
+          highlights: [
+            { label: "Realizadas", value: formatNumber(model.realizadas) },
+            { label: "Pendentes", value: formatNumber(model.pendentes) },
+            { label: "Nao realizadas", value: formatNumber(model.naoRealizadas) },
+          ],
+        };
+      case "visitas":
+        return {
+          title: "Visitas totais",
+          summary: `${formatNumber(model.total)} registros no periodo.`,
+          insight: `${formatNumber(model.concluidas)} foram concluídas e ${formatNumber(model.pendentes)} ficaram pendentes.`,
+          highlights: [
+            { label: "Total", value: formatNumber(model.total) },
+            { label: "Concluidas", value: formatNumber(model.concluidas) },
+            { label: "Pendentes", value: formatNumber(model.pendentes) },
+          ],
+        };
+      case "concluidas":
+        return {
+          title: "Concluidas",
+          summary: `${formatNumber(model.concluidas)} finalizadas no periodo.`,
+          insight: `${formatNumber(model.naoRealizadas)} delas tiveram motivo de não visita.`,
+          highlights: [
+            { label: "Concluidas", value: formatNumber(model.concluidas) },
+            { label: "Nao realizadas", value: formatNumber(model.naoRealizadas) },
+            { label: "Taxa de execucao", value: formatPercent(model.taxaExecucao) },
+          ],
+        };
+      case "pendentes":
+        return {
+          title: "Pendentes",
+          summary: `${formatNumber(model.pendentes)} visitas sem conclusão.`,
+          insight: `Esse bloco costuma indicar gargalo de agenda ou atraso operacional.`,
+          highlights: [
+            { label: "Pendentes", value: formatNumber(model.pendentes) },
+            { label: "Taxa de execucao", value: formatPercent(model.taxaExecucao) },
+            { label: "Total", value: formatNumber(model.total) },
+          ],
+        };
+      case "empresas":
+      default:
+        return {
+          title: "Empresas visitadas",
+          summary: `${formatNumber(model.empresasVisitadas)} empresas distintas.`,
+          insight: `O recorte mostra ${formatNumber(model.totalClientesInScope - model.empresasVisitadas)} empresas ainda sem visita.`,
+          highlights: [
+            { label: "Visitadas", value: formatNumber(model.empresasVisitadas) },
+            { label: "Nao visitadas", value: formatNumber(model.totalClientesInScope - model.empresasVisitadas) },
+            { label: "Cobertura", value: formatPercent(model.coberturaInScope) },
+          ],
+        };
+    }
+  }, [kpiDetailMode, model]);
+
   const lineLabels = model.byDaySeries.map(([day]) => day);
   const lineValues = model.byDaySeries.map(([, v]) =>
     metric === "visitas" ? v.visitas : metric === "concluidas" ? v.concluidas : v.vidas,
@@ -1549,10 +1740,19 @@ export default function DashboardEstrategico() {
             {kpiCards.map((item) => {
               const Icon = item.icon;
               return (
-                <article
+                <button
                   key={item.label}
+                  type="button"
+                  onClick={() => setKpiDetailMode(
+                    item.label === "Visitas totais" ? "visitas" :
+                    item.label === "Concluidas" ? "concluidas" :
+                    item.label === "Pendentes" ? "pendentes" :
+                    item.label === "Empresas visitadas (UNICAS)" ? "empresas" :
+                    item.label === "Cobertura" ? "cobertura" :
+                    item.label === "Vidas totais" ? "vidas" : "taxa"
+                  )}
                   className={[
-                    "dashboard-card rounded-2xl p-4",
+                    "dashboard-card rounded-2xl p-4 text-left transition hover:border-sea/35 hover:shadow-sm",
                     isSoftRefreshing ? "animate-pulse" : "",
                   ].join(" ")}
                 >
@@ -1561,7 +1761,7 @@ export default function DashboardEstrategico() {
                     <Icon size={16} className="text-sea" />
                   </div>
                   <p className={`mt-2 font-display text-3xl ${item.tone}`}>{item.value}</p>
-                </article>
+                </button>
               );
             })}
             <article className="dashboard-card rounded-2xl p-4">
@@ -1575,6 +1775,51 @@ export default function DashboardEstrategico() {
               </div>
             </article>
           </section>
+
+          <DashboardModal
+            open={Boolean(kpiDetailMode)}
+            title={kpiDetailFrame?.title ?? "Detalhe"}
+            subtitle="Clique fora para fechar."
+            onClose={() => setKpiDetailMode(null)}
+            maxWidthClassName="max-w-3xl"
+          >
+            <div className="space-y-4">
+              <section className="grid gap-3 md:grid-cols-3">
+                {kpiDetailFrame?.highlights.map((item) => (
+                  <article key={item.label} className="rounded-2xl border border-sea/15 bg-sand/20 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-ink/55">{item.label}</p>
+                    <p className="mt-2 text-2xl font-semibold text-ink">{item.value}</p>
+                  </article>
+                ))}
+              </section>
+              <section className="rounded-2xl border border-sea/15 bg-white/80 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink/55">Leitura</p>
+                <p className="mt-2 text-sm text-ink/80">{kpiDetailFrame?.summary}</p>
+                <p className="mt-2 text-sm text-ink/60">{kpiDetailFrame?.insight}</p>
+              </section>
+              {kpiDetailItems.length > 0 ? (
+                <section className="rounded-2xl border border-sea/15 bg-sand/20">
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink/55">Top 6</p>
+                    <span className="text-[11px] text-ink/55">contexto complementar</span>
+                  </div>
+                  <div className="divide-y divide-sea/10">
+                    {kpiDetailItems.slice(0, 6).map((item, index) => (
+                      <div key={`${item.title}-${index}`} className="px-4 py-3 text-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-semibold text-ink">{index + 1}. {item.title}</span>
+                          <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
+                            {item.badge}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-ink/60">{item.subtitle}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+            </div>
+          </DashboardModal>
 
           {tab === "performance" && (
             <section className="space-y-4">
