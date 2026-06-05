@@ -8,6 +8,9 @@ import {
   Info,
   LoaderCircle,
   MapPin,
+  PencilLine,
+  GripVertical,
+  Check,
   SquareCenterlineDashedHorizontal,
   X,
 } from "lucide-react";
@@ -30,7 +33,7 @@ import {
   type AgendaScheduledVisit,
   type AgendaVisitVendor,
 } from "../lib/agendaApi";
-import { fetchSupervisorLatestVisitByEmpresa } from "../lib/routesApi";
+import { fetchRouteStops, fetchSupervisorLatestVisitByEmpresa } from "../lib/routesApi";
 import type { AgendaRow } from "../types/agenda";
 import { useAgendaFilters } from "../hooks/useAgendaFilters";
 import MultiSelectFilter from "../components/agenda/MultiSelectFilter";
@@ -309,6 +312,32 @@ type VendorHistoryModalState = {
   empresa: string;
   codigo: string;
   assignments: Array<{ name: string; visitDate: string | null }>;
+};
+
+type VendorRouteStopDraft = {
+  stopId: string;
+  routeId: string;
+  routeName: string;
+  routeDate: string | null;
+  stopOrder: number;
+  clienteId: string | null;
+  companyName: string;
+  city: string;
+  bairro: string;
+};
+
+type VendorRouteEditorState = {
+  agendaId: string;
+  vendorId: string;
+  vendorName: string;
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  expanded: boolean;
+  dirty: boolean;
+  originalStops: VendorRouteStopDraft[];
+  stops: VendorRouteStopDraft[];
+  dragIndex: number | null;
 };
 
 type KpiImportValuesModalState = {
@@ -625,6 +654,9 @@ export default function Agenda() {
   const [excludedAgendaIds, setExcludedAgendaIds] = useState<string[]>([]);
   const [columnChipRemovalModal, setColumnChipRemovalModal] = useState<ColumnChipRemovalModalState | null>(null);
   const [columnChipRemovalPageIndex, setColumnChipRemovalPageIndex] = useState(0);
+  const [vendorRouteEditors, setVendorRouteEditors] = useState<Record<string, VendorRouteEditorState>>(
+    {},
+  );
   const [routesDraftHydrated, setRoutesDraftHydrated] = useState(false);
   const detailsObsRequestRef = useRef(0);
   const restoredViewRef = useRef(false);
@@ -1047,6 +1079,177 @@ export default function Agenda() {
     }
 
     return picked.length ? picked : fallbackAssignments;
+  };
+
+  const buildVendorRouteStopDrafts = async (agendaId: string, vendorId: string, vendorName: string) => {
+    const visits = (visitVendorsByAgenda[agendaId] ?? []).filter(
+      (visit) =>
+        isVendorVisitTypeValue(visit.visit_type) &&
+        (visit.assigned_to_user_id ?? "") === vendorId &&
+        Boolean(visit.route_id),
+    );
+    const uniqueRouteIds = Array.from(new Set(visits.map((visit) => visit.route_id).filter(Boolean)));
+    const routeEntries = await Promise.all(
+      uniqueRouteIds.map(async (routeId) => {
+        const stops = await fetchRouteStops(routeId as string);
+        const routeVisit = visits.find((visit) => visit.route_id === routeId);
+        const routeName = routeVisit?.assigned_to_name?.trim() || vendorName || vendorId;
+        return stops
+          .filter((stop) => (stop.cliente_id ?? "") === agendaId)
+          .map((stop) => ({
+            stopId: stop.id,
+            routeId: stop.route_id,
+            routeName,
+            routeDate: routeVisit?.visit_date ?? null,
+            stopOrder: stop.stop_order ?? 0,
+            clienteId: stop.cliente_id ?? null,
+            companyName:
+              stop.cliente?.empresa ?? stop.cliente?.nome_fantasia ?? scheduleModalRow?.empresa ?? "-",
+            city: stop.cliente?.cidade ?? "",
+            bairro: stop.cliente?.bairro ?? "",
+          }));
+      }),
+    );
+
+    return routeEntries.flat().sort((left, right) => left.stopOrder - right.stopOrder);
+  };
+
+  const openVendorRouteEditor = async (agendaId: string, vendorId: string, vendorName: string) => {
+    const editorKey = `${agendaId}::${vendorId}`;
+    setVendorRouteEditors((prev) => ({
+      ...prev,
+      [editorKey]: {
+        agendaId,
+        vendorId,
+        vendorName,
+        loading: true,
+        saving: false,
+        error: null,
+        expanded: true,
+        dirty: false,
+        originalStops: [],
+        stops: [],
+        dragIndex: null,
+      },
+    }));
+
+    try {
+      const stops = await buildVendorRouteStopDrafts(agendaId, vendorId, vendorName);
+      setVendorRouteEditors((prev) => ({
+        ...prev,
+        [editorKey]: {
+          ...(prev[editorKey] ?? {
+            agendaId,
+            vendorId,
+            vendorName,
+          }),
+          agendaId,
+          vendorId,
+          vendorName,
+          loading: false,
+          saving: false,
+          error: null,
+          expanded: true,
+          dirty: false,
+          originalStops: stops,
+          stops,
+          dragIndex: null,
+        },
+      }));
+    } catch (err) {
+      setVendorRouteEditors((prev) => ({
+        ...prev,
+        [editorKey]: {
+          ...(prev[editorKey] ?? {
+            agendaId,
+            vendorId,
+            vendorName,
+          }),
+          agendaId,
+          vendorId,
+          vendorName,
+          loading: false,
+          saving: false,
+          error: err instanceof Error ? err.message : "Erro ao carregar rotas.",
+          expanded: true,
+          dirty: false,
+          originalStops: [],
+          stops: [],
+          dragIndex: null,
+        },
+      }));
+    }
+  };
+
+  const updateVendorRouteEditor = (editorKey: string, patch: Partial<VendorRouteEditorState>) => {
+    setVendorRouteEditors((prev) => {
+      const current = prev[editorKey];
+      if (!current) return prev;
+      return { ...prev, [editorKey]: { ...current, ...patch } };
+    });
+  };
+
+  const moveVendorRouteStop = (editorKey: string, fromIndex: number, toIndex: number) => {
+    setVendorRouteEditors((prev) => {
+      const current = prev[editorKey];
+      if (!current || fromIndex === toIndex) return prev;
+      const nextStops = [...current.stops];
+      const [moved] = nextStops.splice(fromIndex, 1);
+      nextStops.splice(toIndex, 0, moved);
+      return {
+        ...prev,
+        [editorKey]: {
+          ...current,
+          stops: nextStops,
+          dirty: true,
+          dragIndex: null,
+        },
+      };
+    });
+  };
+
+  const saveVendorRouteEditor = async (editorKey: string) => {
+    const editor = vendorRouteEditors[editorKey];
+    if (!editor || editor.loading || editor.saving || !editor.dirty) return;
+
+    updateVendorRouteEditor(editorKey, { saving: true, error: null });
+    try {
+      const updates = editor.stops.map((stop, index) => ({
+        id: stop.stopId,
+        route_id: stop.routeId,
+        stop_order: index + 1,
+      }));
+      for (const update of updates) {
+        const { error } = await supabase
+          .from("route_stops")
+          .update({ stop_order: update.stop_order })
+          .eq("id", update.id)
+          .eq("route_id", update.route_id);
+        if (error) throw new Error(error.message);
+      }
+
+      updateVendorRouteEditor(editorKey, {
+        saving: false,
+        dirty: false,
+        originalStops: editor.stops,
+      });
+      setRefreshKey((value) => value + 1);
+    } catch (err) {
+      updateVendorRouteEditor(editorKey, {
+        saving: false,
+        error: err instanceof Error ? err.message : "Erro ao salvar ordenacao.",
+      });
+    }
+  };
+
+  const toggleVendorRouteEditor = async (agendaId: string, vendorId: string, vendorName: string) => {
+    const editorKey = `${agendaId}::${vendorId}`;
+    const current = vendorRouteEditors[editorKey];
+    if (current?.expanded) {
+      updateVendorRouteEditor(editorKey, { expanded: false });
+      return;
+    }
+    await openVendorRouteEditor(agendaId, vendorId, vendorName);
   };
 
   const resolveLastCompletedVidas = (agendaId: string, fallback?: number | null) => {
@@ -2876,31 +3079,128 @@ export default function Agenda() {
               : "-";
           const historyTooltip = "Ver historico de atribuicao";
           const hasAnyHistoryDate = recentVendors.some((item) => Boolean(item.visitDate));
+          const editableVendors = recentVendors.filter((item) => Boolean(item.userId));
           return (
-            <div className="relative min-h-[22px] pr-5">
-              <p className={`${tableCellTextClass} text-[9px]`}>{vendorLabel}</p>
-              {hasAnyHistoryDate ? (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setVendorHistoryModal({
-                      empresa: row.empresa ?? row.nome_fantasia ?? "Sem empresa",
-                      codigo: row.cod_1 ?? "-",
-                      assignments: recentVendors.map((item) => ({
-                        name: item.name,
-                        visitDate: item.visitDate,
-                      })),
-                    });
-                  }}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  className="absolute right-0 top-0 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-orange-300 bg-orange-50 text-orange-600 hover:border-orange-400 hover:text-orange-700"
-                  title={historyTooltip}
-                  aria-label={historyTooltip}
-                >
-                  <Clock3 size={10} />
-                </button>
-              ) : null}
+            <div className="space-y-1">
+              <div className="relative min-h-[22px] pr-11">
+                <p className={`${tableCellTextClass} text-[9px]`}>{vendorLabel}</p>
+                {canEdit && editableVendors.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void toggleVendorRouteEditor(
+                        row.id,
+                        editableVendors[0].userId as string,
+                        editableVendors[0].name,
+                      );
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    className="absolute right-6 top-0 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-sea/30 bg-sea/10 text-sea hover:border-sea hover:bg-sea/20"
+                    title="Editar ordem das rotas"
+                    aria-label="Editar ordem das rotas"
+                  >
+                    <PencilLine size={10} />
+                  </button>
+                ) : null}
+                {hasAnyHistoryDate ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setVendorHistoryModal({
+                        empresa: row.empresa ?? row.nome_fantasia ?? "Sem empresa",
+                        codigo: row.cod_1 ?? "-",
+                        assignments: recentVendors.map((item) => ({
+                          name: item.name,
+                          visitDate: item.visitDate,
+                        })),
+                      });
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    className="absolute right-0 top-0 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-orange-300 bg-orange-50 text-orange-600 hover:border-orange-400 hover:text-orange-700"
+                    title={historyTooltip}
+                    aria-label={historyTooltip}
+                  >
+                    <Clock3 size={10} />
+                  </button>
+                ) : null}
+              </div>
+              {canEdit &&
+                editableVendors.map((vendor) => {
+                  const editorKey = `${row.id}::${vendor.userId}`;
+                  const editor = vendorRouteEditors[editorKey];
+                  if (!editor?.expanded) return null;
+                  return (
+                    <div key={editorKey} className="rounded-lg border border-sea/15 bg-sand/20 p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-semibold text-ink/70">
+                          Rotas de {vendor.name}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void saveVendorRouteEditor(editorKey);
+                          }}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          disabled={!editor.dirty || editor.loading || editor.saving}
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 disabled:opacity-40"
+                          title="Salvar ordenacao"
+                          aria-label="Salvar ordenacao"
+                        >
+                          <Check size={12} />
+                        </button>
+                      </div>
+                      {editor.loading ? (
+                        <p className="mt-2 text-[10px] text-ink/60">Carregando rotas...</p>
+                      ) : editor.error ? (
+                        <p className="mt-2 text-[10px] text-red-600">{editor.error}</p>
+                      ) : (
+                        <div className="mt-2 space-y-1">
+                          {editor.stops.length === 0 ? (
+                            <p className="text-[10px] text-ink/60">Nenhuma rota encontrada.</p>
+                          ) : (
+                            editor.stops.map((stop, stopIndex) => (
+                              <div
+                                key={stop.stopId}
+                                draggable
+                                onDragStart={(event) => {
+                                  event.stopPropagation();
+                                  updateVendorRouteEditor(editorKey, { dragIndex: stopIndex });
+                                }}
+                                onDragOver={(event) => event.preventDefault()}
+                                onDrop={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  const fromIndex = editor.dragIndex;
+                                  if (fromIndex === null) return;
+                                  moveVendorRouteStop(editorKey, fromIndex, stopIndex);
+                                }}
+                                onDragEnd={() => updateVendorRouteEditor(editorKey, { dragIndex: null })}
+                                className="flex items-start gap-2 rounded-md border border-sea/10 bg-white px-2 py-1 text-[10px] text-ink/70"
+                              >
+                                <span className="mt-0.5 text-sea">
+                                  <GripVertical size={12} />
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-semibold text-ink">
+                                    {stop.stopOrder}. {stop.companyName}
+                                  </p>
+                                  <p className="truncate text-[9px] text-ink/60">
+                                    {stop.routeDate ? formatDate(stop.routeDate) : "-"}
+                                    {stop.city ? ` | ${stop.city}` : ""}
+                                    {stop.bairro ? ` - ${stop.bairro}` : ""}
+                                  </p>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
             </div>
           );
         },
@@ -4880,6 +5180,7 @@ export default function Agenda() {
                 const mobileVendorLabel = recentVendors.length
                   ? recentVendors.map((item) => item.name).join(", ")
                   : "-";
+                const editableVendors = recentVendors.filter((item) => Boolean(item.userId));
                 return (
                   <div
                     key={row.id}
@@ -4949,6 +5250,25 @@ export default function Agenda() {
                         </p>
                         <p className="break-words">
                           <span className="font-semibold text-ink/80">Vendedor:</span> {mobileVendorLabel}
+                          {canEdit && editableVendors.length > 0 ? (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void toggleVendorRouteEditor(
+                                  row.id,
+                                  editableVendors[0].userId as string,
+                                  editableVendors[0].name,
+                                );
+                              }}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              className="ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-sea/30 bg-sea/10 text-sea"
+                              title="Editar ordem das rotas"
+                              aria-label="Editar ordem das rotas"
+                            >
+                              <PencilLine size={10} />
+                            </button>
+                          ) : null}
                         </p>
                         <p className="break-words">
                           <span className="font-semibold text-ink/80">Ultima visita:</span>{" "}
@@ -5017,6 +5337,71 @@ export default function Agenda() {
                           </div>
                         );
                       })()}
+                      {canEdit &&
+                        editableVendors.map((vendor) => {
+                          const editorKey = `${row.id}::${vendor.userId}`;
+                          const editor = vendorRouteEditors[editorKey];
+                          if (!editor?.expanded) return null;
+                          return (
+                            <div key={editorKey} className="rounded-xl border border-sea/15 bg-sand/20 p-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] font-semibold text-ink/70">
+                                  Rotas de {vendor.name}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void saveVendorRouteEditor(editorKey);
+                                  }}
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  disabled={!editor.dirty || editor.loading || editor.saving}
+                                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 disabled:opacity-40"
+                                >
+                                  <Check size={12} />
+                                </button>
+                              </div>
+                              {editor.loading ? (
+                                <p className="mt-2 text-[10px] text-ink/60">Carregando rotas...</p>
+                              ) : (
+                                <div className="mt-2 space-y-1">
+                                  {editor.stops.map((stop, stopIndex) => (
+                                    <div
+                                      key={stop.stopId}
+                                      draggable
+                                      onDragStart={(event) => {
+                                        event.stopPropagation();
+                                        updateVendorRouteEditor(editorKey, { dragIndex: stopIndex });
+                                      }}
+                                      onDragOver={(event) => event.preventDefault()}
+                                      onDrop={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        const fromIndex = editor.dragIndex;
+                                        if (fromIndex === null) return;
+                                        moveVendorRouteStop(editorKey, fromIndex, stopIndex);
+                                      }}
+                                      onDragEnd={() => updateVendorRouteEditor(editorKey, { dragIndex: null })}
+                                      className="flex items-start gap-2 rounded-md border border-sea/10 bg-white px-2 py-1 text-[10px] text-ink/70"
+                                    >
+                                      <span className="mt-0.5 text-sea">
+                                        <GripVertical size={12} />
+                                      </span>
+                                      <div className="min-w-0 flex-1">
+                                        <p className="truncate font-semibold text-ink">
+                                          {stop.stopOrder}. {stop.companyName}
+                                        </p>
+                                        <p className="truncate text-[9px] text-ink/60">
+                                          {stop.routeDate ? formatDate(stop.routeDate) : "-"}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                     </div>
                   </div>
                 );
