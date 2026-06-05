@@ -7,6 +7,7 @@ import {
   ChevronRight,
   DollarSign,
   Eye,
+  GripVertical,
   Lock,
   LockOpen,
   LoaderCircle,
@@ -15,6 +16,11 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
+import {
+  DragDropContext,
+  Draggable,
+  Droppable,
+} from "@hello-pangea/dnd";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { fetchVendedores } from "../lib/agendaApi";
@@ -333,6 +339,9 @@ export default function Visitas() {
   const [vendorsLoaded, setVendorsLoaded] = useState(false);
   const [editState, setEditState] = useState<Record<string, { vendorId: string; date: string }>>({});
   const [expandedVendor, setExpandedVendor] = useState<string | null>(null);
+  const [routeOrderEditVendor, setRouteOrderEditVendor] = useState<string | null>(null);
+  const [routeOrderDraftByVendor, setRouteOrderDraftByVendor] = useState<Record<string, string[]>>({});
+  const [routeOrderSavingVendor, setRouteOrderSavingVendor] = useState<string | null>(null);
   const [editingVisits, setEditingVisits] = useState<Record<string, boolean>>({});
   const [refreshKey, setRefreshKey] = useState(0);
   const [hasUpdatesAvailable, setHasUpdatesAvailable] = useState(false);
@@ -1859,6 +1868,71 @@ export default function Visitas() {
       stop_order: stopOrder,
     });
     if (insertError) throw new Error(insertError.message);
+  };
+
+  const getVendorRouteOrder = (seller: string, items: VisitRow[]) => {
+    const savedOrder = routeOrderDraftByVendor[seller];
+    const itemIds = items.map((item) => item.id);
+    if (!savedOrder || savedOrder.length === 0) return itemIds;
+    const savedSet = new Set(savedOrder);
+    const next = [...savedOrder.filter((id) => itemIds.includes(id)), ...itemIds.filter((id) => !savedSet.has(id))];
+    return next;
+  };
+
+  const reorderList = (list: string[], startIndex: number, endIndex: number) => {
+    const result = [...list];
+    const [removed] = result.splice(startIndex, 1);
+    result.splice(endIndex, 0, removed);
+    return result;
+  };
+
+  const startVendorRouteOrderEdit = (seller: string, items: VisitRow[]) => {
+    setExpandedVendor(seller);
+    setRouteOrderEditVendor(seller);
+    setRouteOrderDraftByVendor((prev) => ({
+      ...prev,
+      [seller]: getVendorRouteOrder(seller, items),
+    }));
+  };
+
+  const saveVendorRouteOrder = async (seller: string, orderedItems: VisitRow[]) => {
+    if (orderedItems.length === 0) return;
+
+    setRouteOrderSavingVendor(seller);
+    try {
+      const routeGroups = new Map<string, VisitRow[]>();
+      orderedItems.forEach((item) => {
+        if (!item.route_id) return;
+        if (!routeGroups.has(item.route_id)) routeGroups.set(item.route_id, []);
+        routeGroups.get(item.route_id)!.push(item);
+      });
+
+      for (const [routeId, routeItems] of routeGroups.entries()) {
+        const updates = routeItems
+          .filter((item) => Boolean(item.cliente_id))
+          .map((item, index) =>
+            supabase
+              .from("route_stops")
+              .update({ stop_order: index + 1 })
+              .eq("route_id", routeId)
+              .eq("cliente_id", item.cliente_id as string),
+          );
+        for (const update of updates) {
+          const { error } = await update;
+          if (error) throw new Error(error.message);
+        }
+      }
+
+      setRouteOrderEditVendor(null);
+      setRouteOrderDraftByVendor((prev) => ({
+        ...prev,
+        [seller]: orderedItems.map((item) => item.id),
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar ordenacao.");
+    } finally {
+      setRouteOrderSavingVendor(null);
+    }
   };
 
   const handleSaveVisit = async (visitId: string, visitInput?: VisitRow) => {
@@ -3466,6 +3540,33 @@ export default function Visitas() {
                           >
                             {seller}
                           </button>
+                          {canManage ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (routeOrderEditVendor === seller) {
+                                  const orderedItems = getVendorRouteOrder(seller, items)
+                                    .map((id) => items.find((item) => item.id === id))
+                                    .filter((value): value is VisitRow => Boolean(value));
+                                  void saveVendorRouteOrder(seller, orderedItems);
+                                  return;
+                                }
+                                startVendorRouteOrderEdit(seller, items);
+                              }}
+                              className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-sea/30 bg-sea/10 text-sea hover:border-sea hover:bg-sea/20"
+                              title={routeOrderEditVendor === seller ? "Salvar ordenacao" : "Reordenar rotas"}
+                              aria-label={routeOrderEditVendor === seller ? "Salvar ordenacao" : "Reordenar rotas"}
+                              disabled={routeOrderSavingVendor === seller}
+                            >
+                              {routeOrderSavingVendor === seller ? (
+                                <LoaderCircle size={12} className="animate-spin" />
+                              ) : routeOrderEditVendor === seller ? (
+                                <CheckCircle2 size={12} />
+                              ) : (
+                                <Pencil size={12} />
+                              )}
+                            </button>
+                          ) : null}
                           {hasSupervisorGroup ? (
                             <span className="inline-flex rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/60 dark:bg-violet-500/20 dark:text-violet-200">
                               Supervisor
@@ -3508,134 +3609,237 @@ export default function Visitas() {
                       </div>
 
                       {isExpanded && (
-                        <div className="mt-3 space-y-3 text-xs text-ink/70">
-                          {items.map((item) => {
-                            const state = editState[item.id] ?? {
-                              vendorId: "",
-                              date: toDateInput(item.visit_date),
-                            };
-                            const isSupervisorVisit = isSupervisorVisitType(item.visit_type);
-                            const isEditing = editingVisits[item.id] ?? false;
-                            const isCompleted = isVisitRegistered(item);
-                            const canLoggedSupervisorRegister =
-                              role === "SUPERVISOR" &&
-                              isSupervisorVisit &&
-                              isSupervisorVisitForLoggedUser(item);
-                            const mapAddress = buildMapAddress(item.agenda);
-                            const instructionText = item.instructions?.trim() || "";
-                            const isEditRegisteredAction = isCompleted && !item.no_visit_reason;
-                            const registerVisitButtonClass = [
-                              "rounded-lg px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-60",
-                              isEditRegisteredAction ? "bg-orange-500 hover:bg-orange-400" : "bg-sea hover:bg-seaLight",
-                            ].join(" ");
-                            const supervisorReasonLabel = item.supervisor_reason
-                              ? SUPERVISOR_REASON_LABEL_BY_VALUE.get(item.supervisor_reason) ?? item.supervisor_reason
-                              : null;
-                            return (
-                              <div
-                                key={item.id}
-                                className={[
-                                  "rounded-xl border p-3",
-                                  isSupervisorVisit
-                                    ? "border-violet-300 bg-violet-50/70 dark:border-violet-500/45 dark:bg-violet-950/45"
-                                    : "border-sea/10 bg-white/90",
-                                ].join(" ")}
-                              >
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <div>
-                                    <div className="flex items-center gap-2">
-                                      <p className="text-sm font-semibold text-ink">
-                                        {item.agenda?.empresa ?? "Sem nome"}
+                        <DragDropContext
+                          onDragEnd={(result) => {
+                            const { destination, source } = result;
+                            if (!destination) return;
+                            if (destination.droppableId !== source.droppableId) return;
+                            if (destination.index === source.index) return;
+                            if (destination.droppableId !== `seller-${seller}`) return;
+                            const order = getVendorRouteOrder(seller, items);
+                            const nextOrder = reorderList(order, source.index, destination.index);
+                            setRouteOrderDraftByVendor((prev) => ({ ...prev, [seller]: nextOrder }));
+                          }}
+                        >
+                          <Droppable
+                            droppableId={`seller-${seller}`}
+                            renderClone={(cloneProvided, _cloneSnapshot, rubric) => {
+                              const cloneItemId = (routeOrderEditVendor === seller
+                                ? getVendorRouteOrder(seller, items)
+                                : items.map((item) => item.id))[rubric.source.index];
+                              const cloneItem = items.find((item) => item.id === cloneItemId);
+                              if (!cloneItem) return null;
+                              return (
+                                <div
+                                  ref={cloneProvided.innerRef}
+                                  {...cloneProvided.draggableProps}
+                                  {...cloneProvided.dragHandleProps}
+                                  style={{
+                                    ...cloneProvided.draggableProps.style,
+                                    zIndex: 9999,
+                                  }}
+                                  className={[
+                                    "rounded-xl border p-3 shadow-2xl",
+                                    isSupervisorVisitType(cloneItem.visit_type)
+                                      ? "border-violet-300 bg-violet-50/90 dark:border-violet-500/45 dark:bg-violet-950/75"
+                                      : "border-sea/20 bg-white",
+                                  ].join(" ")}
+                                >
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-sea/30 bg-sea/15 text-[10px] font-semibold text-sea">
+                                          {rubric.source.index + 1}
+                                        </span>
+                                        <p className="text-sm font-semibold text-ink">
+                                          {cloneItem.agenda?.empresa ?? "Sem nome"}
+                                        </p>
+                                        <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
+                                          COD {cloneItem.agenda?.cod_1 ?? "-"}
+                                        </span>
+                                      </div>
+                                      <p className="text-[11px] text-ink/70">
+                                        Pessoa: {cloneItem.agenda?.pessoa ?? "-"}
                                       </p>
-                                      <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
-                                        COD {item.agenda?.cod_1 ?? "-"}
-                                      </span>
-                                      {item.agenda?.situacao ? (
-                                        <span className="inline-flex rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
-                                          {item.agenda.situacao}
-                                        </span>
-                                      ) : null}
-                                      {canManage && item.agenda?.categoria ? (
-                                        <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                                          {item.agenda.categoria}
-                                        </span>
-                                      ) : null}
-                                      {isSupervisorVisit ? (
-                                        <span className="inline-flex rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/60 dark:bg-violet-500/20 dark:text-violet-200">
-                                          Visita supervisor
-                                        </span>
-                                      ) : null}
-                                      {isSupervisorVisit && supervisorReasonLabel ? (
-                                        <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/55 dark:bg-violet-500/15 dark:text-violet-200">
-                                          {supervisorReasonLabel}
-                                        </span>
-                                      ) : null}
+                                      <p className="text-[11px] text-ink/70">
+                                        Contato: {cloneItem.agenda?.contato ?? "-"}
+                                      </p>
                                     </div>
-                                    <p className="text-[11px] text-ink/70">
-                                      Pessoa: {item.agenda?.pessoa ?? "-"}
-                                    </p>
-                                    <p className="text-[11px] text-ink/70">
-                                      Contato: {item.agenda?.contato ?? "-"}
-                                    </p>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        openDetailsModal(item);
-                                      }}
-                                      className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
-                                      aria-label="Visualizar detalhes da empresa"
-                                      title="Visualizar detalhes da empresa"
-                                    >
-                                      <Eye size={12} />
-                                    </button>
-                                    {mapAddress ? (
-                                      <button
-                                        type="button"
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          openMapApp(mapAddress);
-                                        }}
-                                        className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
-                                        aria-label="Abrir mapa"
-                                        title="Abrir mapa"
-                                      >
-                                        <MapPin size={12} />
-                                      </button>
-                                    ) : null}
-                                    {canManage && (
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          if (isCompleted) return;
-                                          setEditState((prev) => ({
-                                            ...prev,
-                                            [item.id]:
-                                              prev[item.id] ?? {
-                                                vendorId: item.assigned_to_user_id ?? "",
-                                                date: toDateInput(item.visit_date),
-                                              },
-                                          }));
-                                          setEditingVisits((prev) => ({
-                                            ...prev,
-                                            [item.id]: !isEditing,
-                                          }));
-                                        }}
-                                        disabled={isCompleted}
-                                        className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
-                                        aria-label="Editar visita"
-                                        title="Editar visita"
-                                      >
-                                        <Pencil size={12} />
-                                      </button>
-                                    )}
+                                    <div className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sea/30 bg-sea/10 text-sea">
+                                      <GripVertical size={13} />
+                                    </div>
                                   </div>
                                 </div>
-
-                                {canManage && isEditing && !isCompleted ? (
-                                  <div className="mt-3 grid gap-2 md:grid-cols-3">
+                              );
+                            }}
+                          >
+                            {(dropProvided) => (
+                              <div
+                                ref={dropProvided.innerRef}
+                                {...dropProvided.droppableProps}
+                                className="mt-3 space-y-3 text-xs text-ink/70"
+                              >
+                                {(routeOrderEditVendor === seller ? getVendorRouteOrder(seller, items) : items.map((item) => item.id))
+                                  .map((itemId) => items.find((item) => item.id === itemId))
+                                  .filter((value): value is VisitRow => Boolean(value))
+                                  .map((item, index) => {
+                                    const state = editState[item.id] ?? {
+                                      vendorId: "",
+                                      date: toDateInput(item.visit_date),
+                                    };
+                                    const isSupervisorVisit = isSupervisorVisitType(item.visit_type);
+                                    const isEditing = editingVisits[item.id] ?? false;
+                                    const isCompleted = isVisitRegistered(item);
+                                    const canLoggedSupervisorRegister =
+                                      role === "SUPERVISOR" &&
+                                      isSupervisorVisit &&
+                                      isSupervisorVisitForLoggedUser(item);
+                                    const mapAddress = buildMapAddress(item.agenda);
+                                    const instructionText = item.instructions?.trim() || "";
+                                    const isEditRegisteredAction = isCompleted && !item.no_visit_reason;
+                                    const registerVisitButtonClass = [
+                                      "rounded-lg px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-60",
+                                      isEditRegisteredAction ? "bg-orange-500 hover:bg-orange-400" : "bg-sea hover:bg-seaLight",
+                                    ].join(" ");
+                                    const supervisorReasonLabel = item.supervisor_reason
+                                      ? SUPERVISOR_REASON_LABEL_BY_VALUE.get(item.supervisor_reason) ?? item.supervisor_reason
+                                      : null;
+                                    const isEditingOrder = routeOrderEditVendor === seller;
+                                    const itemOrderLabel = `${index + 1}`;
+                                  return (
+                                      <Draggable key={item.id} draggableId={item.id} index={index} isDragDisabled={!isEditingOrder}>
+                                        {(dragProvided, dragSnapshot) => (
+                                          <div
+                                            ref={dragProvided.innerRef}
+                                            {...dragProvided.draggableProps}
+                                            style={{
+                                              ...dragProvided.draggableProps.style,
+                                              zIndex: dragSnapshot.isDragging ? 9999 : undefined,
+                                              opacity: 1,
+                                            }}
+                                            className={[
+                                      "rounded-xl border p-3 transition-transform",
+                                      isSupervisorVisit
+                                        ? "border-violet-300 bg-violet-50/70 dark:border-violet-500/45 dark:bg-violet-950/45"
+                                        : "border-sea/10 bg-white/90",
+                                              isEditingOrder ? "ring-2 ring-sea/25" : "",
+                                              dragSnapshot.isDragging ? "scale-[1.03] shadow-2xl" : "",
+                                            ].join(" ")}
+                                          >
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                              <div>
+                                                <div className="flex items-center gap-2">
+                                                  <span
+                                                    className={[
+                                                      "inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-semibold",
+                                                      isEditingOrder
+                                                        ? "border-sea/30 bg-sea/15 text-sea"
+                                                        : "border-sea/15 bg-white text-ink/60",
+                                                    ].join(" ")}
+                                                  >
+                                                    {itemOrderLabel}
+                                                  </span>
+                                                  <p className="text-sm font-semibold text-ink">
+                                                    {item.agenda?.empresa ?? "Sem nome"}
+                                                  </p>
+                                                  <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
+                                                    COD {item.agenda?.cod_1 ?? "-"}
+                                                  </span>
+                                                  {item.agenda?.situacao ? (
+                                                    <span className="inline-flex rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
+                                                      {item.agenda.situacao}
+                                                    </span>
+                                                  ) : null}
+                                                  {canManage && item.agenda?.categoria ? (
+                                                    <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                                                      {item.agenda.categoria}
+                                                    </span>
+                                                  ) : null}
+                                                  {isSupervisorVisit ? (
+                                                    <span className="inline-flex rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/60 dark:bg-violet-500/20 dark:text-violet-200">
+                                                      Visita supervisor
+                                                    </span>
+                                                  ) : null}
+                                                  {isSupervisorVisit && supervisorReasonLabel ? (
+                                                    <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/55 dark:bg-violet-500/15 dark:text-violet-200">
+                                                      {supervisorReasonLabel}
+                                                    </span>
+                                                  ) : null}
+                                                </div>
+                                                <p className="text-[11px] text-ink/70">
+                                                  Pessoa: {item.agenda?.pessoa ?? "-"}
+                                                </p>
+                                                <p className="text-[11px] text-ink/70">
+                                                  Contato: {item.agenda?.contato ?? "-"}
+                                                </p>
+                                              </div>
+                                              <div className="flex items-center gap-2">
+                                                {isEditingOrder ? (
+                                                  <div
+                                                    {...dragProvided.dragHandleProps}
+                                                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sea/30 bg-sea/10 text-sea cursor-grab active:cursor-grabbing"
+                                                    aria-label="Arrastar rota"
+                                                    title="Arrastar rota"
+                                                  >
+                                                    <GripVertical size={13} />
+                                                  </div>
+                                                ) : null}
+                                                <button
+                                                  type="button"
+                                                  onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    openDetailsModal(item);
+                                                  }}
+                                                  className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
+                                                  aria-label="Visualizar detalhes da empresa"
+                                                  title="Visualizar detalhes da empresa"
+                                                >
+                                                  <Eye size={12} />
+                                                </button>
+                                                {mapAddress ? (
+                                                  <button
+                                                    type="button"
+                                                    onClick={(event) => {
+                                                      event.stopPropagation();
+                                                      openMapApp(mapAddress);
+                                                    }}
+                                                    className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
+                                                    aria-label="Abrir mapa"
+                                                    title="Abrir mapa"
+                                                  >
+                                                    <MapPin size={12} />
+                                                  </button>
+                                                ) : null}
+                                                {canManage && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      if (isCompleted) return;
+                                                      setEditState((prev) => ({
+                                                        ...prev,
+                                                        [item.id]:
+                                                          prev[item.id] ?? {
+                                                            vendorId: item.assigned_to_user_id ?? "",
+                                                            date: toDateInput(item.visit_date),
+                                                          },
+                                                      }));
+                                                      setEditingVisits((prev) => ({
+                                                        ...prev,
+                                                        [item.id]: !isEditing,
+                                                      }));
+                                                    }}
+                                                    disabled={isCompleted}
+                                                    className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
+                                                    aria-label="Editar visita"
+                                                    title="Editar visita"
+                                                  >
+                                                    <Pencil size={12} />
+                                                  </button>
+                                                )}
+                                              </div>
+                                            </div>
+                                            {canManage && isEditing && !isCompleted ? (
+                                              <div className="mt-3 grid gap-2 md:grid-cols-3">
                                     <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
                                       {isSupervisorVisit ? "Responsavel" : "Vendedor"}
                                       <select
@@ -3791,9 +3995,15 @@ export default function Visitas() {
                                   </div>
                                 )}
                               </div>
+                                )}
+                              </Draggable>
                             );
                           })}
-                        </div>
+                                {dropProvided.placeholder}
+                              </div>
+                            )}
+                          </Droppable>
+                        </DragDropContext>
                       )}
                     </div>
                   );
