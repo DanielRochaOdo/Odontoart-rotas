@@ -226,8 +226,6 @@ const ERP_SYNC_FIELD_LABELS: Record<string, string> = {
 
 const formatErpSyncStatusLabel = (status: string) => ERP_SYNC_STATUS_LABELS[status] ?? status;
 const formatErpSyncFieldLabel = (field: string) => ERP_SYNC_FIELD_LABELS[field] ?? field;
-const formatErpSyncFieldsList = (fields: string[]) =>
-  fields.map((field) => formatErpSyncFieldLabel(field)).join(", ") || "-";
 const formatErpSyncChangeSummary = (
   change: {
     field: string;

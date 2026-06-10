@@ -78,6 +78,10 @@ const toIsoDateInput = (value: string) => {
 const normalizeAddressValue = (value: string | null | undefined) =>
   normalizeSearchText(value);
 
+const debugCreateFlow = (_event?: unknown) => {
+  // Intentionally no-op in production build.
+};
+
 type AddressIdentity = {
   endereco?: string | null;
   cidade?: string | null;
