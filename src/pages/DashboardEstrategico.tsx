@@ -793,7 +793,6 @@ export default function DashboardEstrategico() {
           .range(clientesFrom, clientesFrom + CLIENTES_UNIVERSE_PAGE_SIZE - 1);
         if (pageClientesError) {
           // Non-blocking: keep dashboard alive even if full universe fails.
-          console.warn("Dashboard: falha ao carregar universo completo de clientes, usando parcial.", pageClientesError);
           break;
         }
         const page = (pageClientes ?? []) as ClienteLite[];
@@ -816,7 +815,6 @@ export default function DashboardEstrategico() {
       }
       if (countError) {
         // Non-blocking: fallback to loaded universe size.
-        console.warn("Dashboard: falha no count de clientes, usando fallback local.", countError);
       }
 
       const profileMap = new Map<string, string>();

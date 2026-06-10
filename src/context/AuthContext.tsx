@@ -1,4 +1,4 @@
-﻿/* eslint-disable react-refresh/only-export-components */
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
@@ -214,7 +214,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setProfile(resolvedProfile);
       setProfileError(null);
     } catch (error) {
-      console.error("Erro ao carregar perfil:", error);
       const message = error instanceof Error ? error.message : String(error ?? "");
       if (isAuthSessionError(message)) {
         try {
@@ -244,7 +243,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(activeSession);
         await fetchProfile(activeSession);
       } catch (error) {
-        console.error("Erro ao inicializar autenticacao:", error);
         if (!isMounted) return;
         setSession(null);
         setProfile(null);
@@ -262,7 +260,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (shouldBlockUi) setLoading(true);
       void fetchProfile(nextSession)
         .catch((error) => {
-          console.error("Erro ao atualizar perfil apos evento de auth:", error);
         })
         .finally(() => {
           if (isMounted && shouldBlockUi) setLoading(false);
@@ -300,11 +297,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           await withTimeout(supabase.auth.signOut(), AUTH_REQUEST_TIMEOUT_MS);
         } catch (error) {
-          console.error("Erro no signOut global, tentando signOut local:", error);
           try {
             await supabase.auth.signOut({ scope: "local" });
           } catch (localError) {
-            console.error("Erro no signOut local:", localError);
           }
         } finally {
           setSession(null);

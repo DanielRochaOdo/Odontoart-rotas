@@ -269,7 +269,6 @@ export default function AgendaDrawer({
 
       if (!active) return;
       if (error) {
-        console.error(error);
         setInstructionScopeVisitId(null);
         setScopedInstruction(null);
         setFormState((prev) => (prev ? { ...prev, instructions: "" } : prev));

@@ -58,6 +58,8 @@ export type OdontoartEmpresaResponseRow = {
   Logradouro?: string | null;
   Numero?: number | string | null;
   BairroNome?: string | null;
+  EmpresaGrupo?: string | null;
+  empresaGrupo?: string | null;
   Corte?: number | string | null;
   Vencimento?: number | string | null;
   ObservacaoComercial?: string | null;
@@ -277,6 +279,12 @@ const readStringByKeysFromUnknown = (value: unknown, keys: string[], depth = 0):
   return null;
 };
 
+const readGrupoFromUnknown = (value: unknown) => {
+  const direct = readStringByKeysFromUnknown(value, ["EmpresaGrupo"]);
+  if (direct) return direct;
+  return null;
+};
+
 const readObsFromUnknown = (value: unknown) =>
   readStringByKeysFromUnknown(value, OBS_CANDIDATE_KEYS, 0);
 
@@ -456,3 +464,6 @@ export const fetchObservacaoComercialByEmpresaId = async (empresaId: string) => 
   }
   return readObsFromUnknown(payload);
 };
+
+export const extractOdontoartGrupo = (empresa: OdontoartEmpresaResponseRow, payload?: unknown) =>
+  readGrupoFromUnknown(empresa) ?? readGrupoFromUnknown(payload) ?? null;

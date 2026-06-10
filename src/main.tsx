@@ -37,7 +37,6 @@ const clearServiceWorkersAndCaches = async () => {
       await Promise.all(keys.map((key) => caches.delete(key)));
     }
   } catch (error) {
-    console.warn("Falha ao limpar cache/PWA legado:", error);
   }
 };
 

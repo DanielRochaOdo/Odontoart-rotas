@@ -140,7 +140,6 @@ export default function FilaAlertsModal() {
           await generateFilaCountdownEvents();
           lastGenerateAtRef.current = now;
         } catch (error) {
-          console.warn("Falha ao gerar eventos de contagem regressiva do modulo fila:", error);
         }
       }
       const data = await fetchFilaPendingNotifications(50);
@@ -153,7 +152,6 @@ export default function FilaAlertsModal() {
         setRows([]);
         return;
       }
-      console.warn("Falha ao carregar avisos do modulo fila:", error);
     } finally {
       setLoading(false);
       loadInFlightRef.current = false;
@@ -238,7 +236,6 @@ export default function FilaAlertsModal() {
               try {
                 await Promise.allSettled(eventIds.map((eventId) => acknowledgeFilaNotification(eventId)));
               } catch (error) {
-                console.error("Falha ao confirmar aviso do modulo fila:", error);
               } finally {
                 setAcknowledging(false);
               }

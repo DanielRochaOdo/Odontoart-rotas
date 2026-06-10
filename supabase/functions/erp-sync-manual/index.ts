@@ -56,6 +56,13 @@ type SyncResult = {
   updated_rows: number;
   changed_rows: number;
   fields: string[];
+  field_details: Array<{
+    field: string;
+    from_values: Array<string | number | null>;
+    to_value: string | number | null;
+    changed: boolean;
+    changed_rows: number;
+  }>;
   changes: Array<{
     field: string;
     from_values: Array<string | number | null>;
@@ -221,6 +228,12 @@ const readStringByKeysFromUnknown = (value: unknown, keys: string[], depth = 0):
   return null;
 };
 
+const readGrupoFromUnknown = (value: unknown) => {
+  const direct = readStringByKeysFromUnknown(value, ["EmpresaGrupo", "empresaGrupo", "Grupo", "grupo"]);
+  if (direct) return direct;
+  return null;
+};
+
 const resolveValorTitular = (empresa: Record<string, unknown>) => {
   const fromValue = parseNumberFromUnknown(empresa.ValorTitular);
   if (fromValue !== null) return fromValue;
@@ -346,7 +359,10 @@ const buildClienteUpdatePayload = (empresa: Record<string, unknown>, payload: un
     readStringByKeysFromUnknown(empresa, ["NomeFantazia", "NomeFantasia", "RazaoSocial"]) ?? null;
   if (empresaNome) updates.empresa = empresaNome;
 
-  const grupo = readStringByKeysFromUnknown(empresa, ["Grupo", "grupo", "GrupoEmpresa", "grupoEmpresa"]);
+  const grupo =
+    readRecordValueByKeyInsensitive(empresa, "EmpresaGrupo") ??
+    readStringByKeysFromUnknown(empresa, ["EmpresaGrupo", "empresaGrupo", "Grupo", "grupo"]) ??
+    readStringByKeysFromUnknown(payload, ["EmpresaGrupo", "empresaGrupo", "Grupo", "grupo"]);
   if (grupo) updates.grupo = grupo;
 
   const obsComercial =
@@ -456,6 +472,12 @@ const normalizeComparableValue = (field: string, value: unknown): string | numbe
   return null;
 };
 
+const isMatrizClienteRow = (row: Record<string, unknown>) => {
+  const obs = row.obs;
+  if (typeof obs === "string") return obs.trim().length === 0;
+  return obs === null || obs === undefined;
+};
+
 const syncOneCode = async (code: string): Promise<SyncResult> => {
   try {
     const payload = await fetchOdontoartPayload(code);
@@ -468,6 +490,7 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
         updated_rows: 0,
         changed_rows: 0,
         fields: [],
+        field_details: [],
         changes: [],
         message: "Empresa nao encontrada no ERP.",
       };
@@ -483,6 +506,7 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
         updated_rows: 0,
         changed_rows: 0,
         fields: [],
+        field_details: [],
         changes: [],
         message: "Nenhum campo mapeado retornado pelo ERP para este codigo.",
       };
@@ -501,6 +525,7 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
         updated_rows: 0,
         changed_rows: 0,
         fields,
+        field_details: [],
         changes: [],
         message: localReadError.message,
       };
@@ -513,21 +538,38 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
         updated_rows: 0,
         changed_rows: 0,
         fields,
+        field_details: [],
         changes: [],
         message: "Codigo nao encontrado na base local.",
       };
     }
 
+    const matrizRows = localRows
+      .filter((row) => isMatrizClienteRow(row as Record<string, unknown>))
+      .map((row) => row as Record<string, unknown>);
+
+    if (!matrizRows.length) {
+      return {
+        code,
+        status: "no_mapped_fields",
+        updated_rows: 0,
+        changed_rows: 0,
+        fields,
+        field_details: [],
+        changes: [],
+        message: "Nenhuma matriz encontrada para este codigo. Filiais foram ignoradas.",
+      };
+    }
+
     const changedRowIds = new Set<string>();
-    const changes = fields
+    const fieldDetails = fields
       .map((field) => {
         const toValue = normalizeComparableValue(field, updates[field]);
         const fromValues: Array<string | number | null> = [];
         const fromValuesSeen = new Set<string>();
         let changedRowsCount = 0;
 
-        localRows.forEach((row) => {
-          const rowRecord = row as Record<string, unknown>;
+        matrizRows.forEach((rowRecord) => {
           const currentValue = normalizeComparableValue(field, rowRecord[field]);
           const equalValues = currentValue === toValue;
           if (equalValues) return;
@@ -543,15 +585,19 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
           }
         });
 
-        if (!changedRowsCount) return null;
         return {
           field,
           from_values: fromValues,
           to_value: toValue,
+          changed: changedRowsCount > 0,
           changed_rows: changedRowsCount,
         };
       })
       .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+    const changes = fieldDetails
+      .filter((item) => item.changed)
+      .map(({ changed, ...change }) => change);
 
     if (!changes.length) {
       return {
@@ -560,6 +606,7 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
         updated_rows: 0,
         changed_rows: 0,
         fields,
+        field_details: fieldDetails,
         changes: [],
         message: "Sem alteracoes detectadas na base local.",
       };
@@ -569,6 +616,7 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
       .from("clientes")
       .update(updates)
       .eq("codigo", code)
+      .or("obs.is.null,obs.eq.")
       .select("id");
 
     if (updateError) {
@@ -578,6 +626,7 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
         updated_rows: 0,
         changed_rows: 0,
         fields,
+        field_details: fieldDetails,
         changes: [],
         message: updateError.message,
       };
@@ -590,6 +639,7 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
       updated_rows: updatedCount,
       changed_rows: changedRowIds.size,
       fields,
+      field_details: fieldDetails,
       changes,
       message: null,
     };
@@ -600,6 +650,7 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
       updated_rows: 0,
       changed_rows: 0,
       fields: [],
+      field_details: [],
       changes: [],
       message: error instanceof Error ? error.message : "Erro ao sincronizar codigo.",
     };

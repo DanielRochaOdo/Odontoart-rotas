@@ -51,7 +51,6 @@ export const fetchClientesPage = async (params: {
     p_situacao: params.situacao || null,
   });
   if (error) throw new Error(error.message);
-  console.info("EMPRESAS_QUERY_SOURCE", "rpc_get_empresas_first_page_v1");
   return (data ?? []) as ClienteListRow[];
 };
 
@@ -60,39 +59,16 @@ export const fetchClientesCount = async (params: {
   searchMode?: "codigo" | "empresa" | "geral";
   situacao?: "" | "Ativo" | "Suspenso/Inadimplente" | "Cancelado";
 }) => {
-  console.info("COUNT_EXACT_FIX_2026_05_25", { module: "empresas", active: true });
-  console.info("COUNT_QUERY_FILTERS", {
-    module: "empresas",
-    search: params.search ?? "",
-    searchMode: params.searchMode ?? "codigo",
-    situacao: params.situacao ?? "",
-  });
-  const startedAt = performance.now();
   const searchTerm = sanitizeSearchTerm(params.search);
   const { data, error } = await supabase.rpc("get_empresas_count_v1", {
     p_search: searchTerm || null,
     p_search_mode: params.searchMode ?? "codigo",
     p_situacao: params.situacao || null,
   });
-  const duration = Math.round(performance.now() - startedAt);
   if (error) {
-    console.warn("COUNTER_REJECTED_ESTIMATED_TOTAL", {
-      module: "empresas",
-      reason: "rpc_count_failed_and_estimated_not_allowed",
-    });
-    console.info("COUNT_QUERY_SOURCE", "get_empresas_count_v1");
-    console.info("COUNT_QUERY_METHOD", "rpc_failed");
-    console.info("COUNT_QUERY_DURATION_MS", duration);
-    console.info("COUNT_QUERY_ERROR_SAFE", error.message);
-    console.info("COUNT_QUERY_RETURNED_VALUE", null);
     throw new Error(error.message);
   }
   const total = typeof data === "number" ? data : Number(data ?? 0);
-  console.info("COUNT_QUERY_SOURCE", "get_empresas_count_v1");
-  console.info("COUNT_QUERY_METHOD", "rpc");
-  console.info("COUNT_QUERY_DURATION_MS", duration);
-  console.info("COUNT_QUERY_ERROR_SAFE", null);
-  console.info("COUNT_QUERY_RETURNED_VALUE", total);
   return total;
 };
 
@@ -409,7 +385,6 @@ export const fetchClienteHistory = async (cliente: ClienteRow) => {
     .order("visit_date", { ascending: false });
 
   if (error) {
-    console.warn("Fallback de historico de visitas sem join cliente_id:", error.message);
 
     const fallbackByClienteId = await supabase
       .from("visits")

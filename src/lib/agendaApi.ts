@@ -1,4 +1,4 @@
-﻿import { supabase } from "./supabase";
+import { supabase } from "./supabase";
 import type { AgendaFilters, AgendaRow } from "../types/agenda";
 import type { SortingState } from "@tanstack/react-table";
 import { normalizeText } from "./textNormalize";
@@ -461,7 +461,6 @@ const fetchColumnValuesPaged = async (
 
     guard += 1;
     if (guard >= maxBatches) {
-      console.warn(`fetchColumnValuesPaged reached max batches for ${sourceTable}.`);
       break;
     }
   }
@@ -855,7 +854,6 @@ const fetchAgendaCandidateIdsForLatestVisitFilter = async (
 
     guard += 1;
     if (guard >= maxBatches) {
-      console.warn("fetchAgendaCandidateIdsForLatestVisitFilter reached max batches.");
       break;
     }
   }
@@ -924,34 +922,15 @@ export const fetchAgendaCountExact = async (
   filters: AgendaFilters,
   search?: AgendaSearchFilters,
 ) => {
-  console.info("COUNT_EXACT_FIX_2026_05_25", { module: "agenda", active: true });
   const context = await buildAgendaQueryContext(filters, search);
   const effectiveFilterKeys = Object.keys(context.effectiveFilters);
   const filtersEffectivelyEmpty = effectiveFilterKeys.length === 0;
   const rpcFilters = filtersEffectivelyEmpty ? {} : context.effectiveFilters;
-  console.info("ROTAS_RPC_FILTER_NORMALIZATION_FIX_2026_05_26", { active: true });
-  console.info("ROTAS_RPC_FILTERS_WERE_EFFECTIVELY_EMPTY", filtersEffectivelyEmpty);
-  console.info("ROTAS_RPC_FILTERS_SENT", filtersEffectivelyEmpty ? "{}" : rpcFilters);
-  console.info("ROTAS_RPC_FILTERS_SENT_KEYS", effectiveFilterKeys);
-  console.info("COUNT_QUERY_FILTERS", {
-    module: "agenda",
-    filters: rpcFilters,
-    companyName: context.companyName,
-    companyCode: context.companyCode,
-  });
   const start = performance.now();
 
   if (context.restrictedAgendaIds) {
     const total = await fetchAgendaCountExactDirect(filters, context);
     const duration = Math.round(performance.now() - start);
-    console.info("ROTAS_COUNTER_SOURCE", "clientes_direct_latest_registered_visit");
-    console.info("ROTAS_COUNTER_EXACT_DURATION_MS", duration);
-    console.info("ROTAS_COUNTER_VALUE", total);
-    console.info("COUNT_QUERY_SOURCE", "clientes_direct_latest_registered_visit");
-    console.info("COUNT_QUERY_METHOD", "direct");
-    console.info("COUNT_QUERY_DURATION_MS", duration);
-    console.info("COUNT_QUERY_ERROR_SAFE", null);
-    console.info("COUNT_QUERY_RETURNED_VALUE", total);
     return total;
   }
 
@@ -960,28 +939,10 @@ export const fetchAgendaCountExact = async (
     p_company_name: context.companyName || null,
     p_company_code: context.companyCode || null,
   });
-  const duration = Math.round(performance.now() - start);
   if (error) {
-    console.warn("COUNTER_REJECTED_ESTIMATED_TOTAL", {
-      module: "agenda",
-      reason: "rpc_count_failed_and_estimated_not_allowed",
-    });
-    console.info("COUNT_QUERY_SOURCE", "get_rotas_agenda_count_v1");
-    console.info("COUNT_QUERY_METHOD", "rpc_failed");
-    console.info("COUNT_QUERY_DURATION_MS", duration);
-    console.info("COUNT_QUERY_ERROR_SAFE", error.message);
-    console.info("COUNT_QUERY_RETURNED_VALUE", null);
     throw new Error(error.message);
   }
   const total = typeof data === "number" ? data : Number(data ?? 0);
-  console.info("ROTAS_COUNTER_SOURCE", "rpc_exact");
-  console.info("ROTAS_COUNTER_EXACT_DURATION_MS", duration);
-  console.info("ROTAS_COUNTER_VALUE", total);
-  console.info("COUNT_QUERY_SOURCE", "get_rotas_agenda_count_v1");
-  console.info("COUNT_QUERY_METHOD", "rpc");
-  console.info("COUNT_QUERY_DURATION_MS", duration);
-  console.info("COUNT_QUERY_ERROR_SAFE", null);
-  console.info("COUNT_QUERY_RETURNED_VALUE", total);
   return total;
 };
 
@@ -1000,48 +961,12 @@ export const fetchAgendaFirstPageLite = async (
   const pageOffset = pageIndex * pageSize;
   const shouldUseDirectQuery =
     hasActiveLastVisitDateRange(filters) || Boolean(context.companyCode.trim());
-
-  console.info("DB_OPT_PHASE_1_2026_05_25", { module: "agenda" });
-  console.info("CURRENT_TABLE_OR_VIEW", "rpc_get_rotas_agenda_first_page_v2");
-  console.info("CURRENT_SELECT_FIELDS", AGENDA_LITE_SELECT_COLUMNS);
-  console.info("CURRENT_FILTERS", {
-    filters: rpcFilters,
-    companyName: context.companyName,
-    companyCode: context.companyCode,
-    hasFilaExclusions: Boolean(context.filaBlocks?.blockedEmpresaIds.length),
-  });
-  console.info("CURRENT_ORDER_BY", "visit_generated_at desc nullslast, data_da_ultima_visita desc nullslast, id asc");
-  console.info("CURRENT_RANGE_FROM", pageOffset);
-  console.info("CURRENT_RANGE_TO", pageOffset + pageSize - 1);
-  console.info("CURRENT_HAS_JOINS", false);
-  console.info("CURRENT_HAS_EMBEDS", false);
   const rpcGlobalFilter =
     typeof context.effectiveFilters.global === "string" ? context.effectiveFilters.global : "";
-  console.info("CURRENT_HAS_ILIKE", Boolean(context.companyName || rpcGlobalFilter.trim()));
-  console.info("CURRENT_HAS_OR", true);
-  console.info("CURRENT_USES_COUNT", false);
-  console.info("CURRENT_QUERY_START", start);
-  console.info("ROTAS_REMOVED_HUGE_NOT_IN_2026_05_25", true);
-  console.info("ROTAS_EXCLUSION_SOURCE", "queue_release_controls_view");
-  console.info("ROTAS_EXCLUSION_COUNT", context.filaBlocks?.blockedEmpresaIds.length ?? 0);
-  console.info("ROTAS_QUERY_USES_HUGE_NOT_IN=false");
-  console.info("ROTAS_QUERY_SOURCE", "rpc_get_rotas_agenda_first_page_v2");
-  console.info("ROTAS_RPC_FILTER_NORMALIZATION_FIX_2026_05_26", { active: true });
-  console.info("ROTAS_RPC_FILTERS_WERE_EFFECTIVELY_EMPTY", filtersEffectivelyEmpty);
-  console.info("ROTAS_RPC_FILTERS_SENT", filtersEffectivelyEmpty ? "{}" : rpcFilters);
-  console.info("ROTAS_RPC_FILTERS_SENT_KEYS", effectiveFilterKeys);
 
   if (shouldUseDirectQuery) {
-    console.info("ROTAS_QUERY_SOURCE", "clientes_direct_first_page_fallback");
     const fallbackRows = await fetchAgendaFirstPageLiteDirect(pageIndex, pageSize, filters, context);
     const duration = Math.round(performance.now() - start);
-    console.info("CURRENT_QUERY_END", performance.now());
-    console.info("CURRENT_QUERY_DURATION_MS", duration);
-    console.info("ROTAS_QUERY_DURATION_MS", duration);
-    console.info("CURRENT_TIMEOUT_HIT", false);
-    console.info("CURRENT_ERROR_SAFE", null);
-    console.info("CURRENT_ROWS_RETURNED", fallbackRows.length);
-    console.info("ROTAS_ROWS_RETURNED", fallbackRows.length);
     return fallbackRows;
   }
 
@@ -1059,27 +984,16 @@ export const fetchAgendaFirstPageLite = async (
   } catch (rpcError) {
     const safeMessage = rpcError instanceof Error ? rpcError.message : String(rpcError ?? "");
     if (isStatementTimeoutError(safeMessage)) {
-      console.warn("ROTAS_RPC_TIMEOUT_FALLBACK_TO_DIRECT_QUERY", { safeMessage });
       return fetchAgendaFirstPageLiteDirect(pageIndex, pageSize, filters, context);
     }
     throw rpcError;
   }
 
   const duration = Math.round(performance.now() - start);
-  console.info("CURRENT_QUERY_END", performance.now());
-  console.info("CURRENT_QUERY_DURATION_MS", duration);
-  console.info("ROTAS_QUERY_DURATION_MS", duration);
-  console.info("CURRENT_TIMEOUT_HIT", response.error ? isStatementTimeoutError(response.error.message) : false);
-  console.info("CURRENT_ERROR_SAFE", response.error?.message ?? null);
   const rows = (response.data ?? []) as AgendaRow[];
-  console.info("CURRENT_ROWS_RETURNED", rows.length);
-  console.info("ROTAS_ROWS_RETURNED", rows.length);
 
   if (response.error) {
     if (isStatementTimeoutError(response.error.message)) {
-      console.warn("ROTAS_RPC_TIMEOUT_FALLBACK_TO_DIRECT_QUERY", {
-        safeMessage: response.error.message,
-      });
       return fetchAgendaFirstPageLiteDirect(pageIndex, pageSize, filters, context);
     }
     throw new Error(response.error.message);
@@ -1099,7 +1013,6 @@ export const fetchAgenda = async (
   const [data, count] = await Promise.all([
     fetchAgendaFirstPageLite(pageIndex, pageSize, sorting, filters, search),
     fetchAgendaCountExact(filters, search).catch((countError) => {
-      console.warn("fetchAgenda count query failed:", countError);
       return null;
     }),
   ]);
@@ -1303,7 +1216,6 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
       effectiveFilters = stripLastVisitDateRange(effectiveFilters);
     }
   } catch (err) {
-    console.error("Falha ao filtrar ultima visita por visitas:", err);
   }
 
   if (vidasRange) {
@@ -1311,7 +1223,6 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
       agendaIdsByVidas = await fetchAgendaIdsByLatestCompletedVidas(vidasRange);
       effectiveFilters = stripVidasRange(effectiveFilters);
     } catch (err) {
-      console.error("Falha ao filtrar vidas ultima visita por visitas:", err);
     }
   }
 
