@@ -605,7 +605,6 @@ export default function RoutesMap() {
           const options = await fetchDistinctOptions(key, sources);
           entries.push([key, options] as const);
         } catch (error) {
-          console.error(`Falha ao carregar opcoes do filtro "${key}" no mapa.`, error);
           entries.push([key, []] as const);
         }
       }
@@ -648,28 +647,9 @@ export default function RoutesMap() {
         if (!active) return;
         setEmpresaRows(empresas);
         setTotalEmpresasReal(totalReal);
-        console.info("ROTAS_COUNTER_DIAG_2026_05_25", { module: "routes-map", phase: "network" });
-        console.info("ROTAS_TOTAL_SOURCE", "supabase_count_exact_clientes");
-        console.info("ROTAS_CARD_VALUE", totalReal);
-        console.info("ROTAS_RENDERED_COUNT", empresas.length);
-        console.info("ROTAS_PAGE_SIZE", null);
-        console.info("ROTAS_QUERY_FILTERS", queryFilters);
-        console.info("ROTAS_USING_CACHE", false);
         if (Number.isFinite(totalReal) && empresas.length > 0 && totalReal === empresas.length) {
-          console.warn("COUNTER_SUSPECT_PAGE_SIZE_MATCH", {
-            module: "routes-map",
-            total: totalReal,
-            rendered: empresas.length,
-          });
+          void totalReal;
         }
-        console.info("WEB_ROTAS_COUNTER_FIX_2026_05_25", { active: true });
-        console.info("WEB_ROTAS_TOTAL_COUNT_REAL", totalReal);
-        console.info("WEB_ROTAS_TOTAL_SOURCE", "supabase_count_exact_clientes");
-        console.info("WEB_ROTAS_RENDERED_COUNT", empresas.length);
-        console.info("WEB_ROTAS_PAGE_SIZE", null);
-        console.info("WEB_ROTAS_CARD_VALUE", totalReal);
-        console.info("WEB_ROTAS_QUERY_FILTERS", queryFilters);
-        console.info("WEB_ROTAS_USING_CACHE", false);
       } catch (error) {
         if (!active) return;
         setEmpresaRows([]);
@@ -750,7 +730,6 @@ export default function RoutesMap() {
         setScheduledVisitsByEmpresa(grouped);
       })
       .catch((error) => {
-        console.error(error);
         if (!active) return;
         setScheduledVisitsByEmpresa({});
       });
@@ -781,7 +760,6 @@ export default function RoutesMap() {
         setSupervisorFlagByEmpresa(next);
       })
       .catch((error) => {
-        console.error(error);
         if (active) setSupervisorFlagByEmpresa({});
       });
 

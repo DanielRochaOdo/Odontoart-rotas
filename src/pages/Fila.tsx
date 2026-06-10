@@ -196,7 +196,6 @@ export default function Fila() {
         await runMaintenance();
       } catch (err) {
         const maybeError = err as { message?: string };
-        console.warn("Falha ao sincronizar fila em segundo plano:", maybeError.message ?? err);
       }
     })();
   }, [canManage, loadData, runMaintenance]);

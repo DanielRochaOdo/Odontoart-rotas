@@ -359,7 +359,6 @@ export default function Dashboard() {
       if (!active) return;
 
       if (supaError) {
-        console.error(supaError);
         setSupervisores([]);
         return;
       }
@@ -403,7 +402,6 @@ export default function Dashboard() {
       if (!active) return;
 
       if (vendorsError) {
-        console.error(vendorsError);
         setVendedores([]);
         setSelectedVendorId("all");
         return;
@@ -719,7 +717,6 @@ export default function Dashboard() {
           .slice(0, 6);
         setTopNeighborhoodsByVidas(topRows);
       } catch (err) {
-        console.error(err);
         if (active) setTopNeighborhoodsByVidas([]);
       }
     };

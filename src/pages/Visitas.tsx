@@ -671,7 +671,6 @@ export default function Visitas() {
           }
         })
         .catch((err) => {
-          console.error(err);
           if (active) setVendorsLoaded(true);
         });
     };
@@ -683,7 +682,6 @@ export default function Visitas() {
         .order("display_name", { ascending: true });
       if (!active) return;
       if (supaError) {
-        console.error(supaError);
         setSupervisores([]);
         return;
       }
@@ -880,7 +878,6 @@ export default function Visitas() {
             }
           }
         } catch (gateError) {
-          console.error(gateError);
           maxDate = startDate;
           blockReason = "Nao foi possivel validar as pendencias do vendedor. O acesso a proximas rotas foi bloqueado.";
         }
@@ -895,14 +892,10 @@ export default function Visitas() {
 
         if (!active) return;
         setMaxVisibleDate(maxDate);
-        console.info("VISITS_VENDOR_MAX_VISIBLE_DATE", maxDate);
-        console.info("VISITS_VENDOR_BLOCK_MESSAGE", blockReason ?? null);
       } else {
         if (!active) return;
         setMaxVisibleDate(null);
         setBlockMessage(null);
-        console.info("VISITS_VENDOR_MAX_VISIBLE_DATE", null);
-        console.info("VISITS_VENDOR_BLOCK_MESSAGE", null);
       }
 
       const monthSummaryStart = performance.now();
@@ -914,13 +907,6 @@ export default function Visitas() {
             : null;
       const rpcVisitType = isVendor ? VISIT_TYPE.VENDEDOR : null;
       const rpcCompletedOnly: boolean | null = null;
-      console.info("VISITS_SELECTED_SUPERVISOR", selectedSupervisorId);
-      console.info("VISITS_SELECTED_VENDOR", selectedVendorId);
-      console.info("VISITS_RPC_SUPERVISOR_PARAM", null);
-      console.info("VISITS_RPC_VENDOR_PARAM", selectedVendorId === "all" ? null : selectedVendorId);
-      console.info("VISITS_RPC_ASSIGNED_TO_USER_ID", rpcAssignedToUserId);
-      console.info("VISITS_RPC_VISIT_TYPE", rpcVisitType);
-      console.info("VISITS_RPC_COMPLETED_ONLY", rpcCompletedOnly);
       const { data: monthSummaryData, error: monthSummaryError } = await supabase.rpc(
         "get_visits_month_summary_v1",
         {
@@ -931,25 +917,12 @@ export default function Visitas() {
           p_completed_only: rpcCompletedOnly,
         },
       );
-      console.info("VISITS_MONTH_RANGE_FIX_2026_05_26", { active: true });
-      console.info("VISITS_MONTH_SUMMARY_FIX_2026_05_25", { active: true });
-      console.info("VISITS_MONTH_QUERY_SOURCE", "rpc_get_visits_month_summary_v1");
-      console.info("VISITS_MONTH_START", startDate);
-      console.info("VISITS_MONTH_END_EXCLUSIVE", monthEndExclusive);
-      console.info("VISITS_MONTH_QUERY_DURATION_MS", Math.round(performance.now() - monthSummaryStart));
-      console.info("VISITS_MONTH_ROWS_RETURNED", (monthSummaryData ?? []).length);
-      console.info("VISITS_MONTH_USES_HEAVY_EMBED=false");
-      console.info("VISITS_MONTH_OLD_PAGINATED_EMBED_DISABLED=true");
-      console.info("VISITS_RPC_RAW_RESULT", monthSummaryData ?? []);
       const rpcRawDays = (monthSummaryData ?? []).map((row: { visit_day?: string | null }) => row.visit_day ?? null);
-      console.info("VISITS_RPC_RAW_DAYS", rpcRawDays);
       const monthDaysAfterMay21 = (monthSummaryData ?? []).filter((row: { visit_day?: string | null }) => {
         const day = String((row as { visit_day?: string | null }).visit_day ?? "");
         return day >= "2026-05-22" && day < "2026-06-01";
       });
-      console.info("VISITS_DAYS_AFTER_2026_05_21", monthDaysAfterMay21.length);
       if (monthSummaryError) {
-        console.warn("VISITS_MONTH_SUMMARY_ERROR_SAFE", monthSummaryError.message);
       }
       const summaryMap = new Map<string, number>();
       (monthSummaryData ?? []).forEach((row: { visit_day?: string | null; total_visits?: number | null }) => {
@@ -961,14 +934,6 @@ export default function Visitas() {
       if (!active) return;
       setMonthSummaryCounts(summaryMap);
       const calendarKeys = Array.from(summaryMap.keys()).sort();
-      console.info("VISITS_CALENDAR_KEYS", calendarKeys);
-      console.info("VISITS_DAY_2026_05_22_TOTAL", summaryMap.get("2026-05-22") ?? 0);
-      console.info("VISITS_DAY_2026_05_23_TOTAL", summaryMap.get("2026-05-23") ?? 0);
-      console.info("VISITS_DAY_2026_05_24_TOTAL", summaryMap.get("2026-05-24") ?? 0);
-      console.info("VISITS_DAY_2026_05_25_TOTAL", summaryMap.get("2026-05-25") ?? 0);
-      console.info("VISITS_DAY_2026_05_26_TOTAL", summaryMap.get("2026-05-26") ?? 0);
-      console.info("VISITS_DAY_2026_05_27_TOTAL", summaryMap.get("2026-05-27") ?? 0);
-      console.info("VISITS_DAY_2026_05_28_TOTAL", summaryMap.get("2026-05-28") ?? 0);
 
       const buildVisitsQuery = () => {
         let query = supabase
@@ -1006,8 +971,6 @@ export default function Visitas() {
         from += VISITS_FETCH_PAGE_SIZE;
       }
       const recordsAfterMay21 = data.filter((row) => row.visit_date >= "2026-05-22" && row.visit_date < "2026-06-01").length;
-      console.info("VISITS_RECORDS_AFTER_2026_05_21", recordsAfterMay21);
-      console.info("VISITS_MONTH_ROWS_FETCHED_PAGED", data.length);
 
       if (!active) return;
 
@@ -1188,10 +1151,7 @@ export default function Visitas() {
     }
 
     if (canManage && canFilterBySupervisor) {
-      console.info("VISITS_FILTER_DEBUG", {
-        ...debugFilter,
-        totalAfter: scopedVisits.length,
-      });
+      void debugFilter;
     }
 
     return scopedVisits;
@@ -1289,19 +1249,6 @@ export default function Visitas() {
             : resolvedVisits.length > 0
               ? "day_details_loaded_with_data"
               : "day_details_loaded_empty";
-    console.info("VISITS_DAY_DETAILS_FIX_2026_05_26", { active: true });
-    console.info("VISITS_SELECTED_DAY", selectedDayStart);
-    console.info("VISITS_DAY_START", selectedDayStart);
-    console.info("VISITS_DAY_END_EXCLUSIVE", selectedDayEndExclusive);
-    console.info(
-      "VISITS_DAY_QUERY_SOURCE",
-      visitsForDate.length > 0 ? "filtered_visits_day_range" : "rest_selected_day_light",
-    );
-    console.info("VISITS_DAY_QUERY_DURATION_MS", 0);
-    console.info("VISITS_DAY_RAW_ROWS_RETURNED", resolvedVisits.length);
-    console.info("VISITS_DAY_TOTAL_FROM_DETAILS", resolvedVisits.length);
-    console.info("VISITS_DAY_TOTAL_FROM_MONTH_SUMMARY", daySummaryTotal);
-    console.info("VISITS_DAY_EMPTY_STATE_REASON", emptyStateReason);
     return [...resolvedVisits].sort((a, b) => {
       const aSupervisor = isSupervisorVisitType(a.visit_type);
       const bSupervisor = isSupervisorVisitType(b.visit_type);
@@ -1361,11 +1308,6 @@ export default function Visitas() {
       debugDayFilter.vendorScopedAfter = scopedVisits.length;
     }
 
-    console.info("VISITS_DAY_FILTER_DEBUG", {
-      ...debugDayFilter,
-      totalAfter: scopedVisits.length,
-    });
-
     return scopedVisits;
   }, [
     canFilterBySupervisor,
@@ -1405,14 +1347,6 @@ export default function Visitas() {
 
       setDayDetailsLoadingDateKey(selectedDayStart);
       setDayDetailsErrorByDate((prev) => ({ ...prev, [selectedDayStart]: null }));
-      console.info("VISITS_DAY_EMPTY_STATE_REASON", "local_cache_incomplete_fetching_day");
-      console.info("VISITS_DAY_SELECTED_SUPERVISOR", selectedSupervisorId);
-      console.info("VISITS_DAY_SELECTED_VENDOR", selectedVendorId);
-      console.info("VISITS_DAY_SUPERVISOR_PARAM", selectedSupervisorId === "all" ? null : selectedSupervisorId);
-      console.info("VISITS_DAY_VENDOR_PARAM", selectedVendorId === "all" ? null : selectedVendorId);
-      console.info("VISITS_DAY_ASSIGNED_TO_USER_ID", isVendor ? session?.user.id ?? null : selectedVendorId === "all" ? null : selectedVendorId);
-      console.info("VISITS_DAY_VISIT_TYPE", isVendor ? VISIT_TYPE.VENDEDOR : null);
-      console.info("VISITS_DAY_COMPLETED_ONLY", null);
 
       const startedAt = performance.now();
       let query = supabase
@@ -1438,16 +1372,10 @@ export default function Visitas() {
       const { data, error: dayError } = await query;
       if (!active) return;
 
-      console.info("VISITS_DAY_QUERY_SOURCE", "rest_selected_day_light");
-      console.info("VISITS_SELECTED_DAY", selectedDayStart);
-      console.info("VISITS_DAY_START", selectedDayStart);
-      console.info("VISITS_DAY_END_EXCLUSIVE", selectedDayEndExclusive);
-      console.info("VISITS_DAY_QUERY_DURATION_MS", Math.round(performance.now() - startedAt));
 
       if (dayError) {
         setDayDetailsErrorByDate((prev) => ({ ...prev, [selectedDayStart]: dayError.message }));
         setDayDetailsLoadingDateKey((current) => (current === selectedDayStart ? null : current));
-        console.warn("VISITS_DAY_DETAILS_ERROR_SAFE", dayError.message);
         return;
       }
 
@@ -1473,15 +1401,6 @@ export default function Visitas() {
       }
       setDayDetailsByDate((prev) => ({ ...prev, [selectedDayStart]: scopedDayDetails }));
       setDayDetailsLoadingDateKey((current) => (current === selectedDayStart ? null : current));
-      console.info("VISITS_DAY_RAW_ROWS_RETURNED", scopedDayDetails.length);
-      console.info(
-        "VISITS_DAY_GROUPS_RETURNED",
-        new Set(
-          scopedDayDetails.map(
-            (visit) => visit.assigned_to_name ?? visit.agenda?.supervisor ?? visit.agenda?.empresa ?? "Sem nome",
-          ),
-        ).size,
-      );
     };
 
     void loadDayDetails().catch((error) => {
@@ -1725,7 +1644,6 @@ export default function Visitas() {
 
       if (!active) return;
       if (releasesError) {
-        console.error(releasesError);
         setReleasedVendorIdsForDate([]);
         return;
       }
@@ -2551,7 +2469,6 @@ export default function Visitas() {
         const fromEndpoint = await fetchObservacaoComercialByEmpresaId(codigo);
         if (fromEndpoint?.trim()) return fromEndpoint.trim();
       } catch (error) {
-        console.error(error);
       }
     }
 
@@ -2628,7 +2545,6 @@ export default function Visitas() {
     ) => {
       const { data, error } = await queryPromise;
       if (error) {
-        console.error(error);
         return [] as ClienteCanonicalModalRow[];
       }
       return (data ?? []) as ClienteCanonicalModalRow[];
@@ -2793,7 +2709,6 @@ export default function Visitas() {
         setDetailsObsText((obsComercial ?? fallbackObs ?? "").trim());
       })
       .catch((err) => {
-        console.error(err);
       });
 
     void (async () => {
@@ -2806,7 +2721,6 @@ export default function Visitas() {
 
         if (detailsObsRequestRef.current !== requestId) return;
         if (error) {
-          console.error(error);
           setDetailsInstructionDraft(item.instructions ?? "");
           return;
         }
@@ -2822,7 +2736,6 @@ export default function Visitas() {
         );
       } catch (err) {
         if (detailsObsRequestRef.current !== requestId) return;
-        console.error(err);
         setDetailsInstructionDraft(item.instructions ?? "");
       }
     })();
@@ -2854,7 +2767,6 @@ export default function Visitas() {
           );
         })
         .catch((err) => {
-          console.error(err);
         });
     }
   };

@@ -150,6 +150,13 @@ export type ErpSyncExecuteItem = {
   updated_rows: number;
   changed_rows: number;
   fields: string[];
+  field_details: Array<{
+    field: string;
+    from_values: Array<string | number | null>;
+    to_value: string | number | null;
+    changed: boolean;
+    changed_rows: number;
+  }>;
   changes: Array<{
     field: string;
     from_values: Array<string | number | null>;

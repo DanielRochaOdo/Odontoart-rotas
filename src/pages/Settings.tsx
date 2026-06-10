@@ -139,7 +139,7 @@ type ErpSyncUnlockStoredState = {
 
 const readErpSyncUnlockStoredState = () => {
   try {
-    const raw = sessionStorage.getItem(ERP_SYNC_UNLOCK_STATE_KEY);
+    const raw = localStorage.getItem(ERP_SYNC_UNLOCK_STATE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<ErpSyncUnlockStoredState>;
     if (
@@ -158,10 +158,10 @@ const readErpSyncUnlockStoredState = () => {
 const writeErpSyncUnlockStoredState = (state: ErpSyncUnlockStoredState | null) => {
   try {
     if (!state) {
-      sessionStorage.removeItem(ERP_SYNC_UNLOCK_STATE_KEY);
+      localStorage.removeItem(ERP_SYNC_UNLOCK_STATE_KEY);
       return;
     }
-    sessionStorage.setItem(ERP_SYNC_UNLOCK_STATE_KEY, JSON.stringify(state));
+    localStorage.setItem(ERP_SYNC_UNLOCK_STATE_KEY, JSON.stringify(state));
   } catch {
     // ignore storage failures
   }
@@ -197,6 +197,71 @@ const formatErpSyncValue = (value: string | number | null) => {
   if (value === null) return "(vazio)";
   return String(value);
 };
+
+const ERP_SYNC_STATUS_LABELS: Record<string, string> = {
+  updated: "Atualizado",
+  no_changes: "Sem alteração",
+  local_not_found: "Não encontrado localmente",
+  erp_not_found: "Não encontrado no ERP",
+  no_mapped_fields: "Sem campos mapeados",
+  failed: "Falha",
+};
+
+const ERP_SYNC_FIELD_LABELS: Record<string, string> = {
+  codigo: "Código",
+  cnpj: "CNPJ",
+  empresa: "Empresa",
+  grupo: "Grupo",
+  obs_comercial: "Observação comercial",
+  corte: "Corte",
+  venc: "Vencimento",
+  valor: "Valor",
+  situacao: "Situação",
+  cidade: "Cidade",
+  uf: "UF",
+  endereco: "Endereço",
+  bairro: "Bairro",
+  cep: "CEP",
+};
+
+const formatErpSyncStatusLabel = (status: string) => ERP_SYNC_STATUS_LABELS[status] ?? status;
+const formatErpSyncFieldLabel = (field: string) => ERP_SYNC_FIELD_LABELS[field] ?? field;
+const formatErpSyncChangeSummary = (
+  change: {
+    field: string;
+    from_values: Array<string | number | null>;
+    to_value: string | number | null;
+    changed_rows: number;
+  },
+  ) =>
+  `${formatErpSyncFieldLabel(change.field)}: ${change.from_values
+    .map((value) => formatErpSyncValue(value))
+    .join(" / ")} -> ${formatErpSyncValue(change.to_value)} (${change.changed_rows})`;
+const formatErpSyncBooleanLabel = (value: boolean) => (value ? "Sim" : "Nao");
+const ERP_SYNC_FIELD_ORDER = [
+  "cnpj",
+  "empresa",
+  "grupo",
+  "obs_comercial",
+  "corte",
+  "venc",
+  "valor",
+  "situacao",
+  "cidade",
+  "uf",
+  "endereco",
+  "bairro",
+  "cep",
+];
+const sortErpSyncFields = (fields: string[]) =>
+  [...fields].sort((left, right) => {
+    const leftIndex = ERP_SYNC_FIELD_ORDER.indexOf(left);
+    const rightIndex = ERP_SYNC_FIELD_ORDER.indexOf(right);
+    if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right);
+    if (leftIndex === -1) return 1;
+    if (rightIndex === -1) return -1;
+    return leftIndex - rightIndex;
+  });
 
 const parseCodesFromWorkbook = (workbook: XLSX.WorkBook) => {
   const firstSheetName = workbook.SheetNames[0];
@@ -506,15 +571,10 @@ export default function Settings() {
   }, [activeTab, searchTerm]);
 
   useEffect(() => {
-    if (!canManageUsers || !session?.user.id) {
-      writeErpSyncUnlockStoredState(null);
-      return;
-    }
+    if (authLoading) return;
 
-    if (!erpUnlockToken || !erpUnlockExpiresAt) {
-      writeErpSyncUnlockStoredState(null);
-      return;
-    }
+    if (!canManageUsers || !session?.user.id) return;
+    if (!erpUnlockToken || !erpUnlockExpiresAt) return;
 
     const expiresAtMs = new Date(erpUnlockExpiresAt).getTime();
     if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
@@ -527,17 +587,14 @@ export default function Settings() {
       expires_at: erpUnlockExpiresAt,
       user_id: session.user.id,
     });
-  }, [canManageUsers, erpUnlockExpiresAt, erpUnlockToken, session?.user.id]);
+  }, [authLoading, canManageUsers, erpUnlockExpiresAt, erpUnlockToken, session?.user.id]);
 
   useEffect(() => {
-    if (!canManageUsers || !session?.user.id || erpUnlockToken) return;
+    if (authLoading || !canManageUsers || !session?.user.id || erpUnlockToken) return;
     const stored = readErpSyncUnlockStoredState();
     if (!stored) return;
 
-    if (stored.user_id !== session.user.id) {
-      writeErpSyncUnlockStoredState(null);
-      return;
-    }
+    if (stored.user_id !== session.user.id) return;
 
     const expiresAtMs = new Date(stored.expires_at).getTime();
     if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
@@ -548,7 +605,7 @@ export default function Settings() {
     setErpUnlockToken(stored.unlock_token);
     setErpUnlockExpiresAt(stored.expires_at);
     setErpUnlockError(null);
-  }, [canManageUsers, erpUnlockToken, session?.user.id]);
+  }, [authLoading, canManageUsers, erpUnlockToken, session?.user.id]);
 
   useEffect(() => {
     if (!erpUnlockToken || !erpUnlockExpiresAt) return;
@@ -1822,47 +1879,50 @@ export default function Settings() {
                       </p>
                     </div>
 
-                    <div className="space-y-3 rounded-xl border border-sea/15 bg-white/90 p-3">
-                      <p className="text-xs font-semibold text-ink/70">Upload CSV/XLSX</p>
-                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-sea/25 bg-white px-3 py-2 text-xs font-semibold text-ink/80 hover:border-sea">
-                        <UploadCloud size={14} />
-                        Carregar arquivo
-                        <input
-                          type="file"
-                          accept=".csv,.xlsx,.xls"
-                          className="hidden"
-                          onChange={(event) => void handleUploadErpCodes(event)}
-                        />
-                      </label>
-                      <p className="text-[11px] text-ink/60">
-                        Use coluna <code>codigo</code> (ou primeira coluna do arquivo).
-                      </p>
-                      <div className="flex flex-wrap items-end gap-2 pt-2">
-                        <button
-                          type="button"
-                          onClick={() => void handlePreviewErpSync()}
-                          disabled={erpPreviewLoading || !erpNormalizedCodes.length}
-                          className="inline-flex items-center gap-2 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
-                        >
-                          {erpPreviewLoading ? <LoaderCircle size={14} className="animate-spin" /> : null}
-                          {erpPreviewLoading ? "Gerando preview" : "Gerar preview"}
-                        </button>
+                    <div className="space-y-4 rounded-xl border border-sea/15 bg-white/90 p-3">
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-ink/70">Arquivo de códigos</p>
+                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-sea/25 bg-white px-3 py-2 text-xs font-semibold text-ink/80 hover:border-sea">
+                          <UploadCloud size={14} />
+                          Selecionar CSV ou XLSX
+                          <input
+                            type="file"
+                            accept=".csv,.xlsx,.xls"
+                            className="hidden"
+                            onChange={(event) => void handleUploadErpCodes(event)}
+                          />
+                        </label>
+                        <p className="text-[11px] text-ink/60">
+                          Informe a coluna <code>codigo</code> ou use a primeira coluna do arquivo.
+                        </p>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-[1fr_auto] lg:grid-cols-[1fr_auto_auto] lg:items-end">
                         <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
-                          Tamanho da onda (max {ERP_SYNC_MAX_WAVE_LIMIT})
+                          Limite do lote (max {ERP_SYNC_MAX_WAVE_LIMIT})
                           <input
                             value={erpWaveLimitInput}
                             onChange={(event) => setErpWaveLimitInput(sanitizeWaveLimit(event.target.value))}
-                            className="w-24 rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                            className="w-full rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
                           />
                         </label>
                         <button
                           type="button"
+                          onClick={() => void handlePreviewErpSync()}
+                          disabled={erpPreviewLoading || !erpNormalizedCodes.length}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                        >
+                          {erpPreviewLoading ? <LoaderCircle size={14} className="animate-spin" /> : null}
+                          {erpPreviewLoading ? "Gerando pré-visualização" : "Gerar pré-visualização"}
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => void handleExecuteErpWave()}
                           disabled={erpExecuteLoading || !erpCodesForExecution.length || erpRemainingCount <= 0}
-                          className="inline-flex items-center gap-2 rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/80 hover:border-sea disabled:opacity-60"
+                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/80 hover:border-sea disabled:opacity-60"
                         >
                           {erpExecuteLoading ? <LoaderCircle size={14} className="animate-spin" /> : null}
-                          {erpExecuteLoading ? "Processando onda" : "Executar proxima onda"}
+                          {erpExecuteLoading ? "Executando lote" : "Executar próximo lote"}
                         </button>
                       </div>
                     </div>
@@ -1907,44 +1967,92 @@ export default function Settings() {
                   )}
 
                   {erpLastWaveResults.length > 0 && (
-                    <div className="overflow-x-auto rounded-xl border border-sea/15 bg-white/95">
-                      <table className="min-w-full divide-y divide-sea/10 text-xs">
-                        <thead className="bg-sand/40 text-ink/70">
-                          <tr>
-                            <th className="px-3 py-2 text-left">Codigo</th>
-                            <th className="px-3 py-2 text-left">Status</th>
-                            <th className="px-3 py-2 text-left">Rows atualizadas</th>
-                            <th className="px-3 py-2 text-left">Rows alteradas</th>
-                            <th className="px-3 py-2 text-left">Campos</th>
-                            <th className="px-3 py-2 text-left">Mudancas</th>
-                            <th className="px-3 py-2 text-left">Mensagem</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-sea/10 text-ink/80">
-                          {erpLastWaveResults.map((result) => (
-                            <tr key={`${result.code}-${result.status}-${result.updated_rows}`}>
-                              <td className="whitespace-nowrap px-3 py-2 font-semibold text-ink">{result.code}</td>
-                              <td className="whitespace-nowrap px-3 py-2">{result.status}</td>
-                              <td className="whitespace-nowrap px-3 py-2">{result.updated_rows}</td>
-                              <td className="whitespace-nowrap px-3 py-2">{result.changed_rows}</td>
-                              <td className="px-3 py-2">{result.fields.join(", ") || "-"}</td>
-                              <td className="px-3 py-2">
-                                {result.changes.length
-                                  ? result.changes
-                                      .map(
-                                        (change) =>
-                                          `${change.field}: ${change.from_values
-                                            .map((value) => formatErpSyncValue(value))
-                                            .join(" / ")} -> ${formatErpSyncValue(change.to_value)} (${change.changed_rows})`,
-                                      )
-                                      .join(" | ")
-                                  : "-"}
-                              </td>
-                              <td className="px-3 py-2">{result.message ?? "-"}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    <div className="space-y-3 rounded-xl border border-sea/15 bg-white/95 p-3 dark:border-sea/30 dark:bg-slate-950/70">
+                      {erpLastWaveResults.map((result) => (
+                        <div
+                          key={`${result.code}-${result.status}-${result.updated_rows}`}
+                          className="rounded-xl border border-sea/15 bg-white p-3 dark:border-sea/30 dark:bg-slate-950/80"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold text-ink">Codigo {result.code}</p>
+                              <p className="text-[11px] text-ink/60">{formatErpSyncStatusLabel(result.status)}</p>
+                            </div>
+                            <div className="flex flex-wrap gap-3 text-[11px] text-ink/70">
+                              <span>Atualizados: {result.updated_rows}</span>
+                              <span>Alterados: {result.changed_rows}</span>
+                              <span>Campos lidos: {result.fields.length}</span>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 space-y-3">
+                            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                              {(result.field_details ?? []).length ? (
+                                sortErpSyncFields((result.field_details ?? []).map((field) => field.field)).map((fieldName) => {
+                                  const field = (result.field_details ?? []).find((item) => item.field === fieldName);
+                                  if (!field) return null;
+                                  return (
+                                  <div
+                                    key={`${result.code}-${field.field}`}
+                                    className={[
+                                      "rounded-lg border px-3 py-2 text-[11px] transition-colors",
+                                      field.changed
+                                        ? "border-emerald-400 bg-emerald-50 text-emerald-950 dark:border-emerald-500/60 dark:bg-emerald-950/35 dark:text-emerald-50"
+                                        : "border-sea/15 bg-sand/20 text-ink/70 dark:border-sea/30 dark:bg-slate-900/60 dark:text-slate-200",
+                                    ].join(" ")}
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="font-semibold text-ink dark:text-slate-100">{formatErpSyncFieldLabel(field.field)}</p>
+                                      <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink/70 dark:bg-slate-800 dark:text-slate-200">
+                                        Atualizado: {formatErpSyncBooleanLabel(field.changed)}
+                                      </span>
+                                    </div>
+                                    <p className="mt-1">
+                                      Antes:{" "}
+                                      {field.from_values.length ? field.from_values.map((value) => formatErpSyncValue(value)).join(" / ") : "-"}
+                                    </p>
+                                    <p>Depois: {formatErpSyncValue(field.to_value)}</p>
+                                  </div>
+                                  );
+                                })
+                              ) : result.fields.length ? (
+                                sortErpSyncFields(result.fields).map((field) => (
+                                  <div
+                                    key={`${result.code}-${field}`}
+                                    className="rounded-lg border border-sea/15 bg-sand/20 px-3 py-2 text-[11px] text-ink/70 dark:border-sea/30 dark:bg-slate-900/60 dark:text-slate-200"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="font-semibold text-ink dark:text-slate-100">{formatErpSyncFieldLabel(field)}</p>
+                                      <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink/70 dark:bg-slate-800 dark:text-slate-200">
+                                        Atualizado: Nao
+                                      </span>
+                                    </div>
+                                    <p className="mt-1">Antes: -</p>
+                                    <p>Depois: -</p>
+                                  </div>
+                                ))
+                              ) : (
+                                <p className="text-xs text-ink/60 dark:text-slate-300">Nenhum campo lido.</p>
+                              )}
+                            </div>
+
+                            {!(result.field_details ?? []).length && result.changes.length > 0 && (
+                              <div className="rounded-lg border border-sea/15 bg-white px-3 py-2 text-[11px] text-ink/70 dark:border-sea/30 dark:bg-slate-950/70 dark:text-slate-200">
+                                <p className="mb-1 font-semibold text-ink dark:text-slate-100">Campos alterados</p>
+                                <div className="space-y-1">
+                                  {result.changes.map((change) => (
+                                    <p key={`${result.code}-${change.field}`}>{formatErpSyncChangeSummary(change)}</p>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="rounded-lg border border-sea/15 bg-sand/20 px-3 py-2 text-[11px] text-ink/70 dark:border-sea/30 dark:bg-slate-900/60 dark:text-slate-200">
+                              {result.message ?? "Sem observacao."}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>

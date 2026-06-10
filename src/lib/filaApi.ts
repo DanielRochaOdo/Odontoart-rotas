@@ -504,7 +504,6 @@ export const syncFilaAutoRegistration = async (options?: {
         const alreadyInQueue = controlledIds.has(candidate.id);
         if (registered >= maxRegistrations) break;
         if (!codigo) {
-          console.warn(`${baseLog} bloqueada. Motivo: API_DATA_CONTRATO_NAO_RETORNADA`);
           if (reconcileExisting && alreadyInQueue) {
             try {
               await removeFilaEmpresa({
@@ -512,10 +511,8 @@ export const syncFilaAutoRegistration = async (options?: {
                 reason: "API_DATA_CONTRATO_NAO_RETORNADA",
               });
               removed += 1;
-              console.info(`${baseLog} removida da fila. Motivo: API_DATA_CONTRATO_NAO_RETORNADA`);
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error ?? "");
-              console.warn(`${baseLog} falha ao remover da fila. Erro: ${message}`);
             }
           }
           continue;
@@ -526,9 +523,7 @@ export const syncFilaAutoRegistration = async (options?: {
           empresa = await fetchEmpresaByEmpresaId(codigo);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error ?? "");
-          console.warn(
-            `${baseLog} bloqueada. Motivo: API_DATA_CONTRATO_NAO_RETORNADA. Erro: ${message}`,
-          );
+          void message;
           if (reconcileExisting && alreadyInQueue) {
             try {
               await removeFilaEmpresa({
@@ -536,11 +531,10 @@ export const syncFilaAutoRegistration = async (options?: {
                 reason: "API_DATA_CONTRATO_NAO_RETORNADA",
               });
               removed += 1;
-              console.info(`${baseLog} removida da fila. Motivo: API_DATA_CONTRATO_NAO_RETORNADA`);
             } catch (removeError) {
               const removeMessage =
                 removeError instanceof Error ? removeError.message : String(removeError ?? "");
-              console.warn(`${baseLog} falha ao remover da fila. Erro: ${removeMessage}`);
+              void removeMessage;
             }
           }
           continue;
@@ -553,9 +547,7 @@ export const syncFilaAutoRegistration = async (options?: {
             evaluation.detailReason === "DATA_CONTRATO_FORA_DO_CORTE"
               ? `dataContratoIso=${evaluation.dataContratoIso}`
               : `dataContratoRaw=${String(dataContratoRaw ?? "")}`;
-          console.info(
-            `${baseLog} bloqueada. Motivo: ${evaluation.reason}. Detalhe: ${evaluation.detailReason}. ${detail}`,
-          );
+          void detail;
           if (reconcileExisting && alreadyInQueue) {
             try {
               await removeFilaEmpresa({
@@ -563,18 +555,16 @@ export const syncFilaAutoRegistration = async (options?: {
                 reason: evaluation.reason,
               });
               removed += 1;
-              console.info(`${baseLog} removida da fila. Motivo: ${evaluation.reason}`);
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error ?? "");
-              console.warn(`${baseLog} falha ao remover da fila. Erro: ${message}`);
+              void message;
             }
           }
           continue;
         }
 
-        console.info(
-          `${baseLog} elegivel. Motivo: ${evaluation.reason}. dataContratoIso=${evaluation.dataContratoIso}`,
-        );
+        void baseLog;
+        void evaluation;
 
         if (alreadyInQueue) {
           continue;
@@ -600,9 +590,7 @@ export const syncFilaAutoRegistration = async (options?: {
         }
       }
 
-      if (removed > 0) {
-        console.info(`[fila:auto-register] remocoes por DataContrato: ${removed}`);
-      }
+      void removed;
       return registered;
     } finally {
       const finishedAt = Date.now();

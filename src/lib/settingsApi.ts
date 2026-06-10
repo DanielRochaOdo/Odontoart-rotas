@@ -317,7 +317,6 @@ export const fetchManagedUserEmails = async (userIds: string[]) => {
       if (message.toLowerCase().includes("structure of query does not match function result type")) {
         emailRpcLookupBlockedUntil = Date.now() + EMAIL_RPC_LOOKUP_COOLDOWN_MS;
       }
-      console.warn("list_profile_emails unavailable, using edge fallback:", message);
     }
   }
 
@@ -348,7 +347,6 @@ export const fetchManagedUserEmails = async (userIds: string[]) => {
         ? (data.missing_user_ids as string[])
         : [];
       if (missingUserIds.length > 0) {
-        console.warn(`manage-users list-emails missing ${missingUserIds.length} user(s).`);
       }
       return {
         ...rpcResultByUserId,
@@ -364,7 +362,6 @@ export const fetchManagedUserEmails = async (userIds: string[]) => {
   }
 
   emailLookupBlockedUntil = Date.now() + EMAIL_LOOKUP_COOLDOWN_MS;
-  console.warn("manage-users list-emails unavailable:", lastError?.message ?? "unknown error");
   return rpcResultByUserId;
 };
 

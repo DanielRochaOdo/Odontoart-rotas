@@ -6,6 +6,7 @@ import { fetchEmpresaByCnpjWs } from "../lib/cnpjWsApi";
 import {
   extractOdontoartPlanoValores,
   fetchEmpresaByEmpresaId,
+  extractOdontoartGrupo,
   resolveOdontoartValorTitular,
   type OdontoartPlanoValor,
   type OdontoartEmpresaResponseRow,
@@ -117,6 +118,9 @@ const resolveCepFromApi = (empresa: OdontoartEmpresaResponseRow) => {
   }
   return "";
 };
+
+const resolveGrupoFromApi = (empresa: OdontoartEmpresaResponseRow, payload?: unknown) =>
+  extractOdontoartGrupo(empresa, payload) ?? "";
 
 const normalizeStatus = (value: string) => {
   const cleaned = normalizeSearchText(value);
@@ -283,6 +287,7 @@ export default function PreCadastro() {
       valor: valor !== null ? new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(valor) : prev.valor,
       cep: resolveCepFromApi(empresa) || prev.cep,
       empresa: resolveEmpresaFromApi(empresa) || prev.empresa,
+      grupo: resolveGrupoFromApi(empresa, empresa) || prev.grupo,
       obs_comercial: (empresa.ObservacaoComercial ?? "").trim() || prev.obs_comercial,
       situacao: normalizeStatus(empresa.NomeSituacao ?? empresa.nomeSituacao ?? prev.situacao),
       endereco: buildEndereco(empresa.Logradouro, empresa.Numero) || prev.endereco,

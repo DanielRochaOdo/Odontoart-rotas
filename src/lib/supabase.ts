@@ -16,7 +16,6 @@ const isStandalonePwa = () => {
 const shouldUseFallbackAuthLock = isStandalonePwa();
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn("Missing Supabase env vars. Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.");
 }
 
 export const supabase = createClient(supabaseUrl ?? "", supabaseAnonKey ?? "", {
