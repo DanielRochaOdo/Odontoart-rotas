@@ -58,6 +58,7 @@ export type SupervisorLatestVisitByEmpresa = Record<string, SupervisorLatestVisi
 type EmpresasLookupSearch = {
   companyName?: string;
   companyCode?: string;
+  companyAddress?: string;
 };
 
 type EmpresasLookupOptions = {
@@ -153,6 +154,11 @@ const applyLookupFilters = <T,>(query: T, filters?: AgendaFilters, search?: Empr
   const companyName = sanitizeSearchTerm(search?.companyName);
   if (companyName) {
     next = next.ilike("empresa", `%${companyName}%`);
+  }
+
+  const companyAddress = sanitizeSearchTerm(search?.companyAddress);
+  if (companyAddress) {
+    next = next.ilike("endereco", `%${companyAddress}%`);
   }
 
   const dateRange = applied.dateRanges?.data_da_ultima_visita ?? {};

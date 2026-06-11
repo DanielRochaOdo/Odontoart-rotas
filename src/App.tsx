@@ -6,7 +6,6 @@ import AppLayout from "./layouts/AppLayout";
 const Login = lazy(() => import("./pages/Login"));
 const Dashboard = lazy(() => import("./pages/DashboardEstrategico"));
 const Agenda = lazy(() => import("./pages/Agenda"));
-const RoutesPage = lazy(() => import("./pages/Routes"));
 const Visitas = lazy(() => import("./pages/Visitas"));
 const AceiteDigital = lazy(() => import("./pages/AceiteDigital"));
 const Clientes = lazy(() => import("./pages/Clientes"));
@@ -32,7 +31,7 @@ function AppRoutes() {
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="dashboard-estrategico" element={<Navigate to="/dashboard" replace />} />
             <Route path="agenda" element={<Agenda />} />
-            <Route path="rotas" element={<RoutesPage />} />
+            <Route path="rotas" element={<Navigate to="/agenda" replace />} />
             <Route path="rotas/mapa" element={<Navigate to="/agenda" replace />} />
             <Route path="visitas" element={<Visitas />} />
             <Route path="aceite-digital" element={<AceiteDigital />} />

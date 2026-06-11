@@ -30,6 +30,13 @@ const GLOBAL_SEARCH_COLUMNS = [
 const normalizeOption = (value: string) =>
   value.trim().replace(/\s+/g, " ").toUpperCase();
 
+const normalizeSearchTerm = (value?: string | null) =>
+  (value ?? "")
+    .replace(/[%_]/g, " ")
+    .replace(/,/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
 const CATEGORIA_SEM_CATEGORIA_NORMALIZED = normalizeOption(CATEGORIA_FILTER_SEM_CATEGORIA);
 
 const formatOrValues = (values: string[]) =>
@@ -145,6 +152,20 @@ const resolveFilaRoutingBlocks = async () => {
     throw error;
   }
 };
+
+const applyEnderecoContainsFilter = <T,>(query: T, value?: string | null): T => {
+  const term = normalizeSearchTerm(value);
+  if (!term) return query;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (query as any).ilike("endereco", `%${term}%`) as T;
+};
+
+const getEnderecoColumnFilter = (filters: AgendaFilters) =>
+  normalizeSearchTerm(filters.columns.endereco?.[0]);
+
+const hasEnderecoSearch = (filters: AgendaFilters, context: AgendaQueryContext) =>
+  Boolean(context.companyAddress.trim() || getEnderecoColumnFilter(filters));
 
 const mapAgendaColumnToClientes = (column: string) => {
   if (column === "cod_1") return "codigo";
@@ -392,7 +413,6 @@ const CLIENTES_FILTER_COLUMN_MAP: Record<string, string> = {
   bairro: "bairro",
   cidade: "cidade",
   uf: "uf",
-  endereco: "endereco",
   situacao: "situacao",
   categoria: "categoria",
 };
@@ -495,6 +515,7 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
   Object.entries(filters.columns).forEach(([key, values]) => {
     if (key === "supervisor_flag") return;
     if (key === "situacao") return;
+    if (key === "endereco") return;
     if (!values || values.length === 0) return;
     const cleaned = values.map((value) => normalizeOption(value)).filter(Boolean);
     if (cleaned.length === 0) return;
@@ -560,6 +581,8 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
       next = next.or(conditions);
     }
   }
+
+  next = applyEnderecoContainsFilter(next, getEnderecoColumnFilter(filters));
 
   const { month, year, from, to, invert } = filters.dateRanges.data_da_ultima_visita;
   const hasMonthYear = Boolean(month || year);
@@ -646,6 +669,7 @@ export type AgendaFetchResult = {
 export type AgendaSearchFilters = {
   companyName?: string;
   companyCode?: string;
+  companyAddress?: string;
 };
 
 export type AgendaScheduledVisit = {
@@ -680,6 +704,7 @@ type AgendaQueryContext = {
   restrictedAgendaIds: string[] | null;
   companyName: string;
   companyCode: string;
+  companyAddress: string;
   filaBlocks: FilaRoutingBlockLists | null;
 };
 
@@ -740,6 +765,10 @@ const fetchAgendaFirstPageLiteDirect = async (
     query = query.eq("codigo", context.companyCode);
   }
 
+  if (context.companyAddress) {
+    query = applyEnderecoContainsFilter(query, context.companyAddress);
+  }
+
   const response = await query.range(pageOffset, pageOffset + pageSize - 1);
   if (response.error) throw new Error(response.error.message);
   const rows = (response.data ?? []) as AgendaRow[];
@@ -753,6 +782,7 @@ const buildAgendaRpcFilters = (filters: AgendaFilters): Record<string, unknown> 
 
   (Object.keys(filters.columns) as Array<keyof AgendaFilters["columns"]>).forEach((key) => {
     if (key === "supervisor_flag") return;
+    if (key === "endereco") return;
     const values = filters.columns[key] ?? [];
     const cleaned = values.map((value) => normalizeOption(value)).filter(Boolean);
     if (cleaned.length === 0) return;
@@ -805,6 +835,7 @@ const fetchAgendaCandidateIdsForLatestVisitFilter = async (
 
   const companyName = search?.companyName?.replace(/%/g, "").trim() ?? "";
   const companyCode = search?.companyCode?.replace(/%/g, "").trim() ?? "";
+  const companyAddress = search?.companyAddress?.replace(/%/g, "").trim() ?? "";
   const queryFilters = stripLastVisitDateRange(filters);
   const rows: string[] = [];
   const pageSize = 1000;
@@ -830,11 +861,15 @@ const fetchAgendaCandidateIdsForLatestVisitFilter = async (
       }
     }
 
-    if (companyCode) {
-      query = query.eq("codigo", companyCode);
-    }
+  if (companyCode) {
+    query = query.eq("codigo", companyCode);
+  }
 
-    if (cursorId) {
+  if (companyAddress) {
+    query = applyEnderecoContainsFilter(query, companyAddress);
+  }
+
+  if (cursorId) {
       query = query.gt("id", cursorId);
     }
 
@@ -867,6 +902,7 @@ const buildAgendaQueryContext = async (
 ): Promise<AgendaQueryContext> => {
   const companyName = search?.companyName?.replace(/%/g, "").trim() ?? "";
   const companyCode = search?.companyCode?.replace(/%/g, "").trim() ?? "";
+  const companyAddress = search?.companyAddress?.replace(/%/g, "").trim() ?? "";
   const filaBlocks = await resolveFilaRoutingBlocks();
   const candidateAgendaIds = await fetchAgendaCandidateIdsForLatestVisitFilter(filters, search, filaBlocks);
   const rawRestrictedAgendaIds = await fetchAgendaIdsByLatestRegisteredVisitDate(
@@ -880,6 +916,7 @@ const buildAgendaQueryContext = async (
     restrictedAgendaIds,
     companyName,
     companyCode,
+    companyAddress,
     filaBlocks,
   };
 };
@@ -913,6 +950,13 @@ const fetchAgendaCountExactDirect = async (
     query = query.eq("codigo", context.companyCode);
   }
 
+  if (context.companyAddress) {
+    const term = context.companyAddress.replace(/,/g, " ").trim();
+    if (term) {
+      query = query.ilike("endereco", `%${term}%`);
+    }
+  }
+
   const { count, error } = await query;
   if (error) throw new Error(error.message);
   return count ?? 0;
@@ -928,7 +972,7 @@ export const fetchAgendaCountExact = async (
   const rpcFilters = filtersEffectivelyEmpty ? {} : context.effectiveFilters;
   const start = performance.now();
 
-  if (context.restrictedAgendaIds) {
+  if (context.restrictedAgendaIds || hasEnderecoSearch(filters, context)) {
     const total = await fetchAgendaCountExactDirect(filters, context);
     const duration = Math.round(performance.now() - start);
     return total;
@@ -960,14 +1004,14 @@ export const fetchAgendaFirstPageLite = async (
   const start = performance.now();
   const pageOffset = pageIndex * pageSize;
   const shouldUseDirectQuery =
-    hasActiveLastVisitDateRange(filters) || Boolean(context.companyCode.trim());
+    hasActiveLastVisitDateRange(filters) ||
+    Boolean(context.companyCode.trim()) ||
+    hasEnderecoSearch(filters, context);
   const rpcGlobalFilter =
     typeof context.effectiveFilters.global === "string" ? context.effectiveFilters.global : "";
 
   if (shouldUseDirectQuery) {
-    const fallbackRows = await fetchAgendaFirstPageLiteDirect(pageIndex, pageSize, filters, context);
-    const duration = Math.round(performance.now() - start);
-    return fallbackRows;
+    return fetchAgendaFirstPageLiteDirect(pageIndex, pageSize, filters, context);
   }
 
   let response:
@@ -982,10 +1026,6 @@ export const fetchAgendaFirstPageLite = async (
       p_company_code: context.companyCode || null,
     })) as { data: AgendaRow[] | null; error: { message: string } | null };
   } catch (rpcError) {
-    const safeMessage = rpcError instanceof Error ? rpcError.message : String(rpcError ?? "");
-    if (isStatementTimeoutError(safeMessage)) {
-      return fetchAgendaFirstPageLiteDirect(pageIndex, pageSize, filters, context);
-    }
     throw rpcError;
   }
 
@@ -993,9 +1033,6 @@ export const fetchAgendaFirstPageLite = async (
   const rows = (response.data ?? []) as AgendaRow[];
 
   if (response.error) {
-    if (isStatementTimeoutError(response.error.message)) {
-      return fetchAgendaFirstPageLiteDirect(pageIndex, pageSize, filters, context);
-    }
     throw new Error(response.error.message);
   }
   const deduped = dedupeAgendaRows(rows);
@@ -1012,9 +1049,7 @@ export const fetchAgenda = async (
 ): Promise<AgendaFetchResult> => {
   const [data, count] = await Promise.all([
     fetchAgendaFirstPageLite(pageIndex, pageSize, sorting, filters, search),
-    fetchAgendaCountExact(filters, search).catch((countError) => {
-      return null;
-    }),
+    fetchAgendaCountExact(filters, search),
   ]);
   return { data, count };
 };

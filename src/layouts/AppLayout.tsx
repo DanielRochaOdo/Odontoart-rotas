@@ -67,7 +67,8 @@ export default function AppLayout() {
     const root = document.documentElement;
     root.classList.toggle("dark", theme === "dark");
     document.body.classList.toggle("dark", theme === "dark");
-  }, [theme]);
+    root.style.setProperty("--sidebar-width", collapsed ? "84px" : "272px");
+  }, [theme, collapsed]);
   const isVendor = role === "VENDEDOR";
   const enableVendorSettingsInSidebar = isVendor && isAndroidAppHost();
   const effectiveVendorSettingsOpen = enableVendorSettingsInSidebar && vendorSettingsOpen;

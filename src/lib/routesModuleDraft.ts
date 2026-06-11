@@ -1,6 +1,7 @@
 export type RoutesModuleDraftState = {
   companyNameQuery?: string;
   companyCodeQuery?: string;
+  companyAddressQuery?: string;
   selectedEmpresaIds?: string[];
   selectedAgendaIds?: string[];
   selectedVendorIds?: string[];
@@ -68,6 +69,7 @@ const normalizeDraft = (value: RoutesModuleDraftState | null | undefined): Route
   return {
     companyNameQuery: normalizeString(value?.companyNameQuery),
     companyCodeQuery: normalizeString(value?.companyCodeQuery),
+    companyAddressQuery: normalizeString(value?.companyAddressQuery),
     selectedEmpresaIds,
     selectedAgendaIds,
     selectedVendorIds: normalizeStringArray(value?.selectedVendorIds),
@@ -114,6 +116,7 @@ export const writeRoutesModuleDraft = (draft: RoutesModuleDraftState) => {
       generationTab: draft.generationTab ?? current.generationTab ?? "VENDEDOR",
       supervisorReasonByEmpresaId:
         draft.supervisorReasonByEmpresaId ?? current.supervisorReasonByEmpresaId ?? {},
+      companyAddressQuery: draft.companyAddressQuery ?? current.companyAddressQuery ?? "",
       selectedBairroKeys: draft.selectedBairroKeys ?? current.selectedBairroKeys ?? [],
       excludedBairroEmpresaIds:
         draft.excludedBairroEmpresaIds ?? current.excludedBairroEmpresaIds ?? [],

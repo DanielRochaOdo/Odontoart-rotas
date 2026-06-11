@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
@@ -8,7 +9,6 @@ import {
   Info,
   LoaderCircle,
   MapPin,
-  PencilLine,
   GripVertical,
   Check,
   SquareCenterlineDashedHorizontal,
@@ -582,8 +582,10 @@ export default function Agenda() {
   const setFilters = setDraftFilters;
   const [companyNameQuery, setCompanyNameQuery] = useState("");
   const [companyCodeQuery, setCompanyCodeQuery] = useState("");
+  const [companyAddressQuery, setCompanyAddressQuery] = useState("");
   const [appliedCompanyNameQuery, setAppliedCompanyNameQuery] = useState("");
   const [appliedCompanyCodeQuery, setAppliedCompanyCodeQuery] = useState("");
+  const [appliedCompanyAddressQuery, setAppliedCompanyAddressQuery] = useState("");
   const [hasSearched, setHasSearched] = useState(true);
   const [data, setData] = useState<AgendaRow[]>([]);
   const [totalCount, setTotalCount] = useState<number | null>(null);
@@ -968,6 +970,10 @@ export default function Agenda() {
       setCompanyCodeQuery(draft.companyCodeQuery);
       setAppliedCompanyCodeQuery(draft.companyCodeQuery);
     }
+    if (typeof draft.companyAddressQuery === "string") {
+      setCompanyAddressQuery(draft.companyAddressQuery);
+      setAppliedCompanyAddressQuery(draft.companyAddressQuery);
+    }
     if (Array.isArray(draft.selectedAgendaIds)) {
       setSelectedAgendaIds(Array.from(new Set(draft.selectedAgendaIds.filter(Boolean))));
     }
@@ -1316,7 +1322,7 @@ export default function Agenda() {
 
   useEffect(() => {
     setPageIndex(0);
-  }, [appliedCompanyCodeQuery, appliedCompanyNameQuery, appliedFilters, sorting]);
+  }, [appliedCompanyAddressQuery, appliedCompanyCodeQuery, appliedCompanyNameQuery, appliedFilters, sorting]);
 
   useEffect(() => {
     if (!routesDraftHydrated) return;
@@ -1324,8 +1330,9 @@ export default function Agenda() {
       selectedAgendaIds,
       companyNameQuery,
       companyCodeQuery,
+      companyAddressQuery,
     });
-  }, [companyCodeQuery, companyNameQuery, routesDraftHydrated, selectedAgendaIds]);
+  }, [companyAddressQuery, companyCodeQuery, companyNameQuery, routesDraftHydrated, selectedAgendaIds]);
 
   useEffect(() => {
     if (!canAccess) return;
@@ -1416,6 +1423,7 @@ export default function Agenda() {
       filters: appliedFilters,
       companyNameQuery: appliedCompanyNameQuery.trim(),
       companyCodeQuery: appliedCompanyCodeQuery.trim(),
+      companyAddressQuery: appliedCompanyAddressQuery.trim(),
     });
     const cached = readAgendaPageCache(requestKey);
 
@@ -1444,6 +1452,7 @@ export default function Agenda() {
         const queryFilters = {
           companyName: appliedCompanyNameQuery,
           companyCode: appliedCompanyCodeQuery,
+          companyAddress: appliedCompanyAddressQuery,
         };
         let inflight = agendaStartupSingleflight.get(requestKey);
         const inflightReused = Boolean(inflight);
@@ -2803,7 +2812,7 @@ export default function Agenda() {
       {
         accessorKey: "empresa",
         header: ({ column }) => (
-          <div className="flex flex-col items-center justify-center gap-1 text-center">
+          <div className="flex items-center justify-center gap-1.5 text-center">
             {renderSortLabel(column, "Empresa")}
             <MultiSelectFilter
               label={
@@ -2856,7 +2865,7 @@ export default function Agenda() {
       {
         accessorKey: "categoria",
         header: ({ column }) => (
-          <div className="flex flex-col items-center justify-center gap-1 text-center">
+          <div className="flex items-center justify-center gap-1.5 text-center">
             {renderSortLabel(column, "Categoria")}
             <MultiSelectFilter
               label={
@@ -2914,7 +2923,7 @@ export default function Agenda() {
       {
         accessorKey: "bairro",
         header: ({ column }) => (
-          <div className="flex flex-col items-center justify-center gap-1 text-center">
+          <div className="flex items-center justify-center gap-1.5 text-center">
             {renderSortLabel(column, "Bairro")}
             <MultiSelectFilter
               label={
@@ -2939,7 +2948,7 @@ export default function Agenda() {
       {
         accessorKey: "cidade",
         header: ({ column }) => (
-          <div className="flex flex-col items-center justify-center gap-1 text-center">
+          <div className="flex items-center justify-center gap-1.5 text-center">
             {renderSortLabel(column, "Cidade")}
             <MultiSelectFilter
               label={
@@ -2964,7 +2973,7 @@ export default function Agenda() {
       {
         accessorKey: "vendedor",
         header: ({ column }) => (
-          <div className="flex flex-col items-center justify-center gap-1 text-center">
+          <div className="flex items-center justify-center gap-1.5 text-center">
             {renderSortLabel(column, "Vendedor")}
             <MultiSelectFilter
               label={
@@ -2997,25 +3006,6 @@ export default function Agenda() {
             <div className="space-y-1">
               <div className="relative min-h-[22px] pr-11">
                 <p className={`${tableCellTextClass} text-[9px]`}>{vendorLabel}</p>
-                {canEdit && editableVendors.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void toggleVendorRouteEditor(
-                        row.id,
-                        editableVendors[0].userId as string,
-                        editableVendors[0].name,
-                      );
-                    }}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    className="absolute right-6 top-0 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-sea/30 bg-sea/10 text-sea hover:border-sea hover:bg-sea/20"
-                    title="Editar ordem das rotas"
-                    aria-label="Editar ordem das rotas"
-                  >
-                    <PencilLine size={10} />
-                  </button>
-                ) : null}
                 {hasAnyHistoryDate ? (
                   <button
                     type="button"
@@ -3122,7 +3112,7 @@ export default function Agenda() {
       {
         accessorKey: "grupo",
         header: ({ column }) => (
-          <div className="flex flex-col items-center justify-center gap-1 text-center">
+          <div className="flex items-center justify-center gap-1.5 text-center">
             {renderSortLabel(column, "Grupo")}
             <MultiSelectFilter
               label={
@@ -3147,7 +3137,7 @@ export default function Agenda() {
       {
         accessorKey: "perfil_visita",
         header: ({ column }) => (
-          <div className="flex flex-col items-center justify-center gap-1 text-center">
+          <div className="flex items-center justify-center gap-1.5 text-center">
             {renderSortLabel(column, "Perfil Visita")}
             <MultiSelectFilter
               label={
@@ -3203,11 +3193,11 @@ export default function Agenda() {
   });
 
   const tableCellTextClass =
-    "min-w-0 max-w-full whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word] leading-tight";
+    "min-w-0 max-w-full whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word] leading-tight text-center";
   const tableCellInnerClass =
-    "min-w-0 max-w-full whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word]";
+    "flex min-w-0 max-w-full items-center justify-center whitespace-normal break-words text-center [overflow-wrap:anywhere] [word-break:break-word]";
   const tableFlexWrapClass =
-    "min-w-0 max-w-full flex flex-wrap items-center gap-1 whitespace-normal break-words [overflow-wrap:anywhere]";
+    "min-w-0 max-w-full flex flex-wrap items-center justify-center gap-1 whitespace-normal break-words text-center [overflow-wrap:anywhere]";
 
   const compactColumnWidths: Record<string, number> = {
     select: 3,
@@ -3239,6 +3229,14 @@ export default function Agenda() {
         id: "chip-company-code",
         label: `Codigo: ${companyCodeQuery}`,
         onRemove: () => setCompanyCodeQuery(""),
+      });
+    }
+
+    if (companyAddressQuery) {
+      chips.push({
+        id: "chip-company-address",
+        label: `Endereco: ${companyAddressQuery}`,
+        onRemove: () => setCompanyAddressQuery(""),
       });
     }
 
@@ -3520,6 +3518,7 @@ export default function Agenda() {
     setAppliedFilters(filters);
     setAppliedCompanyNameQuery(companyNameQuery.trim());
     setAppliedCompanyCodeQuery(companyCodeQuery.trim());
+    setAppliedCompanyAddressQuery(companyAddressQuery.trim());
     setExcludedAgendaIds([]);
     setPageIndex(0);
     setHasSearched(true);
@@ -3531,8 +3530,10 @@ export default function Agenda() {
     clearAppliedFilters();
     setCompanyNameQuery("");
     setCompanyCodeQuery("");
+    setCompanyAddressQuery("");
     setAppliedCompanyNameQuery("");
     setAppliedCompanyCodeQuery("");
+    setAppliedCompanyAddressQuery("");
     setExcludedAgendaIds([]);
     setSelectedAgendaIds([]);
     setSorting([]);
@@ -3546,6 +3547,7 @@ export default function Agenda() {
     writeRoutesModuleDraft({
       companyNameQuery: "",
       companyCodeQuery: "",
+      companyAddressQuery: "",
       selectedAgendaIds: [],
     });
   };
@@ -3565,151 +3567,241 @@ export default function Agenda() {
       </header>
 
       <section className="p-0">
-        <div className="flex flex-col gap-4">
-          <div
-            className={`grid gap-3 md:grid-cols-2 xl:items-end ${
-              role === "SUPERVISOR"
-                ? "xl:grid-cols-[minmax(0,1.5fr)_minmax(220px,0.9fr)_minmax(170px,0.8fr)_minmax(180px,0.9fr)_minmax(180px,0.9fr)]"
-                : "xl:grid-cols-[minmax(0,1.7fr)_minmax(220px,1fr)_minmax(180px,0.95fr)_minmax(180px,0.95fr)]"
-            }`}
-          >
-            <label className="flex flex-col gap-1">
-              <span className="text-[11px] font-semibold text-ink/70">Termo por nome (palavra exata)</span>
-              <input
-                value={companyNameQuery}
-                onChange={(event) => setCompanyNameQuery(event.target.value)}
-                placeholder="Ex.: rio"
-                id="agenda-company-name-search"
-                name="agendaCompanyNameSearch"
-                className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-[11px] font-semibold text-ink/70">Busca exata por codigo</span>
-              <input
-                value={companyCodeQuery}
-                onChange={(event) => setCompanyCodeQuery(event.target.value)}
-                placeholder="Busca exata por codigo"
-                id="agenda-company-code-search"
-                name="agendaCompanyCodeSearch"
-                className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
-              />
-            </label>
-            {role === "SUPERVISOR" ? (
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] font-semibold text-ink/70">Flag supervisor</span>
-                <div className="flex h-10 items-center justify-between rounded-lg border border-sea/20 bg-white/90 px-3">
-                  <span className="text-xs text-ink/60">
-                    {(filters.columns.supervisor_flag ?? []).length
-                      ? `${(filters.columns.supervisor_flag ?? []).length} selecionada(s)`
-                      : "Todas"}
-                  </span>
-                  <MultiSelectFilter
-                    label={
-                      (filters.columns.supervisor_flag ?? []).length
-                        ? `Flag (${filters.columns.supervisor_flag.length})`
-                        : "Flag"
-                    }
-                    options={SUPERVISOR_FLAG_FILTER_OPTIONS.map((option) => option.label)}
-                    value={(filters.columns.supervisor_flag ?? []).map(getSupervisorFlagOptionLabel)}
-                    onApply={(nextLabels) =>
-                      setFilters((prev) => ({
-                        ...prev,
-                        columns: {
-                          ...prev.columns,
-                          supervisor_flag: nextLabels
-                            .map(getSupervisorFlagOptionValue)
-                            .filter(
-                              (value): value is SupervisorFlagFilterValue => value !== null,
-                            ),
-                        },
-                      }))
-                    }
-                  />
-                </div>
-              </label>
-            ) : null}
-            <label className="flex flex-col gap-1">
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-ink/70">
-                Categoria
-                <CategoriaLegendPopover />
-              </span>
-              <div className="flex h-10 items-center justify-between rounded-lg border border-sea/20 bg-white/90 px-3">
-                <span className="text-xs text-ink/60">
-                  {(filters.columns.categoria ?? []).length
-                    ? `${(filters.columns.categoria ?? []).length} selecionada(s)`
-                    : "Selecione"}
-                </span>
-                <MultiSelectFilter
-                  label={
-                    (filters.columns.categoria ?? []).length
-                      ? `Categoria (${filters.columns.categoria.length})`
-                      : "Categoria"
-                  }
-                  options={filterOptions.categoria ?? [...CATEGORIA_OPTIONS, CATEGORIA_FILTER_SEM_CATEGORIA]}
-                  value={filters.columns.categoria ?? []}
-                  onApply={(next) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      columns: { ...prev.columns, categoria: next },
-                    }))
-                  }
-                />
+        <div className="rounded-3xl border border-sea/15 bg-white/88 p-3 shadow-[0_16px_40px_rgba(2,6,23,0.12)] backdrop-blur md:p-4 dark:border-emerald-400/20 dark:bg-slate-950/95 dark:shadow-[0_16px_40px_rgba(2,6,23,0.28)]">
+          <div className="mb-2 border-b border-emerald-400/10 pb-2">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-300/90">
+                Filtros de pesquisa
+              </p>
               </div>
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-[11px] font-semibold text-ink/70">Situacao da empresa</span>
-              <div className="flex h-10 items-center justify-between rounded-lg border border-sea/20 bg-white/90 px-3">
-                <span className="text-xs text-ink/60">
-                  {(filters.columns.situacao ?? []).length
-                    ? `${(filters.columns.situacao ?? []).length} selecionada(s)`
-                    : "Ativo"}
-                </span>
-                <MultiSelectFilter
-                  label={
-                    (filters.columns.situacao ?? []).length
-                      ? `Situacao (${filters.columns.situacao.length})`
-                      : "Situacao"
-                  }
-                  options={filterOptions.situacao ?? [...SITUACAO_FILTER_OPTIONS]}
-                  value={filters.columns.situacao ?? []}
-                  onApply={(next) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      columns: { ...prev.columns, situacao: next },
-                    }))
-                  }
-                />
-              </div>
-            </label>
+            </div>
           </div>
 
-          <div className="grid gap-4">
-            <div className="flex flex-col gap-1 md:hidden">
-              <div className="flex items-center gap-2">
-                <label className="text-[11px] font-semibold text-ink/70">Bairro</label>
-                <MultiSelectFilter
-                  label={
-                    (filters.columns.bairro ?? []).length
-                      ? `Selecionados (${filters.columns.bairro.length})`
-                      : "Selecionar"
-                  }
-                  options={filterOptions.bairro ?? []}
-                  value={filters.columns.bairro}
-                  onApply={(next) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      columns: { ...prev.columns, bairro: next },
-                    }))
-                  }
-                />
+          <div className="space-y-3">
+            <div className="rounded-2xl border border-sea/15 bg-white/80 p-3 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
+              <div className="mb-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sea dark:text-emerald-300/90">
+                  Busca rapida
+                </p>
+              </div>
+              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-12">
+                <label className="flex flex-col gap-0.5 xl:col-span-5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                    Termo por nome
+                  </span>
+                  <input
+                    value={companyNameQuery}
+                    onChange={(event) => setCompanyNameQuery(event.target.value)}
+                    placeholder="Ex.: rio"
+                    id="agenda-company-name-search"
+                    name="agendaCompanyNameSearch"
+                    className="h-9 w-full rounded-xl border border-sea/20 bg-white/90 px-3 text-xs text-ink outline-none placeholder:text-ink/40 focus:border-sea focus:ring-2 focus:ring-sea/15 dark:border-emerald-400/20 dark:bg-slate-950/80 dark:text-slate-100 dark:placeholder:text-slate-500"
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5 xl:col-span-3">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                    Codigo
+                  </span>
+                  <input
+                    value={companyCodeQuery}
+                    onChange={(event) => setCompanyCodeQuery(event.target.value)}
+                    placeholder="Busca exata por codigo"
+                    id="agenda-company-code-search"
+                    name="agendaCompanyCodeSearch"
+                    className="h-9 w-full rounded-xl border border-sea/20 bg-white/90 px-3 text-xs text-ink outline-none placeholder:text-ink/40 focus:border-sea focus:ring-2 focus:ring-sea/15 dark:border-emerald-400/20 dark:bg-slate-950/80 dark:text-slate-100 dark:placeholder:text-slate-500"
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5 xl:col-span-4">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                    Endereco
+                  </span>
+                  <input
+                    value={companyAddressQuery}
+                    onChange={(event) => setCompanyAddressQuery(event.target.value)}
+                    placeholder="Rua, avenida, bairro..."
+                    id="agenda-company-address-search"
+                    name="agendaCompanyAddressSearch"
+                    className="h-9 w-full rounded-xl border border-sea/20 bg-white/90 px-3 text-xs text-ink outline-none placeholder:text-ink/40 focus:border-sea focus:ring-2 focus:ring-sea/15 dark:border-emerald-400/20 dark:bg-slate-950/80 dark:text-slate-100 dark:placeholder:text-slate-500"
+                  />
+                </label>
               </div>
             </div>
 
-            <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(220px,280px)] xl:items-end">
-              <div className="flex flex-col gap-1">
-                <span className="text-[11px] font-semibold text-ink/70">Ultima visita</span>
-                <div className="flex flex-wrap items-center gap-2">
+            <div className="rounded-2xl border border-sea/15 bg-white/80 p-3 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
+              <div className="mb-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sea dark:text-emerald-300/90">
+                  Classificacao e status
+                </p>
+              </div>
+              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                {role === "SUPERVISOR" ? (
+                  <label className="flex flex-col gap-0.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                      Flag supervisor
+                    </span>
+                    <div className="flex h-9 items-center justify-between rounded-xl border border-sea/20 bg-white px-3 dark:border-emerald-400/20 dark:bg-slate-950/80">
+                      <span className="text-xs text-ink/55 dark:text-slate-400">
+                        {(filters.columns.supervisor_flag ?? []).length
+                          ? `${(filters.columns.supervisor_flag ?? []).length} selecionada(s)`
+                          : "Todas"}
+                      </span>
+                      <MultiSelectFilter
+                        label={
+                          (filters.columns.supervisor_flag ?? []).length
+                            ? `Flag (${filters.columns.supervisor_flag.length})`
+                            : "Flag"
+                        }
+                        options={SUPERVISOR_FLAG_FILTER_OPTIONS.map((option) => option.label)}
+                        value={(filters.columns.supervisor_flag ?? []).map(getSupervisorFlagOptionLabel)}
+                        onApply={(nextLabels) =>
+                          setFilters((prev) => ({
+                            ...prev,
+                            columns: {
+                              ...prev.columns,
+                              supervisor_flag: nextLabels
+                                .map(getSupervisorFlagOptionValue)
+                                .filter((value): value is SupervisorFlagFilterValue => value !== null),
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                  </label>
+                ) : null}
+                <label className="flex flex-col gap-0.5">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                    Categoria
+                    <CategoriaLegendPopover />
+                  </span>
+                  <div className="flex h-9 items-center justify-between rounded-xl border border-sea/20 bg-white px-3 dark:border-emerald-400/20 dark:bg-slate-950/80">
+                    <span className="text-xs text-ink/55 dark:text-slate-400">
+                      {(filters.columns.categoria ?? []).length
+                        ? `${(filters.columns.categoria ?? []).length} selecionada(s)`
+                        : "Selecione"}
+                    </span>
+                    <MultiSelectFilter
+                      label={
+                        (filters.columns.categoria ?? []).length
+                          ? `Categoria (${filters.columns.categoria.length})`
+                          : "Categoria"
+                      }
+                      options={filterOptions.categoria ?? [...CATEGORIA_OPTIONS, CATEGORIA_FILTER_SEM_CATEGORIA]}
+                      value={filters.columns.categoria ?? []}
+                      onApply={(next) =>
+                        setFilters((prev) => ({
+                          ...prev,
+                          columns: { ...prev.columns, categoria: next },
+                        }))
+                      }
+                    />
+                  </div>
+                </label>
+                <label className="flex flex-col gap-0.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                    Situacao da empresa
+                  </span>
+                  <div className="flex h-9 items-center justify-between rounded-xl border border-sea/20 bg-white/90 px-3 dark:border-emerald-400/20 dark:bg-slate-950/80">
+                    <span className="text-xs text-ink/55 dark:text-slate-400">
+                      {(filters.columns.situacao ?? []).length
+                        ? `${(filters.columns.situacao ?? []).length} selecionada(s)`
+                        : "Ativo"}
+                    </span>
+                    <MultiSelectFilter
+                      label={
+                        (filters.columns.situacao ?? []).length
+                          ? `Situacao (${filters.columns.situacao.length})`
+                          : "Situacao"
+                      }
+                      options={filterOptions.situacao ?? [...SITUACAO_FILTER_OPTIONS]}
+                      value={filters.columns.situacao ?? []}
+                      onApply={(next) =>
+                        setFilters((prev) => ({
+                          ...prev,
+                          columns: { ...prev.columns, situacao: next },
+                        }))
+                      }
+                    />
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-sea/15 bg-white/80 p-4 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
+              <div className="mb-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sea dark:text-emerald-300/90">
+                  Vidas ultima visita
+                </p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-12 xl:items-end">
+                <label className="flex flex-col gap-1 xl:col-span-5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/60 dark:text-slate-300">De</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={filters.ranges.vidas_ultima_visita.from ?? ""}
+                    onChange={(event) => {
+                      const nextValue = normalizeNumberInput(event.target.value);
+                      setFilters((prev) => ({
+                        ...prev,
+                        ranges: {
+                          ...prev.ranges,
+                          vidas_ultima_visita: {
+                            ...prev.ranges.vidas_ultima_visita,
+                            from: nextValue || undefined,
+                          },
+                        },
+                      }));
+                    }}
+                    placeholder="De"
+                    id="agenda-vidas-from"
+                    name="agendaVidasFrom"
+                    className="h-11 w-full rounded-xl border border-sea/20 bg-white/90 px-3 text-sm text-ink outline-none placeholder:text-ink/40 focus:border-sea focus:ring-2 focus:ring-sea/15 dark:border-emerald-400/20 dark:bg-slate-950/80 dark:text-slate-100 dark:placeholder:text-slate-500"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 xl:col-span-5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/60 dark:text-slate-300">Ate</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={filters.ranges.vidas_ultima_visita.to ?? ""}
+                    onChange={(event) => {
+                      const nextValue = normalizeNumberInput(event.target.value);
+                      setFilters((prev) => ({
+                        ...prev,
+                        ranges: {
+                          ...prev.ranges,
+                          vidas_ultima_visita: {
+                            ...prev.ranges.vidas_ultima_visita,
+                            to: nextValue || undefined,
+                          },
+                        },
+                      }));
+                    }}
+                    placeholder="Ate"
+                    id="agenda-vidas-to"
+                    name="agendaVidasTo"
+                    className="h-11 w-full rounded-xl border border-sea/20 bg-white/90 px-3 text-sm text-ink outline-none placeholder:text-ink/40 focus:border-sea focus:ring-2 focus:ring-sea/15 dark:border-emerald-400/20 dark:bg-slate-950/80 dark:text-slate-100 dark:placeholder:text-slate-500"
+                  />
+                </label>
+                <div className="flex items-center justify-end xl:col-span-2 xl:pb-1">
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-sea/15 bg-white/80 p-4 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
+              <div className="mb-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sea dark:text-emerald-300/90">
+                  Ultima visita
+                </p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-12 xl:items-end">
+                <label className="flex flex-col gap-1 xl:col-span-3">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/60 dark:text-slate-300">
+                    Data inicial
+                  </span>
                   <input
                     type="date"
                     value={filters.dateRanges.data_da_ultima_visita.from ?? ""}
@@ -3729,9 +3821,13 @@ export default function Agenda() {
                     }
                     id="agenda-duv-from"
                     name="agendaDuvFrom"
-                    className="min-w-[148px] flex-1 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                    className="h-11 w-full rounded-xl border border-sea/20 bg-white/90 px-3 text-sm text-ink outline-none focus:border-sea focus:ring-2 focus:ring-sea/15 dark:border-emerald-400/20 dark:bg-slate-950/80 dark:text-slate-100"
                   />
-                  <span className="text-xs text-ink/50">ate</span>
+                </label>
+                <label className="flex flex-col gap-1 xl:col-span-3">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/60 dark:text-slate-300">
+                    Data final
+                  </span>
                   <input
                     type="date"
                     value={filters.dateRanges.data_da_ultima_visita.to ?? ""}
@@ -3751,9 +3847,11 @@ export default function Agenda() {
                     }
                     id="agenda-duv-to"
                     name="agendaDuvTo"
-                    className="min-w-[148px] flex-1 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                    className="h-11 w-full rounded-xl border border-sea/20 bg-white/90 px-3 text-sm text-ink outline-none focus:border-sea focus:ring-2 focus:ring-sea/15 dark:border-emerald-400/20 dark:bg-slate-950/80 dark:text-slate-100"
                   />
-                  <span className="text-xs font-semibold text-ink/50">Ou</span>
+                </label>
+                <label className="flex flex-col gap-1 xl:col-span-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/60 dark:text-slate-300">Ou mes</span>
                   <select
                     value={filters.dateRanges.data_da_ultima_visita.month ?? ""}
                     onChange={(event) =>
@@ -3776,7 +3874,7 @@ export default function Agenda() {
                     }
                     id="agenda-duv-month"
                     name="agendaDuvMonth"
-                    className="min-w-[120px] rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
+                    className="h-11 w-full rounded-xl border border-sea/20 bg-white/90 px-3 text-sm text-ink outline-none focus:border-sea focus:ring-2 focus:ring-sea/15 dark:border-emerald-400/20 dark:bg-slate-950/80 dark:text-slate-100"
                   >
                     <option value="">Mes</option>
                     {MONTH_OPTIONS.map((option) => (
@@ -3785,6 +3883,9 @@ export default function Agenda() {
                       </option>
                     ))}
                   </select>
+                </label>
+                <label className="flex flex-col gap-1 xl:col-span-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/60 dark:text-slate-300">Ano</span>
                   <input
                     type="number"
                     inputMode="numeric"
@@ -3806,112 +3907,44 @@ export default function Agenda() {
                     }
                     id="agenda-duv-year"
                     name="agendaDuvYear"
-                    className="w-20 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea sm:w-24"
+                    className="h-11 w-full rounded-xl border border-sea/20 bg-white/90 px-3 text-sm text-ink outline-none placeholder:text-ink/40 focus:border-sea focus:ring-2 focus:ring-sea/15 dark:border-emerald-400/20 dark:bg-slate-950/80 dark:text-slate-100 dark:placeholder:text-slate-500"
                   />
-                  <label className="ml-auto flex items-center gap-2 text-[11px] font-semibold text-ink/60">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFilters((prev) => ({
-                          ...prev,
-                          dateRanges: {
-                            ...prev.dateRanges,
-                            data_da_ultima_visita: {
-                              ...prev.dateRanges.data_da_ultima_visita,
-                              invert: !prev.dateRanges.data_da_ultima_visita.invert,
-                            },
-                          },
-                        }))
-                      }
-                      aria-label="Alternar exclusao do periodo do filtro de ultima visita"
-                      className={[
-                        "inline-flex h-6 w-6 items-center justify-center rounded-md border transition",
-                        filters.dateRanges.data_da_ultima_visita.invert
-                          ? "border-sea bg-sea/10 text-sea"
-                          : "border-sea/30 bg-white text-ink/50 hover:border-sea hover:text-sea",
-                      ].join(" ")}
-                    >
-                      <SquareCenterlineDashedHorizontal size={14} />
-                    </button>
-                    Excluir periodo
-                  </label>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-semibold text-ink/70">Vidas ultima visita</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    value={filters.ranges.vidas_ultima_visita.from ?? ""}
-                    onChange={(event) => {
-                      const nextValue = normalizeNumberInput(event.target.value);
+                </label>
+                <div className="flex h-9 items-center gap-2 xl:col-span-2 xl:justify-end">
+                  <button
+                    type="button"
+                    onClick={() =>
                       setFilters((prev) => ({
                         ...prev,
-                        ranges: {
-                          ...prev.ranges,
-                          vidas_ultima_visita: {
-                            ...prev.ranges.vidas_ultima_visita,
-                            from: nextValue || undefined,
+                        dateRanges: {
+                          ...prev.dateRanges,
+                          data_da_ultima_visita: {
+                            ...prev.dateRanges.data_da_ultima_visita,
+                            invert: !prev.dateRanges.data_da_ultima_visita.invert,
                           },
                         },
-                      }));
-                    }}
-                    placeholder="De"
-                    id="agenda-vidas-from"
-                    name="agendaVidasFrom"
-                    className="w-full rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                  />
-                  <span className="text-xs text-ink/50">ate</span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    value={filters.ranges.vidas_ultima_visita.to ?? ""}
-                    onChange={(event) => {
-                      const nextValue = normalizeNumberInput(event.target.value);
-                      setFilters((prev) => ({
-                        ...prev,
-                        ranges: {
-                          ...prev.ranges,
-                          vidas_ultima_visita: {
-                            ...prev.ranges.vidas_ultima_visita,
-                            to: nextValue || undefined,
-                          },
-                        },
-                      }));
-                    }}
-                    placeholder="Ate"
-                    id="agenda-vidas-to"
-                    name="agendaVidasTo"
-                    className="w-full rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                  />
+                      }))
+                    }
+                    aria-label="Alternar exclusao do periodo do filtro de ultima visita"
+                    className={[
+                      "inline-flex h-7 w-7 items-center justify-center rounded-lg border transition",
+                      filters.dateRanges.data_da_ultima_visita.invert
+                        ? "border-emerald-300 bg-emerald-400/10 text-emerald-300"
+                        : "border-sea/20 bg-white/90 text-ink/55 hover:border-sea hover:text-sea dark:border-emerald-400/20 dark:bg-slate-950/80 dark:text-slate-400 dark:hover:border-emerald-300 dark:hover:text-emerald-300",
+                    ].join(" ")}
+                  >
+                    <SquareCenterlineDashedHorizontal size={15} />
+                  </button>
+                  <span className="text-xs font-medium uppercase tracking-[0.14em] text-ink/55 dark:text-slate-400">
+                    Inverter busca
+                  </span>
                 </div>
               </div>
             </div>
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-              <button
-                type="button"
-                onClick={handleApplySearch}
-                className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight"
-              >
-                Buscar
-              </button>
-              <button
-                type="button"
-                onClick={handleClearFilters}
-                className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
-              >
-                Limpar filtros
-              </button>
-            </div>
-
-            <div className="flex flex-col gap-1">
-              {canGenerate && (
-                <div className="mt-2 flex items-center justify-start gap-3">
+            <div className="flex flex-col gap-3 rounded-2xl border border-sea/15 bg-white/80 p-4 text-ink lg:flex-row lg:items-center lg:justify-between dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
+              <div className="flex flex-wrap items-center gap-2">
+                {canGenerate && (
                   <button
                     type="button"
                     onClick={() => {
@@ -3930,45 +3963,51 @@ export default function Agenda() {
                       setShowGenerateModal(true);
                     }}
                     disabled={selectedAgendaIds.length === 0}
-                    className="inline-flex items-center gap-1 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 shadow-[0_10px_22px_rgba(16,185,129,0.22)] transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <MapPin size={14} />
+                    <MapPin size={16} />
                     Gerar rota
                   </button>
-                  <div className="text-xs text-ink/60 text-right">
-                    <div>Empresas: {totalCount ?? "..."}</div>
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Selecionadas: {selectedAgendaIds.length}</span>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedAgendaIds([])}
-                        disabled={selectedAgendaIds.length === 0}
-                        title="Limpar empresas selecionadas"
-                        aria-label="Limpar empresas selecionadas"
-                        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-ink/50 transition hover:bg-sea/10 hover:text-sea disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <div className="rounded-full border border-sea/15 bg-white/90 px-3 py-1.5 text-xs text-ink dark:border-emerald-400/15 dark:bg-slate-900/70 dark:text-slate-200">
+                    <span className="text-ink/55 dark:text-slate-400">Empresas:</span> {totalCount ?? "..."}
+                  </div>
+                  <div className="rounded-full border border-sea/15 bg-white/90 px-3 py-1.5 text-xs text-ink dark:border-emerald-400/15 dark:bg-slate-900/70 dark:text-slate-200">
+                    <span className="text-ink/55 dark:text-slate-400">Selecionadas:</span> {selectedAgendaIds.length}
                   </div>
                 </div>
-              )}
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                <button
+                  type="button"
+                  onClick={handleClearFilters}
+                  className="inline-flex items-center justify-center rounded-xl border border-sea/20 bg-white/90 px-4 py-2.5 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea dark:border-emerald-400/20 dark:bg-slate-950/80 dark:text-slate-200 dark:hover:border-emerald-300 dark:hover:text-emerald-300"
+                >
+                  Limpar filtros
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApplySearch}
+                  className="inline-flex items-center justify-center rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 shadow-[0_10px_22px_rgba(16,185,129,0.22)] transition hover:bg-emerald-400"
+                >
+                  Buscar
+                </button>
+              </div>
             </div>
-
           </div>
-
-          
         </div>
       </section>
-
       {generateMessage && (
         <div className="rounded-xl border border-sea/20 bg-white/80 px-3 py-2 text-xs text-ink/70">
           {generateMessage}
         </div>
       )}
 
-      {columnChipRemovalModal && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
+      {columnChipRemovalModal &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4115,11 +4154,14 @@ export default function Agenda() {
               </div>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
 
-      {showGenerateModal && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
+      {showGenerateModal &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4434,11 +4476,14 @@ export default function Agenda() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
 
-      {eventWarning && (
-        <div className="fixed inset-0 z-[3300] flex items-start justify-center px-4 pt-6">
+      {eventWarning &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[3300] flex items-center justify-center px-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4480,11 +4525,14 @@ export default function Agenda() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
 
-      {inactiveCompaniesWarning && inactiveCompaniesWarning.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
+      {inactiveCompaniesWarning && inactiveCompaniesWarning.length > 0 &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4521,11 +4569,14 @@ export default function Agenda() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
 
-      {scheduleModalRow && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
+      {scheduleModalRow &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4770,11 +4821,14 @@ export default function Agenda() {
               </div>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
 
-      {detailsModalRow && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
+      {detailsModalRow &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4885,11 +4939,14 @@ export default function Agenda() {
               </div>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
 
-      {planoValoresModal && (
-        <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-6">
+      {planoValoresModal &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-y-0 left-0 right-0 z-[60] flex items-center justify-center px-4 md:left-[var(--sidebar-width)]">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4939,11 +4996,14 @@ export default function Agenda() {
               </div>
             )}
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
 
-      {vendorHistoryModal && (
-        <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-6">
+      {vendorHistoryModal &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-y-0 left-0 right-0 z-[60] flex items-center justify-center px-4 md:left-[var(--sidebar-width)]">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4984,11 +5044,14 @@ export default function Agenda() {
               </div>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
 
-      {kpiImportValuesModal && (
-        <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-6">
+      {kpiImportValuesModal &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-y-0 left-0 right-0 z-[60] flex items-center justify-center px-4 md:left-[var(--sidebar-width)]">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -5051,8 +5114,9 @@ export default function Agenda() {
               </div>
             )}
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
 
 
       {activeChips.length > 0 && (
@@ -5163,25 +5227,6 @@ export default function Agenda() {
                         </p>
                         <p className="break-words">
                           <span className="font-semibold text-ink/80">Vendedor:</span> {mobileVendorLabel}
-                          {canEdit && editableVendors.length > 0 ? (
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void toggleVendorRouteEditor(
-                                  row.id,
-                                  editableVendors[0].userId as string,
-                                  editableVendors[0].name,
-                                );
-                              }}
-                              onPointerDown={(event) => event.stopPropagation()}
-                              className="ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-sea/30 bg-sea/10 text-sea"
-                              title="Editar ordem das rotas"
-                              aria-label="Editar ordem das rotas"
-                            >
-                              <PencilLine size={10} />
-                            </button>
-                          ) : null}
                         </p>
                         <p className="break-words">
                           <span className="font-semibold text-ink/80">Ultima visita:</span>{" "}
@@ -5360,7 +5405,7 @@ export default function Agenda() {
 
         <div className="hidden md:block">
           <div className="overflow-hidden">
-            <table className="w-full table-fixed border-collapse table-layout-fixed text-[9px] leading-tight">
+            <table className="w-full table-fixed border-collapse table-layout-fixed text-[9px] leading-tight text-center align-middle">
               <thead className="sticky top-0 z-30 bg-sand/60 shadow-sm overflow-visible">
                 {table.getHeaderGroups().map((headerGroup) => (
                   <tr key={headerGroup.id}>
@@ -5376,7 +5421,7 @@ export default function Agenda() {
                         <th
                           key={header.id}
                           style={columnStyles}
-                          className={`relative align-top whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word] border-b border-sea/20 py-1 text-[9px] font-semibold text-ink/70 text-center overflow-hidden ${
+                          className={`relative align-middle whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word] border-b border-sea/20 py-1 text-[9px] font-semibold text-ink/70 text-center overflow-hidden ${
                             isTight ? "px-1" : "px-1.5"
                           }`}
                         >
@@ -5436,8 +5481,8 @@ export default function Agenda() {
                           <td
                             key={cell.id}
                             style={columnStyles}
-                            className={`align-top whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word] py-1 text-[9px] leading-tight text-ink ${
-                              isTight ? "px-1 text-center" : "px-1.5"
+                            className={`align-middle whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word] py-1 text-[9px] leading-tight text-ink text-center ${
+                              isTight ? "px-1" : "px-1.5"
                             }`}
                           >
                             <div className={tableCellInnerClass}>
