@@ -244,6 +244,65 @@ const buildDailyVidasSeries = (
   }));
 };
 
+const buildDailyDualVidasSeries = (
+  visits: Array<{
+    visit_date: string | null;
+    completed_at: string | null;
+    completed_vidas: number | null;
+    no_visit_reason: string | null;
+  }>,
+  aceites: Array<{
+    entry_date: string | null;
+    vidas: number | null;
+  }>,
+  from: string,
+  to: string,
+) => {
+  const start = new Date(`${from}T12:00:00`);
+  const end = new Date(`${to}T12:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return [];
+
+  const labels: { key: string; label: string }[] = [];
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    const date = new Date(cursor);
+    const key = date.toISOString().slice(0, 10);
+    const label = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(date);
+    labels.push({ key, label });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  const visitsTotals = new Map<string, number>();
+  const aceiteTotals = new Map<string, number>();
+  labels.forEach(({ key }) => {
+    visitsTotals.set(key, 0);
+    aceiteTotals.set(key, 0);
+  });
+
+  visits.forEach((item) => {
+    if (!item.completed_at || item.no_visit_reason) return;
+    const key = item.visit_date ?? item.completed_at?.slice(0, 10);
+    if (!key || !visitsTotals.has(key)) return;
+    const value = Number(item.completed_vidas ?? 0);
+    if (!Number.isFinite(value)) return;
+    visitsTotals.set(key, (visitsTotals.get(key) ?? 0) + value);
+  });
+
+  aceites.forEach((item) => {
+    const key = (item.entry_date ?? "").slice(0, 10);
+    if (!key || !aceiteTotals.has(key)) return;
+    const value = Number(item.vidas ?? 0);
+    if (!Number.isFinite(value)) return;
+    aceiteTotals.set(key, (aceiteTotals.get(key) ?? 0) + value);
+  });
+
+  return labels.map(({ key, label }) => ({
+    label,
+    visitas: visitsTotals.get(key) ?? 0,
+    aceite: aceiteTotals.get(key) ?? 0,
+  }));
+};
+
 export default function Dashboard() {
   const { role, profile, session, signOut } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -260,7 +319,14 @@ export default function Dashboard() {
   >([]);
   const [visitStats, setVisitStats] = useState<VisitStats | null>(null);
   const [visitStatsError, setVisitStatsError] = useState<string | null>(null);
+  const [vendorVisitsRaw, setVendorVisitsRaw] = useState<Array<{
+    visit_date: string | null;
+    completed_at: string | null;
+    completed_vidas: number | null;
+    no_visit_reason: string | null;
+  }>>([]);
   const [visitDailyVidas, setVisitDailyVidas] = useState<DonutSeries[]>([]);
+  const [vendorAceites, setVendorAceites] = useState<Array<{ entry_date: string | null; vidas: number | null }>>([]);
   const [vendorAceitePeriodVidas, setVendorAceitePeriodVidas] = useState(0);
   const [teamStats, setTeamStats] = useState<VisitStats | null>(null);
   const [teamStatsError, setTeamStatsError] = useState<string | null>(null);
@@ -629,7 +695,7 @@ export default function Dashboard() {
         let visitsQuery = supabaseDash
           .from("v_dash_visits_active")
           .select(
-            "assigned_to_user_id, assigned_to_name, completed_vidas, completed_at, no_visit_reason, visit_date, cliente:cliente_id (bairro)",
+            "assigned_to_user_id, assigned_to_name, completed_vidas, completed_at, no_visit_reason, visit_date, cliente_id",
           )
           .gte("visit_date", globalFrom)
           .lte("visit_date", globalTo)
@@ -693,18 +759,36 @@ export default function Dashboard() {
         if (visitsError) throw new Error(visitsError.message);
         if (!active) return;
 
+        const clienteIds = Array.from(
+          new Set(
+            ((visitsData ?? []) as Array<{ cliente_id: string | null }>)
+              .map((item) => item.cliente_id)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        );
+        const clientesById = new Map<string, { bairro: string | null }>();
+        for (let index = 0; index < clienteIds.length; index += 500) {
+          const chunk = clienteIds.slice(index, index + 500);
+          if (chunk.length === 0) continue;
+          const { data: clientesData, error: clientesError } = await supabaseDash
+            .from("v_dash_clientes_active")
+            .select("id, bairro")
+            .in("id", chunk);
+          if (clientesError) throw new Error(clientesError.message);
+          (clientesData ?? []).forEach((row) => {
+            const item = row as { id: string; bairro: string | null };
+            clientesById.set(item.id, { bairro: item.bairro });
+          });
+        }
+
         type NeighborhoodVisitRow = {
           completed_vidas: number | null;
-          cliente:
-            | { bairro: string | null }
-            | Array<{ bairro: string | null }>
-            | null;
+          cliente_id: string | null;
         };
 
         const byNeighborhood = new Map<string, number>();
         ((visitsData ?? []) as NeighborhoodVisitRow[]).forEach((item) => {
-          const cliente = Array.isArray(item.cliente) ? item.cliente[0] ?? null : item.cliente ?? null;
-          const neighborhood = cliente?.bairro?.trim() ?? "";
+          const neighborhood = clientesById.get(item.cliente_id ?? "")?.bairro?.trim() ?? "";
           if (!neighborhood) return;
           const vidas = Number(item.completed_vidas ?? 0);
           if (!Number.isFinite(vidas)) return;
@@ -762,7 +846,7 @@ export default function Dashboard() {
         let nextRouteQuery = supabaseDash
           .from("v_dash_visits_active")
           .select(
-            "visit_date, perfil_visita, completed_at, assigned_to_user_id, assigned_to_name, cliente:cliente_id (empresa, nome_fantasia)",
+            "visit_date, perfil_visita, completed_at, assigned_to_user_id, assigned_to_name, cliente_id",
           )
           .gt("visit_date", todayRouteKey)
           .is("completed_at", null)
@@ -787,10 +871,7 @@ export default function Dashboard() {
         type NextRouteRow = {
           visit_date: string | null;
           perfil_visita: string | null;
-          cliente:
-            | { empresa: string | null; nome_fantasia: string | null }
-            | Array<{ empresa: string | null; nome_fantasia: string | null }>
-            | null;
+          cliente_id: string | null;
         };
         const futureRoutes = ((nextRoutesData ?? []) as NextRouteRow[]).filter(
           (row): row is NextRouteRow & { visit_date: string } => Boolean(row.visit_date),
@@ -842,8 +923,29 @@ export default function Dashboard() {
         const releasedDateRoutes = futureRoutes.filter(
           (route) => route.visit_date === releasedRoute.visit_date,
         );
+        const routeClienteIds = Array.from(
+          new Set(
+            releasedDateRoutes
+              .map((route) => route.cliente_id)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        );
+        const clientesById = new Map<string, { empresa: string | null; nome_fantasia: string | null }>();
+        for (let index = 0; index < routeClienteIds.length; index += 500) {
+          const chunk = routeClienteIds.slice(index, index + 500);
+          if (chunk.length === 0) continue;
+          const { data: clientesData, error: clientesError } = await supabaseDash
+            .from("v_dash_clientes_active")
+            .select("id, empresa, nome_fantasia")
+            .in("id", chunk);
+          if (clientesError) throw new Error(clientesError.message);
+          (clientesData ?? []).forEach((row) => {
+            const item = row as { id: string; empresa: string | null; nome_fantasia: string | null };
+            clientesById.set(item.id, { empresa: item.empresa, nome_fantasia: item.nome_fantasia });
+          });
+        }
         const routeItems = releasedDateRoutes.map((route) => {
-          const cliente = Array.isArray(route.cliente) ? route.cliente[0] ?? null : route.cliente ?? null;
+          const cliente = route.cliente_id ? clientesById.get(route.cliente_id) ?? null : null;
           return {
             client: cliente?.empresa ?? cliente?.nome_fantasia ?? "Sem empresa",
             perfil: route.perfil_visita?.trim() || "-",
@@ -880,14 +982,18 @@ export default function Dashboard() {
       setVisitStatsError(null);
       if (!globalFrom || !globalTo) {
         setVisitStats(null);
+        setVendorVisitsRaw([]);
         setVisitDailyVidas([]);
+        setVendorAceites([]);
         setVendorAceitePeriodVidas(0);
         return;
       }
       if (globalFrom > globalTo) {
         setVisitStatsError("Periodo invalido.");
         setVisitStats(null);
+        setVendorVisitsRaw([]);
         setVisitDailyVidas([]);
+        setVendorAceites([]);
         setVendorAceitePeriodVidas(0);
         return;
       }
@@ -900,7 +1006,7 @@ export default function Dashboard() {
       visitsQuery = applyVendorVisitTypeScope(visitsQuery);
       let aceiteQuery = supabaseDash
         .from("v_dash_aceite_digital_active")
-        .select("vidas")
+        .select("entry_date, vidas")
         .gte("entry_date", globalFrom)
         .lte("entry_date", globalTo);
 
@@ -927,14 +1033,18 @@ export default function Dashboard() {
       if (visitsError) {
         setVisitStatsError(visitsError.message);
         setVisitStats(null);
+        setVendorVisitsRaw([]);
         setVisitDailyVidas([]);
+        setVendorAceites([]);
         setVendorAceitePeriodVidas(0);
         return;
       }
       if (aceiteError) {
         setVisitStatsError(aceiteError.message);
         setVisitStats(null);
+        setVendorVisitsRaw([]);
         setVisitDailyVidas([]);
+        setVendorAceites([]);
         setVendorAceitePeriodVidas(0);
         return;
       }
@@ -944,6 +1054,15 @@ export default function Dashboard() {
         return sum + (Number.isFinite(value) ? value : 0);
       }, 0);
       setVendorAceitePeriodVidas(totalAceite);
+      setVendorVisitsRaw(
+        (visitsData ?? []) as Array<{
+          visit_date: string | null;
+          completed_at: string | null;
+          completed_vidas: number | null;
+          no_visit_reason: string | null;
+        }>,
+      );
+      setVendorAceites((aceiteData ?? []) as Array<{ entry_date: string | null; vidas: number | null }>);
       setVisitDailyVidas(buildDailyVidasSeries(visitsData ?? []));
       const visits = (visitsData ?? []) as Array<{
         id: string;
@@ -1100,11 +1219,14 @@ export default function Dashboard() {
         new Set(pendingVisits.map((item) => item.cliente_id).filter((value): value is string => Boolean(value))),
       );
       const pendingClientesById = new Map<string, { empresa: string | null; nome_fantasia: string | null }>();
-      if (pendingClienteIds.length > 0) {
-        const { data: clientesData } = await supabaseDash
+      for (let index = 0; index < pendingClienteIds.length; index += 500) {
+        const chunk = pendingClienteIds.slice(index, index + 500);
+        if (chunk.length === 0) continue;
+        const { data: clientesData, error: clientesError } = await supabaseDash
           .from("v_dash_clientes_active")
           .select("id, empresa, nome_fantasia")
-          .in("id", pendingClienteIds);
+          .in("id", chunk);
+        if (clientesError) throw new Error(clientesError.message);
         (clientesData ?? []).forEach((row) => {
           const item = row as { id: string; empresa: string | null; nome_fantasia: string | null };
           pendingClientesById.set(item.id, { empresa: item.empresa, nome_fantasia: item.nome_fantasia });
@@ -1621,11 +1743,13 @@ export default function Dashboard() {
         );
 
         const clientesById = new Map<string, { empresa: string | null; nome_fantasia: string | null }>();
-        if (clienteIds.length > 0) {
+        for (let index = 0; index < clienteIds.length; index += 500) {
+          const chunk = clienteIds.slice(index, index + 500);
+          if (chunk.length === 0) continue;
           const { data: clientesData, error: clientesError } = await supabaseDash
             .from("v_dash_clientes_active")
             .select("id, empresa, nome_fantasia")
-            .in("id", clienteIds);
+            .in("id", chunk);
           if (clientesError) throw new Error(clientesError.message);
           (clientesData ?? []).forEach((row) => {
             const item = row as { id: string; empresa: string | null; nome_fantasia: string | null };
@@ -1788,6 +1912,17 @@ export default function Dashboard() {
     () => (teamStats?.totalVidas ?? 0) + (digitalSummary?.periodTotalVidas ?? 0),
     [digitalSummary, teamStats],
   );
+  const resolvedDailyRange = useMemo(() => {
+    const today = toLocalDateInput(new Date());
+    const monthStart = toLocalDateInput(startOfMonth(new Date()));
+    const from = globalFrom || monthStart;
+    const to = globalTo || today;
+    return { from, to };
+  }, [globalFrom, globalTo]);
+  const dailyDualVidas = useMemo(
+    () => buildDailyDualVidasSeries(vendorVisitsRaw, vendorAceites, resolvedDailyRange.from, resolvedDailyRange.to),
+    [resolvedDailyRange.from, resolvedDailyRange.to, vendorAceites, vendorVisitsRaw],
+  );
 
   const renderDonut = (
     title: string,
@@ -1887,9 +2022,11 @@ export default function Dashboard() {
       await waitFrame();
 
       const bounds = root.getBoundingClientRect();
-      const exportWidthPx = Math.max(Math.ceil(bounds.width), 1180);
+      const exportWidthPx = Math.max(Math.ceil(bounds.width), 794);
       const deviceScale = Math.min(window.devicePixelRatio || 1.5, 2);
       const safeScale = Math.max(0.7, deviceScale);
+      const htmlElement = document.documentElement;
+      const hadDarkClass = htmlElement.classList.contains("dark");
 
       const hasVisiblePixels = (canvas: HTMLCanvasElement) => {
         const probeCanvas = document.createElement("canvas");
@@ -1942,7 +2079,7 @@ export default function Dashboard() {
               foreignObjectRendering: attempt.foreignObjectRendering,
               scrollX: 0,
               scrollY: 0,
-              windowWidth: Math.max(exportWidthPx, element.clientWidth, 1),
+              windowWidth: exportWidthPx,
               windowHeight: Math.max(element.scrollHeight, element.clientHeight, document.documentElement.clientHeight, 1),
               ignoreElements: (node) => node instanceof HTMLElement && node.dataset.pdfExclude === "true",
             });
@@ -1970,44 +2107,28 @@ export default function Dashboard() {
         return `dashboard-${dateKey}.pdf`;
       };
 
-      const makePaddedSlice = (source: HTMLCanvasElement, startY: number, sliceHeightPx: number, padPx: number) => {
-        const paddedCanvas = document.createElement("canvas");
-        paddedCanvas.width = source.width + padPx * 2;
-        paddedCanvas.height = sliceHeightPx + padPx * 2;
-        const paddedCtx = paddedCanvas.getContext("2d");
-        if (!paddedCtx) throw new Error("Falha ao preparar borda de seguranca do PDF.");
-        paddedCtx.fillStyle = "#ffffff";
-        paddedCtx.fillRect(0, 0, paddedCanvas.width, paddedCanvas.height);
-        paddedCtx.drawImage(
-          source,
-          0,
-          startY,
-          source.width,
-          sliceHeightPx,
-          padPx,
-          padPx,
-          source.width,
-          sliceHeightPx,
-        );
-        return paddedCanvas;
-      };
-
       const saveSingleCanvasPdf = (canvas: HTMLCanvasElement) => {
         const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
         const pageWidthMm = 210;
         const pageHeightMm = 297;
-        const marginMm = 14;
+        const marginMm = 8;
         const contentWidthMm = pageWidthMm - marginMm * 2;
         const contentHeightMm = pageHeightMm - marginMm * 2;
         const renderXmm = (pageWidthMm - contentWidthMm) / 2;
         const pageHeightPx = Math.max(1, Math.floor((contentHeightMm * canvas.width) / contentWidthMm));
-        const padPx = Math.max(12, Math.round(canvas.width * 0.015));
         let renderedPx = 0;
         let pageIndex = 0;
 
         while (renderedPx < canvas.height) {
           const sliceHeightPx = Math.min(pageHeightPx, canvas.height - renderedPx);
-          const pageCanvas = makePaddedSlice(canvas, renderedPx, sliceHeightPx, padPx);
+          const pageCanvas = document.createElement("canvas");
+          pageCanvas.width = canvas.width;
+          pageCanvas.height = sliceHeightPx;
+          const pageCtx = pageCanvas.getContext("2d");
+          if (!pageCtx) throw new Error("Falha ao preparar paginas do PDF.");
+          pageCtx.fillStyle = "#ffffff";
+          pageCtx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+          pageCtx.drawImage(canvas, 0, renderedPx, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx);
 
           if (pageIndex > 0) {
             pdf.addPage();
@@ -2015,8 +2136,7 @@ export default function Dashboard() {
 
           const imgData = pageCanvas.toDataURL("image/jpeg", 0.92);
           const sliceHeightMm = (sliceHeightPx * contentWidthMm) / canvas.width;
-          const paddedHeightMm = sliceHeightMm + (padPx * 2 * contentWidthMm) / canvas.width;
-          pdf.addImage(imgData, "JPEG", renderXmm, marginMm, contentWidthMm, paddedHeightMm, undefined, "FAST");
+          pdf.addImage(imgData, "JPEG", renderXmm, marginMm, contentWidthMm, sliceHeightMm, undefined, "FAST");
 
           renderedPx += sliceHeightPx;
           pageIndex += 1;
@@ -2030,6 +2150,7 @@ export default function Dashboard() {
       exportHost.style.left = "0";
       exportHost.style.top = "0";
       exportHost.style.width = `${exportWidthPx}px`;
+      exportHost.style.maxWidth = `${exportWidthPx}px`;
       exportHost.style.background = "#ffffff";
       exportHost.style.pointerEvents = "none";
       exportHost.style.opacity = "1";
@@ -2039,15 +2160,89 @@ export default function Dashboard() {
       clonedRoot.style.width = `${exportWidthPx}px`;
       clonedRoot.style.maxWidth = "none";
       clonedRoot.style.minWidth = `${exportWidthPx}px`;
+      clonedRoot.style.display = "block";
 
       exportHost.appendChild(clonedRoot);
       document.body.appendChild(exportHost);
 
       let blockExportError: unknown = null;
       try {
+        if (hadDarkClass) {
+          htmlElement.classList.remove("dark");
+        }
+
         clonedRoot.querySelectorAll<HTMLElement>("[data-pdf-exclude='true']").forEach((node) => node.remove());
         clonedRoot.style.boxSizing = "border-box";
         clonedRoot.style.padding = "18px 18px 22px";
+        clonedRoot.style.background = "#ffffff";
+        clonedRoot.style.color = "#111827";
+
+        clonedRoot.querySelectorAll<HTMLElement>("section, .dashboard-card, .dashboard-card-soft").forEach((node) => {
+          node.style.boxSizing = "border-box";
+          node.style.maxWidth = "none";
+          node.style.width = "100%";
+        });
+
+        clonedRoot.querySelectorAll<HTMLElement>("section.grid, div.grid").forEach((node) => {
+          const className = node.className ?? "";
+          if (typeof className === "string" && /grid-cols-\d|grid-cols-\[/.test(className)) {
+            node.style.display = "grid";
+            node.style.gridTemplateColumns = "repeat(2, minmax(0, 1fr))";
+            node.style.width = "100%";
+            node.style.alignItems = "stretch";
+          }
+        });
+
+        clonedRoot.querySelectorAll<HTMLElement>(".overflow-x-auto").forEach((node) => {
+          node.style.overflowX = "visible";
+        });
+
+        clonedRoot.querySelectorAll<HTMLLabelElement>("label").forEach((label) => {
+          const text = (label.textContent ?? "").trim().toLowerCase();
+          if (text === "supervisor" || text === "vendedor") {
+            label.style.display = "none";
+          }
+        });
+
+        clonedRoot.querySelectorAll<HTMLElement>("select, input[type='date'], button").forEach((element) => {
+          const label = element.closest("label");
+          if (label) return;
+          const parentText = (element.parentElement?.textContent ?? "").toLowerCase();
+          if (parentText.includes("de") || parentText.includes("ate") || parentText.includes("período")) return;
+        });
+
+        const headerControls = Array.from(clonedRoot.querySelectorAll("header label, header select, header input")).filter(
+          (node): node is HTMLElement => node instanceof HTMLElement,
+        );
+        headerControls.forEach((node) => {
+          const text = (node.textContent ?? "").trim().toLowerCase();
+          if (text === "de" || text === "ate" || text === "supervisor" || text === "vendedor") {
+            return;
+          }
+          if (node.tagName === "SELECT" || node.tagName === "INPUT") {
+            node.style.display = "none";
+          }
+        });
+
+        clonedRoot.querySelectorAll<HTMLElement>("header").forEach((header) => {
+          const rangeText = `${globalFrom && globalTo ? `${globalFrom} a ${globalTo}` : `${resolvedDailyRange.from} a ${resolvedDailyRange.to}`}`;
+          const rangeBadge = document.createElement("span");
+          rangeBadge.textContent = rangeText;
+          rangeBadge.style.display = "inline-flex";
+          rangeBadge.style.alignItems = "center";
+          rangeBadge.style.padding = "4px 8px";
+          rangeBadge.style.border = "1px solid #d1d5db";
+          rangeBadge.style.borderRadius = "9999px";
+          rangeBadge.style.fontSize = "11px";
+          rangeBadge.style.fontWeight = "600";
+          rangeBadge.style.color = "#111827";
+          rangeBadge.style.background = "#f9fafb";
+          header.appendChild(rangeBadge);
+        });
+
+        clonedRoot.querySelectorAll<HTMLElement>(".text-muted, .text-ink\\/60, .text-ink\\/50, .text-ink\\/70").forEach((node) => {
+          node.style.color = "#6b7280";
+        });
 
         const cloneImages = Array.from(clonedRoot.querySelectorAll("img"));
         if (cloneImages.length > 0) {
@@ -2089,79 +2284,15 @@ export default function Dashboard() {
           blocks.push(clonedRoot);
         }
 
-        const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-        const pageWidthMm = 210;
-        const pageHeightMm = 297;
-        const marginMm = 14;
-        const sectionGapMm = 3;
-        const contentWidthMm = pageWidthMm - marginMm * 2;
-        const contentHeightMm = pageHeightMm - marginMm * 2;
-        const renderXmm = (pageWidthMm - contentWidthMm) / 2;
-
-        let cursorY = marginMm;
-
-        const addCanvasSlices = (canvas: HTMLCanvasElement) => {
-          const padPx = Math.max(12, Math.round(canvas.width * 0.015));
-          let renderedPx = 0;
-          while (renderedPx < canvas.height) {
-            const availableMm = pageHeightMm - marginMm - cursorY;
-            if (availableMm <= 1) {
-              pdf.addPage();
-              cursorY = marginMm;
-              continue;
-            }
-
-            const availablePx = Math.max(1, Math.floor((availableMm * canvas.width) / contentWidthMm));
-            const sliceHeightPx = Math.min(availablePx, canvas.height - renderedPx);
-            const pageCanvas = makePaddedSlice(canvas, renderedPx, sliceHeightPx, padPx);
-
-            const imgData = pageCanvas.toDataURL("image/jpeg", 0.92);
-            const sliceHeightMm = (sliceHeightPx * contentWidthMm) / canvas.width;
-            const paddedHeightMm = sliceHeightMm + (padPx * 2 * contentWidthMm) / canvas.width;
-            pdf.addImage(imgData, "JPEG", renderXmm, cursorY, contentWidthMm, paddedHeightMm, undefined, "FAST");
-
-            renderedPx += sliceHeightPx;
-            cursorY += paddedHeightMm;
-
-            if (renderedPx < canvas.height) {
-              pdf.addPage();
-              cursorY = marginMm;
-            }
-          }
-        };
-
-        for (let index = 0; index < blocks.length; index += 1) {
-          const block = blocks[index];
-          const blockCanvas = await captureElement(block);
-          const blockHeightMm = (blockCanvas.height * contentWidthMm) / blockCanvas.width;
-          const availableMm = pageHeightMm - marginMm - cursorY;
-
-          if (blockHeightMm <= contentHeightMm && blockHeightMm > availableMm) {
-            pdf.addPage();
-            cursorY = marginMm;
-          }
-
-          addCanvasSlices(blockCanvas);
-
-          if (index < blocks.length - 1) {
-            cursorY += sectionGapMm;
-            if (cursorY >= pageHeightMm - marginMm - 1) {
-              pdf.addPage();
-              cursorY = marginMm;
-            }
-          }
-        }
-
-        pdf.save(getPdfFileName());
+        const fullCanvas = await captureElement(clonedRoot);
+        saveSingleCanvasPdf(fullCanvas);
       } catch (error) {
-        blockExportError = error;
+        setVendorVidasError(error instanceof Error ? error.message : "Falha ao gerar o PDF.");
       } finally {
+        if (hadDarkClass) {
+          htmlElement.classList.add("dark");
+        }
         exportHost.remove();
-      }
-
-      if (blockExportError) {
-        const fallbackCanvas = await captureElement(root);
-        saveSingleCanvasPdf(fallbackCanvas);
       }
     } catch (error) {
       setVendorVidasError(error instanceof Error ? error.message : "Falha ao gerar o PDF.");
@@ -2583,23 +2714,79 @@ export default function Dashboard() {
           )}
 
           <section className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-sea/15 bg-white/90 p-4 md:p-5">
-              <div className="flex items-center justify-between">
-                <h3 className="font-display text-lg text-ink">Por bairro</h3>
-                <span className="text-xs text-ink/60">Top 6</span>
+            <div className="rounded-2xl border border-sea/15 bg-white/90 p-4 md:p-5 lg:col-span-2">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-display text-lg text-ink">Vidas por dia</h3>
+                  <p className="mt-1 text-xs text-ink/60">
+                    Vidas vindas de visitas e aceite digital no periodo selecionado.
+                  </p>
+                </div>
+                <span className="text-xs text-ink/60">
+                  {globalFrom && globalTo ? `${globalFrom} a ${globalTo}` : `${resolvedDailyRange.from} a ${resolvedDailyRange.to}`}
+                </span>
               </div>
-              <div className="mt-4 space-y-2">
-                {topNeighborhoodsByVidas.length === 0 ? (
-                  <p className="text-sm text-ink/60">Sem dados.</p>
-                ) : (
-                  topNeighborhoodsByVidas.map((item) => (
-                    <div key={item.bairro} className="flex items-center justify-between text-sm">
-                      <span className="text-ink">{item.bairro}</span>
-                      <span className="font-semibold text-sea">{formatNumber(item.vidas)} vidas</span>
-                    </div>
-                  ))
-                )}
-              </div>
+              {dailyDualVidas.length === 0 ? (
+                <p className="mt-4 text-sm text-ink/60">Sem dados.</p>
+              ) : (
+                <div className="mt-5">
+                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-ink/60">
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-sm bg-sea" />
+                      Visitas
+                    </span>
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-sm bg-amber-400" />
+                      Aceite digital
+                    </span>
+                  </div>
+                  <div className="mt-4 flex items-end gap-4 overflow-x-auto pb-2">
+                    {(() => {
+                      const maxValue = dailyDualVidas.reduce((max, item) => Math.max(max, item.visitas, item.aceite), 1);
+                      return dailyDualVidas.map((item) => {
+                        const visitasHeight = Math.max(8, Math.round((item.visitas / maxValue) * 160));
+                        const aceiteHeight = Math.max(8, Math.round((item.aceite / maxValue) * 160));
+                        const total = item.visitas + item.aceite;
+                        return (
+                          <div key={item.label} className="flex min-w-[72px] flex-col items-center gap-2">
+                            <span className="text-[11px] font-semibold text-ink">{formatNumber(total)}</span>
+                            <div className="flex items-end gap-1">
+                              <div className="w-4 rounded-t-lg bg-sea" style={{ height: visitasHeight }} />
+                              <div className="w-4 rounded-t-lg bg-amber-400" style={{ height: aceiteHeight }} />
+                            </div>
+                            <span className="w-20 truncate text-center text-[11px] text-ink/70">{item.label}</span>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                  <div className="mt-5 overflow-x-auto rounded-xl border border-sea/10">
+                    <table className="min-w-[560px] w-full text-left text-xs">
+                      <thead className="bg-sand/30 text-ink/60">
+                        <tr>
+                          <th className="px-3 py-2 font-semibold">Dia</th>
+                          <th className="px-3 py-2 font-semibold text-right">Visitas</th>
+                          <th className="px-3 py-2 font-semibold text-right">Aceite digital</th>
+                          <th className="px-3 py-2 font-semibold text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-sea/10">
+                        {dailyDualVidas.map((item) => {
+                          const total = item.visitas + item.aceite;
+                          return (
+                            <tr key={item.label}>
+                              <td className="px-3 py-2 text-ink">{item.label}</td>
+                              <td className="px-3 py-2 text-right text-ink/70">{formatNumber(item.visitas)}</td>
+                              <td className="px-3 py-2 text-right text-ink/70">{formatNumber(item.aceite)}</td>
+                              <td className="px-3 py-2 text-right font-semibold text-sea">{formatNumber(total)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
 
             {(role === "SUPERVISOR" || role === "ASSISTENTE") && (
