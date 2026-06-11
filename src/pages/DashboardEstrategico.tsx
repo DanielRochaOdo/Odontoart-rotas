@@ -530,6 +530,7 @@ export default function DashboardEstrategico() {
   const { role, session } = useAuth();
   const isVendor = role === "VENDEDOR";
   const canViewTeam = role === "SUPERVISOR" || role === "ASSISTENTE";
+  const visibleTabs = isVendor ? TABS.filter((item) => item.key === "visao") : TABS;
 
   const monthStart = toYmd(startOfMonth(new Date()));
   const today = toYmd(new Date());
@@ -633,6 +634,15 @@ export default function DashboardEstrategico() {
     tab,
     to,
   ]);
+
+  useEffect(() => {
+    if (!isVendor) return;
+    setTab("visao");
+    setSelectedSupervisor("all");
+    setSelectedSeller("all");
+    setDraftSelectedSupervisor("all");
+    setDraftSelectedSeller("all");
+  }, [isVendor]);
 
   useEffect(() => {
     let active = true;
@@ -1693,7 +1703,7 @@ export default function DashboardEstrategico() {
           ) : null}
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
-          {TABS.map((item) => (
+            {visibleTabs.map((item) => (
             <button
               key={item.key}
               type="button"
