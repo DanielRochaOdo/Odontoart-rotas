@@ -113,27 +113,32 @@ type VisitSupervisorRegisterRow = {
   contato: string | null;
 };
 
-type ClienteCanonicalModalRow = {
+type ClienteListRow = {
   id: string;
   codigo: string | null;
-  corte: number | null;
-  venc: number | null;
-  valor: number | null;
-  data_da_ultima_visita: string | null;
   empresa: string | null;
-  pessoa: string | null;
-  contato: string | null;
-  obs_comercial: string | null;
   nome_fantasia: string | null;
-  complemento: string | null;
-  perfil_visita: string | null;
-  situacao: string | null;
-  categoria: string | null;
   endereco: string | null;
   bairro: string | null;
   cidade: string | null;
   uf: string | null;
+  situacao: string | null;
+  categoria: string | null;
+  perfil_visita: string | null;
 };
+
+type ClienteDetailsRow = ClienteListRow & {
+  corte: number | null;
+  venc: number | null;
+  valor: number | null;
+  data_da_ultima_visita: string | null;
+  pessoa: string | null;
+  contato: string | null;
+  obs_comercial: string | null;
+  complemento: string | null;
+};
+
+type ClienteCanonicalModalRow = ClienteDetailsRow;
 
 type PlanoValoresModalState = {
   codigo: string;
@@ -248,10 +253,17 @@ const normalize = (value: string | null) => normalizeSearchText(value);
 
 const CLIENTE_CANONICAL_MODAL_SELECT =
   "id, codigo, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf";
+const CLIENTE_LIST_SELECT =
+  "id, codigo, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, categoria, perfil_visita";
+const CLIENTE_DETAILS_SELECT = CLIENTE_CANONICAL_MODAL_SELECT;
 
 const formatCurrency = (value?: number | null) => {
   if (value === null || value === undefined) return "-";
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+};
+
+const logPerfDuration = (label: string, startedAt: number) => {
+  console.log(label, { durationMs: Math.round(performance.now() - startedAt) });
 };
 
 const NO_VISIT_REASONS = [
@@ -364,6 +376,11 @@ export default function Visitas() {
   const [dayDetailsLoadingDateKey, setDayDetailsLoadingDateKey] = useState<string | null>(null);
   const [dayDetailsErrorByDate, setDayDetailsErrorByDate] = useState<Record<string, string | null>>({});
   const restoredViewRef = useRef(false);
+  const vendorInitialViewRef = useRef(false);
+  const lastDayLoadKeyRef = useRef<string | null>(null);
+  const lastRouteGateKeyRef = useRef<string | null>(null);
+  const clientesLiteCacheRef = useRef(new Map<string, ClienteListRow>());
+  const clientesDetailsCacheRef = useRef(new Map<string, ClienteDetailsRow>());
   const pendingModalRestoreRef = useRef<{
     confirmVisitId: string | null;
     noVisit: { id: string; reason: string } | null;
@@ -392,7 +409,55 @@ export default function Visitas() {
       | null;
   } | null>(null);
 
-  const hydrateVisitsWithClientes = useCallback(async (rows: VisitRowJoin[]) => {
+  const selectedDateKey = useMemo(
+    () => (selectedDate ? format(selectedDate, "yyyy-MM-dd") : ""),
+    [selectedDate],
+  );
+  const currentMonthKey = useMemo(() => format(currentMonth, "yyyy-MM"), [currentMonth]);
+  const dayLoadKey = useMemo(
+    () =>
+      [
+        role,
+        session?.user.id ?? "",
+        profile?.display_name ?? "",
+        session?.user.email ?? "",
+        selectedDateKey,
+        currentMonthKey,
+        refreshKey,
+        selectedVendorId,
+        selectedSupervisorId,
+      ].join("|"),
+    [
+      currentMonthKey,
+      profile?.display_name,
+      refreshKey,
+      role,
+      selectedDateKey,
+      selectedSupervisorId,
+      selectedVendorId,
+      session?.user.email,
+      session?.user.id,
+    ],
+  );
+  const routeGateKey = useMemo(
+    () =>
+      [
+        role,
+        session?.user.id ?? "",
+        profile?.display_name ?? "",
+        session?.user.email ?? "",
+        currentMonthKey,
+        refreshKey,
+      ].join("|"),
+    [currentMonthKey, profile?.display_name, refreshKey, role, session?.user.email, session?.user.id],
+  );
+
+  const clearClientesCache = useCallback(() => {
+    clientesLiteCacheRef.current.clear();
+    clientesDetailsCacheRef.current.clear();
+  }, []);
+
+  const hydrateVisitsWithClientes = useCallback(async (rows: VisitRowJoin[], mode: "list" | "details") => {
     const clienteIds = Array.from(
       new Set(
         rows
@@ -401,34 +466,38 @@ export default function Visitas() {
       ),
     );
 
-    const clientesById = new Map<string, ClienteCanonicalModalRow>();
+    const cache = mode === "details" ? clientesDetailsCacheRef.current : clientesLiteCacheRef.current;
+    const select = mode === "details" ? CLIENTE_DETAILS_SELECT : CLIENTE_LIST_SELECT;
+    const clientesById = new Map<string, ClienteListRow | ClienteDetailsRow>();
     for (let index = 0; index < clienteIds.length; index += 500) {
-      const chunk = clienteIds.slice(index, index + 500);
+      const chunk = clienteIds.slice(index, index + 500).filter((id) => !cache.has(id));
+      if (chunk.length === 0) continue;
       const { data: clientesChunk, error: clientesError } = await supabase
         .from("clientes")
-        .select(CLIENTE_CANONICAL_MODAL_SELECT)
+        .select(select)
         .in("id", chunk);
       if (clientesError) throw new Error(clientesError.message);
       (clientesChunk ?? []).forEach((cliente) => {
-        const row = cliente as ClienteCanonicalModalRow;
+        const row = cliente as unknown as ClienteListRow | ClienteDetailsRow;
+        cache.set(row.id, row as ClienteListRow & ClienteDetailsRow);
         clientesById.set(row.id, row);
       });
     }
 
-    const agendaFromCliente = (cliente: ClienteCanonicalModalRow): NonNullable<VisitRow["agenda"]> => ({
+    const agendaFromCliente = (cliente: ClienteListRow | ClienteDetailsRow): NonNullable<VisitRow["agenda"]> => ({
       id: cliente.id,
       empresa: cliente.empresa,
       nome_fantasia: cliente.nome_fantasia,
       cod_1: cliente.codigo,
-      corte: cliente.corte,
-      venc: cliente.venc,
-      valor: cliente.valor,
-      obs_contrato_1: cliente.obs_comercial,
-      pessoa: cliente.pessoa,
-      contato: cliente.contato,
+      corte: "corte" in cliente ? cliente.corte : null,
+      venc: "venc" in cliente ? cliente.venc : null,
+      valor: "valor" in cliente ? cliente.valor : null,
+      obs_contrato_1: "obs_comercial" in cliente ? cliente.obs_comercial : null,
+      pessoa: "pessoa" in cliente ? cliente.pessoa : null,
+      contato: "contato" in cliente ? cliente.contato : null,
       instructions: null,
       endereco: cliente.endereco,
-      complemento: cliente.complemento,
+      complemento: "complemento" in cliente ? cliente.complemento : null,
       bairro: cliente.bairro,
       cidade: cliente.cidade,
       uf: cliente.uf,
@@ -440,7 +509,7 @@ export default function Visitas() {
 
     return rows.map((row) => {
       const item = row as VisitRowJoin;
-      const cliente = item.cliente_id ? clientesById.get(item.cliente_id) ?? null : null;
+      const cliente = item.cliente_id ? clientesById.get(item.cliente_id) ?? cache.get(item.cliente_id) ?? null : null;
       return { ...item, agenda: cliente ? agendaFromCliente(cliente) : null, cliente };
     }) as VisitRow[];
   }, []);
@@ -504,8 +573,8 @@ export default function Visitas() {
         selectedSupervisorId: string;
         selectedVendorId: string;
       }>;
-      if (parsed.currentMonth) setCurrentMonth(new Date(parsed.currentMonth));
-      if (parsed.selectedDate) setSelectedDate(new Date(parsed.selectedDate));
+      if (!isVendor && parsed.currentMonth) setCurrentMonth(new Date(parsed.currentMonth));
+      if (!isVendor && parsed.selectedDate) setSelectedDate(new Date(parsed.selectedDate));
       if (parsed.expandedVendor) setExpandedVendor(parsed.expandedVendor);
       if (parsed.selectedSupervisorId) setSelectedSupervisorId(parsed.selectedSupervisorId);
       if (parsed.selectedVendorId) setSelectedVendorId(parsed.selectedVendorId);
@@ -517,6 +586,28 @@ export default function Visitas() {
 
   useEffect(() => {
     if (!restoredViewRef.current) return;
+    if (isVendor && !vendorInitialViewRef.current) {
+      const today = new Date();
+      const nextMonth = startOfMonth(today);
+      vendorInitialViewRef.current = true;
+      setCurrentMonth(nextMonth);
+      setSelectedDate(today);
+      try {
+        sessionStorage.setItem(
+          "visitasViewState",
+          JSON.stringify({
+            currentMonth: nextMonth.toISOString(),
+            selectedDate: today.toISOString(),
+            expandedVendor,
+            selectedSupervisorId,
+            selectedVendorId,
+          }),
+        );
+      } catch {
+        // ignore
+      }
+      return;
+    }
     const payload = {
       currentMonth: currentMonth.toISOString(),
       selectedDate: selectedDate ? selectedDate.toISOString() : null,
@@ -529,7 +620,7 @@ export default function Visitas() {
     } catch {
       // ignore
     }
-  }, [currentMonth, expandedVendor, selectedDate, selectedSupervisorId, selectedVendorId]);
+  }, [currentMonth, expandedVendor, isVendor, selectedDate, selectedSupervisorId, selectedVendorId]);
 
   useEffect(() => {
     try {
@@ -701,11 +792,77 @@ export default function Visitas() {
 
   useEffect(() => {
     let active = true;
+    const startedAt = performance.now();
+
+    const loadMonthSummary = async () => {
+      const year = currentMonth.getFullYear();
+      const monthIndex = currentMonth.getMonth();
+      const startDate = toYmd(year, monthIndex, 1);
+      const nextMonthYear = monthIndex === 11 ? year + 1 : year;
+      const nextMonthIndex = monthIndex === 11 ? 0 : monthIndex + 1;
+      const monthEndExclusive = toYmd(nextMonthYear, nextMonthIndex, 1);
+      const rpcAssignedToUserId =
+        isVendor
+          ? session?.user.id ?? null
+          : canManage && selectedVendorId !== "all"
+            ? selectedVendorId
+            : null;
+      const rpcVisitType = isVendor ? VISIT_TYPE.VENDEDOR : null;
+
+      const { data: monthSummaryData, error: monthSummaryError } = await supabase.rpc(
+        "get_visits_month_summary_v1",
+        {
+          p_month_start: startDate,
+          p_month_end_exclusive: monthEndExclusive,
+          p_assigned_to_user_id: rpcAssignedToUserId,
+          p_visit_type: rpcVisitType,
+          p_completed_only: null,
+        },
+      );
+
+      if (!active) return;
+
+      if (monthSummaryError) {
+        setMonthSummaryCounts(new Map());
+        logPerfDuration("VISITAS_MONTH_SUMMARY", startedAt);
+        return;
+      }
+
+      const summaryMap = new Map<string, number>();
+      (monthSummaryData ?? []).forEach((row: { visit_day?: string | null; total_visits?: number | null }) => {
+        const day = String((row as { visit_day?: string | null }).visit_day ?? "");
+        const total = Number((row as { total_visits?: number | null }).total_visits ?? 0);
+        if (!day) return;
+        summaryMap.set(day, total);
+      });
+      setMonthSummaryCounts(summaryMap);
+      logPerfDuration("VISITAS_MONTH_SUMMARY", startedAt);
+    };
+
+    void loadMonthSummary().catch(() => {
+      if (!active) return;
+      setMonthSummaryCounts(new Map());
+      logPerfDuration("VISITAS_MONTH_SUMMARY", startedAt);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [canManage, currentMonth, isVendor, refreshKey, selectedVendorId, session?.user.id]);
+
+  useEffect(() => {
+    let active = true;
+    const startedAt = performance.now();
+
+    if (lastDayLoadKeyRef.current === dayLoadKey) return;
+    lastDayLoadKeyRef.current = dayLoadKey;
 
     const load = async () => {
       if (!active) return;
       setLoading(true);
       setError(null);
+      setMaxVisibleDate(null);
+      setBlockMessage(null);
 
       const year = currentMonth.getFullYear();
       const monthIndex = currentMonth.getMonth();
@@ -713,11 +870,6 @@ export default function Visitas() {
       const nextMonthYear = monthIndex === 11 ? year + 1 : year;
       const nextMonthIndex = monthIndex === 11 ? 0 : monthIndex + 1;
       const monthEndExclusive = toYmd(nextMonthYear, nextMonthIndex, 1);
-      const endInclusive = format(addDays(new Date(`${monthEndExclusive}T12:00:00`), -1), "yyyy-MM-dd");
-      const now = new Date();
-      const todayKey = getDateKey(now);
-      const canUnlockNextRouteByTime = now.getHours() >= 19;
-      let maxDate = endInclusive;
       const assigneeClauses = [
         session?.user.id ? `assigned_to_user_id.eq.${session.user.id}` : null,
         profile?.display_name ? `assigned_to_name.eq.${profile.display_name}` : null,
@@ -742,199 +894,6 @@ export default function Visitas() {
         return query;
       };
 
-      if (isVendor) {
-        let blockReason: string | null = null;
-        const formatRouteDate = (dateKey: string) =>
-          format(new Date(`${dateKey}T12:00:00`), "dd/MM/yyyy");
-
-        const fetchVendorRouteDates = async () => {
-          let query = supabase
-            .from("visits")
-            .select("visit_date")
-            .not("visit_date", "is", null)
-            .order("visit_date", { ascending: true });
-          query = applyVendorVisitFilter(query);
-          const { data, error: datesError } = await query;
-          if (datesError) throw new Error(datesError.message);
-          const unique = new Set<string>();
-          (data ?? []).forEach((row) => {
-            if (!row.visit_date) return;
-            unique.add(formatDateKey(row.visit_date));
-          });
-          return Array.from(unique).sort();
-        };
-
-        const fetchPendingVisitCount = async (dateKey: string) => {
-          let query = supabase
-            .from("visits")
-            .select("id", { count: "exact", head: true })
-            .eq("visit_date", dateKey)
-            .is("completed_at", null);
-          query = applyVendorVisitFilter(query);
-          const { count, error: countError } = await query;
-          if (countError) throw new Error(countError.message);
-          return count ?? 0;
-        };
-
-        const fetchCompletedVisitCount = async (dateKey: string) => {
-          let query = supabase
-            .from("visits")
-            .select("id", { count: "exact", head: true })
-            .eq("visit_date", dateKey)
-            .not("completed_at", "is", null)
-            .is("no_visit_reason", null);
-          query = applyVendorVisitFilter(query);
-          const { count, error: countError } = await query;
-          if (countError) throw new Error(countError.message);
-          return count ?? 0;
-        };
-
-        const hasAceiteDigital = async (dateKey: string) => {
-          if (!session?.user.id) return false;
-          const { count, error: aceiteError } = await supabase
-            .from("aceite_digital")
-            .select("id", { count: "exact", head: true })
-            .eq("vendor_user_id", session.user.id)
-            .eq("entry_date", dateKey);
-          if (aceiteError) throw new Error(aceiteError.message);
-          return (count ?? 0) > 0;
-        };
-
-        const resolveRouteGate = async (
-          dateKey: string,
-          pendingReason: string,
-          acceptanceReason: string,
-        ) => {
-          const [pendingCount, completedCount] = await Promise.all([
-            fetchPendingVisitCount(dateKey),
-            fetchCompletedVisitCount(dateKey),
-          ]);
-
-          if (pendingCount > 0) {
-            return { blocked: true, reason: pendingReason };
-          }
-
-          if (completedCount > 0) {
-            const accepted = await hasAceiteDigital(dateKey);
-            if (!accepted) {
-              return { blocked: true, reason: acceptanceReason };
-            }
-          }
-
-          return { blocked: false, reason: null };
-        };
-
-        try {
-          const routeDates = await fetchVendorRouteDates();
-          if (routeDates.length === 0) {
-            maxDate = endInclusive;
-          } else {
-            const pastOrTodayDates = routeDates.filter((dateKey) => dateKey <= todayKey);
-            if (pastOrTodayDates.length === 0) {
-              const firstRouteDate = routeDates[0];
-              if (!canUnlockNextRouteByTime) {
-                maxDate = todayKey;
-                blockReason = `A proxima rota (${formatRouteDate(firstRouteDate)}) sera liberada a partir das 19:00.`;
-              } else {
-                maxDate = firstRouteDate;
-              }
-            } else {
-              let blockedRouteDate: string | null = null;
-
-              for (const routeDate of pastOrTodayDates) {
-                const nextRouteAfterCurrent = routeDates.find((dateKey) => dateKey > routeDate) ?? null;
-                const releaseTarget = nextRouteAfterCurrent
-                  ? `a proxima rota (${formatRouteDate(nextRouteAfterCurrent)})`
-                  : "as proximas rotas";
-                const routeGate = await resolveRouteGate(
-                  routeDate,
-                  `Conclua todas as visitas da rota (${formatRouteDate(routeDate)}) para liberar ${releaseTarget}.`,
-                  `Registre o aceite digital da rota (${formatRouteDate(routeDate)}) para liberar ${releaseTarget}.`,
-                );
-
-                if (routeGate.blocked) {
-                  blockedRouteDate = routeDate;
-                  blockReason = routeGate.reason;
-                  break;
-                }
-              }
-
-              if (blockedRouteDate) {
-                maxDate = blockedRouteDate;
-              } else {
-                const lastRouteDate = pastOrTodayDates[pastOrTodayDates.length - 1];
-                const nextRouteDate = routeDates.find((dateKey) => dateKey > lastRouteDate) ?? null;
-                if (nextRouteDate) {
-                  if (!canUnlockNextRouteByTime) {
-                    maxDate = lastRouteDate;
-                    blockReason = `A proxima rota (${formatRouteDate(nextRouteDate)}) sera liberada a partir das 19:00.`;
-                  } else {
-                    maxDate = nextRouteDate;
-                  }
-                } else {
-                  maxDate = endInclusive;
-                }
-              }
-            }
-          }
-        } catch (gateError) {
-          maxDate = startDate;
-          blockReason = "Nao foi possivel validar as pendencias do vendedor. O acesso a proximas rotas foi bloqueado.";
-        }
-
-        if (blockReason) {
-          if (!active) return;
-          setBlockMessage(blockReason);
-        } else {
-          if (!active) return;
-          setBlockMessage(null);
-        }
-
-        if (!active) return;
-        setMaxVisibleDate(maxDate);
-      } else {
-        if (!active) return;
-        setMaxVisibleDate(null);
-        setBlockMessage(null);
-      }
-
-      const monthSummaryStart = performance.now();
-      const rpcAssignedToUserId =
-        isVendor
-          ? session?.user.id ?? null
-          : canManage && selectedVendorId !== "all"
-            ? selectedVendorId
-            : null;
-      const rpcVisitType = isVendor ? VISIT_TYPE.VENDEDOR : null;
-      const rpcCompletedOnly: boolean | null = null;
-      const { data: monthSummaryData, error: monthSummaryError } = await supabase.rpc(
-        "get_visits_month_summary_v1",
-        {
-          p_month_start: startDate,
-          p_month_end_exclusive: monthEndExclusive,
-          p_assigned_to_user_id: rpcAssignedToUserId,
-          p_visit_type: rpcVisitType,
-          p_completed_only: rpcCompletedOnly,
-        },
-      );
-      const rpcRawDays = (monthSummaryData ?? []).map((row: { visit_day?: string | null }) => row.visit_day ?? null);
-      const monthDaysAfterMay21 = (monthSummaryData ?? []).filter((row: { visit_day?: string | null }) => {
-        const day = String((row as { visit_day?: string | null }).visit_day ?? "");
-        return day >= "2026-05-22" && day < "2026-06-01";
-      });
-      if (monthSummaryError) {
-      }
-      const summaryMap = new Map<string, number>();
-      (monthSummaryData ?? []).forEach((row: { visit_day?: string | null; total_visits?: number | null }) => {
-        const day = String((row as { visit_day?: string | null }).visit_day ?? "");
-        const total = Number((row as { total_visits?: number | null }).total_visits ?? 0);
-        if (!day) return;
-        summaryMap.set(day, total);
-      });
-      if (!active) return;
-      setMonthSummaryCounts(summaryMap);
-      const calendarKeys = Array.from(summaryMap.keys()).sort();
-
       const buildVisitsQuery = () => {
         let query = supabase
           .from("visits")
@@ -953,9 +912,40 @@ export default function Visitas() {
         return query;
       };
 
+      if (isVendor) {
+        const selectedDayQueryStartedAt = performance.now();
+        const selectedDayStart = selectedDate
+          ? toYmd(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate())
+          : startDate;
+        const nextDay = addDays(new Date(`${selectedDayStart}T12:00:00`), 1);
+        const selectedDayEndExclusive = toYmd(nextDay.getFullYear(), nextDay.getMonth(), nextDay.getDate());
+
+        const { data: dayVisits, error: dayError } = await buildVisitsQuery()
+          .gte("visit_date", selectedDayStart)
+          .lt("visit_date", selectedDayEndExclusive);
+        logPerfDuration("VISITAS_SELECTED_DAY_QUERY", selectedDayQueryStartedAt);
+
+        if (!active) return;
+
+        if (dayError) {
+          setError(dayError.message);
+          setVisits([]);
+        } else {
+          const hydrationStartedAt = performance.now();
+          const normalizedDayVisits = await hydrateVisitsWithClientes((dayVisits ?? []) as VisitRowJoin[], "list");
+          logPerfDuration("VISITAS_CLIENTES_HYDRATION_LITE", hydrationStartedAt);
+          setVisits(normalizedDayVisits);
+        }
+
+        logPerfDuration("VISITAS_INITIAL_LOAD", startedAt);
+        setLoading(false);
+        return;
+      }
+
       const data: VisitRowJoin[] = [];
       let from = 0;
       let supaError: { message: string } | null = null;
+      const selectedDayQueryStartedAt = performance.now();
       while (true) {
         const { data: pageVisits, error: pageError } = await buildVisitsQuery().range(
           from,
@@ -970,7 +960,7 @@ export default function Visitas() {
         if (page.length < VISITS_FETCH_PAGE_SIZE) break;
         from += VISITS_FETCH_PAGE_SIZE;
       }
-      const recordsAfterMay21 = data.filter((row) => row.visit_date >= "2026-05-22" && row.visit_date < "2026-06-01").length;
+      logPerfDuration("VISITAS_SELECTED_DAY_QUERY", selectedDayQueryStartedAt);
 
       if (!active) return;
 
@@ -979,11 +969,14 @@ export default function Visitas() {
         setVisits([]);
         setMonthSummaryCounts(new Map());
       } else {
-        const normalized = await hydrateVisitsWithClientes(data);
+        const hydrationStartedAt = performance.now();
+        const normalized = await hydrateVisitsWithClientes(data, "list");
+        logPerfDuration("VISITAS_CLIENTES_HYDRATION_LITE", hydrationStartedAt);
         setVisits(normalized);
       }
 
       if (!active) return;
+      logPerfDuration("VISITAS_INITIAL_LOAD", startedAt);
       setLoading(false);
     };
 
@@ -992,13 +985,176 @@ export default function Visitas() {
       setError(err instanceof Error ? err.message : "Erro ao carregar visitas.");
       setVisits([]);
       setMonthSummaryCounts(new Map());
+      logPerfDuration("VISITAS_INITIAL_LOAD", startedAt);
       setLoading(false);
     });
 
     return () => {
       active = false;
     };
-  }, [currentMonth, refreshKey, isVendor, profile?.display_name, session?.user.email, session?.user.id, canManage, selectedSupervisorId, selectedVendorId, hydrateVisitsWithClientes]);
+  }, [dayLoadKey, hydrateVisitsWithClientes, isVendor]);
+
+  useEffect(() => {
+    clearClientesCache();
+  }, [clearClientesCache, currentMonth, refreshKey]);
+
+  useEffect(() => {
+    if (!isVendor) {
+      setMaxVisibleDate(null);
+      setBlockMessage(null);
+      return;
+    }
+
+    let active = true;
+    if (lastRouteGateKeyRef.current === routeGateKey) return;
+    lastRouteGateKeyRef.current = routeGateKey;
+    const validateRouteGate = async () => {
+      const startedAt = performance.now();
+      try {
+        const now = new Date();
+        const todayKey = getDateKey(now);
+        const canUnlockNextRouteByTime = now.getHours() >= 19;
+        const endInclusive = format(
+          addDays(new Date(`${toYmd(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1)}T12:00:00`), -1),
+          "yyyy-MM-dd",
+        );
+        const formatRouteDate = (dateKey: string) =>
+          format(new Date(`${dateKey}T12:00:00`), "dd/MM/yyyy");
+
+        const assigneeClauses = [
+          session?.user.id ? `assigned_to_user_id.eq.${session.user.id}` : null,
+          profile?.display_name ? `assigned_to_name.eq.${profile.display_name}` : null,
+          session?.user.email ? `assigned_to_name.eq.${session.user.email}` : null,
+        ].filter((value): value is string => Boolean(value));
+
+        const applyVendorVisitFilter = <TQuery,>(query: TQuery) => {
+          if (assigneeClauses.length > 1) {
+            return (query as TQuery & { or: (filters: string) => TQuery }).or(assigneeClauses.join(","));
+          }
+          if (assigneeClauses.length === 1 && assigneeClauses[0].startsWith("assigned_to_user_id.eq.")) {
+            return (query as TQuery & { eq: (column: string, value: string) => TQuery }).eq(
+              "assigned_to_user_id",
+              assigneeClauses[0].replace("assigned_to_user_id.eq.", ""),
+            );
+          }
+          if (assigneeClauses.length === 1 && assigneeClauses[0].startsWith("assigned_to_name.eq.")) {
+            return (query as TQuery & { eq: (column: string, value: string) => TQuery }).eq(
+              "assigned_to_name",
+              assigneeClauses[0].replace("assigned_to_name.eq.", ""),
+            );
+          }
+          return query;
+        };
+
+        const { data: routeDatesData, error: routeDatesError } = await applyVendorVisitFilter(
+          supabase
+            .from("visits")
+            .select("visit_date")
+            .gte("visit_date", startOfMonth(currentMonth).toISOString().slice(0, 10))
+            .not("visit_date", "is", null)
+            .order("visit_date", { ascending: true }),
+        );
+        if (routeDatesError) throw new Error(routeDatesError.message);
+        const routeDates = Array.from(
+          new Set(
+            (routeDatesData ?? [])
+              .map((row: { visit_date?: string | null }) => row.visit_date)
+              .filter((value): value is string => Boolean(value))
+              .map((value) => formatDateKey(value)),
+          ),
+        ).sort();
+
+        let maxDate = endInclusive;
+        let blockReason: string | null = null;
+
+        if (routeDates.length > 0) {
+          const pastOrTodayDates = routeDates.filter((dateKey) => dateKey <= todayKey);
+          const futureDates = routeDates.filter((dateKey) => dateKey > todayKey);
+
+          for (const checkedRouteDate of pastOrTodayDates) {
+            const [pendingCount, completedCount, aceiteCount] = await Promise.all([
+              applyVendorVisitFilter(
+                supabase
+                  .from("visits")
+                  .select("id", { count: "exact", head: true })
+                  .eq("visit_date", checkedRouteDate)
+                  .is("completed_at", null),
+              ).then(({ count, error }) => {
+                if (error) throw error;
+                return count ?? 0;
+              }),
+              applyVendorVisitFilter(
+                supabase
+                  .from("visits")
+                  .select("id", { count: "exact", head: true })
+                  .eq("visit_date", checkedRouteDate)
+                  .not("completed_at", "is", null)
+                  .is("no_visit_reason", null),
+              ).then(({ count, error }) => {
+                if (error) throw error;
+                return count ?? 0;
+              }),
+              session?.user.id
+                ? supabase
+                    .from("aceite_digital")
+                    .select("id", { count: "exact", head: true })
+                    .eq("vendor_user_id", session.user.id)
+                    .eq("entry_date", checkedRouteDate)
+                    .then(({ count, error }) => {
+                      if (error) throw error;
+                      return count ?? 0;
+                    })
+                : Promise.resolve(0),
+            ]);
+
+            if (pendingCount > 0) {
+              maxDate = checkedRouteDate;
+              blockReason = `Conclua todas as visitas da rota (${formatRouteDate(checkedRouteDate)}) para liberar as proximas rotas.`;
+              break;
+            }
+
+            if (completedCount > 0 && aceiteCount === 0) {
+              maxDate = checkedRouteDate;
+              blockReason = `Registre o aceite digital da rota (${formatRouteDate(checkedRouteDate)}) para liberar as proximas rotas.`;
+              break;
+            }
+
+            maxDate = checkedRouteDate;
+          }
+
+          if (!blockReason && futureDates.length > 0) {
+            const nextRouteDate = futureDates[0];
+            if (nextRouteDate) {
+              if (!canUnlockNextRouteByTime) {
+                blockReason = `A proxima rota (${formatRouteDate(nextRouteDate)}) sera liberada a partir das 19:00.`;
+                maxDate = todayKey;
+              } else {
+                maxDate = nextRouteDate;
+              }
+            }
+          }
+        }
+
+        if (!active) return;
+        setMaxVisibleDate(maxDate);
+        setBlockMessage(blockReason);
+        if (isAfter(selectedDate ?? new Date(0), new Date(`${maxDate}T12:00:00`))) {
+          setSelectedDate(new Date(`${maxDate}T12:00:00`));
+        }
+      } catch {
+        if (!active) return;
+        setMaxVisibleDate(startOfMonth(currentMonth).toISOString().slice(0, 10));
+        setBlockMessage("Nao foi possivel validar as pendencias do vendedor. O acesso a proximas rotas foi bloqueado.");
+      } finally {
+        logPerfDuration("VISITAS_ROUTE_GATE", startedAt);
+      }
+    };
+
+    void validateRouteGate();
+    return () => {
+      active = false;
+    };
+  }, [isVendor, routeGateKey]);
 
   useEffect(() => {
     const monthStart = toYmd(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
@@ -1379,7 +1535,7 @@ export default function Visitas() {
         return;
       }
 
-      const normalized = await hydrateVisitsWithClientes((data ?? []) as VisitRowJoin[]);
+      const normalized = await hydrateVisitsWithClientes((data ?? []) as VisitRowJoin[], "list");
       let scopedDayDetails = normalized;
       if (canManage && canFilterBySupervisor && selectedSupervisorId !== "all") {
         if (vendorsLoaded) {
@@ -1559,11 +1715,6 @@ export default function Visitas() {
       normalizeSearchText(assignee.display_name ?? assignee.user_id).includes(query),
     );
   }, [addVendorsModal?.allowSupervisorAssignees, addVendorsQuery, supervisorRouteAssignees, vendors]);
-  const selectedDateKey = useMemo(
-    () => (selectedDate ? format(selectedDate, "yyyy-MM-dd") : ""),
-    [selectedDate],
-  );
-
   useEffect(() => {
     invalidateDayDetailsCache();
   }, [invalidateDayDetailsCache, selectedSupervisorId, selectedVendorId, currentMonth]);
@@ -2740,18 +2891,21 @@ export default function Visitas() {
       }
     })();
 
-    if (item.agenda) {
-      fetchAgendaCanonicalFromClientes(item)
-        .then((hydratedAgenda) => {
+    if (item.cliente_id) {
+      const hydrationStartedAt = performance.now();
+      hydrateVisitsWithClientes([item], "details")
+        .then((hydratedVisits) => {
           if (detailsObsRequestRef.current !== requestId) return;
-          if (!hydratedAgenda) return;
+          const hydratedVisit = hydratedVisits[0];
+          if (!hydratedVisit) return;
 
           setVisits((prev) =>
             prev.map((visit) =>
               visit.id === item.id
                 ? {
                     ...visit,
-                    agenda: hydratedAgenda,
+                    agenda: hydratedVisit.agenda ?? visit.agenda,
+                    cliente: hydratedVisit.cliente ?? visit.cliente,
                   }
                 : visit,
             ),
@@ -2761,12 +2915,15 @@ export default function Visitas() {
             prev && prev.id === item.id
               ? {
                   ...prev,
-                  agenda: hydratedAgenda,
+                  agenda: hydratedVisit.agenda ?? prev.agenda,
+                  cliente: hydratedVisit.cliente ?? prev.cliente,
                 }
               : prev,
           );
         })
-        .catch((err) => {
+        .catch(() => {})
+        .finally(() => {
+          logPerfDuration("VISITAS_CLIENTES_HYDRATION_FULL", hydrationStartedAt);
         });
     }
   };
