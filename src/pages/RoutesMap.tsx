@@ -400,8 +400,10 @@ export default function RoutesMap() {
   const setFilters = setDraftFilters;
   const [companyNameQuery, setCompanyNameQuery] = useState("");
   const [companyCodeQuery, setCompanyCodeQuery] = useState("");
+  const [companyAddressQuery, setCompanyAddressQuery] = useState("");
   const [appliedCompanyNameQuery, setAppliedCompanyNameQuery] = useState("");
   const [appliedCompanyCodeQuery, setAppliedCompanyCodeQuery] = useState("");
+  const [appliedCompanyAddressQuery, setAppliedCompanyAddressQuery] = useState("");
   const [hasSearched, setHasSearched] = useState(true);
   const [loadingEmpresas, setLoadingEmpresas] = useState(false);
   const restoredDraftRef = useRef(false);
@@ -511,8 +513,10 @@ export default function RoutesMap() {
     const parsed = readRoutesModuleDraft();
     setCompanyNameQuery(parsed.companyNameQuery ?? "");
     setCompanyCodeQuery(parsed.companyCodeQuery ?? "");
+    setCompanyAddressQuery(parsed.companyAddressQuery ?? "");
     setAppliedCompanyNameQuery(parsed.companyNameQuery ?? "");
     setAppliedCompanyCodeQuery(parsed.companyCodeQuery ?? "");
+    setAppliedCompanyAddressQuery(parsed.companyAddressQuery ?? "");
     if (Array.isArray(parsed.selectedEmpresaIds)) {
       setSelectedEmpresaIds(Array.from(new Set(parsed.selectedEmpresaIds.filter(Boolean))));
     }
@@ -638,6 +642,7 @@ export default function RoutesMap() {
           search: {
             companyName: appliedCompanyNameQuery,
             companyCode: appliedCompanyCodeQuery,
+            companyAddress: appliedCompanyAddressQuery,
           },
         };
         const [empresas, totalReal] = await Promise.all([
@@ -667,6 +672,7 @@ export default function RoutesMap() {
   }, [
     appliedCompanyCodeQuery,
     appliedCompanyNameQuery,
+    appliedCompanyAddressQuery,
     appliedFilters,
     canGenerate,
     hasSearched,
@@ -778,7 +784,12 @@ export default function RoutesMap() {
   }, [appliedSupervisorFlagFilters, dedupedEmpresaRows, role, supervisorFlagByEmpresa]);
 
   const hasActiveRowsFilter = useMemo(() => {
-    if (normalizeSearchText(appliedCompanyNameQuery) || normalizeSearchText(appliedCompanyCodeQuery)) return true;
+    if (
+      normalizeSearchText(appliedCompanyNameQuery) ||
+      normalizeSearchText(appliedCompanyCodeQuery) ||
+      normalizeSearchText(appliedCompanyAddressQuery)
+    )
+      return true;
     if (Object.keys(FILTER_SOURCES).some((key) => (appliedFilters.columns[key] ?? []).length > 0)) return true;
     if ((appliedFilters.columns.supervisor_flag ?? []).length > 0) return true;
     const dateRange = appliedFilters.dateRanges.data_da_ultima_visita;
@@ -789,6 +800,7 @@ export default function RoutesMap() {
   }, [
     appliedCompanyCodeQuery,
     appliedCompanyNameQuery,
+    appliedCompanyAddressQuery,
     appliedFilters.columns,
     appliedFilters.dateRanges.data_da_ultima_visita,
     appliedFilters.ranges.vidas_ultima_visita,
@@ -971,6 +983,7 @@ export default function RoutesMap() {
     writeRoutesModuleDraft({
       companyNameQuery,
       companyCodeQuery,
+      companyAddressQuery,
       selectedEmpresaIds: effectiveSelectedEmpresaIds,
       generationTab,
       selectedVendorIds,
@@ -991,6 +1004,7 @@ export default function RoutesMap() {
   }, [
     companyCodeQuery,
     companyNameQuery,
+    companyAddressQuery,
     effectiveSelectedEmpresaIds,
     excludedBairroEmpresaIds,
     generationTab,
@@ -1504,6 +1518,7 @@ export default function RoutesMap() {
     setAppliedFilters(filters);
     setAppliedCompanyNameQuery(companyNameQuery.trim());
     setAppliedCompanyCodeQuery(companyCodeQuery.trim());
+    setAppliedCompanyAddressQuery(companyAddressQuery.trim());
     setSelectedEmpresaIds([]);
     setSelectedBairroKeys([]);
     setExcludedBairroEmpresaIds([]);
@@ -1517,8 +1532,10 @@ export default function RoutesMap() {
     setAppliedFilters(emptyFilters);
     setCompanyNameQuery("");
     setCompanyCodeQuery("");
+    setCompanyAddressQuery("");
     setAppliedCompanyNameQuery("");
     setAppliedCompanyCodeQuery("");
+    setAppliedCompanyAddressQuery("");
     setSelectedEmpresaIds([]);
     setSelectedBairroKeys([]);
     setExcludedBairroEmpresaIds([]);
@@ -1549,268 +1566,302 @@ export default function RoutesMap() {
       <section className="grid gap-4 lg:grid-cols-[30%_70%] lg:items-stretch">
         <div className="rounded-2xl border border-sea/20 bg-sand/30 p-4">
           <div className="flex flex-col gap-4">
-            {/* Busca por nome e codigo */}
-            <div
-              className={`grid gap-3 md:items-end ${
-                role === "SUPERVISOR"
-                  ? "md:grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)_minmax(180px,220px)_minmax(180px,220px)]"
-                  : "md:grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)_minmax(180px,220px)]"
-              }`}
-            >
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] font-semibold text-ink/70">Termo por nome (palavra exata)</span>
-                <input
-                  value={companyNameQuery}
-                  onChange={(e) => setCompanyNameQuery(e.target.value)}
-                  placeholder="Ex.: rio"
-                  className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] font-semibold text-ink/70">Busca exata por codigo</span>
-                <input
-                  value={companyCodeQuery}
-                  onChange={(e) => setCompanyCodeQuery(e.target.value)}
-                  placeholder="Busca exata por codigo"
-                  className="w-full rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-sm outline-none focus:border-sea"
-                />
-              </label>
-              {role === "SUPERVISOR" ? (
-                <label className="flex flex-col gap-1">
-                  <span className="text-[11px] font-semibold text-ink/70">Flag supervisor</span>
-                  <div className="flex h-10 items-center justify-between rounded-lg border border-sea/20 bg-white/90 px-3">
-                    <span className="text-xs text-ink/60">
-                      {(filters.columns.supervisor_flag ?? []).length
-                        ? `${(filters.columns.supervisor_flag ?? []).length} selecionada(s)`
-                        : "Todas"}
-                    </span>
-                    <MultiSelectFilter
-                      label={
-                        (filters.columns.supervisor_flag ?? []).length
-                          ? `Flag (${filters.columns.supervisor_flag.length})`
-                          : "Flag"
-                      }
-                      options={SUPERVISOR_FLAG_FILTER_OPTIONS.map((option) => option.label)}
-                      value={(filters.columns.supervisor_flag ?? []).map(getSupervisorFlagOptionLabel)}
-                      onApply={(nextLabels) =>
-                        setFilters((prev) => ({
-                          ...prev,
-                          columns: {
-                            ...prev.columns,
-                            supervisor_flag: nextLabels
-                              .map(getSupervisorFlagOptionValue)
-                              .filter(
-                                (value): value is SupervisorFlagFilterValue => value !== null,
-                              ),
-                          },
-                        }))
-                      }
-                    />
+            <div className="rounded-[16px] border border-emerald-400/20 bg-slate-950/90 p-4 shadow-[0_12px_30px_rgba(2,6,23,0.2)] backdrop-blur">
+              <div className="mb-4 border-b border-emerald-400/10 pb-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-300/90">
+                  Filtros de pesquisa
+                </p>
+                <p className="mt-1 text-sm text-slate-300/75">
+                  Refine os critérios para gerar ou consultar rotas
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-white/5 bg-white/5 p-3">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-200/90">
+                      Identificação
+                    </h3>
                   </div>
-                </label>
-              ) : null}
-              <label className="flex flex-col gap-1">
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-ink/70">
-                  Categoria
-                  <CategoriaLegendPopover />
-                </span>
-                <div className="flex h-10 items-center justify-between rounded-lg border border-sea/20 bg-white/90 px-3">
-                  <span className="text-xs text-ink/60">
-                    {(filters.columns.categoria ?? []).length
-                      ? `${(filters.columns.categoria ?? []).length} selecionada(s)`
-                      : "Selecione"}
-                  </span>
-                  <MultiSelectFilter
-                    label={
-                      (filters.columns.categoria ?? []).length
-                        ? `Categoria (${filters.columns.categoria.length})`
-                        : "Categoria"
-                    }
-                    options={filterOptions.categoria ?? [...CATEGORIA_OPTIONS]}
-                    value={filters.columns.categoria ?? []}
-                    onApply={(next) =>
-                      setFilters((prev) => ({
-                        ...prev,
-                        columns: { ...prev.columns, categoria: next },
-                      }))
-                    }
-                  />
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-12">
+                    <label className="flex min-w-0 flex-col gap-1 xl:col-span-3">
+                      <span className="text-[11px] font-medium text-slate-300/80">Termo por nome</span>
+                      <input
+                        value={companyNameQuery}
+                        onChange={(e) => setCompanyNameQuery(e.target.value)}
+                        placeholder="Ex.: rio"
+                        className="h-10 w-full rounded-xl border border-white/10 bg-slate-900/70 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                      />
+                    </label>
+                    <label className="flex min-w-0 flex-col gap-1 xl:col-span-2">
+                      <span className="text-[11px] font-medium text-slate-300/80">Busca exata por código</span>
+                      <input
+                        value={companyCodeQuery}
+                        onChange={(e) => setCompanyCodeQuery(e.target.value)}
+                        placeholder="Código"
+                        className="h-10 w-full rounded-xl border border-white/10 bg-slate-900/70 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                      />
+                    </label>
+                    <label className="flex min-w-0 flex-col gap-1 xl:col-span-3">
+                      <span className="text-[11px] font-medium text-slate-300/80">Endereço</span>
+                      <input
+                        value={companyAddressQuery}
+                        onChange={(e) => setCompanyAddressQuery(e.target.value)}
+                        placeholder="Rua, avenida, bairro..."
+                        className="h-10 w-full rounded-xl border border-white/10 bg-slate-900/70 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                      />
+                    </label>
+                    {role === "SUPERVISOR" ? (
+                      <label className="flex min-w-0 flex-col gap-1 xl:col-span-2">
+                        <span className="text-[11px] font-medium text-slate-300/80">Flag supervisor</span>
+                        <div className="flex h-10 items-center justify-between rounded-xl border border-white/10 bg-slate-900/70 px-3 text-sm text-slate-100">
+                          <span className="truncate text-xs text-slate-300/75">
+                            {(filters.columns.supervisor_flag ?? []).length
+                              ? `${(filters.columns.supervisor_flag ?? []).length} selecionada(s)`
+                              : "Todas"}
+                          </span>
+                          <MultiSelectFilter
+                            label={
+                              (filters.columns.supervisor_flag ?? []).length
+                                ? `Flag (${filters.columns.supervisor_flag.length})`
+                                : "Flag"
+                            }
+                            options={SUPERVISOR_FLAG_FILTER_OPTIONS.map((option) => option.label)}
+                            value={(filters.columns.supervisor_flag ?? []).map(getSupervisorFlagOptionLabel)}
+                            onApply={(nextLabels) =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                columns: {
+                                  ...prev.columns,
+                                  supervisor_flag: nextLabels
+                                    .map(getSupervisorFlagOptionValue)
+                                    .filter(
+                                      (value): value is SupervisorFlagFilterValue => value !== null,
+                                    ),
+                                },
+                              }))
+                            }
+                          />
+                        </div>
+                      </label>
+                    ) : null}
+                    <label className="flex min-w-0 flex-col gap-1 xl:col-span-2">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-300/80">
+                        Categoria
+                        <CategoriaLegendPopover />
+                      </span>
+                      <div className="flex h-10 items-center justify-between rounded-xl border border-white/10 bg-slate-900/70 px-3 text-sm text-slate-100">
+                        <span className="truncate text-xs text-slate-300/75">
+                          {(filters.columns.categoria ?? []).length
+                            ? `${(filters.columns.categoria ?? []).length} selecionada(s)`
+                            : "Selecione"}
+                        </span>
+                        <MultiSelectFilter
+                          label={
+                            (filters.columns.categoria ?? []).length
+                              ? `Categoria (${filters.columns.categoria.length})`
+                              : "Categoria"
+                          }
+                          options={filterOptions.categoria ?? [...CATEGORIA_OPTIONS]}
+                          value={filters.columns.categoria ?? []}
+                          onApply={(next) =>
+                            setFilters((prev) => ({
+                              ...prev,
+                              columns: { ...prev.columns, categoria: next },
+                            }))
+                          }
+                        />
+                      </div>
+                    </label>
+                    <label className="flex min-w-0 flex-col gap-1 xl:col-span-2">
+                      <span className="text-[11px] font-medium text-slate-300/80">Situação da empresa</span>
+                      <div className="flex h-10 items-center rounded-xl border border-white/10 bg-slate-900/70 px-3 text-xs text-slate-300/75">
+                        {(filters.columns.situacao ?? []).length
+                          ? `${(filters.columns.situacao ?? []).length} selecionada(s)`
+                          : "Ativo (padrão)"}
+                      </div>
+                    </label>
+                  </div>
                 </div>
-              </label>
-            </div>
 
-            {/* Ultima visita */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-ink/70">Ultima visita</label>
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <div className="rounded-2xl border border-white/5 bg-white/5 p-3">
+                    <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-200/90">
+                      Período da última visita
+                    </h3>
+                    <div className="grid gap-3">
+                      <div className="grid gap-3 sm:grid-cols-[1fr_auto_1fr]">
+                        <input
+                          type="date"
+                          value={filters.dateRanges.data_da_ultima_visita.from ?? ""}
+                          onChange={(e) =>
+                            setFilters((p) => ({
+                              ...p,
+                              dateRanges: {
+                                ...p.dateRanges,
+                                data_da_ultima_visita: {
+                                  ...p.dateRanges.data_da_ultima_visita,
+                                  from: e.target.value || undefined,
+                                  month: undefined,
+                                  year: undefined,
+                                },
+                              },
+                            }))
+                          }
+                          className="h-10 min-w-0 rounded-xl border border-white/10 bg-slate-900/70 px-3 text-xs text-slate-100 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                        />
+                        <span className="flex items-center justify-center text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                          ou
+                        </span>
+                        <input
+                          type="date"
+                          value={filters.dateRanges.data_da_ultima_visita.to ?? ""}
+                          onChange={(e) =>
+                            setFilters((p) => ({
+                              ...p,
+                              dateRanges: {
+                                ...p.dateRanges,
+                                data_da_ultima_visita: {
+                                  ...p.dateRanges.data_da_ultima_visita,
+                                  to: e.target.value || undefined,
+                                  month: undefined,
+                                  year: undefined,
+                                },
+                              },
+                            }))
+                          }
+                          className="h-10 min-w-0 rounded-xl border border-white/10 bg-slate-900/70 px-3 text-xs text-slate-100 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                        />
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-[auto_minmax(120px,1fr)_minmax(96px,120px)_auto] sm:items-center">
+                        <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">ou</span>
+                        <select
+                          value={filters.dateRanges.data_da_ultima_visita.month ?? ""}
+                          onChange={(e) =>
+                            setFilters((p) => ({
+                              ...p,
+                              dateRanges: {
+                                ...p.dateRanges,
+                                data_da_ultima_visita: {
+                                  ...p.dateRanges.data_da_ultima_visita,
+                                  month: e.target.value || undefined,
+                                  year:
+                                    e.target.value && !p.dateRanges.data_da_ultima_visita.year
+                                      ? String(new Date().getFullYear())
+                                      : p.dateRanges.data_da_ultima_visita.year,
+                                  from: undefined,
+                                  to: undefined,
+                                },
+                              },
+                            }))
+                          }
+                          className="h-10 rounded-xl border border-white/10 bg-slate-900/70 px-3 text-xs text-slate-100 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                        >
+                          <option value="">Mês</option>
+                          {MONTH_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          placeholder="Ano"
+                          value={filters.dateRanges.data_da_ultima_visita.year ?? ""}
+                          onChange={(e) =>
+                            setFilters((p) => ({
+                              ...p,
+                              dateRanges: {
+                                ...p.dateRanges,
+                                data_da_ultima_visita: {
+                                  ...p.dateRanges.data_da_ultima_visita,
+                                  year: e.target.value || undefined,
+                                  from: undefined,
+                                  to: undefined,
+                                },
+                              },
+                            }))
+                          }
+                          className="h-10 rounded-xl border border-white/10 bg-slate-900/70 px-3 text-xs text-slate-100 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setFilters((p) => ({
+                              ...p,
+                              dateRanges: {
+                                ...p.dateRanges,
+                                data_da_ultima_visita: {
+                                  ...p.dateRanges.data_da_ultima_visita,
+                                  invert: !p.dateRanges.data_da_ultima_visita.invert,
+                                },
+                              },
+                            }))
+                          }
+                          className={[
+                            "inline-flex h-10 items-center justify-center rounded-xl border px-3 text-xs font-semibold transition",
+                            filters.dateRanges.data_da_ultima_visita.invert
+                              ? "border-emerald-400 bg-emerald-400/10 text-emerald-200"
+                              : "border-white/10 bg-slate-900/70 text-slate-300 hover:border-emerald-400 hover:text-emerald-200",
+                          ].join(" ")}
+                          title="Excluir período"
+                        >
+                          <SquareCenterlineDashedHorizontal size={14} />
+                          <span className="ml-2">Excluir período</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
 
-              <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  value={filters.dateRanges.data_da_ultima_visita.from ?? ""}
-                  onChange={(e) =>
-                    setFilters((p) => ({
-                      ...p,
-                      dateRanges: {
-                        ...p.dateRanges,
-                        data_da_ultima_visita: {
-                          ...p.dateRanges.data_da_ultima_visita,
-                          from: e.target.value || undefined,
-                          month: undefined,
-                          year: undefined,
-                        },
-                      },
-                    }))
-                  }
-                  className="min-w-0 flex-1 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                />
-                <span className="text-xs text-ink/50">ate</span>
-                <input
-                  type="date"
-                  value={filters.dateRanges.data_da_ultima_visita.to ?? ""}
-                  onChange={(e) =>
-                    setFilters((p) => ({
-                      ...p,
-                      dateRanges: {
-                        ...p.dateRanges,
-                        data_da_ultima_visita: {
-                          ...p.dateRanges.data_da_ultima_visita,
-                          to: e.target.value || undefined,
-                          month: undefined,
-                          year: undefined,
-                        },
-                      },
-                    }))
-                  }
-                  className="min-w-0 flex-1 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                />
+                  <div className="rounded-2xl border border-white/5 bg-white/5 p-3">
+                    <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-200/90">
+                      Vidas última visita
+                    </h3>
+                    <div className="grid gap-3 sm:grid-cols-[1fr_auto_1fr]">
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        value={filters.ranges.vidas_ultima_visita.from ?? ""}
+                        onChange={(e) => {
+                          const v = normalizeNumberInput(e.target.value);
+                          setFilters((p) => ({
+                            ...p,
+                            ranges: {
+                              ...p.ranges,
+                              vidas_ultima_visita: { ...p.ranges.vidas_ultima_visita, from: v || undefined },
+                            },
+                          }));
+                        }}
+                        placeholder="De"
+                        className="h-10 min-w-0 rounded-xl border border-white/10 bg-slate-900/70 px-3 text-xs text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                      />
+                      <span className="flex items-center justify-center text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                        até
+                      </span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        value={filters.ranges.vidas_ultima_visita.to ?? ""}
+                        onChange={(e) => {
+                          const v = normalizeNumberInput(e.target.value);
+                          setFilters((p) => ({
+                            ...p,
+                            ranges: {
+                              ...p.ranges,
+                              vidas_ultima_visita: { ...p.ranges.vidas_ultima_visita, to: v || undefined },
+                            },
+                          }));
+                        }}
+                        placeholder="Até"
+                        className="h-10 min-w-0 rounded-xl border border-white/10 bg-slate-900/70 px-3 text-xs text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold text-ink/50">ou</span>
-                <select
-                  value={filters.dateRanges.data_da_ultima_visita.month ?? ""}
-                  onChange={(e) =>
-                    setFilters((p) => ({
-                      ...p,
-                      dateRanges: {
-                        ...p.dateRanges,
-                        data_da_ultima_visita: {
-                          ...p.dateRanges.data_da_ultima_visita,
-                          month: e.target.value || undefined,
-                          year:
-                            e.target.value && !p.dateRanges.data_da_ultima_visita.year
-                              ? String(new Date().getFullYear())
-                              : p.dateRanges.data_da_ultima_visita.year,
-                          from: undefined,
-                          to: undefined,
-                        },
-                      },
-                    }))
-                  }
-                  className="min-w-[110px] rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                >
-                  <option value="">Mes</option>
-                  {MONTH_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="Ano"
-                  value={filters.dateRanges.data_da_ultima_visita.year ?? ""}
-                  onChange={(e) =>
-                    setFilters((p) => ({
-                      ...p,
-                      dateRanges: {
-                        ...p.dateRanges,
-                        data_da_ultima_visita: {
-                          ...p.dateRanges.data_da_ultima_visita,
-                          year: e.target.value || undefined,
-                          from: undefined,
-                          to: undefined,
-                        },
-                      },
-                    }))
-                  }
-                  className="w-24 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                />
-
-                <label className="flex items-center gap-2 text-[11px] font-semibold text-ink/60">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setFilters((p) => ({
-                        ...p,
-                        dateRanges: {
-                          ...p.dateRanges,
-                          data_da_ultima_visita: {
-                            ...p.dateRanges.data_da_ultima_visita,
-                            invert: !p.dateRanges.data_da_ultima_visita.invert,
-                          },
-                        },
-                      }))
-                    }
-                    className={[
-                      "inline-flex h-6 w-6 items-center justify-center rounded-md border transition",
-                      filters.dateRanges.data_da_ultima_visita.invert
-                        ? "border-sea bg-sea/10 text-sea"
-                        : "border-sea/30 bg-white text-ink/50 hover:border-sea hover:text-sea",
-                    ].join(" ")}
-                  >
-                    <SquareCenterlineDashedHorizontal size={14} />
-                  </button>
-                  Inverter
-                </label>
-              </div>
-            </div>
-
-            {/* Vidas ultima visita */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-ink/70">Vidas ultima visita</label>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={0}
-                  value={filters.ranges.vidas_ultima_visita.from ?? ""}
-                  onChange={(e) => {
-                    const v = normalizeNumberInput(e.target.value);
-                    setFilters((p) => ({
-                      ...p,
-                      ranges: {
-                        ...p.ranges,
-                        vidas_ultima_visita: { ...p.ranges.vidas_ultima_visita, from: v || undefined },
-                      },
-                    }));
-                  }}
-                  placeholder="De"
-                  className="w-24 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                />
-                <span className="text-xs text-ink/50">ate</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={0}
-                  value={filters.ranges.vidas_ultima_visita.to ?? ""}
-                  onChange={(e) => {
-                    const v = normalizeNumberInput(e.target.value);
-                    setFilters((p) => ({
-                      ...p,
-                      ranges: {
-                        ...p.ranges,
-                        vidas_ultima_visita: { ...p.ranges.vidas_ultima_visita, to: v || undefined },
-                      },
-                    }));
-                  }}
-                  placeholder="Ate"
-                  className="w-24 rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea"
-                />
-              </div>
-            </div>
 
             {/* Selecao por raio */}
             <div className="rounded-xl border border-sea/20 bg-white/75 p-3">
@@ -1912,15 +1963,17 @@ export default function RoutesMap() {
             </div>
 
             {/* Filtros de colunas */}
-            <div className="rounded-xl border border-sea/20 bg-white/75 p-3">
-              <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-ink/70">Filtros de colunas</h3>
+            <div className="rounded-xl border border-emerald-400/10 bg-white/5 p-3">
+              <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-emerald-200/90">
+                Filtros de colunas
+              </h3>
               <div className="mt-3 grid gap-2">
                 {Object.keys(FILTER_SOURCES).map((key) => (
                   <div
                     key={key}
-                    className="flex items-center justify-between rounded-lg border border-sea/15 bg-white/90 px-2 py-2"
+                    className="flex items-center justify-between rounded-lg border border-sea/10 bg-white/80 px-3 py-2 text-ink dark:border-white/5 dark:bg-slate-900/50 dark:text-slate-200"
                   >
-                    <span className="text-xs font-semibold text-ink/70">{FILTER_LABELS[key] ?? key}</span>
+                    <span className="text-xs font-semibold text-ink/80 dark:text-slate-200/80">{FILTER_LABELS[key] ?? key}</span>
                     <MultiSelectFilter
                       label={FILTER_LABELS[key] ?? key}
                       options={filterOptions[key] ?? []}
@@ -1937,66 +1990,81 @@ export default function RoutesMap() {
               </div>
             </div>
 
-            {/* Botoes */}
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={handleApplySearch}
-                className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight"
-              >
-                Buscar
-              </button>
+            <div className="rounded-[16px] border border-emerald-400/15 bg-slate-950/90 p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                <div className="text-xs text-slate-300/75">
+                  <div>Empresas encontradas: {totalEmpresasReal ?? "..."}</div>
+                  {missingFromFiltersCount > 0 && <div>Sem coordenada real: {missingFromFiltersCount}</div>}
+                  <div className="flex items-center gap-1">
+                    <span>Empresas selecionadas: {effectiveSelectedEmpresaIds.length}</span>
+                    <button
+                      type="button"
+                      onClick={clearAllSelectedCompanies}
+                      disabled={effectiveSelectedEmpresaIds.length === 0}
+                      title="Limpar empresas selecionadas"
+                      aria-label="Limpar empresas selecionadas"
+                      className="inline-flex h-5 w-5 items-center justify-center rounded-full text-slate-300/60 transition hover:bg-emerald-400/10 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setMessage(null);
-                  setInactiveCompaniesWarning(null);
-                  if (selectedSupervisorIds.length === 0 && role === "SUPERVISOR" && session?.user.id) {
-                    setSelectedSupervisorIds([session.user.id]);
-                  }
-                  setSupervisorReasonByEmpresaId((prev) => {
-                    const next = { ...prev };
-                    effectiveSelectedEmpresaIds.forEach((empresaId) => {
-                      if (!next[empresaId]) next[empresaId] = "RETENCAO";
-                    });
-                    return next;
-                  });
-                  setShowGenerateModal(true);
-                }}
-                disabled={effectiveSelectedEmpresaIds.length === 0}
-                className="inline-flex items-center gap-1 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
-              >
-                <MapPin size={14} />
-                Gerar rota
-              </button>
-
-              <button
-                type="button"
-                onClick={handleClearFilters}
-                className="rounded-lg border border-sea/30 bg-white/80 px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
-              >
-                Limpar filtros
-              </button>
-
-              <div className="ml-auto text-right text-xs text-ink/60">
-                <div>Empresas: {totalEmpresasReal ?? "..."}</div>
-                {missingFromFiltersCount > 0 && <div>Sem coordenada real: {missingFromFiltersCount}</div>}
-                <div className="flex items-center justify-end gap-1">
-                  <span>Selecionadas: {effectiveSelectedEmpresaIds.length}</span>
+                <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                   <button
                     type="button"
-                    onClick={clearAllSelectedCompanies}
-                    disabled={effectiveSelectedEmpresaIds.length === 0}
-                    title="Limpar empresas selecionadas"
-                    aria-label="Limpar empresas selecionadas"
-                    className="inline-flex h-5 w-5 items-center justify-center rounded-full text-ink/50 transition hover:bg-sea/10 hover:text-sea disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={handleApplySearch}
+                    className="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-semibold text-white shadow-[0_8px_20px_rgba(16,185,129,0.25)] transition hover:bg-emerald-400"
                   >
-                    <X size={12} />
+                    Buscar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearFilters}
+                    className="rounded-xl border border-white/15 bg-transparent px-4 py-2 text-xs font-semibold text-slate-200/85 transition hover:border-emerald-400 hover:text-emerald-200"
+                  >
+                    Limpar filtros
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-emerald-400/10 bg-white/5 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-200/90">
+                      Ação posterior
+                    </p>
+                    <p className="mt-1 text-xs text-slate-300/70">
+                      Gere a rota somente depois de revisar o resultado da busca
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMessage(null);
+                      setInactiveCompaniesWarning(null);
+                      if (selectedSupervisorIds.length === 0 && role === "SUPERVISOR" && session?.user.id) {
+                        setSelectedSupervisorIds([session.user.id]);
+                      }
+                      setSupervisorReasonByEmpresaId((prev) => {
+                        const next = { ...prev };
+                        effectiveSelectedEmpresaIds.forEach((empresaId) => {
+                          if (!next[empresaId]) next[empresaId] = "RETENCAO";
+                        });
+                        return next;
+                      });
+                      setShowGenerateModal(true);
+                    }}
+                    disabled={effectiveSelectedEmpresaIds.length === 0}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-semibold text-white shadow-[0_8px_20px_rgba(16,185,129,0.25)] transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <MapPin size={14} />
+                    Gerar rota
                   </button>
                 </div>
               </div>
             </div>
+          </div>
             {!hasSearched ? (
               <div className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink/70">
                 Ajuste os filtros e clique em Buscar.
@@ -2394,7 +2462,7 @@ export default function RoutesMap() {
 
       {/* MODAL GERAR VISITAS */}
       {showGenerateModal && (
-        <div className="fixed inset-0 z-[3000] flex items-start justify-center px-4 pt-6">
+        <div className="fixed inset-0 z-[3000] flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -2703,7 +2771,7 @@ export default function RoutesMap() {
       )}
 
       {eventWarning && (
-        <div className="fixed inset-0 z-[3300] flex items-start justify-center px-4 pt-6">
+        <div className="fixed inset-0 z-[3300] flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -2748,7 +2816,7 @@ export default function RoutesMap() {
       )}
 
       {inactiveCompaniesWarning && inactiveCompaniesWarning.length > 0 && (
-        <div className="fixed inset-0 z-[3100] flex items-start justify-center px-4 pt-6">
+        <div className="fixed inset-0 z-[3100] flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"

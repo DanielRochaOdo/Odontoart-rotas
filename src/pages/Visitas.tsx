@@ -3933,7 +3933,7 @@ export default function Visitas() {
       )}
 
       {addVendorsModal && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4082,7 +4082,7 @@ export default function Visitas() {
       )}
 
       {detailsVisit && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
           <button type="button" className="absolute inset-0 bg-ink/30" onClick={closeDetailsModal} />
           <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <div className="flex items-start justify-between gap-3">
@@ -4200,7 +4200,7 @@ export default function Visitas() {
       )}
 
       {planoValoresModal && (
-        <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-6">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4254,7 +4254,7 @@ export default function Visitas() {
       )}
 
       {canManageVendorRouteAccess && vendorDashboardAccessModal && (
-        <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-6">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4300,7 +4300,7 @@ export default function Visitas() {
       )}
 
       {completeVisit && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4732,7 +4732,7 @@ export default function Visitas() {
       )}
 
       {confirmVisit && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4773,7 +4773,7 @@ export default function Visitas() {
       )}
 
       {noVisit && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"

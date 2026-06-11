@@ -140,13 +140,13 @@ export default function MultiSelectFilter({
         onClick={(event) => {
           event.stopPropagation();
         }}
-        className="relative inline-flex h-6 w-6 items-center justify-center rounded-md border border-sea/20 bg-white/80 text-ink/50 transition hover:border-sea hover:text-sea"
+        className="relative inline-flex h-5 w-5 items-center justify-center rounded-md border border-sea/20 bg-white/80 text-ink/50 transition hover:border-sea hover:text-sea dark:bg-slate-900/60 dark:text-slate-200/60"
         aria-label={label}
         title={label}
       >
-        <Filter size={12} />
+        <Filter size={10} />
         {value.length > 0 ? (
-          <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-sea px-1 text-[10px] font-semibold text-white">
+          <span className="absolute -top-1 -right-1 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-sea px-1 text-[9px] font-semibold text-white">
             {value.length}
           </span>
         ) : null}
@@ -156,17 +156,17 @@ export default function MultiSelectFilter({
         ? createPortal(
             <div
               ref={popoverRef}
-              className="fixed z-[9999] w-64 rounded-2xl border border-sea/20 bg-white p-3 shadow-xl"
+              className="fixed z-[9999] w-64 rounded-2xl border border-sea/20 bg-white p-3 shadow-xl dark:border-sea/20 dark:bg-slate-950 dark:text-slate-100"
               style={{ top: position.top, left: position.left }}
               onClick={(event) => event.stopPropagation()}
               onMouseDown={(event) => event.stopPropagation()}
               onPointerDown={(event) => event.stopPropagation()}
             >
               <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-ink/60">Filtro</p>
+                <p className="text-xs font-semibold text-ink/60 dark:text-slate-300">Filtro</p>
                 <button
                   type="button"
-                  className="text-xs text-sea"
+                  className="text-xs text-sea dark:text-seaLight"
                   onClick={() => {
                     setDraft([]);
                     setQuery("");
@@ -184,7 +184,7 @@ export default function MultiSelectFilter({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Buscar..."
-                className="mt-2 w-full rounded-lg border border-sea/20 bg-white/90 px-2 py-1 text-xs outline-none focus:border-sea"
+                className="mt-2 w-full rounded-lg border border-sea/20 bg-white/90 px-2 py-1 text-xs outline-none focus:border-sea dark:border-sea/20 dark:bg-slate-900/80 dark:text-slate-100 dark:placeholder:text-slate-500"
               />
 
               <div className="mt-2 max-h-40 space-y-1 overflow-auto">
@@ -198,7 +198,7 @@ export default function MultiSelectFilter({
                         key={option}
                         type="button"
                         onClick={() => toggleValue(option)}
-                        className="flex w-full items-center justify-between rounded-lg px-2 py-1 text-xs text-ink hover:bg-sea/10"
+                        className="flex w-full items-center justify-between rounded-lg px-2 py-1 text-xs text-ink hover:bg-sea/10 dark:text-slate-200 dark:hover:bg-sea/15"
                       >
                         <span>{option}</span>
                         {checked ? <Check size={14} className="text-sea" /> : null}
@@ -211,15 +211,15 @@ export default function MultiSelectFilter({
               <div className="mt-3 flex items-center justify-between">
                 <button
                   type="button"
-                  className="text-xs text-ink/60"
+                  className="text-xs text-ink/60 dark:text-slate-300"
                   onClick={() => setDraft(dedupeOptions(filteredOptions.map((item) => canonicalizeValue(item))))}
                 >
                   Selecionar todos
                 </button>
                 <button
                   type="button"
-                  className="rounded-lg bg-sea px-3 py-1 text-xs font-semibold text-white shadow"
-                  onClick={() => {
+                  className="rounded-lg bg-sea px-3 py-1 text-xs font-semibold text-white shadow dark:bg-seaLight dark:text-slate-950"
+                onClick={() => {
                     onApply(draft);
                     setOpen(false);
                   }}

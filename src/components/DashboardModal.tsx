@@ -55,7 +55,7 @@ export default function DashboardModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[99999] flex items-start justify-center bg-black/50 px-4 pt-6 overscroll-contain"
+      className="fixed inset-y-0 left-0 right-0 z-[99999] flex items-center justify-center bg-black/50 px-4 overscroll-contain md:left-[var(--sidebar-width)]"
       role="dialog"
       aria-modal="true"
       onMouseDown={onClose}
@@ -63,7 +63,7 @@ export default function DashboardModal({
       <div
         className={[
           "relative w-full rounded-3xl border border-sea/20 bg-white p-6 shadow-card",
-          "max-h-[85dvh] overflow-hidden",
+          "max-h-[calc(100dvh-2rem)] overflow-hidden",
           maxWidthClassName,
         ].join(" ")}
         onMouseDown={(event) => event.stopPropagation()}
@@ -81,7 +81,7 @@ export default function DashboardModal({
             Fechar
           </button>
         </div>
-        <div className="mt-4 max-h-[calc(85dvh-88px)] overflow-y-auto">{children}</div>
+        <div className="mt-4 max-h-[calc(100dvh-10rem)] overflow-y-auto">{children}</div>
       </div>
     </div>,
     document.body,

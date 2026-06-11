@@ -255,6 +255,11 @@ export default function AgendaDrawer({
   const rowId = row?.id ?? null;
 
   useEffect(() => {
+    const root = document.querySelector<HTMLElement>('[data-agenda-drawer-content="true"]');
+    root?.scrollTo({ top: 0, behavior: "auto" });
+  }, [rowId]);
+
+  useEffect(() => {
     if (!rowId) return;
     let active = true;
 
@@ -526,8 +531,11 @@ export default function AgendaDrawer({
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      <button type="button" className="absolute inset-0 bg-slate-900/30" onClick={onClose} />
-      <div className="relative h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl">
+      <button type="button" className="absolute inset-0" onClick={onClose} aria-label="Fechar detalhes da empresa" />
+      <div
+        data-agenda-drawer-content="true"
+        className="relative h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl"
+      >
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-muted">Agenda</p>
@@ -974,14 +982,14 @@ export default function AgendaDrawer({
         )}
       </div>
       {planoValoresModal && (
-        <div className="fixed inset-0 z-[70] flex items-start justify-center bg-slate-900/40 px-4 pt-6">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 px-4">
           <button
             type="button"
             className="absolute inset-0"
             aria-label="Fechar modal de valores por plano"
             onClick={() => setPlanoValoresModal(null)}
           />
-          <div className="relative w-full max-w-md rounded-2xl border border-mist/60 bg-white p-5 shadow-xl">
+          <div className="relative w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl border border-mist/60 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between">
               <h3 className="font-display text-lg text-ink">Valores por plano</h3>
               <button
