@@ -3631,6 +3631,186 @@ export default function Agenda() {
             <div className="rounded-2xl border border-sea/15 bg-white/80 p-3 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
               <div className="mb-2">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sea dark:text-emerald-300/90">
+                  Filtros de coluna
+                </p>
+              </div>
+              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                    Empresa
+                  </span>
+                  <div className="flex h-9 items-center justify-between rounded-xl border border-sea/20 bg-white px-3 dark:border-emerald-400/20 dark:bg-slate-950/80">
+                    <span className="text-xs text-ink/55 dark:text-slate-400">
+                      {(filters.columns.empresa_nome ?? []).length
+                        ? `${filters.columns.empresa_nome.length} selecionada(s)`
+                        : "Todas"}
+                    </span>
+                    <MultiSelectFilter
+                      label={filters.columns.empresa_nome?.length ? `Empresa (${filters.columns.empresa_nome.length})` : "Empresa"}
+                      options={filterOptions.empresa_nome ?? []}
+                      value={filters.columns.empresa_nome}
+                      onApply={(next) =>
+                        setFilters((prev) => ({
+                          ...prev,
+                          columns: { ...prev.columns, empresa_nome: next },
+                        }))
+                      }
+                    />
+                  </div>
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                    Categoria
+                    <CategoriaLegendPopover />
+                  </span>
+                  <div className="flex h-9 items-center justify-between rounded-xl border border-sea/20 bg-white px-3 dark:border-emerald-400/20 dark:bg-slate-950/80">
+                    <span className="text-xs text-ink/55 dark:text-slate-400">
+                      {(filters.columns.categoria ?? []).length
+                        ? `${filters.columns.categoria.length} selecionada(s)`
+                        : "Selecione"}
+                    </span>
+                    <MultiSelectFilter
+                      label={
+                        (filters.columns.categoria ?? []).length
+                          ? `Categoria (${filters.columns.categoria.length})`
+                          : "Categoria"
+                      }
+                      options={filterOptions.categoria ?? [...CATEGORIA_OPTIONS, CATEGORIA_FILTER_SEM_CATEGORIA]}
+                      value={filters.columns.categoria ?? []}
+                      onApply={(next) =>
+                        setFilters((prev) => ({
+                          ...prev,
+                          columns: { ...prev.columns, categoria: next },
+                        }))
+                      }
+                    />
+                  </div>
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                    Bairro
+                  </span>
+                  <div className="flex h-9 items-center justify-between rounded-xl border border-sea/20 bg-white px-3 dark:border-emerald-400/20 dark:bg-slate-950/80">
+                    <span className="text-xs text-ink/55 dark:text-slate-400">
+                      {(filters.columns.bairro ?? []).length
+                        ? `${filters.columns.bairro.length} selecionada(s)`
+                        : "Todas"}
+                    </span>
+                    <MultiSelectFilter
+                      label={filters.columns.bairro?.length ? `Bairro (${filters.columns.bairro.length})` : "Bairro"}
+                      options={filterOptions.bairro ?? []}
+                      value={filters.columns.bairro}
+                      onApply={(next) =>
+                        setFilters((prev) => ({
+                          ...prev,
+                          columns: { ...prev.columns, bairro: next },
+                        }))
+                      }
+                    />
+                  </div>
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                    Cidade
+                  </span>
+                  <div className="flex h-9 items-center justify-between rounded-xl border border-sea/20 bg-white px-3 dark:border-emerald-400/20 dark:bg-slate-950/80">
+                    <span className="text-xs text-ink/55 dark:text-slate-400">
+                      {(filters.columns.cidade ?? []).length
+                        ? `${filters.columns.cidade.length} selecionada(s)`
+                        : "Todas"}
+                    </span>
+                    <MultiSelectFilter
+                      label={filters.columns.cidade?.length ? `Cidade (${filters.columns.cidade.length})` : "Cidade"}
+                      options={filterOptions.cidade ?? []}
+                      value={filters.columns.cidade}
+                      onApply={(next) =>
+                        setFilters((prev) => ({
+                          ...prev,
+                          columns: { ...prev.columns, cidade: next },
+                        }))
+                      }
+                    />
+                  </div>
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                    Vendedor
+                  </span>
+                  <div className="flex h-9 items-center justify-between rounded-xl border border-sea/20 bg-white px-3 dark:border-emerald-400/20 dark:bg-slate-950/80">
+                    <span className="text-xs text-ink/55 dark:text-slate-400">
+                      {(filters.columns.vendedor ?? []).length
+                        ? `${filters.columns.vendedor.length} selecionada(s)`
+                        : "Todos"}
+                    </span>
+                    <MultiSelectFilter
+                      label={filters.columns.vendedor?.length ? `Vendedor (${filters.columns.vendedor.length})` : "Vendedor"}
+                      options={filterOptions.vendedor ?? []}
+                      value={filters.columns.vendedor}
+                      onApply={(next) =>
+                        setFilters((prev) => ({
+                          ...prev,
+                          columns: { ...prev.columns, vendedor: next },
+                        }))
+                      }
+                    />
+                  </div>
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                    Grupo
+                  </span>
+                  <div className="flex h-9 items-center justify-between rounded-xl border border-sea/20 bg-white px-3 dark:border-emerald-400/20 dark:bg-slate-950/80">
+                    <span className="text-xs text-ink/55 dark:text-slate-400">
+                      {(filters.columns.grupo ?? []).length
+                        ? `${filters.columns.grupo.length} selecionada(s)`
+                        : "Todos"}
+                    </span>
+                    <MultiSelectFilter
+                      label={filters.columns.grupo?.length ? `Grupo (${filters.columns.grupo.length})` : "Grupo"}
+                      options={filterOptions.grupo ?? []}
+                      value={filters.columns.grupo}
+                      onApply={(next) =>
+                        setFilters((prev) => ({
+                          ...prev,
+                          columns: { ...prev.columns, grupo: next },
+                        }))
+                      }
+                    />
+                  </div>
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                    Perfil visita
+                  </span>
+                  <div className="flex h-9 items-center justify-between rounded-xl border border-sea/20 bg-white px-3 dark:border-emerald-400/20 dark:bg-slate-950/80">
+                    <span className="text-xs text-ink/55 dark:text-slate-400">
+                      {(filters.columns.perfil_visita ?? []).length
+                        ? `${filters.columns.perfil_visita.length} selecionada(s)`
+                        : "Todos"}
+                    </span>
+                    <MultiSelectFilter
+                      label={
+                        filters.columns.perfil_visita?.length
+                          ? `Perfil Visita (${filters.columns.perfil_visita.length})`
+                          : "Perfil Visita"
+                      }
+                      options={filterOptions.perfil_visita ?? []}
+                      value={filters.columns.perfil_visita}
+                      onApply={(next) =>
+                        setFilters((prev) => ({
+                          ...prev,
+                          columns: { ...prev.columns, perfil_visita: next },
+                        }))
+                      }
+                    />
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-sea/15 bg-white/80 p-3 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
+              <div className="mb-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sea dark:text-emerald-300/90">
                   Classificacao e status
                 </p>
               </div>
@@ -4828,7 +5008,7 @@ export default function Agenda() {
       {detailsModalRow &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 py-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4836,7 +5016,7 @@ export default function Agenda() {
               closeDetailsModal();
             }}
           />
-          <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+          <div className="relative w-full max-w-lg max-h-[calc(100vh-2rem)] overflow-y-auto rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <div className="flex items-start justify-between gap-3">
               <h3 className="font-display text-lg text-ink">Detalhes da empresa</h3>
               <button
@@ -5404,98 +5584,249 @@ export default function Agenda() {
         </div>
 
         <div className="hidden md:block">
-          <div className="overflow-hidden">
-            <table className="w-full table-fixed border-collapse table-layout-fixed text-[9px] leading-tight text-center align-middle">
-              <thead className="sticky top-0 z-30 bg-sand/60 shadow-sm overflow-visible">
-                {table.getHeaderGroups().map((headerGroup) => (
-                  <tr key={headerGroup.id}>
-                    {headerGroup.headers.map((header) => {
-                      const isTight = header.column.id === "select" || header.column.id === "obs";
-                      const explicitWidth = compactColumnWidths[header.column.id];
-                      const columnStyles = explicitWidth
-                        ? {
-                            width: `${explicitWidth}%`,
-                          }
-                        : undefined;
-                      return (
-                        <th
-                          key={header.id}
-                          style={columnStyles}
-                          className={`relative align-middle whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word] border-b border-sea/20 py-1 text-[9px] font-semibold text-ink/70 text-center overflow-hidden ${
-                            isTight ? "px-1" : "px-1.5"
-                          }`}
-                        >
-                          {header.isPlaceholder
-                            ? null
-                            : flexRender(header.column.columnDef.header, header.getContext())}
-                        </th>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr>
-                    <td colSpan={columns.length} className="px-4 py-6 text-center text-sm text-ink/60">
-                      Carregando agenda...
-                    </td>
-                  </tr>
-                ) : !hasSearched ? (
-                  <tr>
-                    <td colSpan={columns.length} className="px-4 py-6 text-center text-sm text-ink/60">
-                      Ajuste os filtros e clique em Buscar.
-                    </td>
-                  </tr>
-                ) : error ? (
-                  <tr>
-                    <td colSpan={columns.length} className="px-4 py-6 text-center text-sm text-red-500">
-                      {error}
-                    </td>
-                  </tr>
-                ) : data.length === 0 ? (
-                  <tr>
-                    <td colSpan={columns.length} className="px-4 py-6 text-center text-sm text-ink/60">
-                      {hasActiveCompanySearch ? "Termo nao encontrado." : "Nenhum registro encontrado."}
-                    </td>
-                  </tr>
-                ) : (
-                  table.getRowModel().rows.map((row) => (
-                    <tr
-                      key={row.id}
-                      className="cursor-pointer border-b border-sea/10 hover:bg-sea/10"
-                      onClick={() => {
-                        setSelectedRow(row.original);
-                        setSelectedRowId(row.original.id);
-                      }}
-                    >
-                      {row.getVisibleCells().map((cell) => {
-                        const isTight = cell.column.id === "select" || cell.column.id === "obs";
-                        const explicitWidth = compactColumnWidths[cell.column.id];
-                        const columnStyles = explicitWidth
-                          ? {
-                              width: `${explicitWidth}%`,
-                            }
-                          : undefined;
-                        return (
-                          <td
-                            key={cell.id}
-                            style={columnStyles}
-                            className={`align-middle whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word] py-1 text-[9px] leading-tight text-ink text-center ${
-                              isTight ? "px-1" : "px-1.5"
-                            }`}
-                          >
-                            <div className={tableCellInnerClass}>
-                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+          <div className="space-y-2">
+            {loading ? (
+              <div className="rounded-2xl border border-sea/15 bg-white/90 px-4 py-6 text-center text-sm text-ink/60">
+                Carregando agenda...
+              </div>
+            ) : !hasSearched ? (
+              <div className="rounded-2xl border border-sea/15 bg-white/90 px-4 py-6 text-center text-sm text-ink/60">
+                Ajuste os filtros e clique em Buscar.
+              </div>
+            ) : error ? (
+              <div className="rounded-2xl border border-sea/15 bg-white/90 px-4 py-6 text-center text-sm text-red-500">
+                {error}
+              </div>
+            ) : data.length === 0 ? (
+              <div className="rounded-2xl border border-sea/15 bg-white/90 px-4 py-6 text-center text-sm text-ink/60">
+                {hasActiveCompanySearch ? "Termo nao encontrado." : "Nenhum registro encontrado."}
+              </div>
+            ) : (
+              table.getRowModel().rows.map((row) => {
+                const original = row.original;
+                const recentVendors = resolveVendorsForAgenda(original.id, original.vendedor);
+                const vendorLabel =
+                  recentVendors.length > 0 ? recentVendors.map((item) => item.name).join(", ") : "-";
+                const editableVendors = recentVendors.filter((item) => Boolean(item.userId));
+                const hasAnyHistoryDate = recentVendors.some((item) => Boolean(item.visitDate));
+                const scheduledObs = resolveScheduledObsVisit(original.id);
+                const badgeText = formatVisitBadge(scheduledObs?.visitDate ?? null);
+                const isSelected = selectedAgendaSet.has(original.id);
+
+                return (
+                  <div
+                    key={row.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      setSelectedRow(original);
+                      setSelectedRowId(original.id);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedRow(original);
+                        setSelectedRowId(original.id);
+                      }
+                    }}
+                    className={`group rounded-2xl border bg-white/95 px-4 py-3 text-left shadow-sm transition hover:shadow-card focus:outline-none focus:ring-2 focus:ring-sea/40 ${
+                      isSelected ? "border-sea/40 ring-1 ring-sea/20" : "border-sea/15"
+                    }`}
+                  >
+                    <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <div className="flex flex-wrap items-start gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                              <p className="truncate text-sm font-semibold text-ink">
+                                {original.empresa ?? original.nome_fantasia ?? "Sem empresa"}
+                              </p>
+                              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                                <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
+                                  COD {original.cod_1 ?? "-"}
+                                </span>
+                                {role === "SUPERVISOR" ? (
+                                  <span
+                                    title={getSupervisorFlagTooltip(supervisorFlagByAgendaId[original.id])}
+                                    aria-label={getSupervisorFlagTooltip(supervisorFlagByAgendaId[original.id])}
+                                    className="inline-flex items-center"
+                                  >
+                                    <span
+                                      className={`h-2.5 w-2.5 rounded-full border ${getSupervisorFlagDotStyles(
+                                        supervisorFlagByAgendaId[original.id]?.color ?? "CINZA",
+                                      )}`}
+                                    />
+                                  </span>
+                                ) : null}
+                                {hasAnyHistoryDate ? (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setVendorHistoryModal({
+                                        empresa: original.empresa ?? original.nome_fantasia ?? "Sem empresa",
+                                        codigo: original.cod_1 ?? "-",
+                                        assignments: recentVendors.map((item) => ({
+                                          name: item.name,
+                                          visitDate: item.visitDate,
+                                        })),
+                                      });
+                                    }}
+                                    onPointerDown={(event) => event.stopPropagation()}
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-orange-300 bg-orange-50 text-orange-600 hover:border-orange-400 hover:text-orange-700"
+                                    title="Ver historico de atribuicao"
+                                    aria-label="Ver historico de atribuicao"
+                                  >
+                                    <Clock3 size={12} />
+                                  </button>
+                                ) : null}
+                              </div>
                             </div>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                          </div>
+
+                        </div>
+
+                        <div className="grid gap-2 text-[11px] text-ink/70 lg:grid-cols-2 xl:grid-cols-4">
+                          <p className="truncate">
+                            <span className="font-semibold text-ink/80">Cidade:</span>{" "}
+                            {(original.cidade ?? "-")} / {(original.uf ?? "-")}
+                          </p>
+                          <p className="truncate">
+                            <span className="font-semibold text-ink/80">Bairro:</span> {original.bairro ?? "-"}
+                          </p>
+                          <p className="truncate">
+                            <span className="font-semibold text-ink/80">Vendedor:</span> {vendorLabel}
+                          </p>
+                          <p className="truncate">
+                            <span className="font-semibold text-ink/80">Grupo:</span> {original.grupo ?? "-"}
+                          </p>
+                          <p className="truncate">
+                            <span className="font-semibold text-ink/80">Ultima visita:</span>{" "}
+                            {resolveLastCompletedVisitDate(original.id, original.data_da_ultima_visita)}
+                          </p>
+                          <p className="truncate">
+                            <span className="font-semibold text-ink/80">Vidas ultima visita:</span>{" "}
+                            {resolveLastCompletedVidas(original.id, original.visit_completed_vidas)}
+                          </p>
+                          <p className="truncate xl:col-span-2">
+                            <span className="font-semibold text-ink/80">Perfil visita:</span>{" "}
+                            {formatPerfilVisitaDisplay(original.perfil_visita)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-2 xl:shrink-0 xl:justify-start">
+                        <div
+                          className="flex items-center gap-2"
+                          onClick={(event) => event.stopPropagation()}
+                          onPointerDown={(event) => event.stopPropagation()}
+                        >
+                          {scheduledObs ? (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openScheduleModal(original);
+                              }}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              className="inline-flex min-h-7 items-center justify-center rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-red-700"
+                              title={
+                                scheduledObs.visitDate
+                                  ? `Visita agendada: ${formatDate(scheduledObs.visitDate)}${
+                                      scheduledObs.instructions ? ` | Instrucoes: ${scheduledObs.instructions}` : ""
+                                    }`
+                                  : "Visita agendada"
+                              }
+                              aria-label="Ver visita agendada"
+                            >
+                              {badgeText}
+                            </button>
+                          ) : null}
+                          <label className="inline-flex items-center gap-1 rounded-full border border-sea/20 bg-white px-2 py-1 text-[10px] text-ink/70">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleAgendaSelection(original.id)}
+                              className="h-3.5 w-3.5 accent-sea"
+                              aria-label="Selecionar empresa"
+                            />
+                            Sel.
+                          </label>
+                        </div>
+
+                        {canEdit &&
+                          editableVendors.map((vendor) => {
+                            const editorKey = `${original.id}::${vendor.userId}`;
+                            const editor = vendorRouteEditors[editorKey];
+                            if (!editor?.expanded) return null;
+                            return (
+                              <div key={editorKey} className="w-full rounded-xl border border-sea/15 bg-sand/20 p-2 xl:min-w-[320px]">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[10px] font-semibold text-ink/70">
+                                    Rotas de {vendor.name}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void saveVendorRouteEditor(editorKey);
+                                    }}
+                                    onPointerDown={(event) => event.stopPropagation()}
+                                    disabled={!editor.dirty || editor.loading || editor.saving}
+                                    className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 disabled:opacity-40"
+                                  >
+                                    <Check size={12} />
+                                  </button>
+                                </div>
+                                {editor.loading ? (
+                                  <p className="mt-2 text-[10px] text-ink/60">Carregando rotas...</p>
+                                ) : (
+                                  <div className="mt-2 space-y-1">
+                                    {editor.stops.map((stop, stopIndex) => (
+                                      <div
+                                        key={stop.stopId}
+                                        draggable
+                                        onDragStart={(event) => {
+                                          event.stopPropagation();
+                                          updateVendorRouteEditor(editorKey, { dragIndex: stopIndex });
+                                        }}
+                                        onDragOver={(event) => event.preventDefault()}
+                                        onDrop={(event) => {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                          const fromIndex = editor.dragIndex;
+                                          if (fromIndex === null) return;
+                                          moveVendorRouteStop(editorKey, fromIndex, stopIndex);
+                                        }}
+                                        onDragEnd={() => updateVendorRouteEditor(editorKey, { dragIndex: null })}
+                                        className="flex items-start gap-2 rounded-md border border-sea/10 bg-white px-2 py-1 text-[10px] text-ink/70"
+                                      >
+                                        <span className="mt-0.5 text-sea">
+                                          <GripVertical size={12} />
+                                        </span>
+                                        <div className="min-w-0 flex-1">
+                                          <p className="truncate font-semibold text-ink">
+                                            {stop.stopOrder}. {stop.companyName}
+                                          </p>
+                                          <p className="truncate text-[9px] text-ink/60">
+                                            {stop.routeDate ? formatDate(stop.routeDate) : "-"}
+                                            {stop.city ? ` | ${stop.city}` : ""}
+                                            {stop.bairro ? ` - ${stop.bairro}` : ""}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-sea/15 px-4 py-3 text-xs text-ink/60">
