@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { DollarSign, LoaderCircle } from "lucide-react";
 import type { AgendaRow } from "../../types/agenda";
 import { supabase } from "../../lib/supabase";
@@ -254,9 +254,14 @@ export default function AgendaDrawer({
   }, [supervisorOptions, formState?.supervisor]);
   const rowId = row?.id ?? null;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = document.querySelector<HTMLElement>('[data-agenda-drawer-content="true"]');
-    root?.scrollTo({ top: 0, behavior: "auto" });
+    if (!root) return;
+    root.scrollTop = 0;
+    const frame = window.requestAnimationFrame(() => {
+      root.scrollTop = 0;
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [rowId]);
 
   useEffect(() => {
@@ -530,11 +535,11 @@ export default function AgendaDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <button type="button" className="absolute inset-0" onClick={onClose} aria-label="Fechar detalhes da empresa" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+      <button type="button" className="absolute inset-0 bg-ink/30" onClick={onClose} aria-label="Fechar detalhes da empresa" />
       <div
         data-agenda-drawer-content="true"
-        className="relative h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl"
+        className="relative w-[min(94vw,1100px)] max-h-[88vh] overflow-y-auto rounded-3xl border border-sea/20 bg-white p-6 shadow-card"
       >
         <div className="flex items-start justify-between gap-4">
           <div>

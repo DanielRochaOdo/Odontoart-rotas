@@ -207,8 +207,19 @@ serve(async (req) => {
       return jsonResponse(400, { error: "User id obrigatorio." });
     }
 
+    const cleanupSteps: Array<Promise<{ error: { message: string } | null }>> = [
+      supabase.from("profiles").delete().eq("user_id", payload.user_id),
+    ];
+
+    for (const step of cleanupSteps) {
+      const { error } = await step;
+      if (error) {
+        return jsonResponse(400, { error: error.message });
+      }
+    }
+
     const { error: deleteError } = await supabase.auth.admin.deleteUser(payload.user_id);
-    if (deleteError) {
+    if (deleteError && !isMissingUserError(deleteError.message)) {
       return jsonResponse(400, { error: deleteError.message });
     }
 
