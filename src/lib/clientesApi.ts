@@ -1,6 +1,6 @@
 import { supabase } from "./supabase";
 import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
-import { extractCustomTimes } from "./perfilVisita";
+import { extractCustomTimes, normalizePerfilVisitaValue } from "./perfilVisita";
 const DEFAULT_SITUACAO = "Ativo";
 const CLIENTES_SELECT_COLUMNS =
   "id, codigo, corte, venc, valor, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf, latitude, longitude, geocode_source, geocode_updated_at, created_at";
@@ -23,8 +23,8 @@ const sanitizeSearchTerm = (value: string | null | undefined) =>
   (value ?? "").replace(/%/g, "").trim();
 
 const normalizePerfilTimes = (value: string | null) => {
-  if (!value) return { perfil: null as string | null, opcoes: null as string | null };
-  const cleanedPerfil = value.trim();
+  const cleanedPerfil = normalizePerfilVisitaValue(value);
+  if (!cleanedPerfil) return { perfil: null as string | null, opcoes: null as string | null };
   const hasTimes = extractCustomTimes(cleanedPerfil).length > 0;
   return {
     perfil: cleanedPerfil,
@@ -170,6 +170,7 @@ export const createCliente = async (payload: {
   cidade?: string | null;
   uf?: string | null;
 }) => {
+  const normalizedPerfil = normalizePerfilVisitaValue(payload.perfil_visita ?? null);
   const { data, error } = await supabase
     .from("clientes")
     .insert({
@@ -188,7 +189,7 @@ export const createCliente = async (payload: {
       obs: payload.obs ?? null,
       nome_fantasia: payload.nome_fantasia ?? null,
       complemento: payload.complemento ?? null,
-      perfil_visita: payload.perfil_visita ?? null,
+      perfil_visita: normalizedPerfil,
       situacao: payload.situacao ?? DEFAULT_SITUACAO,
       categoria: payload.categoria ?? null,
       endereco: payload.endereco ?? null,
@@ -227,7 +228,9 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
   setIfDefined("obs");
   setIfDefined("nome_fantasia");
   setIfDefined("complemento");
-  setIfDefined("perfil_visita");
+  if (payload.perfil_visita !== undefined) {
+    updatePayload.perfil_visita = normalizePerfilVisitaValue(payload.perfil_visita);
+  }
   setIfDefined("situacao");
   setIfDefined("categoria");
   setIfDefined("endereco");
@@ -326,7 +329,7 @@ export const upsertClientes = async (
     obs: payload.obs ?? null,
     nome_fantasia: payload.nome_fantasia ?? null,
     complemento: payload.complemento ?? null,
-    perfil_visita: payload.perfil_visita ?? null,
+    perfil_visita: normalizePerfilVisitaValue(payload.perfil_visita ?? null),
     situacao: payload.situacao ?? DEFAULT_SITUACAO,
     categoria: payload.categoria ?? null,
     endereco: payload.endereco ?? null,

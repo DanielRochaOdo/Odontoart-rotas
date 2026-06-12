@@ -1,9 +1,33 @@
 import { normalizeText } from "./textNormalize";
 
 const stripAccents = (value: string) => normalizeText(value);
+const PERFIL_VISITA_SPLIT_REGEX = /\s*[,;|]\s*/;
 
 export const normalizePerfilVisita = (value: string | null) =>
   stripAccents((value ?? "").trim()).toUpperCase();
+
+export const normalizePerfilVisitaValue = (value: string | null) => {
+  const raw = (value ?? "").trim();
+  if (!raw) return null;
+
+  const parts = raw
+    .replace(/\u2022/g, ",")
+    .split(PERFIL_VISITA_SPLIT_REGEX)
+    .map((item) => normalizePerfilVisita(item))
+    .filter(Boolean);
+
+  if (parts.length === 0) return null;
+
+  const uniqueParts: string[] = [];
+  const seen = new Set<string>();
+  for (const part of parts) {
+    if (seen.has(part)) continue;
+    seen.add(part);
+    uniqueParts.push(part);
+  }
+
+  return uniqueParts.join(", ");
+};
 
 export const PERFIL_VISITA_PRESETS = [
   "HORARIO COMERCIAL",
