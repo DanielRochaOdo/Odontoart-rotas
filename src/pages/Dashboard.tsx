@@ -1923,6 +1923,7 @@ export default function Dashboard() {
     () => buildDailyDualVidasSeries(vendorVisitsRaw, vendorAceites, resolvedDailyRange.from, resolvedDailyRange.to),
     [resolvedDailyRange.from, resolvedDailyRange.to, vendorAceites, vendorVisitsRaw],
   );
+  const canViewDailyVendorStats = canViewTeamStats && selectedVendorId !== "all";
 
   const renderDonut = (
     title: string,
@@ -2714,115 +2715,83 @@ export default function Dashboard() {
           )}
 
           <section className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-sea/15 bg-white/90 p-4 md:p-5 lg:col-span-2">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-display text-lg text-ink">Vidas por dia</h3>
-                  <p className="mt-1 text-xs text-ink/60">
-                    Vidas vindas de visitas e aceite digital no periodo selecionado.
-                  </p>
+            {canViewDailyVendorStats && (
+              <div className="rounded-2xl border border-sea/15 bg-white/90 p-4 md:p-5 lg:col-span-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-display text-lg text-ink">Vidas por dia</h3>
+                    <p className="mt-1 text-xs text-ink/60">
+                      Vidas vindas de visitas e aceite digital no periodo selecionado.
+                    </p>
+                  </div>
+                  <span className="text-xs text-ink/60">
+                    {globalFrom && globalTo ? `${globalFrom} a ${globalTo}` : `${resolvedDailyRange.from} a ${resolvedDailyRange.to}`}
+                  </span>
                 </div>
-                <span className="text-xs text-ink/60">
-                  {globalFrom && globalTo ? `${globalFrom} a ${globalTo}` : `${resolvedDailyRange.from} a ${resolvedDailyRange.to}`}
-                </span>
-              </div>
-              {dailyDualVidas.length === 0 ? (
-                <p className="mt-4 text-sm text-ink/60">Sem dados.</p>
-              ) : (
-                <div className="mt-5">
-                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-ink/60">
-                    <span className="inline-flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 rounded-sm bg-sea" />
-                      Visitas
-                    </span>
-                    <span className="inline-flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 rounded-sm bg-amber-400" />
-                      Aceite digital
-                    </span>
-                  </div>
-                  <div className="mt-4 flex items-end gap-4 overflow-x-auto pb-2">
-                    {(() => {
-                      const maxValue = dailyDualVidas.reduce((max, item) => Math.max(max, item.visitas, item.aceite), 1);
-                      return dailyDualVidas.map((item) => {
-                        const visitasHeight = Math.max(8, Math.round((item.visitas / maxValue) * 160));
-                        const aceiteHeight = Math.max(8, Math.round((item.aceite / maxValue) * 160));
-                        const total = item.visitas + item.aceite;
-                        return (
-                          <div key={item.label} className="flex min-w-[72px] flex-col items-center gap-2">
-                            <span className="text-[11px] font-semibold text-ink">{formatNumber(total)}</span>
-                            <div className="flex items-end gap-1">
-                              <div className="w-4 rounded-t-lg bg-sea" style={{ height: visitasHeight }} />
-                              <div className="w-4 rounded-t-lg bg-amber-400" style={{ height: aceiteHeight }} />
-                            </div>
-                            <span className="w-20 truncate text-center text-[11px] text-ink/70">{item.label}</span>
-                          </div>
-                        );
-                      });
-                    })()}
-                  </div>
-                  <div className="mt-5 overflow-x-auto rounded-xl border border-sea/10">
-                    <table className="min-w-[560px] w-full text-left text-xs">
-                      <thead className="bg-sand/30 text-ink/60">
-                        <tr>
-                          <th className="px-3 py-2 font-semibold">Dia</th>
-                          <th className="px-3 py-2 font-semibold text-right">Visitas</th>
-                          <th className="px-3 py-2 font-semibold text-right">Aceite digital</th>
-                          <th className="px-3 py-2 font-semibold text-right">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-sea/10">
-                        {dailyDualVidas.map((item) => {
+                {dailyDualVidas.length === 0 ? (
+                  <p className="mt-4 text-sm text-ink/60">Sem dados.</p>
+                ) : (
+                  <div className="mt-5">
+                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-ink/60">
+                      <span className="inline-flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 rounded-sm bg-sea" />
+                        Visitas
+                      </span>
+                      <span className="inline-flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 rounded-sm bg-amber-400" />
+                        Aceite digital
+                      </span>
+                    </div>
+                    <div className="mt-4 flex items-end gap-4 overflow-x-auto pb-2">
+                      {(() => {
+                        const maxValue = dailyDualVidas.reduce((max, item) => Math.max(max, item.visitas, item.aceite), 1);
+                        return dailyDualVidas.map((item) => {
+                          const visitasHeight = Math.max(8, Math.round((item.visitas / maxValue) * 160));
+                          const aceiteHeight = Math.max(8, Math.round((item.aceite / maxValue) * 160));
                           const total = item.visitas + item.aceite;
                           return (
-                            <tr key={item.label}>
-                              <td className="px-3 py-2 text-ink">{item.label}</td>
-                              <td className="px-3 py-2 text-right text-ink/70">{formatNumber(item.visitas)}</td>
-                              <td className="px-3 py-2 text-right text-ink/70">{formatNumber(item.aceite)}</td>
-                              <td className="px-3 py-2 text-right font-semibold text-sea">{formatNumber(total)}</td>
-                            </tr>
+                            <div key={item.label} className="flex min-w-[72px] flex-col items-center gap-2">
+                              <span className="text-[11px] font-semibold text-ink">{formatNumber(total)}</span>
+                              <div className="flex items-end gap-1">
+                                <div className="w-4 rounded-t-lg bg-sea" style={{ height: visitasHeight }} />
+                                <div className="w-4 rounded-t-lg bg-amber-400" style={{ height: aceiteHeight }} />
+                              </div>
+                              <span className="w-20 truncate text-center text-[11px] text-ink/70">{item.label}</span>
+                            </div>
                           );
-                        })}
-                      </tbody>
-                    </table>
+                        });
+                      })()}
+                    </div>
+                    <div className="mt-5 overflow-x-auto rounded-xl border border-sea/10">
+                      <table className="min-w-[560px] w-full text-left text-xs">
+                        <thead className="bg-sand/30 text-ink/60">
+                          <tr>
+                            <th className="px-3 py-2 font-semibold">Dia</th>
+                            <th className="px-3 py-2 font-semibold text-right">Visitas</th>
+                            <th className="px-3 py-2 font-semibold text-right">Aceite digital</th>
+                            <th className="px-3 py-2 font-semibold text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-sea/10">
+                          {dailyDualVidas.map((item) => {
+                            const total = item.visitas + item.aceite;
+                            return (
+                              <tr key={item.label}>
+                                <td className="px-3 py-2 text-ink">{item.label}</td>
+                                <td className="px-3 py-2 text-right text-ink/70">{formatNumber(item.visitas)}</td>
+                                <td className="px-3 py-2 text-right text-ink/70">{formatNumber(item.aceite)}</td>
+                                <td className="px-3 py-2 text-right font-semibold text-sea">{formatNumber(total)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-
-            {(role === "SUPERVISOR" || role === "ASSISTENTE") && (
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => setShowVendorVisitsModal(true)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    setShowVendorVisitsModal(true);
-                  }
-                }}
-                className="cursor-pointer rounded-2xl border border-sea/15 bg-white/90 p-4 transition hover:border-sea/40 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-sea/40 md:p-5"
-              >
-                <div className="flex items-center justify-between">
-                  <h3 className="font-display text-lg text-ink">Visitas por vendedor</h3>
-                  <span className="text-xs text-ink/60">Top 5</span>
-                </div>
-                <div className="mt-4 space-y-2">
-                  {summary.ranking.length === 0 ? (
-                    <p className="text-sm text-ink/60">Sem dados.</p>
-                  ) : (
-                    summary.ranking.map(([label, value], index) => (
-                      <div key={label} className="flex items-center justify-between text-sm">
-                        <span className="text-ink">
-                          {index + 1}. {label}
-                        </span>
-                        <span className="font-semibold text-sea">{formatNumber(value)}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
-                <p className="mt-3 text-[11px] text-ink/50">Clique para ver todos</p>
+                )}
               </div>
             )}
+
           </section>
 
           {canViewTeamStats && (
@@ -2942,120 +2911,124 @@ export default function Dashboard() {
           )}
 
           {isVendor && (
-            <section className="grid gap-4 lg:grid-cols-3">
-              {visitStatsError ? (
-                <div className="dashboard-status-danger rounded-2xl border p-4 text-sm md:p-5">
-                  {visitStatsError}
-                </div>
-              ) : visitStats ? (
-                <>
-                  {renderDonut(
-                    "Visitas no periodo",
-                    visitStats.visitasRealizadas + visitStats.visitasNaoRealizadas + visitStats.visitasPendentes,
-                    [
-                      { label: "Realizadas", value: visitStats.visitasRealizadas, color: DASHBOARD_STATUS_COLORS.success },
-                      { label: "Nao realizadas", value: visitStats.visitasNaoRealizadas, color: DASHBOARD_STATUS_COLORS.warning },
-                      { label: "Pendentes", value: visitStats.visitasPendentes, color: DASHBOARD_STATUS_COLORS.neutral },
-                    ],
-                    globalPeriodLabel,
-                    (label) => {
-                      if (label === "Pendentes") {
-                        setPendingVisitsModal({
-                          title: "Visitas pendentes",
-                          subtitle: `Registros sem conclusao no periodo ${globalPeriodLabel}.`,
-                          rows: pendingVisitsModal?.rows ?? [],
-                        });
-                      }
-                    },
-                  )}
-                  {renderDonut(
-                    "Impacto no periodo",
-                    vendorImpactVidas,
-                    [
-                      {
-                        label: "Vidas em visitas",
-                        value: visitStats.totalVidas,
-                        color: DASHBOARD_STATUS_COLORS.info,
+            <section className="overflow-x-auto">
+              <div className="grid min-w-[960px] gap-4 lg:grid-cols-3">
+                {visitStatsError ? (
+                  <div className="dashboard-status-danger rounded-2xl border p-4 text-sm md:p-5">
+                    {visitStatsError}
+                  </div>
+                ) : visitStats ? (
+                  <>
+                    {renderDonut(
+                      "Visitas no periodo",
+                      visitStats.visitasRealizadas + visitStats.visitasNaoRealizadas + visitStats.visitasPendentes,
+                      [
+                        { label: "Realizadas", value: visitStats.visitasRealizadas, color: DASHBOARD_STATUS_COLORS.success },
+                        { label: "Nao realizadas", value: visitStats.visitasNaoRealizadas, color: DASHBOARD_STATUS_COLORS.warning },
+                        { label: "Pendentes", value: visitStats.visitasPendentes, color: DASHBOARD_STATUS_COLORS.neutral },
+                      ],
+                      globalPeriodLabel,
+                      (label) => {
+                        if (label === "Pendentes") {
+                          setPendingVisitsModal({
+                            title: "Visitas pendentes",
+                            subtitle: `Registros sem conclusao no periodo ${globalPeriodLabel}.`,
+                            rows: pendingVisitsModal?.rows ?? [],
+                          });
+                        }
                       },
-                      {
-                        label: "Vidas em aceite digital",
-                        value: vendorAceitePeriodVidas,
-                        color: DASHBOARD_STATUS_COLORS.accent,
-                      },
-                    ],
-                    `${globalPeriodLabel} • Empresas visitadas: ${formatNumber(visitStats.empresasVisitadas)}`,
-                  )}
-                  {renderDonut(
-                    "Vidas por dia",
-                    dailyVidasTotal,
-                    visitDailyVidas,
-                    globalPeriodLabel,
-                  )}
-                </>
-              ) : (
-                <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-5">
-                  Carregando dados do vendedor...
-                </div>
-              )}
+                    )}
+                    {renderDonut(
+                      "Impacto no periodo",
+                      vendorImpactVidas,
+                      [
+                        {
+                          label: "Vidas em visitas",
+                          value: visitStats.totalVidas,
+                          color: DASHBOARD_STATUS_COLORS.info,
+                        },
+                        {
+                          label: "Vidas em aceite digital",
+                          value: vendorAceitePeriodVidas,
+                          color: DASHBOARD_STATUS_COLORS.accent,
+                        },
+                      ],
+                      `${globalPeriodLabel} • Empresas visitadas: ${formatNumber(visitStats.empresasVisitadas)}`,
+                    )}
+                    {renderDonut(
+                      "Vidas por dia",
+                      dailyVidasTotal,
+                      visitDailyVidas,
+                      globalPeriodLabel,
+                    )}
+                  </>
+                ) : (
+                  <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-5">
+                    Carregando dados do vendedor...
+                  </div>
+                )}
+              </div>
             </section>
           )}
 
           {canViewTeamStats && (
-            <section className="grid gap-4 lg:grid-cols-3">
-              {teamStatsError ? (
-                <div className="dashboard-status-danger rounded-2xl border p-4 text-sm md:p-5">
-                  {teamStatsError}
-                </div>
-              ) : teamStats ? (
-                <>
-                  {renderDonut(
-                    "Visitas no periodo (equipe)",
-                    teamStats.visitasRealizadas + teamStats.visitasNaoRealizadas + teamStats.visitasPendentes,
-                    [
-                      { label: "Realizadas", value: teamStats.visitasRealizadas, color: DASHBOARD_STATUS_COLORS.success },
-                      { label: "Nao realizadas", value: teamStats.visitasNaoRealizadas, color: DASHBOARD_STATUS_COLORS.warning },
-                      { label: "Pendentes", value: teamStats.visitasPendentes, color: DASHBOARD_STATUS_COLORS.neutral },
-                    ],
-                    `${globalPeriodLabel} • ${teamVendorsCount} vendedor(es)`,
-                    (label) => {
-                      if (label === "Pendentes") {
-                        setPendingVisitsModal({
-                          title: "Visitas pendentes",
-                          subtitle: `Registros sem conclusao no periodo ${globalPeriodLabel}.`,
-                          rows: pendingVisitsModal?.rows ?? [],
-                        });
-                      }
-                    },
-                  )}
-                  {renderDonut(
-                    "Impacto no periodo (equipe)",
-                    teamImpactVidas,
-                    [
-                      {
-                        label: "Vidas em visitas",
-                        value: teamStats.totalVidas,
-                        color: DASHBOARD_STATUS_COLORS.info,
+            <section className="overflow-x-auto">
+              <div className="grid min-w-[960px] gap-4 lg:grid-cols-3">
+                {teamStatsError ? (
+                  <div className="dashboard-status-danger rounded-2xl border p-4 text-sm md:p-5">
+                    {teamStatsError}
+                  </div>
+                ) : teamStats ? (
+                  <>
+                    {renderDonut(
+                      "Visitas no periodo (equipe)",
+                      teamStats.visitasRealizadas + teamStats.visitasNaoRealizadas + teamStats.visitasPendentes,
+                      [
+                        { label: "Realizadas", value: teamStats.visitasRealizadas, color: DASHBOARD_STATUS_COLORS.success },
+                        { label: "Nao realizadas", value: teamStats.visitasNaoRealizadas, color: DASHBOARD_STATUS_COLORS.warning },
+                        { label: "Pendentes", value: teamStats.visitasPendentes, color: DASHBOARD_STATUS_COLORS.neutral },
+                      ],
+                      `${globalPeriodLabel} • ${teamVendorsCount} vendedor(es)`,
+                      (label) => {
+                        if (label === "Pendentes") {
+                          setPendingVisitsModal({
+                            title: "Visitas pendentes",
+                            subtitle: `Registros sem conclusao no periodo ${globalPeriodLabel}.`,
+                            rows: pendingVisitsModal?.rows ?? [],
+                          });
+                        }
                       },
-                      {
-                        label: "Vidas em aceite digital",
-                        value: digitalSummary?.periodTotalVidas ?? 0,
-                        color: DASHBOARD_STATUS_COLORS.accent,
-                      },
-                    ],
-                    `${globalPeriodLabel} • Empresas visitadas: ${formatNumber(teamStats.empresasVisitadas)}`,
-                  )}
-                  {renderDonut(
-                    "Vidas por dia (equipe)",
-                    teamDailyVidasTotal,
-                    teamDailyVidas,
-                    globalPeriodLabel,
-                  )}
-                </>
-              ) : (
-                <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-5">
-                  Carregando dados da equipe...
-                </div>
-              )}
+                    )}
+                    {renderDonut(
+                      "Impacto no periodo (equipe)",
+                      teamImpactVidas,
+                      [
+                        {
+                          label: "Vidas em visitas",
+                          value: teamStats.totalVidas,
+                          color: DASHBOARD_STATUS_COLORS.info,
+                        },
+                        {
+                          label: "Vidas em aceite digital",
+                          value: digitalSummary?.periodTotalVidas ?? 0,
+                          color: DASHBOARD_STATUS_COLORS.accent,
+                        },
+                      ],
+                      `${globalPeriodLabel} • Empresas visitadas: ${formatNumber(teamStats.empresasVisitadas)}`,
+                    )}
+                    {renderDonut(
+                      "Vidas por dia (equipe)",
+                      teamDailyVidasTotal,
+                      teamDailyVidas,
+                      globalPeriodLabel,
+                    )}
+                  </>
+                ) : (
+                  <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-5">
+                    Carregando dados da equipe...
+                  </div>
+                )}
+              </div>
             </section>
           )}
         </div>

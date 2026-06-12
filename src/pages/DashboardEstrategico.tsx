@@ -225,6 +225,8 @@ function DailyBarChart({
   const yTicks = Array.from({ length: 7 }).map((_, index) => index * yStep).reverse();
   const barHeightPct = (value: number) => Math.max(8, (Math.max(0, value) / max) * 100);
   const averagePct = Math.max(0, Math.min(100, (Math.max(0, safeAverageValue) / max) * 100));
+  const chartTopSpacePct = 12;
+  const chartPlotHeightPct = 100 - chartTopSpacePct;
   return (
     <article className="dashboard-card rounded-2xl p-4">
       <div className="flex items-center justify-between gap-2">
@@ -260,7 +262,8 @@ function DailyBarChart({
               <div className="absolute inset-0 flex items-end gap-1 px-1">
                 {safeValues.map((value, index) => {
                   const height = barHeightPct(value);
-                  const labelBottom = Math.min(96, height + 1.5);
+                  const barHeight = (height / 100) * chartPlotHeightPct;
+                  const labelBottom = Math.min(96, barHeight + 1.5);
                   return (
                     <div
                       key={`${labels[index]}-${index}`}
@@ -268,15 +271,15 @@ function DailyBarChart({
                       title={`${formatTimelineTick(labels[index])}: ${formatNumber(value)}`}
                     >
                       <span
-                        className="absolute left-0 right-0 text-center text-[10px] font-semibold text-ink/70"
+                        className="absolute left-0 right-0 z-20 text-center text-[10px] font-semibold text-ink/70"
                         style={{ bottom: `${labelBottom}%` }}
                       >
                         {formatNumber(value)}
                       </span>
                       <div
-                        className="absolute bottom-0 left-0 right-0 rounded-t-sm transition-all duration-300"
+                        className="absolute bottom-0 left-0 right-0 z-10 rounded-t-sm transition-all duration-300"
                         style={{
-                          height: `${height}%`,
+                          height: `${barHeight}%`,
                           minHeight: value > 0 ? 2 : 1,
                           backgroundColor:
                             value <= 0

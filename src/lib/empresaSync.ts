@@ -1,5 +1,5 @@
 ﻿import { supabase } from "./supabase";
-import { extractCustomTimes } from "./perfilVisita";
+import { extractCustomTimes, normalizePerfilVisitaValue } from "./perfilVisita";
 
 type ClienteSyncPayload = {
   id: string;
@@ -26,10 +26,10 @@ type ClienteSyncPayload = {
 };
 
 const toVisitPerfilPayload = (perfil: string | null) => {
-  if (!perfil) {
+  const cleanedPerfil = normalizePerfilVisitaValue(perfil);
+  if (!cleanedPerfil) {
     return { perfil_visita: null as string | null, perfil_visita_opcoes: null as string | null };
   }
-  const cleanedPerfil = perfil.trim();
   const hasTimes = extractCustomTimes(cleanedPerfil).length > 0;
   return {
     perfil_visita: cleanedPerfil,
