@@ -1,15 +1,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
-import { LoaderCircle, LogOut, Moon, Pencil, Plus, RotateCcw, Sun, Trash, UploadCloud } from "lucide-react";
+import { LoaderCircle, LogOut, Moon, Pencil, Plus, Power, RotateCcw, Sun, UploadCloud } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import {
   createManagedUser,
-  deleteManagedUser,
   deleteProfileOnly,
+  inactivateManagedUser,
   fetchManagedProfiles,
   fetchManagedUserEmails,
   resetManagedUserAccess,
+  reactivateManagedUser,
   updateManagedProfile,
   updateManagedUserCredentials,
   type ManagedProfile,
@@ -948,32 +949,57 @@ export default function Settings() {
     }
   };
 
-  const handleDelete = async (profile: ManagedProfile) => {
-    const confirmDelete = window.confirm("Deseja excluir este usuario?");
-    if (!confirmDelete) return;
+  const handleInactivate = async (profile: ManagedProfile) => {
+    const confirmInactivate = window.confirm("Deseja inativar este usuario? Ele perdera o acesso ate ser reativado.");
+    if (!confirmInactivate) return;
     setError(null);
     try {
       if (profile.user_id) {
-        await deleteManagedUser(profile.user_id);
+        await inactivateManagedUser(profile.user_id);
       } else {
         await deleteProfileOnly(profile.id);
       }
-      setProfiles((prev) => prev.filter((item) => item.id !== profile.id));
       if (profile.user_id) {
-        const profileUserId = profile.user_id;
-        setUserEmailsByUserId((prev) => {
-          if (!prev[profileUserId]) return prev;
-          const next = { ...prev };
-          delete next[profileUserId];
-          return next;
-        });
+        setProfiles((prev) =>
+          prev.map((item) =>
+            item.id === profile.id
+              ? { ...item, force_reauth_after: new Date().toISOString(), is_inactive: true }
+              : item,
+          ),
+        );
+      } else {
+        setProfiles((prev) => prev.filter((item) => item.id !== profile.id));
       }
       resetEdits();
       emitProfilesUpdated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao excluir usuario.");
+      setError(err instanceof Error ? err.message : "Erro ao inativar usuario.");
     }
   };
+
+  const handleReactivate = async (profile: ManagedProfile) => {
+    if (!profile.user_id) {
+      setError("Perfil sem usuario vinculado para reativacao.");
+      return;
+    }
+    setError(null);
+    try {
+      await reactivateManagedUser(profile.user_id);
+      setProfiles((prev) =>
+        prev.map((item) =>
+          item.id === profile.id
+            ? { ...item, force_reauth_after: null, is_inactive: false }
+            : item,
+        ),
+      );
+      resetEdits();
+      emitProfilesUpdated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao reativar usuario.");
+    }
+  };
+
+  const isUserInactive = (profile: ManagedProfile) => Boolean(profile.is_inactive || profile.force_reauth_after);
 
   const handleResetAccess = async (profile: ManagedProfile) => {
     if (!profile.user_id) {
@@ -1473,11 +1499,22 @@ export default function Settings() {
                           </button>
                         </form>
                       ) : (
-                        <div>
+                        <div className="flex flex-col gap-1">
                           <p className="text-sm font-semibold text-ink">
                             {supervisor.nome ?? supervisor.display_name ?? "Sem nome"}
                           </p>
-                          <p className="text-xs text-ink/60">Supervisor</p>
+                          <div className="flex items-center gap-2 text-xs text-ink/60">
+                            <span>Supervisor</span>
+                            {isUserInactive(supervisor) ? (
+                              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
+                                Inativo
+                              </span>
+                            ) : (
+                              <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+                                Ativo
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-ink/60">
                             Email: {getCurrentEmail(supervisor)}
                           </p>
@@ -1494,10 +1531,16 @@ export default function Settings() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDelete(supervisor)}
-                            className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600 hover:border-red-300"
+                            onClick={() => (isUserInactive(supervisor) ? handleReactivate(supervisor) : handleInactivate(supervisor))}
+                            className={[
+                              "rounded-lg px-2 py-1 text-xs font-semibold",
+                              isUserInactive(supervisor)
+                                ? "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300"
+                                : "border border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300",
+                            ].join(" ")}
                           >
-                            <Trash size={12} />
+                            <Power size={12} />
+                            {isUserInactive(supervisor) ? "Reativar" : "Inativar"}
                           </button>
                         </div>
                       )}
@@ -1636,13 +1679,22 @@ export default function Settings() {
                           </button>
                         </form>
                       ) : (
-                        <div>
+                        <div className="flex flex-col gap-1">
                           <p className="text-sm font-semibold text-ink">
                             {vendor.nome ?? vendor.display_name ?? "Sem nome"}
                           </p>
-                          <p className="text-xs text-ink/60">
-                            Supervisor: {vendor.supervisor?.display_name ?? "Nao informado"}
-                          </p>
+                          <div className="flex items-center gap-2 text-xs text-ink/60">
+                            <span>Supervisor: {vendor.supervisor?.display_name ?? "Nao informado"}</span>
+                            {isUserInactive(vendor) ? (
+                              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
+                                Inativo
+                              </span>
+                            ) : (
+                              <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+                                Ativo
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-ink/60">
                             Email: {getCurrentEmail(vendor)}
                           </p>
@@ -1659,10 +1711,16 @@ export default function Settings() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDelete(vendor)}
-                            className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600 hover:border-red-300"
+                            onClick={() => (isUserInactive(vendor) ? handleReactivate(vendor) : handleInactivate(vendor))}
+                            className={[
+                              "rounded-lg px-2 py-1 text-xs font-semibold",
+                              isUserInactive(vendor)
+                                ? "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300"
+                                : "border border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300",
+                            ].join(" ")}
                           >
-                            <Trash size={12} />
+                            <Power size={12} />
+                            {isUserInactive(vendor) ? "Reativar" : "Inativar"}
                           </button>
                         </div>
                       )}
@@ -1775,11 +1833,22 @@ export default function Settings() {
                           </button>
                         </form>
                       ) : (
-                        <div>
+                        <div className="flex flex-col gap-1">
                           <p className="text-sm font-semibold text-ink">
                             {assistant.nome ?? assistant.display_name ?? "Sem nome"}
                           </p>
-                          <p className="text-xs text-ink/60">Assistente</p>
+                          <div className="flex items-center gap-2 text-xs text-ink/60">
+                            <span>Assistente</span>
+                            {isUserInactive(assistant) ? (
+                              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
+                                Inativo
+                              </span>
+                            ) : (
+                              <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+                                Ativo
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-ink/60">
                             Email: {getCurrentEmail(assistant)}
                           </p>
@@ -1796,10 +1865,16 @@ export default function Settings() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDelete(assistant)}
-                            className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600 hover:border-red-300"
+                            onClick={() => (isUserInactive(assistant) ? handleReactivate(assistant) : handleInactivate(assistant))}
+                            className={[
+                              "rounded-lg px-2 py-1 text-xs font-semibold",
+                              isUserInactive(assistant)
+                                ? "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300"
+                                : "border border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300",
+                            ].join(" ")}
                           >
-                            <Trash size={12} />
+                            <Power size={12} />
+                            {isUserInactive(assistant) ? "Reativar" : "Inativar"}
                           </button>
                         </div>
                       )}
