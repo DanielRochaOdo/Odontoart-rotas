@@ -11,6 +11,8 @@ export type ManagedProfile = {
   can_access_next_route_dashboard: boolean;
   supervisor_id: string | null;
   vendedor_id: string | null;
+  force_reauth_after?: string | null;
+  is_inactive?: boolean;
   supervisor?: { id: string; display_name: string | null } | null;
   vendedor?: { id: string; display_name: string | null } | null;
 };
@@ -43,7 +45,7 @@ const parseErrorMessage = (payload: unknown, fallback: string) => {
 const invokeManageUsersViaHttp = async (
   accessToken: string,
   body: {
-    action: "create" | "delete" | "update" | "list-emails" | "reset-access" | "reset-all-access";
+    action: "create" | "delete" | "update" | "list-emails" | "reset-access" | "reset-all-access" | "reactivate";
     payload: Record<string, unknown>;
   },
 ): Promise<ManageUsersInvokeResult> => {
@@ -95,7 +97,7 @@ const invokeManageUsersViaHttp = async (
 };
 
 const invokeManageUsers = async (body: {
-  action: "create" | "delete" | "update" | "list-emails" | "reset-access" | "reset-all-access";
+  action: "create" | "delete" | "update" | "list-emails" | "reset-access" | "reset-all-access" | "reactivate";
   payload: Record<string, unknown>;
 }): Promise<ManageUsersInvokeResult> => {
   const {
@@ -152,7 +154,7 @@ export const fetchManagedProfiles = async () => {
   const { data, error } = await supabase
     .from("profiles")
     .select(
-      "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
+      "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, force_reauth_after, is_inactive, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
     )
     .order("display_name", { ascending: true });
 
@@ -195,7 +197,7 @@ export const updateManagedProfile = async (payload: {
     .update(updates)
     .eq("id", payload.id)
     .select(
-      "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
+      "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, force_reauth_after, is_inactive, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
     )
     .single();
 
@@ -269,6 +271,26 @@ export const resetManagedUserAccess = async (payload: { user_id: string }) => {
   const { data, error } = await invokeManageUsers({
     action: "reset-access",
     payload: payload as unknown as Record<string, unknown>,
+  });
+
+  if (error) throw new Error(error.message);
+  return data ?? { success: true };
+};
+
+export const inactivateManagedUser = async (user_id: string) => {
+  const { data, error } = await invokeManageUsers({
+    action: "delete",
+    payload: { user_id },
+  });
+
+  if (error) throw new Error(error.message);
+  return data ?? { success: true };
+};
+
+export const reactivateManagedUser = async (user_id: string) => {
+  const { data, error } = await invokeManageUsers({
+    action: "reactivate",
+    payload: { user_id },
   });
 
   if (error) throw new Error(error.message);

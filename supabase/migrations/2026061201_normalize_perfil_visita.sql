@@ -62,11 +62,19 @@ before insert or update of perfil_visita on public.clientes
 for each row
 execute function public.sanitize_perfil_visita_row();
 
-drop trigger if exists sanitize_agenda_perfil_visita on public.agenda;
-create trigger sanitize_agenda_perfil_visita
-before insert or update of perfil_visita on public.agenda
-for each row
-execute function public.sanitize_perfil_visita_row();
+do $$
+begin
+  if to_regclass('public.agenda') is not null then
+    execute 'drop trigger if exists sanitize_agenda_perfil_visita on public.agenda';
+    execute '
+      create trigger sanitize_agenda_perfil_visita
+      before insert or update of perfil_visita on public.agenda
+      for each row
+      execute function public.sanitize_perfil_visita_row()
+    ';
+  end if;
+end
+$$;
 
 drop trigger if exists sanitize_visits_perfil_visita on public.visits;
 create trigger sanitize_visits_perfil_visita
@@ -79,10 +87,18 @@ set perfil_visita = public.normalize_perfil_visita_text(perfil_visita)
 where perfil_visita is not null
   and coalesce(perfil_visita, '') <> coalesce(public.normalize_perfil_visita_text(perfil_visita), '');
 
-update public.agenda
-set perfil_visita = public.normalize_perfil_visita_text(perfil_visita)
-where perfil_visita is not null
-  and coalesce(perfil_visita, '') <> coalesce(public.normalize_perfil_visita_text(perfil_visita), '');
+do $$
+begin
+  if to_regclass('public.agenda') is not null then
+    execute '
+      update public.agenda
+      set perfil_visita = public.normalize_perfil_visita_text(perfil_visita)
+      where perfil_visita is not null
+        and coalesce(perfil_visita, '''') <> coalesce(public.normalize_perfil_visita_text(perfil_visita), '''')
+    ';
+  end if;
+end
+$$;
 
 update public.visits
 set

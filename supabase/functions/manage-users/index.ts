@@ -32,6 +32,10 @@ type ResetAccessPayload = {
   user_id: string;
 };
 
+type ReactivatePayload = {
+  user_id: string;
+};
+
 type ResetAllAccessPayload = Record<string, never>;
 
 type ListEmailsPayload = {
@@ -105,7 +109,14 @@ serve(async (req) => {
 
   let body: {
     action?: string;
-    payload?: CreatePayload | DeletePayload | UpdatePayload | ResetAccessPayload | ResetAllAccessPayload | ListEmailsPayload;
+    payload?:
+      | CreatePayload
+      | DeletePayload
+      | UpdatePayload
+      | ResetAccessPayload
+      | ReactivatePayload
+      | ResetAllAccessPayload
+      | ListEmailsPayload;
   } | null = null;
   try {
     body = await req.json();
@@ -206,24 +217,30 @@ serve(async (req) => {
     if (!payload.user_id) {
       return jsonResponse(400, { error: "User id obrigatorio." });
     }
+    const forceReauthAfter = new Date().toISOString();
+    const { error: authUpdateError } = await supabase.auth.admin.updateUserById(payload.user_id, {
+      ban_duration: "876000h",
+    });
 
-    const cleanupSteps: Array<Promise<{ error: { message: string } | null }>> = [
-      supabase.from("profiles").delete().eq("user_id", payload.user_id),
-    ];
-
-    for (const step of cleanupSteps) {
-      const { error } = await step;
-      if (error) {
-        return jsonResponse(400, { error: error.message });
-      }
+    if (authUpdateError) {
+      return jsonResponse(400, { error: authUpdateError.message });
     }
 
-    const { error: deleteError } = await supabase.auth.admin.deleteUser(payload.user_id);
-    if (deleteError && !isMissingUserError(deleteError.message)) {
-      return jsonResponse(400, { error: deleteError.message });
+    const { error: profileUpdateError } = await supabase
+      .from("profiles")
+      .update({ force_reauth_after: forceReauthAfter, is_inactive: true })
+      .eq("user_id", payload.user_id);
+
+    if (profileUpdateError) {
+      return jsonResponse(400, { error: profileUpdateError.message });
     }
 
-    return jsonResponse(200, { success: true });
+    return jsonResponse(200, {
+      success: true,
+      user_id: payload.user_id,
+      force_reauth_after: forceReauthAfter,
+      scope: "single-user",
+    });
   }
 
   if (body.action === "reset-access") {
@@ -246,6 +263,36 @@ serve(async (req) => {
       success: true,
       user_id: payload.user_id,
       force_reauth_after: forceReauthAfter,
+      scope: "single-user",
+    });
+  }
+
+  if (body.action === "reactivate") {
+    const payload = body.payload as ReactivatePayload;
+    if (!payload.user_id) {
+      return jsonResponse(400, { error: "User id obrigatorio." });
+    }
+
+    const { error: authUpdateError } = await supabase.auth.admin.updateUserById(payload.user_id, {
+      ban_duration: "none",
+    });
+
+    if (authUpdateError) {
+      return jsonResponse(400, { error: authUpdateError.message });
+    }
+
+    const { error: profileUpdateError } = await supabase
+      .from("profiles")
+      .update({ force_reauth_after: null, is_inactive: false })
+      .eq("user_id", payload.user_id);
+
+    if (profileUpdateError) {
+      return jsonResponse(400, { error: profileUpdateError.message });
+    }
+
+    return jsonResponse(200, {
+      success: true,
+      user_id: payload.user_id,
       scope: "single-user",
     });
   }
