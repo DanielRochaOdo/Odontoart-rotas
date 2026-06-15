@@ -311,7 +311,8 @@ type PlanoValoresModalState = {
 type VendorHistoryModalState = {
   empresa: string;
   codigo: string;
-  assignments: Array<{ name: string; visitDate: string | null }>;
+  assignments: Array<{ name: string; visitDate: string | null; completedVidas: number | null }>;
+  loading?: boolean;
 };
 
 type VendorRouteStopDraft = {
@@ -1043,7 +1044,12 @@ export default function Agenda() {
       ),
     )
       .slice(0, 2)
-      .map((name) => ({ name, visitDate: null as string | null, userId: null as string | null }));
+      .map((name) => ({
+        name,
+        visitDate: null as string | null,
+        completedVidas: null as number | null,
+        userId: null as string | null,
+      }));
 
     if (!visits.length) return fallbackAssignments;
 
@@ -1066,7 +1072,12 @@ export default function Agenda() {
       return 0;
     });
 
-    const picked: Array<{ name: string; visitDate: string | null; userId: string | null }> = [];
+    const picked: Array<{
+      name: string;
+      visitDate: string | null;
+      completedVidas: number | null;
+      userId: string | null;
+    }> = [];
     const seen = new Set<string>();
     for (const visit of sortedVisits) {
       const vendorName =
@@ -1079,12 +1090,107 @@ export default function Agenda() {
       picked.push({
         name: normalizedName,
         visitDate: visit.visit_date ?? null,
+        completedVidas: visit.completed_vidas ?? null,
         userId: visit.assigned_to_user_id ?? null,
       });
       if (picked.length >= 2) break;
     }
 
     return picked.length ? picked : fallbackAssignments;
+  };
+
+  const buildVendorHistoryAssignments = (visits: AgendaVisitVendor[], fallback?: string | null) => {
+    const filteredVisits = visits.filter((visit) =>
+      isVendorVisitTypeValue((visit as { visit_type?: string | null }).visit_type),
+    );
+    const fallbackAssignments = Array.from(
+      new Set(
+        (fallback ?? "")
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean),
+      ),
+    )
+      .slice(0, 2)
+      .map((name) => ({
+        name,
+        visitDate: null as string | null,
+        completedVidas: null as number | null,
+      }));
+
+    if (!filteredVisits.length) return fallbackAssignments;
+
+    const sortedVisits = [...filteredVisits].sort((left, right) => {
+      const leftCompletedAt = toSortableTimestamp(left.completed_at);
+      const rightCompletedAt = toSortableTimestamp(right.completed_at);
+      if (leftCompletedAt === null && rightCompletedAt !== null) return 1;
+      if (leftCompletedAt !== null && rightCompletedAt === null) return -1;
+      if (leftCompletedAt !== null && rightCompletedAt !== null && leftCompletedAt !== rightCompletedAt) {
+        return rightCompletedAt - leftCompletedAt;
+      }
+
+      const leftVisitDate = toSortableTimestamp(left.visit_date);
+      const rightVisitDate = toSortableTimestamp(right.visit_date);
+      if (leftVisitDate === null && rightVisitDate !== null) return 1;
+      if (leftVisitDate !== null && rightVisitDate === null) return -1;
+      if (leftVisitDate !== null && rightVisitDate !== null && leftVisitDate !== rightVisitDate) {
+        return rightVisitDate - leftVisitDate;
+      }
+      return 0;
+    });
+
+    const picked: Array<{ name: string; visitDate: string | null; completedVidas: number | null }> = [];
+    const seen = new Set<string>();
+    for (const visit of sortedVisits) {
+      const vendorName =
+        visit.assigned_to_name ?? (visit.assigned_to_user_id ? vendorById.get(visit.assigned_to_user_id) : null) ?? "";
+      const normalizedName = vendorName.trim();
+      if (!normalizedName || seen.has(normalizedName)) continue;
+      seen.add(normalizedName);
+      picked.push({
+        name: normalizedName,
+        visitDate: visit.completed_at ?? visit.visit_date ?? null,
+        completedVidas: visit.completed_vidas ?? null,
+      });
+      if (picked.length >= 2) break;
+    }
+
+    return picked.length ? picked : fallbackAssignments;
+  };
+
+  const openVendorHistoryModal = async (row: AgendaRow, fallback?: string | null) => {
+    const initialAssignments = resolveVendorsForAgenda(row.id, fallback);
+    setVendorHistoryModal({
+      empresa: row.empresa ?? row.nome_fantasia ?? "Sem empresa",
+      codigo: row.cod_1 ?? "-",
+      assignments: initialAssignments.map((item) => ({
+        name: item.name,
+        visitDate: item.visitDate,
+        completedVidas: item.completedVidas ?? null,
+      })),
+      loading: true,
+    });
+
+    try {
+      const visits = await fetchAgendaVisitVendors([row.id]);
+      setVendorHistoryModal({
+        empresa: row.empresa ?? row.nome_fantasia ?? "Sem empresa",
+        codigo: row.cod_1 ?? "-",
+        assignments: buildVendorHistoryAssignments(visits, fallback),
+        loading: false,
+      });
+    } catch {
+      setVendorHistoryModal({
+        empresa: row.empresa ?? row.nome_fantasia ?? "Sem empresa",
+        codigo: row.cod_1 ?? "-",
+        assignments: initialAssignments.map((item) => ({
+          name: item.name,
+          visitDate: item.visitDate,
+          completedVidas: item.completedVidas ?? null,
+        })),
+        loading: false,
+      });
+    }
   };
 
   const buildVendorRouteStopDrafts = async (agendaId: string, vendorId: string, vendorName: string) => {
@@ -3011,14 +3117,7 @@ export default function Agenda() {
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      setVendorHistoryModal({
-                        empresa: row.empresa ?? row.nome_fantasia ?? "Sem empresa",
-                        codigo: row.cod_1 ?? "-",
-                        assignments: recentVendors.map((item) => ({
-                          name: item.name,
-                          visitDate: item.visitDate,
-                        })),
-                      });
+                      void openVendorHistoryModal(row, row.vendedor);
                     }}
                     onPointerDown={(event) => event.stopPropagation()}
                     className="absolute right-0 top-0 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-orange-300 bg-orange-50 text-orange-600 hover:border-orange-400 hover:text-orange-700"
@@ -4112,6 +4211,7 @@ export default function Agenda() {
                         ? "border-emerald-300 bg-emerald-400/10 text-emerald-300"
                         : "border-sea/20 bg-white/90 text-ink/55 hover:border-sea hover:text-sea dark:border-emerald-400/20 dark:bg-slate-950/80 dark:text-slate-400 dark:hover:border-emerald-300 dark:hover:text-emerald-300",
                     ].join(" ")}
+                    title="Excluir periodo da ultima visita"
                   >
                     <SquareCenterlineDashedHorizontal size={15} />
                   </button>
@@ -5212,6 +5312,9 @@ export default function Agenda() {
                 <p className="text-xs text-ink/60">
                   Data: {formatDate(vendorHistoryModal.assignments[0]?.visitDate ?? null)}
                 </p>
+                <p className="text-xs text-ink/60">
+                  Vidas: {vendorHistoryModal.assignments[0]?.completedVidas ?? "-"}
+                </p>
               </div>
               <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
                 <p className="text-[11px] font-semibold text-ink/60">Penultimo vendedor</p>
@@ -5220,6 +5323,9 @@ export default function Agenda() {
                 </p>
                 <p className="text-xs text-ink/60">
                   Data: {formatDate(vendorHistoryModal.assignments[1]?.visitDate ?? null)}
+                </p>
+                <p className="text-xs text-ink/60">
+                  Vidas: {vendorHistoryModal.assignments[1]?.completedVidas ?? "-"}
                 </p>
               </div>
             </div>
@@ -5455,14 +5561,7 @@ export default function Agenda() {
                                 type="button"
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  setVendorHistoryModal({
-                                    empresa: row.empresa ?? row.nome_fantasia ?? "Sem empresa",
-                                    codigo: row.cod_1 ?? "-",
-                                    assignments: recentVendors.map((item) => ({
-                                      name: item.name,
-                                      visitDate: item.visitDate,
-                                    })),
-                                  });
+                                  void openVendorHistoryModal(row, row.vendedor);
                                 }}
                                 onPointerDown={(event) => event.stopPropagation()}
                                 className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-orange-300 bg-orange-50 text-orange-600 hover:border-orange-400 hover:text-orange-700"
@@ -5663,14 +5762,7 @@ export default function Agenda() {
                                     type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      setVendorHistoryModal({
-                                        empresa: original.empresa ?? original.nome_fantasia ?? "Sem empresa",
-                                        codigo: original.cod_1 ?? "-",
-                                        assignments: recentVendors.map((item) => ({
-                                          name: item.name,
-                                          visitDate: item.visitDate,
-                                        })),
-                                      });
+                                      void openVendorHistoryModal(original, original.vendedor);
                                     }}
                                     onPointerDown={(event) => event.stopPropagation()}
                                     className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-orange-300 bg-orange-50 text-orange-600 hover:border-orange-400 hover:text-orange-700"
