@@ -1529,19 +1529,16 @@ export default function Settings() {
                           >
                             <Pencil size={12} />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => (isUserInactive(supervisor) ? handleReactivate(supervisor) : handleInactivate(supervisor))}
-                            className={[
-                              "rounded-lg px-2 py-1 text-xs font-semibold",
-                              isUserInactive(supervisor)
-                                ? "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300"
-                                : "border border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300",
-                            ].join(" ")}
-                          >
-                            <Power size={12} />
-                            {isUserInactive(supervisor) ? "Reativar" : "Inativar"}
-                          </button>
+                          {isUserInactive(supervisor) && (
+                            <button
+                              type="button"
+                              onClick={() => handleReactivate(supervisor)}
+                              className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:border-emerald-300"
+                            >
+                              <Power size={12} />
+                              Reativar
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1709,19 +1706,16 @@ export default function Settings() {
                           >
                             <Pencil size={12} />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => (isUserInactive(vendor) ? handleReactivate(vendor) : handleInactivate(vendor))}
-                            className={[
-                              "rounded-lg px-2 py-1 text-xs font-semibold",
-                              isUserInactive(vendor)
-                                ? "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300"
-                                : "border border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300",
-                            ].join(" ")}
-                          >
-                            <Power size={12} />
-                            {isUserInactive(vendor) ? "Reativar" : "Inativar"}
-                          </button>
+                          {isUserInactive(vendor) && (
+                            <button
+                              type="button"
+                              onClick={() => handleReactivate(vendor)}
+                              className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:border-emerald-300"
+                            >
+                              <Power size={12} />
+                              Reativar
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1863,19 +1857,16 @@ export default function Settings() {
                           >
                             <Pencil size={12} />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => (isUserInactive(assistant) ? handleReactivate(assistant) : handleInactivate(assistant))}
-                            className={[
-                              "rounded-lg px-2 py-1 text-xs font-semibold",
-                              isUserInactive(assistant)
-                                ? "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300"
-                                : "border border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300",
-                            ].join(" ")}
-                          >
-                            <Power size={12} />
-                            {isUserInactive(assistant) ? "Reativar" : "Inativar"}
-                          </button>
+                          {isUserInactive(assistant) && (
+                            <button
+                              type="button"
+                              onClick={() => handleReactivate(assistant)}
+                              className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:border-emerald-300"
+                            >
+                              <Power size={12} />
+                              Reativar
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
