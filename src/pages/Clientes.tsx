@@ -121,6 +121,7 @@ type CadastroFormState = {
   venc: string;
   valor: string;
   reajuste_pct: string;
+  competencia: string;
   data_da_ultima_visita: string;
   cep: string;
   empresa: string;
@@ -374,6 +375,19 @@ const formatPercentDisplay = (value: number | null | undefined) => {
   return `${value.toFixed(2).replace(".", ",")}%`;
 };
 
+const sanitizeCompetenciaInput = (value: string) => {
+  const digits = value.replace(/\D/g, "").slice(0, 6);
+  if (!digits) return "";
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+};
+
+const formatCompetenciaInput = (value: string) => {
+  const digits = value.replace(/\D/g, "").slice(0, 6);
+  if (digits.length < 6) return sanitizeCompetenciaInput(value);
+  return `${digits.slice(0, 2)}/${digits.slice(2, 6)}`;
+};
+
 const resolveCnpjFromEmpresa = (empresa: OdontoartEmpresaResponseRow) => {
   const candidates: Array<string | number | null | undefined> = [
     empresa.CNPJ,
@@ -607,6 +621,8 @@ const HEADER_MAP: Record<string, string> = {
   "reajuste %": "reajuste_pct",
   "reajuste percentual": "reajuste_pct",
   reajuste_pct: "reajuste_pct",
+  competencia: "competencia",
+  competência: "competencia",
   "data ultima visita": "data_da_ultima_visita",
   "data da ultima visita": "data_da_ultima_visita",
   data_ultima_visita: "data_da_ultima_visita",
@@ -720,6 +736,7 @@ const buildInitialCadastroForm = (): CadastroFormState => ({
   venc: "",
   valor: "",
   reajuste_pct: "",
+  competencia: "",
   data_da_ultima_visita: "",
   cep: "",
   empresa: "",
@@ -1340,6 +1357,7 @@ export default function Clientes() {
         selected.reajuste_pct !== null && selected.reajuste_pct !== undefined
           ? formatPercentInput(String(selected.reajuste_pct))
           : "",
+      competencia: selected.competencia ?? "",
       data_da_ultima_visita: toDateInput(selected.data_da_ultima_visita),
       cep: selected.cep ?? "",
       empresa: selected.empresa ?? "",
@@ -1551,6 +1569,7 @@ export default function Clientes() {
     const vencValue = sourceForm.venc ? Number(sourceForm.venc) : null;
     const parsedCorte = Number.isFinite(corteValue ?? NaN) ? corteValue : null;
     const parsedVenc = Number.isFinite(vencValue ?? NaN) ? vencValue : null;
+    const competencia = sourceForm.competencia ? formatCompetenciaInput(sourceForm.competencia) : null;
     const parsedDataUltimaVisita = toIsoDateInput(sourceForm.data_da_ultima_visita);
   const created = await createCliente({
       codigo: sourceForm.codigo.trim() || null,
@@ -1559,6 +1578,7 @@ export default function Clientes() {
       venc: parsedVenc,
       valor: sourceForm.valor ? parseImportCurrency(sourceForm.valor) : null,
       reajuste_pct: sourceForm.reajuste_pct ? parseImportPercent(sourceForm.reajuste_pct) : null,
+      competencia,
       data_da_ultima_visita: parsedDataUltimaVisita,
       cep: sourceForm.cep.trim() || null,
       empresa: sourceForm.empresa.trim() || null,
@@ -2598,6 +2618,7 @@ export default function Clientes() {
       const vencValue = editForm.venc ? Number(editForm.venc) : null;
       const parsedCorte = Number.isFinite(corteValue ?? NaN) ? corteValue : null;
       const parsedVenc = Number.isFinite(vencValue ?? NaN) ? vencValue : null;
+      const competencia = editForm.competencia ? formatCompetenciaInput(editForm.competencia) : null;
       const parsedDataUltimaVisita = toIsoDateInput(editForm.data_da_ultima_visita);
       const updated = await updateCliente(selected.id, {
         codigo: editForm.codigo.trim() || null,
@@ -2606,6 +2627,7 @@ export default function Clientes() {
         venc: parsedVenc,
         valor: editForm.valor ? parseImportCurrency(editForm.valor) : null,
         reajuste_pct: editForm.reajuste_pct ? parseImportPercent(editForm.reajuste_pct) : null,
+        competencia,
         data_da_ultima_visita: parsedDataUltimaVisita,
         cep: editForm.cep.trim() || null,
         empresa: editForm.empresa.trim() || null,
@@ -2821,6 +2843,7 @@ export default function Clientes() {
           const vencValue = record.venc ? Number(record.venc) : null;
           const parsedCorte = Number.isFinite(corteValue ?? NaN) ? corteValue : null;
           const parsedVenc = Number.isFinite(vencValue ?? NaN) ? vencValue : null;
+          const competencia = record.competencia ? formatCompetenciaInput(record.competencia) : null;
           const parsedDataUltimaVisita = record.data_da_ultima_visita
             ? parseImportDate(record.data_da_ultima_visita)
             : null;
@@ -2833,6 +2856,7 @@ export default function Clientes() {
             venc: parsedVenc,
             valor: parsedValor,
             reajuste_pct: record.reajuste_pct ? parseImportPercent(record.reajuste_pct) : null,
+            competencia,
             data_da_ultima_visita: parsedDataUltimaVisita,
             cep: record.cep ?? null,
             empresa: record.empresa ?? null,
@@ -3330,16 +3354,31 @@ export default function Clientes() {
             </label>
             <label className="w-20 flex flex-col gap-1 text-xs font-semibold text-ink/70">
               <span>Reajuste %</span>
-                <input
-                  value={form.reajuste_pct}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, reajuste_pct: sanitizePercentInput(event.target.value) }))
-                  }
-                  onBlur={(event) =>
-                    setForm((prev) => ({ ...prev, reajuste_pct: formatPercentInput(event.target.value) }))
-                  }
-                  inputMode="decimal"
-                  placeholder="0,00%"
+              <input
+                value={form.reajuste_pct}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, reajuste_pct: sanitizePercentInput(event.target.value) }))
+                }
+                onBlur={(event) =>
+                  setForm((prev) => ({ ...prev, reajuste_pct: formatPercentInput(event.target.value) }))
+                }
+                inputMode="decimal"
+                placeholder="0,00%"
+                className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+              />
+            </label>
+            <label className="w-24 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              <span>Competencia</span>
+              <input
+                value={form.competencia}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, competencia: sanitizeCompetenciaInput(event.target.value) }))
+                }
+                onBlur={(event) =>
+                  setForm((prev) => ({ ...prev, competencia: formatCompetenciaInput(event.target.value) }))
+                }
+                inputMode="numeric"
+                placeholder="MM/AAAA"
                 className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
               />
             </label>
@@ -3720,6 +3759,11 @@ export default function Clientes() {
                         Obs: {cliente.obs}
                       </div>
                     ) : null}
+                    {cliente.competencia ? (
+                      <div className="text-[11px] text-ink/50">
+                        Competencia: {formatCompetenciaInput(cliente.competencia)}
+                      </div>
+                    ) : null}
                     {cliente.situacao ? (
                       <div className="mt-1 text-[11px] text-ink/50">
                         Situacao: {cliente.situacao}
@@ -3991,6 +4035,27 @@ export default function Clientes() {
                       }
                       inputMode="decimal"
                       placeholder="0,00%"
+                      className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                  </label>
+                  <label className="w-24 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                    <span>Competencia</span>
+                    <input
+                      value={editForm.competencia}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({
+                          ...prev,
+                          competencia: sanitizeCompetenciaInput(event.target.value),
+                        }))
+                      }
+                      onBlur={(event) =>
+                        setEditForm((prev) => ({
+                          ...prev,
+                          competencia: formatCompetenciaInput(event.target.value),
+                        }))
+                      }
+                      inputMode="numeric"
+                      placeholder="MM/AAAA"
                       className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
                     />
                   </label>
@@ -4281,6 +4346,7 @@ export default function Clientes() {
                   ["Venc", selected.venc ?? null],
                   ["Valor", null],
                   ["Reajuste %", formatPercentDisplay(selected.reajuste_pct)],
+                  ["Competencia", selected.competencia ? formatCompetenciaInput(selected.competencia) : "-"],
                   ["Data da ultima visita", formatDate(selected.data_da_ultima_visita)],
                   ["CEP", selected.cep],
                   ["CNPJ", selected.cnpj],
@@ -4325,6 +4391,10 @@ export default function Clientes() {
                       </button>
                     ) : label === "Reajuste %" ? (
                       <span className="text-sm text-ink">{formatPercentDisplay(selected.reajuste_pct)}</span>
+                    ) : label === "Competencia" ? (
+                      <span className="text-sm text-ink">
+                        {selected.competencia ? formatCompetenciaInput(selected.competencia) : "-"}
+                      </span>
                     ) : (
                       <span className="text-sm text-ink">{value ?? "-"}</span>
                     )}
@@ -4857,6 +4927,41 @@ export default function Clientes() {
                     }
                     inputMode="decimal"
                     placeholder="0,00%"
+                    className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                </label>
+                <label className="w-24 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  <span>Competencia</span>
+                  <input
+                    value={filialCadastroModal.form.competencia}
+                    onChange={(event) =>
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: {
+                                ...prev.form,
+                                competencia: sanitizeCompetenciaInput(event.target.value),
+                              },
+                            }
+                          : prev,
+                      )
+                    }
+                    onBlur={(event) =>
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: {
+                                ...prev.form,
+                                competencia: formatCompetenciaInput(event.target.value),
+                              },
+                            }
+                          : prev,
+                      )
+                    }
+                    inputMode="numeric"
+                    placeholder="MM/AAAA"
                     className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>

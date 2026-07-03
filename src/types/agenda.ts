@@ -12,6 +12,7 @@
   venc: number | null;
   valor: number | null;
   reajuste_pct?: number | null;
+  competencia?: string | null;
   endereco: string | null;
   complemento: string | null;
   bairro: string | null;

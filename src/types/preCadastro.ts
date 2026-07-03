@@ -14,6 +14,7 @@ export type PreCadastroRow = {
   venc: number | null;
   valor: number | null;
   reajuste_pct: number | null;
+  competencia: string | null;
   data_da_ultima_visita: string | null;
   cep: string | null;
   empresa: string | null;
@@ -40,6 +41,7 @@ export type CreatePreCadastroPayload = {
   venc?: number | null;
   valor?: number | null;
   reajuste_pct?: number | null;
+  competencia?: string | null;
   data_da_ultima_visita?: string | null;
   cep?: string | null;
   empresa?: string | null;

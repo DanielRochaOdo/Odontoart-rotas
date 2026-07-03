@@ -168,9 +168,11 @@ const formatCurrency = (value: number | null) => {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 };
 
+const roundPercent = (value: number) => Math.round(value * 100) / 100;
+
 const formatPercentDisplay = (value: number | null | undefined) => {
   if (value === null || value === undefined || !Number.isFinite(value)) return "-";
-  return `${value.toFixed(2).replace(".", ",")}%`;
+  return `${roundPercent(value).toFixed(2).replace(".", ",")}%`;
 };
 
 const formatDateTime = (value: string | null | undefined) => {
