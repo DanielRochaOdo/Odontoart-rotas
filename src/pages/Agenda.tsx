@@ -168,6 +168,11 @@ const formatCurrency = (value: number | null) => {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 };
 
+const formatPercentDisplay = (value: number | null | undefined) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+  return `${value.toFixed(2).replace(".", ",")}%`;
+};
+
 const formatDateTime = (value: string | null | undefined) => {
   if (!value) return "-";
   const date = parseDateValue(value);
@@ -5129,41 +5134,72 @@ export default function Agenda() {
                 Fechar
               </button>
             </div>
-            <div className="mt-4 space-y-3 text-sm text-ink/80">
-              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
-                <p className="text-[11px] font-semibold text-ink/60">Nome da empresa</p>
-                <p className="mt-1 font-semibold text-ink">
-                  {detailsModalRow.empresa ?? "-"}{" "}
-                  <span className="text-sea/80">{"{"}COD {detailsModalRow.cod_1 ?? "-"}{"}"}</span>
-                </p>
-              </div>
-              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
-                <p className="text-[11px] font-semibold text-ink/60">Endereco e numero</p>
-                <p className="mt-1">
-                  {[detailsModalRow.endereco, detailsModalRow.complemento].filter(Boolean).join(", ") || "-"}
-                </p>
-              </div>
-              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <p className="text-[11px] font-semibold text-ink/60">Corte | Vencimento</p>
-                  <button
-                    type="button"
-                    onClick={() => void openPlanoValoresModal(detailsModalRow.cod_1, detailsModalRow.empresa)}
-                    className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
-                    title="Ver valores Titular/Dependente"
-                    aria-label="Ver valores Titular e Dependente"
-                  >
-                    {planoValoresModal?.loading ? (
-                      <LoaderCircle size={12} className="animate-spin" />
-                    ) : (
-                      <DollarSign size={12} />
-                    )}
-                  </button>
+            <div className="mt-4 space-y-3">
+              {[
+                ["Codigo", detailsModalRow.cod_1],
+                ["Corte", detailsModalRow.corte ?? null],
+                ["Venc", detailsModalRow.venc ?? null],
+                ["Valor", null],
+                ["Reajuste %", formatPercentDisplay(detailsModalRow.reajuste_pct)],
+                ["Data da ultima visita", formatDate(detailsModalRow.data_da_ultima_visita)],
+                ["CEP", detailsModalRow.cep],
+                ["Empresa", detailsModalRow.empresa],
+                ["Pessoa", detailsModalRow.pessoa],
+                ["Contato", detailsModalRow.contato],
+                ["Grupo", detailsModalRow.grupo],
+                ["Obs comercial", detailsModalRow.obs_comercial],
+                ["Obs", detailsModalRow.obs_contrato_1],
+                ["Situacao", detailsModalRow.situacao ?? "Ativo"],
+                ["Categoria", detailsModalRow.categoria ?? "-"],
+                ["Perfil visita", formatPerfilVisitaDisplay(detailsModalRow.perfil_visita)],
+                ["Endereco", detailsModalRow.endereco],
+                ["Complemento", detailsModalRow.complemento],
+                ["Bairro", detailsModalRow.bairro],
+                ["Cidade", detailsModalRow.cidade],
+                ["UF", detailsModalRow.uf],
+              ].map(([label, value]) => (
+                <div key={label} className="flex items-center justify-between border-b border-mist/50 pb-2 text-sm text-ink/80">
+                  <span className="text-xs font-semibold text-muted">{label}</span>
+                  {label === "Valor" ? (
+                    <button
+                      type="button"
+                      onClick={() => void openPlanoValoresModal(detailsModalRow.cod_1, detailsModalRow.empresa)}
+                      title="Ver valores Titular/Dependente"
+                      aria-label="Ver valores Titular e Dependente"
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
+                    >
+                      {planoValoresModal?.loading ? (
+                        <LoaderCircle size={12} className="animate-spin" />
+                      ) : (
+                        <DollarSign size={12} />
+                      )}
+                    </button>
+                  ) : label === "Obs" ? (
+                    <div className="flex items-center gap-2">
+                      {detailsModalRow.obs_contrato_1?.trim() ? (
+                        <button
+                          type="button"
+                          onClick={() => setDetailsObsExpanded((prev) => !prev)}
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300 bg-emerald-100 text-emerald-700"
+                          title={detailsObsExpanded ? "Ocultar observacao" : "Ver observacao"}
+                          aria-label={detailsObsExpanded ? "Ocultar observacao" : "Ver observacao"}
+                        >
+                          <CheckCircle2 size={14} />
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : label === "Reajuste %" ? (
+                    <span>{formatPercentDisplay(detailsModalRow.reajuste_pct)}</span>
+                  ) : (
+                    <span>{value ?? "-"}</span>
+                  )}
                 </div>
-                <p className="mt-1">
-                  {(detailsModalRow.corte ?? "-")} | {(detailsModalRow.venc ?? "-")}
-                </p>
-              </div>
+              ))}
+              {detailsModalRow.obs_contrato_1?.trim() && detailsObsExpanded ? (
+                <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-sm text-ink/80">
+                  <p className="whitespace-pre-wrap break-all">{detailsModalRow.obs_contrato_1}</p>
+                </div>
+              ) : null}
               <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
                 <p className="text-[11px] font-semibold text-ink/60">Instrucoes</p>
                 {canManageInstruction ? (
@@ -5191,31 +5227,6 @@ export default function Agenda() {
                 {detailsInstructionMessage ? (
                   <p className="mt-2 text-xs text-ink/70">{detailsInstructionMessage}</p>
                 ) : null}
-              </div>
-              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <p className="text-[11px] font-semibold text-ink/60">Obs</p>
-                  {detailsModalRow.obs_contrato_1?.trim() ? (
-                    <button
-                      type="button"
-                      onClick={() => setDetailsObsExpanded((prev) => !prev)}
-                      className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300 bg-emerald-100 text-emerald-700"
-                      title={detailsObsExpanded ? "Ocultar observacao" : "Ver observacao"}
-                      aria-label={detailsObsExpanded ? "Ocultar observacao" : "Ver observacao"}
-                    >
-                      <CheckCircle2 size={14} />
-                    </button>
-                  ) : null}
-                </div>
-                {detailsModalRow.obs_contrato_1?.trim() ? (
-                  detailsObsExpanded ? (
-                    <p className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-all text-sm">
-                      {detailsModalRow.obs_contrato_1}
-                    </p>
-                  ) : null
-                ) : (
-                  <p className="mt-1">-</p>
-                )}
               </div>
             </div>
           </div>

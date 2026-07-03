@@ -120,6 +120,7 @@ type CadastroFormState = {
   corte: string;
   venc: string;
   valor: string;
+  reajuste_pct: string;
   data_da_ultima_visita: string;
   cep: string;
   empresa: string;
@@ -176,6 +177,7 @@ type ImportPayload = {
   codigo?: string | null;
   cnpj?: string | null;
   valor?: number | null;
+  reajuste_pct?: number | null;
   cep?: string | null;
   empresa?: string | null;
   pessoa?: string | null;
@@ -270,7 +272,7 @@ const SITUACAO_OPTIONS = ["Ativo", "Suspenso/Inadimplente", "Cancelado"] as cons
 const normalizeHeader = (value: string) =>
   normalizeSearchText(value);
 
-const IMPORT_NUMERIC_FIELDS = new Set(["corte", "venc"]);
+const IMPORT_NUMERIC_FIELDS = new Set(["corte", "venc", "reajuste_pct"]);
 const IMPORT_BATCH_SIZE = 80;
 const CLIENTES_DEFAULT_PAGE_SIZE = 50;
 const CLIENTES_VIEW_STATE_KEY = "clientesViewStateV2";
@@ -333,11 +335,43 @@ const parseImportCurrency = (value: string) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const parseImportPercent = (value: string) => {
+  const cleaned = value.replace(/[^\d.,-]/g, "");
+  if (!cleaned) return null;
+  const hasComma = cleaned.includes(",");
+  const hasDot = cleaned.includes(".");
+  let normalized = cleaned;
+  if (hasComma && hasDot) {
+    normalized = cleaned.replace(/\./g, "").replace(",", ".");
+  } else if (hasComma) {
+    normalized = cleaned.replace(",", ".");
+  }
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 const formatCurrency = (value: number | string | null) => {
   if (value === null || value === "") return "";
   const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric)) return String(value);
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(numeric);
+};
+
+const sanitizePercentInput = (value: string) =>
+  value.replace(/[^\d.,]/g, "").replace(/\.(?=.*\.)/g, "");
+
+const formatPercentInput = (value: string) => {
+  const cleaned = sanitizePercentInput(value);
+  if (!cleaned) return "";
+  const normalized = cleaned.replace(/\./g, "").replace(",", ".");
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return cleaned;
+  return `${parsed.toFixed(2).replace(".", ",")}%`;
+};
+
+const formatPercentDisplay = (value: number | null | undefined) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+  return `${value.toFixed(2).replace(".", ",")}%`;
 };
 
 const resolveCnpjFromEmpresa = (empresa: OdontoartEmpresaResponseRow) => {
@@ -488,6 +522,7 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
     corte: corteFromApi,
     venc: vencFromApi,
     valor: valorTitular !== null ? formatCurrency(valorTitular) : "",
+    reajuste_pct: "",
     data_da_ultima_visita: "",
     cep: resolveCepFromEmpresa(empresa),
     empresa: resolveEmpresaFromApi(empresa),
@@ -568,6 +603,10 @@ const HEADER_MAP: Record<string, string> = {
   corte: "corte",
   venc: "venc",
   vencimento: "venc",
+  reajuste: "reajuste_pct",
+  "reajuste %": "reajuste_pct",
+  "reajuste percentual": "reajuste_pct",
+  reajuste_pct: "reajuste_pct",
   "data ultima visita": "data_da_ultima_visita",
   "data da ultima visita": "data_da_ultima_visita",
   data_ultima_visita: "data_da_ultima_visita",
@@ -680,6 +719,7 @@ const buildInitialCadastroForm = (): CadastroFormState => ({
   corte: "",
   venc: "",
   valor: "",
+  reajuste_pct: "",
   data_da_ultima_visita: "",
   cep: "",
   empresa: "",
@@ -890,6 +930,7 @@ const preserveFilialCommonFields = (
   corte: draft.corte.trim(),
   venc: draft.venc.trim(),
   valor: draft.valor.trim(),
+  reajuste_pct: draft.reajuste_pct.trim(),
   situacao: draft.situacao.trim() || "Ativo",
 });
 
@@ -1295,6 +1336,10 @@ export default function Clientes() {
       corte: selected.corte !== null && selected.corte !== undefined ? String(selected.corte) : "",
       venc: selected.venc !== null && selected.venc !== undefined ? String(selected.venc) : "",
       valor: selected.valor !== null && selected.valor !== undefined ? formatCurrency(selected.valor) : "",
+      reajuste_pct:
+        selected.reajuste_pct !== null && selected.reajuste_pct !== undefined
+          ? formatPercentInput(String(selected.reajuste_pct))
+          : "",
       data_da_ultima_visita: toDateInput(selected.data_da_ultima_visita),
       cep: selected.cep ?? "",
       empresa: selected.empresa ?? "",
@@ -1507,12 +1552,13 @@ export default function Clientes() {
     const parsedCorte = Number.isFinite(corteValue ?? NaN) ? corteValue : null;
     const parsedVenc = Number.isFinite(vencValue ?? NaN) ? vencValue : null;
     const parsedDataUltimaVisita = toIsoDateInput(sourceForm.data_da_ultima_visita);
-    const created = await createCliente({
+  const created = await createCliente({
       codigo: sourceForm.codigo.trim() || null,
       cnpj: normalizeCnpj(sourceForm.cnpj),
       corte: parsedCorte,
       venc: parsedVenc,
       valor: sourceForm.valor ? parseImportCurrency(sourceForm.valor) : null,
+      reajuste_pct: sourceForm.reajuste_pct ? parseImportPercent(sourceForm.reajuste_pct) : null,
       data_da_ultima_visita: parsedDataUltimaVisita,
       cep: sourceForm.cep.trim() || null,
       empresa: sourceForm.empresa.trim() || null,
@@ -2559,6 +2605,7 @@ export default function Clientes() {
         corte: parsedCorte,
         venc: parsedVenc,
         valor: editForm.valor ? parseImportCurrency(editForm.valor) : null,
+        reajuste_pct: editForm.reajuste_pct ? parseImportPercent(editForm.reajuste_pct) : null,
         data_da_ultima_visita: parsedDataUltimaVisita,
         cep: editForm.cep.trim() || null,
         empresa: editForm.empresa.trim() || null,
@@ -2764,7 +2811,8 @@ export default function Clientes() {
             if (!target) return;
             const text = String(value ?? "").trim();
             if (!text) return;
-            const cleaned = IMPORT_NUMERIC_FIELDS.has(target) ? sanitizeDigits(text) : text;
+            const cleaned =
+              target === "reajuste_pct" ? text : IMPORT_NUMERIC_FIELDS.has(target) ? sanitizeDigits(text) : text;
             if (!cleaned) return;
             record[target] = target === "cep" ? formatCep(cleaned) : cleaned;
           });
@@ -2784,6 +2832,7 @@ export default function Clientes() {
 	            corte: parsedCorte,
             venc: parsedVenc,
             valor: parsedValor,
+            reajuste_pct: record.reajuste_pct ? parseImportPercent(record.reajuste_pct) : null,
             data_da_ultima_visita: parsedDataUltimaVisita,
             cep: record.cep ?? null,
             empresa: record.empresa ?? null,
@@ -2824,6 +2873,7 @@ export default function Clientes() {
           corte: number | null;
           venc: number | null;
           valor: number | null;
+          reajuste_pct: number | null;
           data_da_ultima_visita: string | null;
           cep: string | null;
           empresa: string | null;
@@ -3277,6 +3327,21 @@ export default function Clientes() {
                   {createValoresLoading ? <LoaderCircle size={14} className="animate-spin" /> : <DollarSign size={14} />}
                 </button>
               </div>
+            </label>
+            <label className="w-20 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              <span>Reajuste %</span>
+                <input
+                  value={form.reajuste_pct}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, reajuste_pct: sanitizePercentInput(event.target.value) }))
+                  }
+                  onBlur={(event) =>
+                    setForm((prev) => ({ ...prev, reajuste_pct: formatPercentInput(event.target.value) }))
+                  }
+                  inputMode="decimal"
+                  placeholder="0,00%"
+                className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+              />
             </label>
             <label className="w-40 flex flex-col gap-1 text-xs font-semibold text-ink/70">
               Data da ultima visita
@@ -3908,6 +3973,27 @@ export default function Clientes() {
                       </button>
                     </div>
                   </label>
+                  <label className="w-20 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                    <span>Reajuste %</span>
+                    <input
+                      value={editForm.reajuste_pct}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({
+                          ...prev,
+                          reajuste_pct: sanitizePercentInput(event.target.value),
+                        }))
+                      }
+                      onBlur={(event) =>
+                        setEditForm((prev) => ({
+                          ...prev,
+                          reajuste_pct: formatPercentInput(event.target.value),
+                        }))
+                      }
+                      inputMode="decimal"
+                      placeholder="0,00%"
+                      className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+                    />
+                  </label>
                   <label className="w-40 flex flex-col gap-1 text-xs font-semibold text-ink/70">
                     Data da ultima visita
                     <input
@@ -4194,6 +4280,7 @@ export default function Clientes() {
                   ["Corte", selected.corte ?? null],
                   ["Venc", selected.venc ?? null],
                   ["Valor", null],
+                  ["Reajuste %", formatPercentDisplay(selected.reajuste_pct)],
                   ["Data da ultima visita", formatDate(selected.data_da_ultima_visita)],
                   ["CEP", selected.cep],
                   ["CNPJ", selected.cnpj],
@@ -4236,6 +4323,8 @@ export default function Clientes() {
                           <DollarSign size={12} />
                         )}
                       </button>
+                    ) : label === "Reajuste %" ? (
+                      <span className="text-sm text-ink">{formatPercentDisplay(selected.reajuste_pct)}</span>
                     ) : (
                       <span className="text-sm text-ink">{value ?? "-"}</span>
                     )}
@@ -4735,6 +4824,41 @@ export default function Clientes() {
                       {createValoresLoading ? <LoaderCircle size={14} className="animate-spin" /> : <DollarSign size={14} />}
                     </button>
                   </div>
+                </label>
+                <label className="w-20 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                  <span>Reajuste %</span>
+                  <input
+                    value={filialCadastroModal.form.reajuste_pct}
+                    onChange={(event) =>
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: {
+                                ...prev.form,
+                                reajuste_pct: sanitizePercentInput(event.target.value),
+                              },
+                            }
+                          : prev,
+                      )
+                    }
+                    onBlur={(event) =>
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: {
+                                ...prev.form,
+                                reajuste_pct: formatPercentInput(event.target.value),
+                              },
+                            }
+                          : prev,
+                      )
+                    }
+                    inputMode="decimal"
+                    placeholder="0,00%"
+                    className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
+                  />
                 </label>
                 <label className="w-40 flex flex-col gap-1 text-xs font-semibold text-ink/70">
                   Data da ultima visita

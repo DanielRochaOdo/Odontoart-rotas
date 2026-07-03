@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { DollarSign, LoaderCircle } from "lucide-react";
 import type { AgendaRow } from "../../types/agenda";
 import { supabase } from "../../lib/supabase";
+import { fetchClienteById } from "../../lib/clientesApi";
 import { syncAgendaRowAcrossModules } from "../../lib/empresaSync";
 import {
   extractOdontoartPlanoValores,
@@ -26,6 +27,11 @@ const formatCurrency = (value: number | string | null) => {
   const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric)) return String(value);
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(numeric);
+};
+
+const formatPercent = (value: number | null | undefined) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+  return `${value.toFixed(2).replace(".", ",")}%`;
 };
 
 const formatDate = (value: string | null) => {
@@ -108,6 +114,8 @@ const FIELDS = [
   { key: "corte", label: "Corte", type: "number" },
   { key: "venc", label: "Venc", type: "number" },
   { key: "valor", label: "Valor", type: "number" },
+  { key: "reajuste_pct", label: "Reajuste %", type: "number" },
+  { key: "cep", label: "CEP", type: "text" },
   { key: "endereco", label: "Endereco", type: "text", wide: true },
   { key: "complemento", label: "Complemento", type: "text", wide: true },
   { key: "bairro", label: "Bairro", type: "text" },
@@ -118,6 +126,7 @@ const FIELDS = [
   { key: "grupo", label: "Grupo", type: "text" },
   { key: "situacao", label: "Situacao", type: "text" },
   { key: "categoria", label: "Categoria", type: "text" },
+  { key: "obs_comercial", label: "Obs comercial", type: "text", wide: true },
   { key: "obs_contrato_1", label: "Obs. Contrato", type: "text", wide: true },
 ] as const;
 
@@ -147,6 +156,9 @@ const buildFormState = (row: AgendaRow): AgendaFormState => ({
   corte: row.corte?.toString() ?? "",
   venc: row.venc?.toString() ?? "",
   valor: row.valor !== null && row.valor !== undefined ? formatCurrency(row.valor) : "",
+  reajuste_pct:
+    row.reajuste_pct !== null && row.reajuste_pct !== undefined ? formatPercent(row.reajuste_pct) : "",
+  cep: (row as AgendaRow & { cep?: string | null }).cep ?? "",
   endereco: row.endereco ?? "",
   complemento: row.complemento ?? "",
   bairro: row.bairro ?? "",
@@ -157,6 +169,7 @@ const buildFormState = (row: AgendaRow): AgendaFormState => ({
   grupo: row.grupo ?? "",
   situacao: row.situacao ?? "",
   categoria: row.categoria ?? "",
+  obs_comercial: (row as AgendaRow & { obs_comercial?: string | null }).obs_comercial ?? "",
   obs_contrato_1: row.obs_contrato_1 ?? "",
 });
 
@@ -172,17 +185,19 @@ export default function AgendaDrawer({
   onDeleted,
 }: AgendaDrawerProps) {
   const [isEditing, setIsEditing] = useState(false);
-  const initialFormState = useMemo(() => (row ? buildFormState(row) : null), [row]);
+  const [hydratedRow, setHydratedRow] = useState<AgendaRow | null>(row);
+  const displayRow = hydratedRow ?? row;
+  const initialFormState = useMemo(() => (displayRow ? buildFormState(displayRow) : null), [displayRow]);
   const [formState, setFormState] = useState<AgendaFormState | null>(initialFormState);
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [planoValoresModal, setPlanoValoresModal] = useState<PlanoValoresModalState | null>(null);
-  const initialPerfilValue = normalizePerfilVisita(row?.perfil_visita ?? "");
-  const initialCustomTimes = extractCustomTimes(row?.perfil_visita ?? null);
-  const initialSingleTimeBase = getSingleTimePerfilBase(row?.perfil_visita ?? null);
-  const initialSingleTimeValue = getSingleTimePerfilValue(row?.perfil_visita ?? null);
+  const initialPerfilValue = normalizePerfilVisita(displayRow?.perfil_visita ?? "");
+  const initialCustomTimes = extractCustomTimes(displayRow?.perfil_visita ?? null);
+  const initialSingleTimeBase = getSingleTimePerfilBase(displayRow?.perfil_visita ?? null);
+  const initialSingleTimeValue = getSingleTimePerfilValue(displayRow?.perfil_visita ?? null);
   const initialPerfilIsCustom =
     initialPerfilValue !== "" && !isPresetPerfilVisita(initialPerfilValue) && !initialSingleTimeBase;
   const [perfilCustomEnabled, setPerfilCustomEnabled] = useState(initialPerfilIsCustom);
@@ -195,6 +210,42 @@ export default function AgendaDrawer({
   const [scopedInstruction, setScopedInstruction] = useState<string | null>(
     normalizeInstruction(initialFormState?.instructions),
   );
+
+  useEffect(() => {
+    setFormState(initialFormState);
+  }, [initialFormState]);
+
+  useEffect(() => {
+    setHydratedRow(row);
+    if (!row?.id) return;
+    let active = true;
+    void (async () => {
+      try {
+        const cliente = await fetchClienteById(row.id);
+        if (!active) return;
+        setHydratedRow((prev) =>
+          prev
+            ? {
+                ...prev,
+                cep: cliente.cep ?? prev.cep ?? null,
+                reajuste_pct: cliente.reajuste_pct ?? prev.reajuste_pct ?? null,
+                obs_comercial: cliente.obs_comercial ?? prev.obs_comercial ?? null,
+              }
+            : {
+                ...row,
+                cep: cliente.cep ?? null,
+                reajuste_pct: cliente.reajuste_pct ?? null,
+                obs_comercial: cliente.obs_comercial ?? null,
+              },
+        );
+      } catch {
+        if (active) setHydratedRow(row);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [row]);
 
   const applyCustomTimes = (times: string[]) => {
     setPerfilSingleTimeBase("");
@@ -379,6 +430,8 @@ export default function AgendaDrawer({
         corte: formState.corte ? parseNumber(formState.corte) : null,
         venc: formState.venc ? parseNumber(formState.venc) : null,
         valor: row.valor ?? null,
+        reajuste_pct: formState.reajuste_pct ? parseNumber(formState.reajuste_pct) : null,
+        cep: formState.cep.trim() || null,
         endereco: formState.endereco.trim() || null,
         complemento: formState.complemento.trim() || null,
         bairro: formState.bairro.trim() || null,
@@ -398,7 +451,7 @@ export default function AgendaDrawer({
         .update(payload)
         .eq("id", row.id)
         .select(
-          "id, data_da_ultima_visita, cod_1:codigo, empresa, pessoa, contato, instructions, perfil_visita, corte, venc, valor, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, categoria, obs_contrato_1:obs_comercial, visit_generated_at, created_at",
+          "id, data_da_ultima_visita, cod_1:codigo, empresa, cep, pessoa, contato, instructions, perfil_visita, corte, venc, valor, reajuste_pct, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, categoria, obs_contrato_1:obs_comercial, obs_comercial, visit_generated_at, created_at",
         )
         .single();
 
@@ -432,6 +485,7 @@ export default function AgendaDrawer({
         hasChanged(updatedRow.corte, row.corte) ||
         hasChanged(updatedRow.venc, row.venc) ||
         hasChanged(updatedRow.valor, row.valor) ||
+        hasChanged((updatedRow as AgendaRow & { reajuste_pct?: number | null }).reajuste_pct, (row as AgendaRow & { reajuste_pct?: number | null }).reajuste_pct) ||
         hasChanged(updatedRow.data_da_ultima_visita, row.data_da_ultima_visita) ||
         hasChanged((updatedRow as AgendaRow & { cep?: string | null }).cep, (row as AgendaRow & { cep?: string | null }).cep) ||
         hasChanged(updatedRow.empresa, row.empresa) ||
@@ -456,13 +510,14 @@ export default function AgendaDrawer({
           corte: updatedRow.corte,
           venc: updatedRow.venc,
           valor: updatedRow.valor,
+          reajuste_pct: (updatedRow as AgendaRow & { reajuste_pct?: number | null }).reajuste_pct ?? null,
           data_da_ultima_visita: updatedRow.data_da_ultima_visita,
           cep: (updatedRow as AgendaRow & { cep?: string | null }).cep ?? null,
           empresa: updatedRow.empresa,
           pessoa: (updatedRow as AgendaRow & { pessoa?: string | null }).pessoa ?? null,
           contato: (updatedRow as AgendaRow & { contato?: string | null }).contato ?? null,
           grupo: updatedRow.grupo,
-          obs_comercial: updatedRow.obs_contrato_1,
+          obs_comercial: (updatedRow as AgendaRow & { obs_comercial?: string | null }).obs_comercial ?? updatedRow.obs_contrato_1,
           nome_fantasia: updatedRow.nome_fantasia,
           complemento: (updatedRow as AgendaRow & { complemento?: string | null }).complemento ?? null,
           perfil_visita: updatedRow.perfil_visita,
@@ -545,7 +600,7 @@ export default function AgendaDrawer({
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-muted">Agenda</p>
             <h3 className="mt-2 font-display text-xl text-ink">{displayTitle}</h3>
-            <p className="text-sm text-muted">{row.cidade ? `${row.cidade} / ${row.uf ?? ""}` : ""}</p>
+            <p className="text-sm text-muted">{displayRow?.cidade ? `${displayRow.cidade} / ${displayRow.uf ?? ""}` : ""}</p>
           </div>
           <div className="flex items-center gap-2">
             {canEdit && (
@@ -901,7 +956,7 @@ export default function AgendaDrawer({
                   <div className="flex items-center gap-2 text-sm text-ink">
                     <button
                       type="button"
-                      onClick={() => void openPlanoValoresModal(row.cod_1, row.empresa)}
+                      onClick={() => void openPlanoValoresModal(displayRow?.cod_1, displayRow?.empresa)}
                       title="Ver valores Titular/Dependente"
                       aria-label="Ver valores Titular e Dependente"
                       className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-sea/30 bg-white text-sea hover:border-sea hover:text-seaLight"
@@ -917,12 +972,12 @@ export default function AgendaDrawer({
                 ) : (
                   <span className="text-sm text-ink">
                     {field.type === "date"
-                      ? formatDate(row[field.key] as string | null)
+                      ? formatDate(displayRow?.[field.key] as string | null)
                       : field.key === "instructions"
                         ? formatValue(scopedInstruction)
                       : field.key === "perfil_visita"
-                        ? formatPerfilDisplay(row[field.key] as string | null)
-                        : formatValue(row[field.key] as string | number | null)}
+                        ? formatPerfilDisplay(displayRow?.[field.key] as string | null)
+                        : formatValue(displayRow?.[field.key] as string | number | null)}
                   </span>
                 )}
               </div>

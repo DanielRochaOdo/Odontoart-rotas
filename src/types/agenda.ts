@@ -3,6 +3,7 @@
   data_da_ultima_visita: string | null;
   cod_1: string | null;
   empresa: string | null;
+  cep: string | null;
   pessoa: string | null;
   contato: string | null;
   instructions: string | null;
@@ -10,6 +11,7 @@
   corte: number | null;
   venc: number | null;
   valor: number | null;
+  reajuste_pct?: number | null;
   endereco: string | null;
   complemento: string | null;
   bairro: string | null;
@@ -19,6 +21,7 @@
   vendedor: string | null;
   nome_fantasia: string | null;
   grupo: string | null;
+  obs_comercial: string | null;
   situacao: string | null;
   categoria: string | null;
   obs_contrato_1: string | null;
