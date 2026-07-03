@@ -13,6 +13,7 @@ export type PreCadastroRow = {
   corte: number | null;
   venc: number | null;
   valor: number | null;
+  reajuste_pct: number | null;
   data_da_ultima_visita: string | null;
   cep: string | null;
   empresa: string | null;
@@ -38,6 +39,7 @@ export type CreatePreCadastroPayload = {
   corte?: number | null;
   venc?: number | null;
   valor?: number | null;
+  reajuste_pct?: number | null;
   data_da_ultima_visita?: string | null;
   cep?: string | null;
   empresa?: string | null;
@@ -54,4 +56,3 @@ export type CreatePreCadastroPayload = {
   cidade?: string | null;
   uf?: string | null;
 };
-
