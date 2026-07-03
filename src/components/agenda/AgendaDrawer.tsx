@@ -29,9 +29,24 @@ const formatCurrency = (value: number | string | null) => {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(numeric);
 };
 
+const roundPercent = (value: number) => Math.round(value * 100) / 100;
+
 const formatPercent = (value: number | null | undefined) => {
   if (value === null || value === undefined || !Number.isFinite(value)) return "-";
-  return `${value.toFixed(2).replace(".", ",")}%`;
+  return `${roundPercent(value).toFixed(2).replace(".", ",")}%`;
+};
+
+const sanitizeCompetenciaInput = (value: string) => {
+  const digits = value.replace(/\D/g, "").slice(0, 6);
+  if (!digits) return "";
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+};
+
+const formatCompetenciaInput = (value: string) => {
+  const digits = value.replace(/\D/g, "").slice(0, 6);
+  if (digits.length < 6) return sanitizeCompetenciaInput(value);
+  return `${digits.slice(0, 2)}/${digits.slice(2, 6)}`;
 };
 
 const formatDate = (value: string | null) => {
@@ -115,6 +130,7 @@ const FIELDS = [
   { key: "venc", label: "Venc", type: "number" },
   { key: "valor", label: "Valor", type: "number" },
   { key: "reajuste_pct", label: "Reajuste %", type: "number" },
+  { key: "competencia", label: "Competencia", type: "text" },
   { key: "cep", label: "CEP", type: "text" },
   { key: "endereco", label: "Endereco", type: "text", wide: true },
   { key: "complemento", label: "Complemento", type: "text", wide: true },
@@ -158,6 +174,7 @@ const buildFormState = (row: AgendaRow): AgendaFormState => ({
   valor: row.valor !== null && row.valor !== undefined ? formatCurrency(row.valor) : "",
   reajuste_pct:
     row.reajuste_pct !== null && row.reajuste_pct !== undefined ? formatPercent(row.reajuste_pct) : "",
+  competencia: (row as AgendaRow & { competencia?: string | null }).competencia ?? "",
   cep: (row as AgendaRow & { cep?: string | null }).cep ?? "",
   endereco: row.endereco ?? "",
   complemento: row.complemento ?? "",
@@ -431,6 +448,7 @@ export default function AgendaDrawer({
         venc: formState.venc ? parseNumber(formState.venc) : null,
         valor: row.valor ?? null,
         reajuste_pct: formState.reajuste_pct ? parseNumber(formState.reajuste_pct) : null,
+        competencia: formState.competencia ? formatCompetenciaInput(formState.competencia) : null,
         cep: formState.cep.trim() || null,
         endereco: formState.endereco.trim() || null,
         complemento: formState.complemento.trim() || null,
@@ -451,7 +469,7 @@ export default function AgendaDrawer({
         .update(payload)
         .eq("id", row.id)
         .select(
-          "id, data_da_ultima_visita, cod_1:codigo, empresa, cep, pessoa, contato, instructions, perfil_visita, corte, venc, valor, reajuste_pct, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, categoria, obs_contrato_1:obs_comercial, obs_comercial, visit_generated_at, created_at",
+          "id, data_da_ultima_visita, cod_1:codigo, empresa, cep, pessoa, contato, instructions, perfil_visita, corte, venc, valor, reajuste_pct, competencia, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, categoria, obs_contrato_1:obs_comercial, obs_comercial, visit_generated_at, created_at",
         )
         .single();
 
@@ -486,6 +504,7 @@ export default function AgendaDrawer({
         hasChanged(updatedRow.venc, row.venc) ||
         hasChanged(updatedRow.valor, row.valor) ||
         hasChanged((updatedRow as AgendaRow & { reajuste_pct?: number | null }).reajuste_pct, (row as AgendaRow & { reajuste_pct?: number | null }).reajuste_pct) ||
+        hasChanged((updatedRow as AgendaRow & { competencia?: string | null }).competencia, (row as AgendaRow & { competencia?: string | null }).competencia) ||
         hasChanged(updatedRow.data_da_ultima_visita, row.data_da_ultima_visita) ||
         hasChanged((updatedRow as AgendaRow & { cep?: string | null }).cep, (row as AgendaRow & { cep?: string | null }).cep) ||
         hasChanged(updatedRow.empresa, row.empresa) ||
@@ -511,6 +530,7 @@ export default function AgendaDrawer({
           venc: updatedRow.venc,
           valor: updatedRow.valor,
           reajuste_pct: (updatedRow as AgendaRow & { reajuste_pct?: number | null }).reajuste_pct ?? null,
+          competencia: (updatedRow as AgendaRow & { competencia?: string | null }).competencia ?? null,
           data_da_ultima_visita: updatedRow.data_da_ultima_visita,
           cep: (updatedRow as AgendaRow & { cep?: string | null }).cep ?? null,
           empresa: updatedRow.empresa,

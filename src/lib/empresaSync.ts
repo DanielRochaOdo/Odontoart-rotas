@@ -8,6 +8,7 @@ type ClienteSyncPayload = {
   venc?: number | null;
   valor?: number | null;
   reajuste_pct?: number | null;
+  competencia?: string | null;
   data_da_ultima_visita?: string | null;
   cep?: string | null;
   empresa?: string | null;
@@ -45,6 +46,7 @@ export const syncAgendaRowAcrossModules = async (row: ClienteSyncPayload) => {
   if (row.venc !== undefined) clientePayload.venc = row.venc;
   if (row.valor !== undefined) clientePayload.valor = row.valor;
   if (row.reajuste_pct !== undefined) clientePayload.reajuste_pct = row.reajuste_pct;
+  if (row.competencia !== undefined) clientePayload.competencia = row.competencia;
   if (row.data_da_ultima_visita !== undefined) clientePayload.data_da_ultima_visita = row.data_da_ultima_visita;
   if (row.cep !== undefined) clientePayload.cep = row.cep;
   if (row.empresa !== undefined) clientePayload.empresa = row.empresa;

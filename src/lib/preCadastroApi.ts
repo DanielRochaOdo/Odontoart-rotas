@@ -3,7 +3,7 @@ import { supabase } from "./supabase";
 import type { CreatePreCadastroPayload, PreCadastroRow, PreCadastroStatus } from "../types/preCadastro";
 
 const PRE_CADASTRO_SELECT_COLUMNS =
-  "id, created_by_user_id, created_by_name, reviewed_by_user_id, status, review_note, approved_cliente_id, codigo, cnpj, corte, venc, valor, reajuste_pct, data_da_ultima_visita, cep, empresa, pessoa, contato, grupo, obs_comercial, obs, perfil_visita, situacao, endereco, complemento, bairro, cidade, uf, created_at, reviewed_at";
+  "id, created_by_user_id, created_by_name, reviewed_by_user_id, status, review_note, approved_cliente_id, codigo, cnpj, corte, venc, valor, reajuste_pct, competencia, data_da_ultima_visita, cep, empresa, pessoa, contato, grupo, obs_comercial, obs, perfil_visita, situacao, endereco, complemento, bairro, cidade, uf, created_at, reviewed_at";
 
 const formatCnpj = (value: string | null | undefined) => {
   const digits = (value ?? "").replace(/\D/g, "").slice(0, 14);
@@ -18,6 +18,7 @@ const mapPreCadastroToClientePayload = (row: PreCadastroRow) => ({
   venc: row.venc ?? null,
   valor: row.valor ?? null,
   reajuste_pct: row.reajuste_pct ?? null,
+  competencia: row.competencia ?? null,
   data_da_ultima_visita: row.data_da_ultima_visita ?? null,
   cep: row.cep ?? null,
   cnpj: formatCnpj(row.cnpj),
@@ -51,6 +52,7 @@ export const createPreCadastro = async (
       venc: payload.venc ?? null,
       valor: payload.valor ?? null,
       reajuste_pct: payload.reajuste_pct ?? null,
+      competencia: payload.competencia ?? null,
       data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
       cep: payload.cep ?? null,
       empresa: payload.empresa ?? null,
