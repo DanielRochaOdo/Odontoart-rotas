@@ -130,6 +130,8 @@ type CadastroFormState = {
   grupo: string;
   obs_comercial: string;
   obs: string;
+  regra_visita_observacao: string;
+  regra_visita_ativa: boolean;
   situacao: string;
   categoria: string;
   endereco: string;
@@ -154,6 +156,10 @@ type FilialCadastroModalState = {
   form: CadastroFormState;
   existingCount: number;
   error: string | null;
+};
+
+type RegraVisitaModalState = {
+  target: "create" | "edit";
 };
 
 type ClientesViewState = {
@@ -186,6 +192,7 @@ type ImportPayload = {
   grupo?: string | null;
   obs_comercial?: string | null;
   obs?: string | null;
+  regra_visita_observacao?: string | null;
   situacao?: string | null;
   categoria?: string | null;
   perfil_visita?: string | null;
@@ -387,6 +394,8 @@ const formatCompetenciaInput = (value: string) => {
   if (digits.length < 6) return sanitizeCompetenciaInput(value);
   return `${digits.slice(0, 2)}/${digits.slice(2, 6)}`;
 };
+
+const sanitizeRegraVisitaObservation = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 50);
 
 const resolveCnpjFromEmpresa = (empresa: OdontoartEmpresaResponseRow) => {
   const candidates: Array<string | number | null | undefined> = [
@@ -745,6 +754,8 @@ const buildInitialCadastroForm = (): CadastroFormState => ({
   grupo: "",
   obs_comercial: "",
   obs: "",
+  regra_visita_observacao: "",
+  regra_visita_ativa: false,
   situacao: "Ativo",
   categoria: "",
   endereco: "",
@@ -758,12 +769,38 @@ const restoreCadastroForm = (value: unknown): CadastroFormState => {
   const next = buildInitialCadastroForm();
   if (!isRecord(value)) return next;
 
-  for (const key of Object.keys(next) as Array<keyof CadastroFormState>) {
+  const stringKeys: Array<keyof CadastroFormState> = [
+    "codigo",
+    "cnpj",
+    "corte",
+    "venc",
+    "valor",
+    "reajuste_pct",
+    "competencia",
+    "data_da_ultima_visita",
+    "cep",
+    "empresa",
+    "pessoa",
+    "contato",
+    "grupo",
+    "obs_comercial",
+    "obs",
+    "regra_visita_observacao",
+    "situacao",
+    "categoria",
+    "endereco",
+    "complemento",
+    "bairro",
+    "cidade",
+    "uf",
+  ];
+  for (const key of stringKeys) {
     const candidate = value[key];
     if (typeof candidate === "string") {
-      next[key] = candidate;
+      (next as unknown as Record<string, string>)[key] = candidate;
     }
   }
+  if (typeof value.regra_visita_ativa === "boolean") next.regra_visita_ativa = value.regra_visita_ativa;
 
   return next;
 };
@@ -883,11 +920,17 @@ const mergeLookupIntoCadastroForm = (
   for (const [rawKey, rawValue] of Object.entries(incoming)) {
     const key = rawKey as keyof CadastroFormState;
     if (rawValue === undefined || rawValue === null) continue;
+    if (typeof rawValue === "boolean") {
+      if (key === "regra_visita_ativa") {
+        next.regra_visita_ativa = rawValue;
+      }
+      continue;
+    }
     const incomingValue = String(rawValue);
     if (!incomingValue.trim()) continue;
     const currentValue = next[key];
-    if (forceFields.has(key) || !currentValue.trim()) {
-      next[key] = incomingValue;
+    if (typeof currentValue === "string" && (forceFields.has(key) || !currentValue.trim())) {
+      (next as Record<string, string | boolean>)[key] = incomingValue;
     }
   }
 
@@ -948,6 +991,8 @@ const preserveFilialCommonFields = (
   venc: draft.venc.trim(),
   valor: draft.valor.trim(),
   reajuste_pct: draft.reajuste_pct.trim(),
+  regra_visita_observacao: draft.regra_visita_observacao.trim(),
+  regra_visita_ativa: draft.regra_visita_ativa,
   situacao: draft.situacao.trim() || "Ativo",
 });
 
@@ -994,6 +1039,7 @@ export default function Clientes() {
   const [editForm, setEditForm] = useState<CadastroFormState>(buildInitialCadastroForm);
   const [perfilEdit, setPerfilEdit] = useState(() => buildPerfilState(null));
   const [editPlanoValores, setEditPlanoValores] = useState<OdontoartPlanoValor[]>([]);
+  const [regraVisitaModal, setRegraVisitaModal] = useState<RegraVisitaModalState | null>(null);
   const [planosModalState, setPlanosModalState] = useState<{
     title: string;
     source: "create" | "edit";
@@ -1366,6 +1412,8 @@ export default function Clientes() {
       grupo: selected.grupo ?? "",
       obs_comercial: selected.obs_comercial ?? "",
       obs: selected.obs ?? "",
+      regra_visita_observacao: selected.regra_visita_observacao ?? "",
+      regra_visita_ativa: Boolean((selected.regra_visita_observacao ?? "").trim()),
       situacao: selected.situacao ?? "Ativo",
       categoria: selected.categoria ?? "",
       endereco: selected.endereco ?? "",
@@ -1587,6 +1635,9 @@ export default function Clientes() {
       grupo: sourceForm.grupo.trim() || null,
       obs_comercial: sourceForm.obs_comercial.trim() || null,
       obs: sourceForm.obs.trim() || null,
+      regra_visita_observacao: sourceForm.regra_visita_ativa
+        ? sanitizeRegraVisitaObservation(sourceForm.regra_visita_observacao) || null
+        : null,
       perfil_visita: perfilVisita,
       situacao: sourceForm.situacao.trim() || "Ativo",
       categoria: sourceForm.categoria.trim() || null,
@@ -2192,6 +2243,10 @@ export default function Clientes() {
     event.preventDefault();
     if (!canCreate || creating || codigoLoading || cnpjLoading) return;
     if (!isSituacaoAllowedForCadastro(form.situacao)) return;
+    if (form.regra_visita_ativa && !sanitizeRegraVisitaObservation(form.regra_visita_observacao)) {
+      setError("Informe a observacao da Regra de Visita.");
+      return;
+    }
     const flowId = startNewCreateFlow();
     const formSnapshot: CadastroFormState = { ...form };
     const perfilSnapshot = perfilCreate.perfil || null;
@@ -2611,6 +2666,10 @@ export default function Clientes() {
       setError("Informe o nome da empresa.");
       return;
     }
+    if (editForm.regra_visita_ativa && !sanitizeRegraVisitaObservation(editForm.regra_visita_observacao)) {
+      setError("Informe a observacao da Regra de Visita.");
+      return;
+    }
     setSavingEdit(true);
     setError(null);
     try {
@@ -2636,6 +2695,9 @@ export default function Clientes() {
         grupo: editForm.grupo.trim() || null,
         obs_comercial: editForm.obs_comercial.trim() || null,
         obs: editForm.obs.trim() || null,
+        regra_visita_observacao: editForm.regra_visita_ativa
+          ? sanitizeRegraVisitaObservation(editForm.regra_visita_observacao) || null
+          : null,
         perfil_visita: perfilEdit.perfil || null,
         situacao: editForm.situacao.trim() || "Ativo",
         categoria: editForm.categoria.trim() || null,
@@ -3550,6 +3612,28 @@ export default function Clientes() {
                 ))}
               </select>
             </label>
+            <div className="w-[145px] min-w-[145px] shrink-0 flex h-10 items-center rounded-lg border border-sea/15 bg-sand/20 px-3">
+              <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap text-xs font-semibold text-ink/70">
+                <input
+                  type="checkbox"
+                  checked={form.regra_visita_ativa}
+                  onChange={(event) => {
+                    if (!event.target.checked) {
+                      setForm((prev) => ({
+                        ...prev,
+                        regra_visita_ativa: false,
+                        regra_visita_observacao: "",
+                      }));
+                      return;
+                    }
+                    setForm((prev) => ({ ...prev, regra_visita_ativa: true }));
+                    setRegraVisitaModal({ target: "create" });
+                  }}
+                  className="h-4 w-4 accent-sea"
+                />
+                Regra Visita
+              </label>
+            </div>
           </div>
           <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-2">
             Cidade
@@ -4165,6 +4249,28 @@ export default function Clientes() {
                       ))}
                     </select>
                   </label>
+            <div className="w-[190px] min-w-[190px] shrink-0 flex items-center justify-between rounded-lg border border-sea/15 bg-sand/20 px-3 py-3">
+                    <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-ink/70">
+                      <input
+                        type="checkbox"
+                        checked={editForm.regra_visita_ativa}
+                        onChange={(event) => {
+                          if (!event.target.checked) {
+                            setEditForm((prev) => ({
+                              ...prev,
+                              regra_visita_ativa: false,
+                              regra_visita_observacao: "",
+                            }));
+                            return;
+                          }
+                          setEditForm((prev) => ({ ...prev, regra_visita_ativa: true }));
+                          setRegraVisitaModal({ target: "edit" });
+                        }}
+                        className="h-4 w-4 accent-sea"
+                      />
+                      Regra Visita
+                    </label>
+                  </div>
                 </div>
                 <div className="md:col-span-6">
                   {(perfilEdit.singleTimeBase === "ALMOCO" || perfilEdit.singleTimeBase === "JANTAR") && (
@@ -4358,6 +4464,7 @@ export default function Clientes() {
                   ["Obs", selected.obs],
                   ["Situacao", selected.situacao ?? "Ativo"],
                   ["Categoria", selected.categoria ?? "-"],
+                  ["Regra visita", selected.regra_visita_observacao?.trim() || "-"],
                   ["Perfil visita", formatPerfilDisplay(selected.perfil_visita)],
                   ["Endereco", selected.endereco],
                   ["Complemento", selected.complemento],
@@ -5363,6 +5470,109 @@ export default function Clientes() {
                 Manter os dois
               </button>
             </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {regraVisitaModal &&
+        createPortal(
+          <div className="fixed inset-0 z-[9050] flex items-start justify-center overflow-y-auto px-4 pt-6">
+            <button
+              type="button"
+              className="absolute inset-0 bg-ink/30"
+              onClick={() => {
+                const target = regraVisitaModal.target;
+                setRegraVisitaModal(null);
+                if (target === "create") {
+                  setForm((prev) => ({ ...prev, regra_visita_ativa: false, regra_visita_observacao: "" }));
+                } else {
+                  setEditForm((prev) => ({ ...prev, regra_visita_ativa: false, regra_visita_observacao: "" }));
+                }
+              }}
+            />
+            <div className="relative z-10 w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+              <h3 className="font-display text-lg text-ink">Regra de Visita</h3>
+              <p className="mt-1 text-xs text-ink/60">
+                Informe uma observacao que devera ser confirmada pelo supervisor antes da geracao de rotas para esta empresa.
+              </p>
+              <label className="mt-4 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                Observacao
+                <textarea
+                  maxLength={50}
+                  value={
+                    regraVisitaModal.target === "create"
+                      ? form.regra_visita_observacao
+                      : editForm.regra_visita_observacao
+                  }
+                  onChange={(event) => {
+                    const value = event.target.value.slice(0, 50);
+                    if (regraVisitaModal.target === "create") {
+                      setForm((prev) => ({ ...prev, regra_visita_observacao: value }));
+                    } else {
+                      setEditForm((prev) => ({ ...prev, regra_visita_observacao: value }));
+                    }
+                  }}
+                  placeholder="Ex.: Visitar somente pela manha"
+                  className="min-h-24 rounded-xl border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
+              <div className="mt-1 text-right text-[11px] text-ink/50">
+                {(
+                  regraVisitaModal.target === "create"
+                    ? form.regra_visita_observacao
+                    : editForm.regra_visita_observacao
+                ).length}
+                /50
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = regraVisitaModal.target;
+                    setRegraVisitaModal(null);
+                    if (target === "create") {
+                      setForm((prev) => ({ ...prev, regra_visita_ativa: false, regra_visita_observacao: "" }));
+                    } else {
+                      setEditForm((prev) => ({ ...prev, regra_visita_ativa: false, regra_visita_observacao: "" }));
+                    }
+                  }}
+                  className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = regraVisitaModal.target;
+                    const current =
+                      target === "create" ? form.regra_visita_observacao : editForm.regra_visita_observacao;
+                    const next = sanitizeRegraVisitaObservation(current);
+                    if (!next) {
+                      setError("Informe a observacao da Regra de Visita.");
+                      return;
+                    }
+                    if (target === "create") {
+                      setForm((prev) => ({
+                        ...prev,
+                        regra_visita_ativa: true,
+                        regra_visita_observacao: next,
+                      }));
+                    } else {
+                      setEditForm((prev) => ({
+                        ...prev,
+                        regra_visita_ativa: true,
+                        regra_visita_observacao: next,
+                      }));
+                    }
+                    setError(null);
+                    setRegraVisitaModal(null);
+                  }}
+                  className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight"
+                >
+                  Salvar regra
+                </button>
+              </div>
             </div>
           </div>,
           document.body,

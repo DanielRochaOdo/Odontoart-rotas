@@ -74,17 +74,18 @@ type VisitRow = {
     corte?: number | null;
     venc?: number | null;
     valor?: number | null;
-    obs_contrato_1?: string | null;
-    pessoa: string | null;
-    contato: string | null;
-    instructions?: string | null;
-    endereco: string | null;
-    complemento?: string | null;
+      obs_contrato_1?: string | null;
+      pessoa: string | null;
+      contato: string | null;
+      instructions?: string | null;
+      endereco: string | null;
+      complemento?: string | null;
       bairro: string | null;
       cidade: string | null;
       uf: string | null;
       situacao: string | null;
       categoria?: string | null;
+      regra_visita_observacao?: string | null;
       perfil_visita: string | null;
       supervisor?: string | null;
     } | null;
@@ -252,7 +253,7 @@ const extractVisitDateKey = (value: string | null | undefined) => {
 const normalize = (value: string | null) => normalizeSearchText(value);
 
 const CLIENTE_CANONICAL_MODAL_SELECT =
-  "id, codigo, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf";
+  "id, codigo, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, categoria, regra_visita_observacao, endereco, bairro, cidade, uf";
 const CLIENTE_LIST_SELECT =
   "id, codigo, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, categoria, perfil_visita";
 const CLIENTE_DETAILS_SELECT = CLIENTE_CANONICAL_MODAL_SELECT;
@@ -4265,6 +4266,14 @@ export default function Visitas() {
                 <p className="mt-1">
                   {[detailsVisit.agenda?.endereco, detailsVisit.agenda?.complemento].filter(Boolean).join(", ") || "-"}
                 </p>
+              </div>
+              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                <p className="text-[11px] font-semibold text-ink/60">Categoria</p>
+                <p className="mt-1">{detailsVisit.agenda?.categoria ?? "-"}</p>
+              </div>
+              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                <p className="text-[11px] font-semibold text-ink/60">Regra visita</p>
+                <p className="mt-1">{detailsVisit.agenda?.regra_visita_observacao ?? "-"}</p>
               </div>
               <div className="grid gap-2 sm:grid-cols-3">
                 <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">

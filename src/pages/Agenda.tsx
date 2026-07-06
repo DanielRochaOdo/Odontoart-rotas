@@ -644,13 +644,15 @@ export default function Agenda() {
   const [inactiveCompaniesPreview, setInactiveCompaniesPreview] = useState<InactiveCompanyWarningItem[]>([]);
   const [inactiveWarningsLoading, setInactiveWarningsLoading] = useState(false);
   const [inactiveWarningChecked, setInactiveWarningChecked] = useState(false);
+  const [visitRuleWarningChecked, setVisitRuleWarningChecked] = useState(false);
   const [eventWarningChecked, setEventWarningChecked] = useState(false);
   const [inactiveWarningViewed, setInactiveWarningViewed] = useState(false);
+  const [visitRuleWarningViewed, setVisitRuleWarningViewed] = useState(false);
   const [eventWarningViewed, setEventWarningViewed] = useState(false);
   const [inactiveCompaniesWarning, setInactiveCompaniesWarning] = useState<InactiveCompanyWarningItem[] | null>(null);
+  const [visitRuleCompaniesWarning, setVisitRuleCompaniesWarning] = useState<InactiveCompanyWarningItem[] | null>(null);
   const hasInactiveWarning = inactiveCompaniesPreview.length > 0;
   const hasEventWarning = eventWarningsPreview.length > 0;
-  const shouldShowWarningBlock = hasInactiveWarning || hasEventWarning;
   const [refreshKey, setRefreshKey] = useState(0);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [detailsModalRow, setDetailsModalRow] = useState<AgendaRow | null>(null);
@@ -746,6 +748,13 @@ export default function Agenda() {
     if (!showGenerateModal) {
       setEventWarningsPreview([]);
       setEventWarningsLoading(false);
+      setInactiveWarningChecked(false);
+      setVisitRuleWarningChecked(false);
+      setEventWarningChecked(false);
+      setInactiveWarningViewed(false);
+      setVisitRuleWarningViewed(false);
+      setEventWarningViewed(false);
+      setVisitRuleCompaniesWarning(null);
       return;
     }
     if (!visitDate) {
@@ -816,6 +825,9 @@ export default function Agenda() {
     if (!showGenerateModal) return;
     setEventWarningChecked(false);
     setEventWarningViewed(false);
+    setVisitRuleWarningChecked(false);
+    setVisitRuleWarningViewed(false);
+    setVisitRuleCompaniesWarning(null);
   }, [showGenerateModal, visitDate]);
 
   useEffect(() => {
@@ -1740,6 +1752,26 @@ export default function Agenda() {
       .map((agendaId) => byId.get(agendaId))
       .filter((row): row is AgendaRow => Boolean(row));
   }, [data, selectedAgendaIds]);
+  const visitRuleCompaniesPreview = useMemo(
+    () =>
+      Array.from(
+        selectedGenerateRows
+          .filter((row) => (row.regra_visita_observacao ?? "").trim())
+          .reduce<Map<string, InactiveCompanyWarningItem>>((acc, row) => {
+            acc.set(row.id, {
+              id: row.id,
+              code: row.cod_1 ?? "-",
+              name: row.empresa ?? row.nome_fantasia ?? "Sem nome",
+              status: row.regra_visita_observacao?.trim() ?? "-",
+            });
+            return acc;
+          }, new Map())
+          .values(),
+      ),
+    [selectedGenerateRows],
+  );
+  const hasVisitRuleWarning = visitRuleCompaniesPreview.length > 0;
+  const shouldShowWarningBlock = hasInactiveWarning || hasVisitRuleWarning || hasEventWarning;
 
   const excludedAgendaSet = useMemo(() => new Set(excludedAgendaIds), [excludedAgendaIds]);
 
@@ -4653,6 +4685,38 @@ export default function Agenda() {
                         </div>
                       )}
 
+                      {hasVisitRuleWarning && (
+                        <div className="flex items-start justify-between gap-2 rounded-lg border border-sea/20 bg-white/90 px-2 py-2">
+                          <label className="flex cursor-pointer items-start gap-2 text-xs text-ink">
+                            <input
+                              type="checkbox"
+                              checked={visitRuleWarningChecked}
+                              onChange={(event) => setVisitRuleWarningChecked(event.target.checked)}
+                              disabled={!visitRuleWarningViewed}
+                              className="mt-0.5 h-4 w-4 accent-sea disabled:opacity-50"
+                            />
+                            <span>
+                              <span className="block">{`Li o aviso de regra de visita (${visitRuleCompaniesPreview.length} empresa(s)).`}</span>
+                              {!visitRuleWarningViewed && (
+                                <span className="mt-0.5 block text-[10px] font-semibold text-sea">
+                                  Clique em Ver detalhes para habilitar o checkbox.
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setVisitRuleWarningViewed(true);
+                              setVisitRuleCompaniesWarning(visitRuleCompaniesPreview);
+                            }}
+                            className="rounded-lg border border-sea/30 bg-white/90 px-2 py-1 text-[11px] font-semibold text-ink/80 hover:border-sea"
+                          >
+                            Ver detalhes
+                          </button>
+                        </div>
+                      )}
+
                       {hasEventWarning && (
                         <div className="flex items-start justify-between gap-2 rounded-lg border border-sea/20 bg-white/90 px-2 py-2">
                           <label className="flex cursor-pointer items-start gap-2 text-xs text-ink">
@@ -4754,6 +4818,7 @@ export default function Agenda() {
                   inactiveWarningsLoading ||
                   eventWarningsLoading ||
                   (hasInactiveWarning && !inactiveWarningChecked) ||
+                  (hasVisitRuleWarning && !visitRuleWarningChecked) ||
                   (hasEventWarning && !eventWarningChecked) ||
                   generating
                 }
@@ -4857,6 +4922,50 @@ export default function Agenda() {
             </div>
           </div>
         </div>,
+          document.body,
+        )}
+
+      {visitRuleCompaniesWarning && visitRuleCompaniesWarning.length > 0 &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+            <button
+              type="button"
+              className="absolute inset-0 bg-ink/30"
+              onClick={() => setVisitRuleCompaniesWarning(null)}
+              aria-label="Fechar aviso de regra de visita"
+            />
+            <div className="relative w-full max-w-xl rounded-3xl border border-amber-300 bg-white p-6 shadow-card">
+              <h3 className="font-display text-lg text-ink">Aviso de regra de visita</h3>
+              <p className="mt-1 text-xs text-ink/70">
+                As empresas abaixo possuem regra ativa e precisam de confirmacao antes da geracao.
+              </p>
+
+              <div className="mt-4 max-h-64 space-y-2 overflow-auto rounded-xl border border-amber-200 bg-amber-50/70 p-2">
+                {visitRuleCompaniesWarning.map((company) => (
+                  <div
+                    key={company.id}
+                    className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-ink"
+                  >
+                    <p className="font-semibold">{company.name}</p>
+                    <p className="mt-1 text-[11px] text-ink/70">
+                      COD: {company.code} | Regra de visita: {company.status}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setVisitRuleCompaniesWarning(null)}
+                  className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>,
           document.body,
         )}
 
@@ -5153,6 +5262,7 @@ export default function Agenda() {
                 ["Obs", detailsModalRow.obs_contrato_1],
                 ["Situacao", detailsModalRow.situacao ?? "Ativo"],
                 ["Categoria", detailsModalRow.categoria ?? "-"],
+                ["Regra visita", detailsModalRow.regra_visita_observacao ?? "-"],
                 ["Perfil visita", formatPerfilVisitaDisplay(detailsModalRow.perfil_visita)],
                 ["Endereco", detailsModalRow.endereco],
                 ["Complemento", detailsModalRow.complemento],

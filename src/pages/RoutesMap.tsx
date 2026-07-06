@@ -181,6 +181,12 @@ type InactiveCompanyWarningItem = {
   name: string;
   status: string;
 };
+type VisitRuleWarningItem = {
+  id: string;
+  code: string;
+  name: string;
+  observation: string;
+};
 type SupervisorEmpresaFlagInfo = {
   color: "CINZA" | "VERDE" | "AMARELO" | "VERMELHO";
   lastVisitDate: string | null;
@@ -439,13 +445,16 @@ export default function RoutesMap() {
   const [eventWarningsPreview, setEventWarningsPreview] = useState<RouteEventRow[]>([]);
   const [eventWarningsLoading, setEventWarningsLoading] = useState(false);
   const [inactiveWarningChecked, setInactiveWarningChecked] = useState(false);
+  const [visitRuleWarningChecked, setVisitRuleWarningChecked] = useState(false);
   const [eventWarningChecked, setEventWarningChecked] = useState(false);
   const [inactiveWarningViewed, setInactiveWarningViewed] = useState(false);
+  const [visitRuleWarningViewed, setVisitRuleWarningViewed] = useState(false);
   const [eventWarningViewed, setEventWarningViewed] = useState(false);
 
   const [message, setMessage] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [inactiveCompaniesWarning, setInactiveCompaniesWarning] = useState<InactiveCompanyWarningItem[] | null>(null);
+  const [visitRuleCompaniesWarning, setVisitRuleCompaniesWarning] = useState<VisitRuleWarningItem[] | null>(null);
 
   // ====== SELECAO POR RAIO (AGORA COM 1KM) ======
   const [radiusKm, setRadiusKm] = useState<0.5 | 1 | 3 | 5 | 10>(1);
@@ -469,6 +478,9 @@ export default function RoutesMap() {
     if (!showGenerateModal) {
       setEventWarningsPreview([]);
       setEventWarningsLoading(false);
+      setVisitRuleWarningChecked(false);
+      setVisitRuleWarningViewed(false);
+      setVisitRuleCompaniesWarning(null);
       return;
     }
     if (!visitDate) {
@@ -505,6 +517,9 @@ export default function RoutesMap() {
     if (!showGenerateModal) return;
     setEventWarningChecked(false);
     setEventWarningViewed(false);
+    setVisitRuleWarningChecked(false);
+    setVisitRuleWarningViewed(false);
+    setVisitRuleCompaniesWarning(null);
   }, [showGenerateModal, visitDate]);
 
   useEffect(() => {
@@ -923,12 +938,35 @@ export default function RoutesMap() {
       ),
     [selectedGenerateRows],
   );
+  const visitRuleCompaniesPreview = useMemo(
+    () =>
+      Array.from(
+        selectedGenerateRows
+          .filter((row) => (row.regra_visita_observacao ?? "").trim())
+          .reduce<Map<string, VisitRuleWarningItem>>((acc, row) => {
+            acc.set(row.id, {
+              id: row.id,
+              code: row.codigo ?? "-",
+              name: row.empresa ?? row.nome_fantasia ?? "Sem nome",
+              observation: row.regra_visita_observacao?.trim() ?? "",
+            });
+            return acc;
+          }, new Map())
+          .values(),
+      ),
+    [selectedGenerateRows],
+  );
   const hasInactiveWarning = inactiveCompaniesPreview.length > 0;
+  const hasVisitRuleWarning = visitRuleCompaniesPreview.length > 0;
   const hasEventWarning = eventWarningsPreview.length > 0;
-  const shouldShowWarningBlock = hasInactiveWarning || hasEventWarning;
+  const shouldShowWarningBlock = hasInactiveWarning || hasVisitRuleWarning || hasEventWarning;
 
   useEffect(() => {
-    const modalOpen = showGenerateModal || Boolean(eventWarning) || Boolean(inactiveCompaniesWarning?.length);
+    const modalOpen =
+      showGenerateModal ||
+      Boolean(eventWarning) ||
+      Boolean(inactiveCompaniesWarning?.length) ||
+      Boolean(visitRuleCompaniesWarning?.length);
     if (!modalOpen || typeof document === "undefined") return undefined;
 
     const previousBodyOverflow = document.body.style.overflow;
@@ -2658,6 +2696,38 @@ export default function RoutesMap() {
                         </div>
                       )}
 
+                      {hasVisitRuleWarning && (
+                        <div className="flex items-start justify-between gap-2 rounded-lg border border-sea/20 bg-white/90 px-2 py-2">
+                          <label className="flex cursor-pointer items-start gap-2 text-xs text-ink">
+                            <input
+                              type="checkbox"
+                              checked={visitRuleWarningChecked}
+                              onChange={(event) => setVisitRuleWarningChecked(event.target.checked)}
+                              disabled={!visitRuleWarningViewed}
+                              className="mt-0.5 h-4 w-4 accent-sea disabled:opacity-50"
+                            />
+                            <span>
+                              <span className="block">{`Li o aviso de regra de visita (${visitRuleCompaniesPreview.length} empresa(s)).`}</span>
+                              {!visitRuleWarningViewed && (
+                                <span className="mt-0.5 block text-[10px] font-semibold text-sea">
+                                  Clique em Ver detalhes para habilitar o checkbox.
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setVisitRuleWarningViewed(true);
+                              setVisitRuleCompaniesWarning(visitRuleCompaniesPreview);
+                            }}
+                            className="rounded-lg border border-sea/30 bg-white/90 px-2 py-1 text-[11px] font-semibold text-ink/80 hover:border-sea"
+                          >
+                            Ver detalhes
+                          </button>
+                        </div>
+                      )}
+
                       {hasEventWarning && (
                         <div className="flex items-start justify-between gap-2 rounded-lg border border-sea/20 bg-white/90 px-2 py-2">
                           <label className="flex cursor-pointer items-start gap-2 text-xs text-ink">
@@ -2758,6 +2828,7 @@ export default function RoutesMap() {
                   !visitDate ||
                   eventWarningsLoading ||
                   (hasInactiveWarning && !inactiveWarningChecked) ||
+                  (hasVisitRuleWarning && !visitRuleWarningChecked) ||
                   (hasEventWarning && !eventWarningChecked) ||
                   generating
                 }
@@ -2847,6 +2918,43 @@ export default function RoutesMap() {
               <button
                 type="button"
                 onClick={() => setInactiveCompaniesWarning(null)}
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {visitRuleCompaniesWarning && visitRuleCompaniesWarning.length > 0 && (
+        <div className="fixed inset-0 z-[3200] flex items-center justify-center overflow-y-auto px-4 py-6">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setVisitRuleCompaniesWarning(null)}
+            aria-label="Fechar aviso de regra de visita"
+          />
+          <div className="relative w-full max-w-xl rounded-3xl border border-amber-300 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Aviso de regra de visita</h3>
+            <p className="mt-1 text-xs text-ink/70">As observacoes abaixo serao exigidas na confirmacao da rota.</p>
+
+            <div className="mt-4 max-h-64 space-y-2 overflow-auto rounded-xl border border-amber-200 bg-amber-50/70 p-2">
+              {visitRuleCompaniesWarning.map((company) => (
+                <div key={company.id} className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-ink">
+                  <p className="font-semibold">{company.name}</p>
+                  <p className="mt-1 text-[11px] text-ink/70">COD: {company.code}</p>
+                  <p className="mt-1 text-[11px] text-ink/70">
+                    Regra de visita da empresa: {company.observation}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setVisitRuleCompaniesWarning(null)}
                 className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea"
               >
                 Fechar
