@@ -3,7 +3,7 @@ import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import { extractCustomTimes, normalizePerfilVisitaValue } from "./perfilVisita";
 const DEFAULT_SITUACAO = "Ativo";
 const CLIENTES_SELECT_COLUMNS =
-  "id, codigo, corte, venc, valor, reajuste_pct, competencia, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf, latitude, longitude, geocode_source, geocode_updated_at, created_at";
+  "id, codigo, corte, venc, valor, reajuste_pct, competencia, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, regra_visita_observacao, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf, latitude, longitude, geocode_source, geocode_updated_at, created_at";
 const MAX_CLIENTES_PAGE_SIZE = 100;
 
 export type ClienteListRow = Pick<
@@ -162,6 +162,7 @@ export const createCliente = async (payload: {
   grupo?: string | null;
   obs_comercial?: string | null;
   obs?: string | null;
+  regra_visita_observacao?: string | null;
   nome_fantasia?: string | null;
   complemento?: string | null;
   perfil_visita?: string | null;
@@ -191,6 +192,7 @@ export const createCliente = async (payload: {
       grupo: payload.grupo ?? null,
       obs_comercial: payload.obs_comercial ?? null,
       obs: payload.obs ?? null,
+      regra_visita_observacao: payload.regra_visita_observacao ?? null,
       nome_fantasia: payload.nome_fantasia ?? null,
       complemento: payload.complemento ?? null,
       perfil_visita: normalizedPerfil,
@@ -232,6 +234,7 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
   setIfDefined("grupo");
   setIfDefined("obs_comercial");
   setIfDefined("obs");
+  setIfDefined("regra_visita_observacao");
   setIfDefined("nome_fantasia");
   setIfDefined("complemento");
   if (payload.perfil_visita !== undefined) {
@@ -303,6 +306,7 @@ export const upsertClientes = async (
     grupo?: string | null;
     obs_comercial?: string | null;
     obs?: string | null;
+    regra_visita_observacao?: string | null;
     nome_fantasia?: string | null;
     complemento?: string | null;
     perfil_visita?: string | null;
@@ -333,6 +337,7 @@ export const upsertClientes = async (
     grupo: payload.grupo ?? null,
     obs_comercial: payload.obs_comercial ?? null,
     obs: payload.obs ?? null,
+    regra_visita_observacao: payload.regra_visita_observacao ?? null,
     nome_fantasia: payload.nome_fantasia ?? null,
     complemento: payload.complemento ?? null,
     perfil_visita: normalizePerfilVisitaValue(payload.perfil_visita ?? null),

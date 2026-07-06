@@ -15,6 +15,7 @@ export type ClienteRow = {
   grupo: string | null;
   obs_comercial: string | null;
   obs: string | null;
+  regra_visita_observacao: string | null;
   nome_fantasia: string | null;
   complemento: string | null;
   perfil_visita: string | null;

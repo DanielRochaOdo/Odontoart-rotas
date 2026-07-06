@@ -23,6 +23,7 @@
   nome_fantasia: string | null;
   grupo: string | null;
   obs_comercial: string | null;
+  regra_visita_observacao?: string | null;
   situacao: string | null;
   categoria: string | null;
   obs_contrato_1: string | null;

@@ -22,6 +22,7 @@ export type EmpresaLookupRow = {
   visit_completed_vidas: number | null;
   grupo: string | null;
   obs_comercial: string | null;
+  regra_visita_observacao: string | null;
   endereco: string | null;
   complemento: string | null;
   bairro: string | null;
@@ -67,7 +68,7 @@ type EmpresasLookupOptions = {
 };
 
 const EMPRESA_LOOKUP_SELECT_COLUMNS =
-  "id, codigo, empresa, nome_fantasia, vendedor, supervisor, situacao, categoria, perfil_visita, instructions, data_da_ultima_visita, visit_completed_vidas, grupo, obs_comercial, endereco, complemento, bairro, cidade, uf, latitude, longitude";
+  "id, codigo, empresa, nome_fantasia, vendedor, supervisor, situacao, categoria, perfil_visita, instructions, data_da_ultima_visita, visit_completed_vidas, grupo, obs_comercial, regra_visita_observacao, endereco, complemento, bairro, cidade, uf, latitude, longitude";
 
 const normalizeValue = (value: string) => value.trim().replace(/\s+/g, " ").toUpperCase();
 
