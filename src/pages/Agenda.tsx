@@ -413,7 +413,7 @@ const mapInactiveCompanies = (
 const getCategoriaBadgeStyles = (value: string | null | undefined) => {
   const normalized = normalizeText(value, { letterCase: "upper" });
   const baseClassName =
-    "inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.02em]";
+    "inline-flex shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.02em]"
   if (!normalized) {
     return {
       label: "-",
@@ -3987,34 +3987,6 @@ export default function Agenda() {
                     </div>
                   </label>
                 ) : null}
-                <label className="flex flex-col gap-0.5">
-                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
-                    Categoria
-                    <CategoriaLegendPopover />
-                  </span>
-                  <div className="flex h-9 items-center justify-between rounded-xl border border-sea/20 bg-white px-3 dark:border-emerald-400/20 dark:bg-slate-950/80">
-                    <span className="text-xs text-ink/55 dark:text-slate-400">
-                      {(filters.columns.categoria ?? []).length
-                        ? `${(filters.columns.categoria ?? []).length} selecionada(s)`
-                        : "Selecione"}
-                    </span>
-                    <MultiSelectFilter
-                      label={
-                        (filters.columns.categoria ?? []).length
-                          ? `Categoria (${filters.columns.categoria.length})`
-                          : "Categoria"
-                      }
-                      options={filterOptions.categoria ?? [...CATEGORIA_OPTIONS, CATEGORIA_FILTER_SEM_CATEGORIA]}
-                      value={filters.columns.categoria ?? []}
-                      onApply={(next) =>
-                        setFilters((prev) => ({
-                          ...prev,
-                          columns: { ...prev.columns, categoria: next },
-                        }))
-                      }
-                    />
-                  </div>
-                </label>
                 <label className="flex flex-col gap-0.5">
                     <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
                     Situacao da empresa
