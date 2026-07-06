@@ -8,7 +8,7 @@ export default function CategoriaLegendPopover() {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<number | null>(null);
-
+  const noWrapText = (value: string) => value.replace(/\s/g, "\u00A0");
   const clearCloseTimer = () => {
     if (closeTimerRef.current !== null) {
       window.clearTimeout(closeTimerRef.current);
@@ -17,7 +17,7 @@ export default function CategoriaLegendPopover() {
   };
 
   const getPosition = useCallback((rect: DOMRect, viewport: { width: number; height: number }) => {
-    const width = Math.min(360, Math.max(280, viewport.width - 24));
+    const width = Math.min(540, Math.max(360, viewport.width - 24));
     const gap = 8;
     const padding = 12;
     let left = rect.left;
@@ -78,7 +78,7 @@ export default function CategoriaLegendPopover() {
         ? createPortal(
             <div
               ref={popoverRef}
-              className="fixed z-[9999] w-[min(360px,calc(100vw-24px))] rounded-2xl border border-sea/20 bg-white/95 p-3 shadow-card"
+              className="fixed z-[9999] w-[min(540px,calc(100vw-24px))] overflow-x-auto rounded-2xl border border-sea/20 bg-white/95 p-3 shadow-card"
               style={{ top: position.top, left: position.left }}
               onPointerEnter={openPopover}
               onPointerLeave={closePopoverSoon}
@@ -90,12 +90,28 @@ export default function CategoriaLegendPopover() {
                 {CATEGORIA_LEGEND_ITEMS.map((item) => (
                   <div
                     key={item.value}
-                    className="flex items-start gap-2 rounded-lg border border-sea/20 bg-white/90 px-2.5 py-2"
+                    className="flex min-w-max flex-nowrap items-center gap-2 whitespace-nowrap rounded-lg border border-sea/20 bg-white/90 px-2.5 py-2"
                   >
-                    <span className="inline-flex rounded-full border border-sea/20 bg-sea/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-sea">
-                      {item.value}
+                    <span
+                      className="inline-flex shrink-0 whitespace-nowrap rounded-full border border-sea/20 bg-sea/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-sea"
+                      style={{
+                        whiteSpace: "nowrap",
+                        wordBreak: "keep-all",
+                        overflowWrap: "normal",
+                      }}
+                    >
+                      {noWrapText(item.value)}
                     </span>
-                    <p className="pt-[1px] text-[11px] leading-4 text-ink/70">{item.description}</p>
+                    <p
+                      className="shrink-0 whitespace-nowrap text-[11px] leading-4 text-ink/70"
+                      style={{
+                        whiteSpace: "nowrap",
+                        wordBreak: "keep-all",
+                        overflowWrap: "normal",
+                      }}
+                    >
+                      {noWrapText(item.description)}
+                    </p>
                   </div>
                 ))}
               </div>

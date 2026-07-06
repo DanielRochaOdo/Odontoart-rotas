@@ -49,6 +49,8 @@ const formatCompetenciaInput = (value: string) => {
   return `${digits.slice(0, 2)}/${digits.slice(2, 6)}`;
 };
 
+const sanitizeRegraVisitaObservation = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 50);
+
 const formatDate = (value: string | null) => {
   if (!value) return "-";
   const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
@@ -110,6 +112,10 @@ type PlanoValoresModalState = {
   error: string | null;
 };
 
+type RegraVisitaModalState = {
+  open: boolean;
+};
+
 const hasPlanoValores = (planos: OdontoartPlanoValor[]) =>
   planos.some((plano) => plano.valorTitular !== null || plano.valorDependente !== null);
 
@@ -142,6 +148,7 @@ const FIELDS = [
   { key: "grupo", label: "Grupo", type: "text" },
   { key: "situacao", label: "Situacao", type: "text" },
   { key: "categoria", label: "Categoria", type: "text" },
+  { key: "regra_visita_observacao", label: "Regra Visita", type: "text", wide: true },
   { key: "obs_comercial", label: "Obs comercial", type: "text", wide: true },
   { key: "obs_contrato_1", label: "Obs. Contrato", type: "text", wide: true },
 ] as const;
@@ -186,6 +193,7 @@ const buildFormState = (row: AgendaRow): AgendaFormState => ({
   grupo: row.grupo ?? "",
   situacao: row.situacao ?? "",
   categoria: row.categoria ?? "",
+  regra_visita_observacao: (row as AgendaRow & { regra_visita_observacao?: string | null }).regra_visita_observacao ?? "",
   obs_comercial: (row as AgendaRow & { obs_comercial?: string | null }).obs_comercial ?? "",
   obs_contrato_1: row.obs_contrato_1 ?? "",
 });
@@ -211,6 +219,7 @@ export default function AgendaDrawer({
   const [deletePassword, setDeletePassword] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [planoValoresModal, setPlanoValoresModal] = useState<PlanoValoresModalState | null>(null);
+  const [regraVisitaModal, setRegraVisitaModal] = useState<RegraVisitaModalState | null>(null);
   const initialPerfilValue = normalizePerfilVisita(displayRow?.perfil_visita ?? "");
   const initialCustomTimes = extractCustomTimes(displayRow?.perfil_visita ?? null);
   const initialSingleTimeBase = getSingleTimePerfilBase(displayRow?.perfil_visita ?? null);
@@ -460,6 +469,9 @@ export default function AgendaDrawer({
         grupo: formState.grupo.trim() || null,
         situacao: formState.situacao.trim() || null,
         categoria: formState.categoria.trim() || null,
+        regra_visita_observacao: formState.regra_visita_observacao.trim()
+          ? sanitizeRegraVisitaObservation(formState.regra_visita_observacao)
+          : null,
         obs_comercial: formState.obs_contrato_1.trim() || null,
         instructions: canManageInstruction ? null : row.instructions ?? null,
       };
@@ -469,7 +481,7 @@ export default function AgendaDrawer({
         .update(payload)
         .eq("id", row.id)
         .select(
-          "id, data_da_ultima_visita, cod_1:codigo, empresa, cep, pessoa, contato, instructions, perfil_visita, corte, venc, valor, reajuste_pct, competencia, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, categoria, obs_contrato_1:obs_comercial, obs_comercial, visit_generated_at, created_at",
+          "id, data_da_ultima_visita, cod_1:codigo, empresa, cep, pessoa, contato, instructions, perfil_visita, corte, venc, valor, reajuste_pct, competencia, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, situacao, categoria, regra_visita_observacao, obs_contrato_1:obs_comercial, obs_comercial, visit_generated_at, created_at",
         )
         .single();
 
@@ -517,6 +529,10 @@ export default function AgendaDrawer({
         hasChanged(updatedRow.perfil_visita, row.perfil_visita) ||
         hasChanged(updatedRow.situacao, row.situacao) ||
         hasChanged(updatedRow.categoria, row.categoria) ||
+        hasChanged(
+          (updatedRow as AgendaRow & { regra_visita_observacao?: string | null }).regra_visita_observacao,
+          (row as AgendaRow & { regra_visita_observacao?: string | null }).regra_visita_observacao,
+        ) ||
         hasChanged(updatedRow.endereco, row.endereco) ||
         hasChanged(updatedRow.bairro, row.bairro) ||
         hasChanged(updatedRow.cidade, row.cidade) ||
@@ -543,6 +559,8 @@ export default function AgendaDrawer({
           perfil_visita: updatedRow.perfil_visita,
           situacao: updatedRow.situacao,
           categoria: updatedRow.categoria,
+          regra_visita_observacao:
+            (updatedRow as AgendaRow & { regra_visita_observacao?: string | null }).regra_visita_observacao ?? null,
           endereco: updatedRow.endereco,
           bairro: updatedRow.bairro,
           cidade: updatedRow.cidade,
@@ -556,6 +574,9 @@ export default function AgendaDrawer({
           instructionsChanged && instructionScopeVisitId
             ? nextInstruction
             : scopedInstruction,
+        regra_visita_observacao:
+          (updatedRow as AgendaRow & { regra_visita_observacao?: string | null }).regra_visita_observacao ??
+          null,
       } as AgendaRow;
 
       setFormState(buildFormState(updatedRowWithScopedInstruction));
@@ -610,11 +631,17 @@ export default function AgendaDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+    <div
+      className={`fixed inset-0 z-50 flex ${
+        isEditing ? "items-start justify-center px-4 pt-6" : "justify-end"
+      }`}
+    >
       <button type="button" className="absolute inset-0 bg-ink/30" onClick={onClose} aria-label="Fechar detalhes da empresa" />
       <div
         data-agenda-drawer-content="true"
-        className="relative w-[min(94vw,1100px)] max-h-[88vh] overflow-y-auto rounded-3xl border border-sea/20 bg-white p-6 shadow-card"
+        className={`relative w-full overflow-y-auto bg-white shadow-2xl ${
+          isEditing ? "max-h-[92vh] max-w-6xl rounded-2xl p-6" : "h-full max-w-xl p-6"
+        }`}
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -648,7 +675,7 @@ export default function AgendaDrawer({
         {status && <p className="mt-4 rounded-lg bg-sand/40 px-3 py-2 text-xs text-ink/70">{status}</p>}
 
         {isEditing ? (
-          <div className="mt-6 grid gap-3 md:grid-cols-2">
+          <div className="mt-6 grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-3 md:grid-cols-6 md:p-4">
             {FIELDS.map((field) => {
               const isWide = "wide" in field && field.wide;
               const isInstructionField = field.key === "instructions";
@@ -657,7 +684,7 @@ export default function AgendaDrawer({
                 <label
                   key={field.key}
                   className={`flex flex-col gap-1 text-xs font-semibold text-ink/70 ${
-                    isWide ? "md:col-span-2" : ""
+                    isWide ? "md:col-span-2" : "md:col-span-1"
                   }`}
                 >
                 {field.label}
@@ -752,6 +779,26 @@ export default function AgendaDrawer({
                       </option>
                     ))}
                   </select>
+                ) : field.key === "regra_visita_observacao" ? (
+                  <div className="w-[190px] min-w-[190px] shrink-0 flex items-center justify-between rounded-lg border border-sea/15 bg-sand/20 px-3 py-3">
+                    <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-ink/70">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(formState.regra_visita_observacao.trim())}
+                        onChange={(event) => {
+                          if (!event.target.checked) {
+                            setFormState((prev) =>
+                              prev ? { ...prev, regra_visita_observacao: "" } : prev,
+                            );
+                            return;
+                          }
+                          setRegraVisitaModal({ open: true });
+                        }}
+                        className="h-4 w-4 accent-sea"
+                      />
+                      Regra Visita
+                    </label>
+                  </div>
                 ) : field.key === "perfil_visita" ? (
                   <div className="flex flex-col gap-2">
                     <select
@@ -1061,6 +1108,57 @@ export default function AgendaDrawer({
           </div>
         )}
       </div>
+      {regraVisitaModal?.open && (
+        <div className="fixed inset-0 z-[9050] flex items-start justify-center overflow-y-auto px-4 pt-6">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setRegraVisitaModal(null)}
+          />
+          <div className="relative z-10 w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Regra de Visita</h3>
+            <p className="mt-1 text-xs text-ink/60">
+              Informe uma observacao que devera ser confirmada pelo supervisor antes da geracao de rotas para esta empresa.
+            </p>
+            <label className="mt-4 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              Observacao
+              <textarea
+                maxLength={50}
+                value={formState?.regra_visita_observacao ?? ""}
+                onChange={(event) => {
+                  const value = event.target.value.slice(0, 50);
+                  setFormState((prev) => (prev ? { ...prev, regra_visita_observacao: value } : prev));
+                }}
+                placeholder="Ex.: Visitar somente pela manha"
+                className="min-h-24 rounded-xl border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+              />
+            </label>
+            <div className="mt-1 text-right text-[11px] text-ink/50">
+              {(formState?.regra_visita_observacao ?? "").length}/50
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRegraVisitaModal(null)}
+                className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = sanitizeRegraVisitaObservation(formState?.regra_visita_observacao ?? "");
+                  setFormState((prev) => (prev ? { ...prev, regra_visita_observacao: next } : prev));
+                  setRegraVisitaModal(null);
+                }}
+                className="rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight"
+              >
+                Salvar regra
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {planoValoresModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 px-4">
           <button
