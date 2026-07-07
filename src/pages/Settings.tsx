@@ -5,7 +5,7 @@ import { LoaderCircle, LogOut, Moon, Pencil, Plus, Power, RotateCcw, Sun, Upload
 import { useAuth } from "../context/AuthContext";
 import {
   createManagedUser,
-  deleteProfileOnly,
+  fetchManagedUserHistorySnapshot,
   inactivateManagedUser,
   fetchManagedProfiles,
   fetchManagedUserEmails,
@@ -522,7 +522,7 @@ export default function Settings() {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchManagedProfiles();
+      const data = await fetchManagedProfiles({ includeInactive: true });
       setProfiles(data);
       const userIds = data.map((profile) => profile.user_id).filter((value): value is string => Boolean(value));
       const emails = await fetchManagedUserEmails(userIds);
@@ -821,13 +821,24 @@ export default function Settings() {
       setError("Supervisor nao encontrado.");
       return;
     }
+    const nextDisplayName = supervisorEdit.display_name.trim();
+    const currentDisplayName = (current.nome ?? current.display_name ?? "").trim();
+    if (nextDisplayName !== currentDisplayName) {
+      const history = await fetchManagedUserHistorySnapshot(current.user_id ?? current.id);
+      if (history.hasHistory) {
+        const confirmed = window.confirm(
+          "Este usuario possui historico vinculado. Alterar o nome pode impactar relatórios históricos. Para outro operador, crie um novo usuario.",
+        );
+        if (!confirmed) return;
+      }
+    }
 
     setError(null);
     try {
       const updated = await updateManagedProfile({
         id: editingSupervisorId,
-        display_name: supervisorEdit.display_name,
-        nome: supervisorEdit.display_name,
+        display_name: nextDisplayName,
+        nome: nextDisplayName,
         supervisor_id: null,
         vendedor_id: null,
       });
@@ -865,13 +876,24 @@ export default function Settings() {
       setError("Vendedor nao encontrado.");
       return;
     }
+    const nextDisplayName = vendorEdit.display_name.trim();
+    const currentDisplayName = (current.nome ?? current.display_name ?? "").trim();
+    if (nextDisplayName !== currentDisplayName) {
+      const history = await fetchManagedUserHistorySnapshot(current.user_id ?? current.id);
+      if (history.hasHistory) {
+        const confirmed = window.confirm(
+          "Este usuario possui historico vinculado. Alterar o nome pode impactar relatórios históricos. Para outro operador, crie um novo usuario.",
+        );
+        if (!confirmed) return;
+      }
+    }
 
     setError(null);
     try {
       const updated = await updateManagedProfile({
         id: editingVendorId,
-        display_name: vendorEdit.display_name,
-        nome: vendorEdit.display_name,
+        display_name: nextDisplayName,
+        nome: nextDisplayName,
         can_access_pre_cadastro: vendorEdit.can_access_pre_cadastro,
         supervisor_id: vendorEdit.supervisor_id,
         vendedor_id: null,
@@ -916,13 +938,24 @@ export default function Settings() {
       setError("Assistente nao encontrado.");
       return;
     }
+    const nextDisplayName = assistantEdit.display_name.trim();
+    const currentDisplayName = (current.nome ?? current.display_name ?? "").trim();
+    if (nextDisplayName !== currentDisplayName) {
+      const history = await fetchManagedUserHistorySnapshot(current.user_id ?? current.id);
+      if (history.hasHistory) {
+        const confirmed = window.confirm(
+          "Este usuario possui historico vinculado. Alterar o nome pode impactar relatórios históricos. Para outro operador, crie um novo usuario.",
+        );
+        if (!confirmed) return;
+      }
+    }
 
     setError(null);
     try {
       const updated = await updateManagedProfile({
         id: editingAssistantId,
-        display_name: assistantEdit.display_name,
-        nome: assistantEdit.display_name,
+        display_name: nextDisplayName,
+        nome: nextDisplayName,
         vendedor_id: null,
         supervisor_id: null,
       });
@@ -950,26 +983,20 @@ export default function Settings() {
   };
 
   const handleInactivate = async (profile: ManagedProfile) => {
-    const confirmInactivate = window.confirm("Deseja inativar este usuario? Ele perdera o acesso ate ser reativado.");
+    const confirmInactivate = window.confirm(
+      "Tem certeza que deseja inativar este usuario? Ele nao podera mais acessar o sistema.",
+    );
     if (!confirmInactivate) return;
     setError(null);
     try {
       if (profile.user_id) {
         await inactivateManagedUser(profile.user_id);
-      } else {
-        await deleteProfileOnly(profile.id);
       }
-      if (profile.user_id) {
-        setProfiles((prev) =>
-          prev.map((item) =>
-            item.id === profile.id
-              ? { ...item, force_reauth_after: new Date().toISOString(), is_inactive: true }
-              : item,
-          ),
-        );
-      } else {
-        setProfiles((prev) => prev.filter((item) => item.id !== profile.id));
-      }
+      setProfiles((prev) =>
+        prev.map((item) =>
+          item.id === profile.id ? { ...item, is_inactive: true } : item,
+        ),
+      );
       resetEdits();
       emitProfilesUpdated();
     } catch (err) {
@@ -982,13 +1009,17 @@ export default function Settings() {
       setError("Perfil sem usuario vinculado para reativacao.");
       return;
     }
+    const confirmReactivate = window.confirm(
+      "Tem certeza que deseja ativar este usuario? Ele voltara a ter acesso ao sistema.",
+    );
+    if (!confirmReactivate) return;
     setError(null);
     try {
       await reactivateManagedUser(profile.user_id);
       setProfiles((prev) =>
         prev.map((item) =>
           item.id === profile.id
-            ? { ...item, force_reauth_after: null, is_inactive: false }
+            ? { ...item, is_inactive: false }
             : item,
         ),
       );
@@ -1505,11 +1536,11 @@ export default function Settings() {
                           </p>
                           <div className="flex items-center gap-2 text-xs text-ink/60">
                             <span>Supervisor</span>
-                            {isUserInactive(supervisor) ? (
-                              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
-                                Inativo
-                              </span>
-                            ) : (
+                          {isUserInactive(supervisor) ? (
+                            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
+                              Inativo
+                            </span>
+                          ) : (
                               <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
                                 Ativo
                               </span>
@@ -1529,7 +1560,7 @@ export default function Settings() {
                           >
                             <Pencil size={12} />
                           </button>
-                          {isUserInactive(supervisor) && (
+                          {isUserInactive(supervisor) ? (
                             <button
                               type="button"
                               onClick={() => handleReactivate(supervisor)}
@@ -1537,6 +1568,15 @@ export default function Settings() {
                             >
                               <Power size={12} />
                               Reativar
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleInactivate(supervisor)}
+                              className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700 hover:border-amber-300"
+                            >
+                              <Power size={12} />
+                              Inativar
                             </button>
                           )}
                         </div>
@@ -1706,7 +1746,7 @@ export default function Settings() {
                           >
                             <Pencil size={12} />
                           </button>
-                          {isUserInactive(vendor) && (
+                          {isUserInactive(vendor) ? (
                             <button
                               type="button"
                               onClick={() => handleReactivate(vendor)}
@@ -1714,6 +1754,15 @@ export default function Settings() {
                             >
                               <Power size={12} />
                               Reativar
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleInactivate(vendor)}
+                              className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700 hover:border-amber-300"
+                            >
+                              <Power size={12} />
+                              Inativar
                             </button>
                           )}
                         </div>
@@ -1857,7 +1906,7 @@ export default function Settings() {
                           >
                             <Pencil size={12} />
                           </button>
-                          {isUserInactive(assistant) && (
+                          {isUserInactive(assistant) ? (
                             <button
                               type="button"
                               onClick={() => handleReactivate(assistant)}
@@ -1865,6 +1914,15 @@ export default function Settings() {
                             >
                               <Power size={12} />
                               Reativar
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleInactivate(assistant)}
+                              className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700 hover:border-amber-300"
+                            >
+                              <Power size={12} />
+                              Inativar
                             </button>
                           )}
                         </div>

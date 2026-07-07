@@ -10,6 +10,7 @@ export type Profile = {
   role: UserRole;
   display_name: string | null;
   nome?: string | null;
+  is_inactive?: boolean;
   can_access_pre_cadastro: boolean;
   can_access_next_route_dashboard: boolean;
   force_reauth_after?: string | null;
@@ -20,6 +21,7 @@ type AuthContextValue = {
   session: Session | null;
   profile: Profile | null;
   profileError: string | null;
+  accessDeniedMessage: string | null;
   role: UserRole | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
@@ -31,9 +33,9 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const AUTH_REQUEST_TIMEOUT_MS = 12000;
 const PROFILE_REQUEST_TIMEOUT_MS = 8000;
 const PROFILE_SELECT_WITH_FORCE_REAUTH =
-  "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, force_reauth_after, created_at";
+  "id, user_id, role, display_name, nome, is_inactive, can_access_pre_cadastro, can_access_next_route_dashboard, force_reauth_after, created_at";
 const PROFILE_SELECT_FALLBACK =
-  "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, created_at";
+  "id, user_id, role, display_name, nome, is_inactive, can_access_pre_cadastro, can_access_next_route_dashboard, created_at";
 const PROFILE_LOAD_FRIENDLY_ERROR_MESSAGE =
   "Nao conseguimos carregar seu perfil agora. Voce ainda pode sair da conta normalmente. Tente novamente em instantes; se persistir, fale com a supervisao.";
 
@@ -121,12 +123,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [accessDeniedMessage, setAccessDeniedMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = async (activeSession: Session | null) => {
     if (!activeSession) {
       setProfile(null);
       setProfileError(null);
+      setAccessDeniedMessage(null);
       return;
     }
 
@@ -169,6 +173,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setSession(null);
           setProfile(null);
           setProfileError(null);
+          setAccessDeniedMessage(null);
           return;
         }
 
@@ -185,6 +190,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setSession(null);
             setProfile(null);
             setProfileError(null);
+            setAccessDeniedMessage(null);
             return;
           }
         } catch {
@@ -208,14 +214,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await supabase.auth.signOut();
         setProfile(null);
         setProfileError(null);
+        setAccessDeniedMessage(null);
         return;
       }
 
-      setProfile(resolvedProfile);
-      setProfileError(null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error ?? "");
-      if (isAuthSessionError(message)) {
+      if (resolvedProfile.is_inactive) {
         try {
           await supabase.auth.signOut({ scope: "local" });
         } catch {
@@ -224,8 +227,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(null);
         setProfile(null);
         setProfileError(null);
+        setAccessDeniedMessage("Usuario inativo. Entre em contato com o administrador.");
         return;
       }
+
+      setProfile(resolvedProfile);
+      setProfileError(null);
+      setAccessDeniedMessage(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error ?? "");
+      if (isAuthSessionError(message)) {
+        try {
+          await supabase.auth.signOut({ scope: "local" });
+        } catch {
+          // ignore
+        }
+          setSession(null);
+          setProfile(null);
+          setProfileError(null);
+          setAccessDeniedMessage(null);
+          return;
+        }
       // Preserve last known profile on transient sync errors.
       setProfile((prev) => prev);
       setProfileError(PROFILE_LOAD_FRIENDLY_ERROR_MESSAGE);
@@ -277,6 +299,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       session,
       profile,
       profileError,
+      accessDeniedMessage,
       role: profile?.role ?? null,
       loading,
       signIn: async (email, password) => {
@@ -305,6 +328,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setSession(null);
           setProfile(null);
           setProfileError(null);
+          setAccessDeniedMessage(null);
           setLoading(false);
         }
       },
@@ -312,7 +336,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await fetchProfile(session);
       },
     }),
-    [session, profile, profileError, loading],
+    [session, profile, profileError, accessDeniedMessage, loading],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

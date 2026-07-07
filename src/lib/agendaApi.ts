@@ -1309,6 +1309,7 @@ export const fetchVendedores = async () => {
     .from("profiles")
     .select("user_id, display_name, role, supervisor_id, can_access_next_route_dashboard")
     .eq("role", "VENDEDOR")
+    .or("is_inactive.is.null,is_inactive.eq.false")
     .order("display_name", { ascending: true });
 
   if (error) throw new Error(error.message);
@@ -1320,6 +1321,7 @@ export const fetchSupervisores = async () => {
     .from("profiles")
     .select("id, user_id, display_name, role")
     .eq("role", "SUPERVISOR")
+    .or("is_inactive.is.null,is_inactive.eq.false")
     .order("display_name", { ascending: true });
 
   if (error) throw new Error(error.message);
