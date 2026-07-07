@@ -17,6 +17,12 @@ export type ManagedProfile = {
   vendedor?: { id: string; display_name: string | null } | null;
 };
 
+export type ManagedUserHistorySnapshot = {
+  visits: number;
+  aceiteDigital: number;
+  hasHistory: boolean;
+};
+
 const EMAIL_LOOKUP_COOLDOWN_MS = 60_000;
 let emailLookupBlockedUntil = 0;
 const EMAIL_RPC_LOOKUP_COOLDOWN_MS = 5 * 60_000;
@@ -150,13 +156,19 @@ const invokeManageUsers = async (body: {
   return firstAttempt;
 };
 
-export const fetchManagedProfiles = async () => {
-  const { data, error } = await supabase
+export const fetchManagedProfiles = async (options?: { includeInactive?: boolean }) => {
+  let query = supabase
     .from("profiles")
     .select(
       "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, force_reauth_after, is_inactive, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
     )
     .order("display_name", { ascending: true });
+
+  if (!options?.includeInactive) {
+    query = query.or("is_inactive.is.null,is_inactive.eq.false");
+  }
+
+  const { data, error } = await query;
 
   if (error) throw new Error(error.message);
   return (data ?? []) as unknown as ManagedProfile[];
@@ -166,6 +178,7 @@ export const updateManagedProfile = async (payload: {
   id: string;
   display_name?: string | null;
   nome?: string | null;
+  is_inactive?: boolean;
   can_access_pre_cadastro?: boolean;
   can_access_next_route_dashboard?: boolean;
   supervisor_id?: string | null;
@@ -176,6 +189,7 @@ export const updateManagedProfile = async (payload: {
     nome: string | null;
     supervisor_id: string | null;
     vendedor_id: string | null;
+    is_inactive?: boolean;
     can_access_pre_cadastro?: boolean;
     can_access_next_route_dashboard?: boolean;
   } = {
@@ -190,6 +204,9 @@ export const updateManagedProfile = async (payload: {
   }
   if (payload.can_access_next_route_dashboard !== undefined) {
     updates.can_access_next_route_dashboard = payload.can_access_next_route_dashboard;
+  }
+  if (payload.is_inactive !== undefined) {
+    updates.is_inactive = payload.is_inactive;
   }
 
   const { data, error } = await supabase
@@ -278,23 +295,33 @@ export const resetManagedUserAccess = async (payload: { user_id: string }) => {
 };
 
 export const inactivateManagedUser = async (user_id: string) => {
-  const { data, error } = await invokeManageUsers({
-    action: "delete",
-    payload: { user_id },
-  });
-
+  const { error } = await supabase.from("profiles").update({ is_inactive: true }).eq("user_id", user_id);
   if (error) throw new Error(error.message);
-  return data ?? { success: true };
+  return { success: true };
+};
+
+export const fetchManagedUserHistorySnapshot = async (userId: string) => {
+  const [visitsResponse, aceiteResponse] = await Promise.all([
+    supabase.from("visits").select("id", { count: "exact", head: true }).eq("assigned_to_user_id", userId),
+    supabase.from("aceite_digital").select("id", { count: "exact", head: true }).eq("vendor_user_id", userId),
+  ]);
+
+  if (visitsResponse.error) throw new Error(visitsResponse.error.message);
+  if (aceiteResponse.error) throw new Error(aceiteResponse.error.message);
+
+  const visits = visitsResponse.count ?? 0;
+  const aceiteDigital = aceiteResponse.count ?? 0;
+  return {
+    visits,
+    aceiteDigital,
+    hasHistory: visits > 0 || aceiteDigital > 0,
+  } satisfies ManagedUserHistorySnapshot;
 };
 
 export const reactivateManagedUser = async (user_id: string) => {
-  const { data, error } = await invokeManageUsers({
-    action: "reactivate",
-    payload: { user_id },
-  });
-
+  const { error } = await supabase.from("profiles").update({ is_inactive: false }).eq("user_id", user_id);
   if (error) throw new Error(error.message);
-  return data ?? { success: true };
+  return { success: true };
 };
 
 export const resetAllManagedUsersAccess = async () => {

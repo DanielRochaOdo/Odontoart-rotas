@@ -4,14 +4,14 @@ import { Eye, EyeOff } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 export default function Login() {
-  const { session, signIn } = useAuth();
+  const { session, signIn, accessDeniedMessage, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (session) {
+  if (session && !authLoading && !accessDeniedMessage) {
     return <Navigate to="/" replace />;
   }
 
@@ -89,7 +89,9 @@ export default function Login() {
               </div>
             </label>
 
-            {error ? <p className="text-sm text-red-500">{error}</p> : null}
+            {accessDeniedMessage || error ? (
+              <p className="text-sm text-red-500">{accessDeniedMessage ?? error}</p>
+            ) : null}
 
             <button
               type="submit"
