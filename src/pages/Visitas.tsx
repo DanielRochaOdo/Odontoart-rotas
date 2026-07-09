@@ -3,6 +3,7 @@ import { addDays, endOfMonth, format, isAfter, isSameDay, startOfMonth } from "d
 import { ptBR } from "date-fns/locale";
 import {
   CheckCircle2,
+  Calendar,
   ChevronLeft,
   ChevronRight,
   DollarSign,
@@ -14,6 +15,7 @@ import {
   MapPin,
   Pencil,
   Plus,
+  TriangleAlert,
   Trash2,
 } from "lucide-react";
 import {
@@ -64,6 +66,7 @@ type VisitRow = {
   completed_at: string | null;
   completed_vidas: number | null;
   no_visit_reason: string | null;
+  no_visit_observation: string | null;
   instructions: string | null;
   visit_supervisors?: Array<{ supervisor_user_id: string | null }> | null;
     agenda?: {
@@ -384,7 +387,7 @@ export default function Visitas() {
   const clientesDetailsCacheRef = useRef(new Map<string, ClienteDetailsRow>());
   const pendingModalRestoreRef = useRef<{
     confirmVisitId: string | null;
-    noVisit: { id: string; reason: string } | null;
+    noVisit: { id: string; reason: string; observation: string } | null;
     completeVisit:
       | {
           id: string;
@@ -632,7 +635,7 @@ export default function Visitas() {
       }
       const parsed = JSON.parse(raw) as {
         confirmVisitId?: string | null;
-        noVisit?: { id: string; reason: string } | null;
+          noVisit?: { id: string; reason: string; observation: string } | null;
         completeVisit?: {
           id: string;
           visitType?: string | null;
@@ -689,7 +692,7 @@ export default function Visitas() {
     }
   }, []);
   const [confirmVisit, setConfirmVisit] = useState<VisitRow | null>(null);
-  const [noVisit, setNoVisit] = useState<{ id: string; reason: string } | null>(null);
+  const [noVisit, setNoVisit] = useState<{ id: string; reason: string; observation: string } | null>(null);
   const [restoredModalState, setRestoredModalState] = useState(false);
   const [completeVisit, setCompleteVisit] = useState<{
     id: string;
@@ -713,6 +716,11 @@ export default function Visitas() {
     instructions: string;
   } | null>(null);
   const [detailsVisit, setDetailsVisit] = useState<VisitRow | null>(null);
+  const [noVisitObservationModal, setNoVisitObservationModal] = useState<{
+    visitId: string;
+    seller: string;
+    observation: string;
+  } | null>(null);
   const [detailsObsExpanded, setDetailsObsExpanded] = useState(false);
   const [detailsObsText, setDetailsObsText] = useState("");
   const [detailsInstructionDraft, setDetailsInstructionDraft] = useState("");
@@ -731,6 +739,7 @@ export default function Visitas() {
     Boolean(noVisit) ||
     Boolean(completeVisit) ||
     Boolean(detailsVisit) ||
+    Boolean(noVisitObservationModal) ||
     Boolean(planoValoresModal) ||
     Boolean(vendorDashboardAccessModal) ||
     Boolean(addVendorsModal) ||
@@ -899,7 +908,7 @@ export default function Visitas() {
         let query = supabase
           .from("visits")
           .select(
-            "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, visit_type, supervisor_reason, register_mode, visit_time, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, visit_supervisors(supervisor_user_id)",
+            "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, visit_type, supervisor_reason, register_mode, visit_time, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, no_visit_observation, instructions, visit_supervisors(supervisor_user_id)",
           )
           .gte("visit_date", startDate)
           .lt("visit_date", monthEndExclusive)
@@ -1509,7 +1518,7 @@ export default function Visitas() {
       let query = supabase
         .from("visits")
         .select(
-          "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, visit_type, supervisor_reason, register_mode, visit_time, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, instructions, visit_supervisors(supervisor_user_id)",
+          "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, visit_type, supervisor_reason, register_mode, visit_time, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, no_visit_observation, instructions, visit_supervisors(supervisor_user_id)",
         )
         .gte("visit_date", selectedDayStart)
         .lt("visit_date", selectedDayEndExclusive)
@@ -2433,29 +2442,32 @@ export default function Visitas() {
           completed_at: null,
           completed_vidas: null,
           no_visit_reason: null,
+          no_visit_observation: null,
           instructions: null,
           agenda: null,
           cliente: null,
         };
       }
 
-      if (visit.route_id && visit.cliente_id) {
+      const resolvedVisit = visit;
+
+      if (resolvedVisit.route_id && resolvedVisit.cliente_id) {
         const { error: deleteStopError } = await supabase
           .from("route_stops")
           .delete()
-          .eq("route_id", visit.route_id)
-          .eq("cliente_id", visit.cliente_id);
+          .eq("route_id", resolvedVisit.route_id)
+          .eq("cliente_id", resolvedVisit.cliente_id);
         if (deleteStopError) throw new Error(deleteStopError.message);
       }
 
       const { error: deleteError } = await supabase.from("visits").delete().eq("id", visitId);
       if (deleteError) throw new Error(deleteError.message);
 
-      if (visit.cliente_id) {
+      if (resolvedVisit.cliente_id) {
         const { count, error: countError } = await supabase
           .from("visits")
           .select("id", { count: "exact", head: true })
-          .eq("cliente_id", visit.cliente_id);
+          .eq("cliente_id", resolvedVisit.cliente_id);
 
         if (countError) throw new Error(countError.message);
 
@@ -2463,13 +2475,13 @@ export default function Visitas() {
           const { error: updateError } = await supabase
             .from("clientes")
             .update({ visit_generated_at: null })
-            .eq("id", visit.cliente_id);
+            .eq("id", resolvedVisit.cliente_id);
           if (updateError) throw new Error(updateError.message);
         }
       }
 
       removeVisitLocally(visitId);
-      invalidateDayDetailsCache(toDateInput(visit.visit_date));
+      invalidateDayDetailsCache(toDateInput(resolvedVisit.visit_date));
       requestRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao remover visita.");
@@ -2932,12 +2944,23 @@ export default function Visitas() {
   const closeDetailsModal = () => {
     detailsObsRequestRef.current += 1;
     setDetailsVisit(null);
+    setNoVisitObservationModal(null);
     setDetailsObsExpanded(false);
     setDetailsObsText("");
     setDetailsInstructionDraft("");
     setDetailsInstructionSaving(false);
     setDetailsInstructionMessage(null);
     setPlanoValoresModal(null);
+  };
+
+  const openNoVisitObservationModal = (item: VisitRow, seller: string) => {
+    const observation = item.no_visit_observation?.trim() ?? "";
+    if (!observation) return;
+    setNoVisitObservationModal({
+      visitId: item.id,
+      seller,
+      observation,
+    });
   };
 
   const openPlanoValoresModal = async (codigoRaw: string | null | undefined, empresa: string | null) => {
@@ -3080,6 +3103,7 @@ export default function Visitas() {
         .update({
           completed_at: new Date().toISOString(),
           no_visit_reason: noVisit.reason,
+          no_visit_observation: noVisit.observation.trim() || null,
         })
         .eq("id", noVisit.id);
 
@@ -3377,7 +3401,7 @@ export default function Visitas() {
   }, [shouldLockSupervisorRegisterMode]);
 
   return (
-    <div className="space-y-4 md:space-y-6">
+    <div className="overflow-x-hidden space-y-4 md:space-y-6">
       <header className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -3387,7 +3411,7 @@ export default function Visitas() {
             </p>
           </div>
           {canFilterBySupervisor && (
-            <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-end">
               {hasUpdatesAvailable && (
                 <button
                   type="button"
@@ -3397,7 +3421,7 @@ export default function Visitas() {
                   Ha novas rotas disponiveis. Atualizar agenda
                 </button>
               )}
-              <label className="flex min-w-[220px] flex-col gap-1 text-xs font-semibold text-ink/70">
+              <label className="flex w-full min-w-0 flex-col gap-1 text-xs font-semibold text-ink/70 sm:min-w-[220px]">
                 Supervisor
                 <select
                   id="visitas-supervisor-select"
@@ -3418,7 +3442,7 @@ export default function Visitas() {
                   )}
                 </select>
               </label>
-              <label className="flex min-w-[220px] flex-col gap-1 text-xs font-semibold text-ink/70">
+              <label className="flex w-full min-w-0 flex-col gap-1 text-xs font-semibold text-ink/70 sm:min-w-[220px]">
                 Vendedor
                 <select
                   id="visitas-vendor-select"
@@ -3461,9 +3485,9 @@ export default function Visitas() {
           Este modulo e restrito a usuarios autorizados.
         </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr] lg:gap-6">
-          <section className="rounded-2xl border border-sea/15 bg-white/95 p-3 shadow-card md:p-4">
-            <div className="flex items-center justify-between">
+        <div className="grid min-w-0 gap-4 lg:grid-cols-[1.1fr_1fr] lg:gap-6">
+          <section className="min-w-0 rounded-2xl border border-sea/15 bg-white/95 p-3 shadow-card md:p-4">
+            <div className="flex items-center justify-between gap-2">
               <button
                 type="button"
                 className="rounded-full border border-sea/20 bg-white/80 p-2 text-sea hover:border-sea"
@@ -3483,7 +3507,7 @@ export default function Visitas() {
               </button>
             </div>
 
-            <div className="mt-4 grid grid-cols-7 gap-2 text-center text-xs text-ink/60">
+            <div className="mt-4 grid grid-cols-7 gap-1 text-center text-[10px] text-ink/60 sm:gap-2 sm:text-xs">
               {["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"].map((day) => (
                 <span key={day} className="font-semibold">
                   {day}
@@ -3491,7 +3515,7 @@ export default function Visitas() {
               ))}
             </div>
 
-            <div className="mt-2 grid grid-cols-7 gap-2">
+            <div className="mt-2 grid grid-cols-7 gap-1 sm:gap-2">
               {calendarCells.map((day, index) => {
                 if (!day) {
                   return <div key={`calendar-empty-${index}`} aria-hidden="true" className="h-16 rounded-xl" />;
@@ -3516,7 +3540,7 @@ export default function Visitas() {
                         : undefined
                     }
                     className={[
-                      "relative flex h-16 flex-col items-center justify-center rounded-xl border px-1 text-xs transition",
+                      "relative flex h-14 flex-col items-center justify-center rounded-xl border px-1 text-center text-[10px] transition sm:h-16 sm:text-xs",
                       isSelected ? "border-orange-300" : "border-sea/20 bg-white",
                       isSelected
                         ? "bg-orange-200 shadow-lg shadow-orange-200/70 ring-2 ring-orange-200"
@@ -3541,10 +3565,10 @@ export default function Visitas() {
                         </span>
                       </span>
                     ) : null}
-                    <span className={["text-sm font-semibold", isSelected ? "text-green-700" : "text-ink"].join(" ")}>
+                    <span className={["text-[11px] font-semibold sm:text-sm", isSelected ? "text-green-700" : "text-ink"].join(" ")}>
                       {format(day, "d")}
                     </span>
-                    <span className={["text-[10px]", isSelected ? "text-green-700/80" : "text-ink/60"].join(" ")}>
+                    <span className={["text-[9px] sm:text-[10px]", isSelected ? "text-green-700/80" : "text-ink/60"].join(" ")}>
                       {count} visitas
                     </span>
                   </button>
@@ -3560,10 +3584,10 @@ export default function Visitas() {
             )}
           </section>
 
-          <section className="rounded-2xl border border-sea/15 bg-white/95 p-3 shadow-card md:p-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-display text-lg text-ink">Visitas do dia</h3>
-              <span className="text-xs text-ink/60">
+          <section className="min-w-0 rounded-2xl border border-sea/15 bg-white/95 p-3 shadow-card md:p-4">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="min-w-0 font-display text-lg text-ink">Visitas do dia</h3>
+              <span className="shrink-0 text-xs text-ink/60">
                 {selectedDate ? format(selectedDate, "dd/MM/yyyy") : "Selecione uma data"}
               </span>
             </div>
@@ -3577,7 +3601,7 @@ export default function Visitas() {
                 <p className="mt-4 text-sm text-ink/60">Nenhuma visita para esta data.</p>
               )
             ) : (
-              <div className="mt-4 space-y-4">
+              <div className="mt-4 space-y-4 overflow-x-hidden">
                 {groupedBySeller.map(([seller, items]) => {
                   const isExpanded = expandedVendor === seller;
                   const hasSupervisorGroup = items.some((item) => isSupervisorVisitType(item.visit_type));
@@ -3595,18 +3619,18 @@ export default function Visitas() {
                     <div
                       key={seller}
                       className={[
-                        "rounded-2xl border p-3",
+                        "min-w-0 overflow-hidden rounded-2xl border p-3",
                         hasSupervisorGroup
                           ? "border-violet-300 bg-violet-50/50 dark:border-violet-500/45 dark:bg-violet-950/35"
                           : "border-sea/20 bg-sand/20",
                       ].join(" ")}
                     >
-                      <div className="flex w-full items-center justify-between text-left">
-                        <div className="flex items-center gap-2">
+                      <div className="flex w-full items-start justify-between gap-2 text-left">
+                        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                           <button
                             type="button"
                             onClick={() => setExpandedVendor(isExpanded ? null : seller)}
-                            className="text-sm font-semibold text-ink"
+                            className="min-w-0 break-words text-left text-sm font-semibold text-ink"
                           >
                             {seller}
                           </button>
@@ -3670,7 +3694,7 @@ export default function Visitas() {
                           type="button"
                           onClick={() => setExpandedVendor(isExpanded ? null : seller)}
                           className={[
-                            "text-xs font-semibold",
+                            "shrink-0 text-xs font-semibold",
                             allCompleted ? "text-emerald-600" : "text-red-600",
                           ].join(" ")}
                         >
@@ -3788,124 +3812,343 @@ export default function Visitas() {
                                               opacity: 1,
                                             }}
                                             className={[
-                                      "rounded-xl border p-3 transition-transform",
-                                      isSupervisorVisit
-                                        ? "border-violet-300 bg-violet-50/70 dark:border-violet-500/45 dark:bg-violet-950/45"
-                                        : "border-sea/10 bg-white/90",
+                                              "min-w-0 overflow-hidden rounded-xl border p-3 transition-transform",
+                                              isSupervisorVisit
+                                                ? "border-violet-300 bg-violet-50/70 dark:border-violet-500/45 dark:bg-violet-950/45"
+                                                : "border-sea/10 bg-white/90",
                                               isEditingOrder ? "ring-2 ring-sea/25" : "",
                                               dragSnapshot.isDragging ? "scale-[1.03] shadow-2xl" : "",
                                             ].join(" ")}
                                           >
-                                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                              <div>
-                                                <div className="flex items-center gap-2">
+                                            <div className="space-y-3 md:hidden">
+                                              <div className="flex items-start justify-between gap-3">
+                                                <div className="flex min-w-0 items-center gap-3">
                                                   <span
                                                     className={[
-                                                      "inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-semibold",
+                                                      "mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border text-xs font-semibold",
                                                       isEditingOrder
-                                                        ? "border-sea/30 bg-sea/15 text-sea"
-                                                        : "border-sea/15 bg-white text-ink/60",
+                                                        ? "border-sea/30 bg-sea/10 text-ink dark:text-white"
+                                                        : "border-sea/20 bg-white text-ink dark:border-white/10 dark:bg-white/5 dark:text-white",
                                                     ].join(" ")}
                                                   >
                                                     {itemOrderLabel}
                                                   </span>
-                                                  <p className="text-sm font-semibold text-ink">
-                                                    {item.agenda?.empresa ?? "Sem nome"}
-                                                  </p>
-                                                  <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
-                                                    COD {item.agenda?.cod_1 ?? "-"}
-                                                  </span>
-                                                  {item.agenda?.situacao ? (
-                                                    <span className="inline-flex rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
-                                                      {item.agenda.situacao}
-                                                    </span>
-                                                  ) : null}
-                                                  {canManage && item.agenda?.categoria ? (
-                                                    <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                                                      {item.agenda.categoria}
-                                                    </span>
-                                                  ) : null}
-                                                  {isSupervisorVisit ? (
-                                                    <span className="inline-flex rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/60 dark:bg-violet-500/20 dark:text-violet-200">
-                                                      Visita supervisor
-                                                    </span>
-                                                  ) : null}
-                                                  {isSupervisorVisit && supervisorReasonLabel ? (
-                                                    <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/55 dark:bg-violet-500/15 dark:text-violet-200">
-                                                      {supervisorReasonLabel}
-                                                    </span>
-                                                  ) : null}
                                                 </div>
-                                                <p className="text-[11px] text-ink/70">
-                                                  Pessoa: {item.agenda?.pessoa ?? "-"}
-                                                </p>
-                                                <p className="text-[11px] text-ink/70">
-                                                  Contato: {item.agenda?.contato ?? "-"}
-                                                </p>
-                                              </div>
-                                              <div className="flex items-center gap-2">
-                                                {isEditingOrder ? (
-                                                  <div
-                                                    {...dragProvided.dragHandleProps}
-                                                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sea/30 bg-sea/10 text-sea cursor-grab active:cursor-grabbing"
-                                                    aria-label="Arrastar rota"
-                                                    title="Arrastar rota"
-                                                  >
-                                                    <GripVertical size={13} />
-                                                  </div>
-                                                ) : null}
-                                                <button
-                                                  type="button"
-                                                  onClick={(event) => {
-                                                    event.stopPropagation();
-                                                    openDetailsModal(item);
-                                                  }}
-                                                  className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
-                                                  aria-label="Visualizar detalhes da empresa"
-                                                  title="Visualizar detalhes da empresa"
-                                                >
-                                                  <Eye size={12} />
-                                                </button>
-                                                {mapAddress ? (
+                                                <div className="flex shrink-0 items-center gap-2">
+                                                  {isEditingOrder ? (
+                                                    <div
+                                                      {...dragProvided.dragHandleProps}
+                                                      className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-sea/30 bg-sea/10 text-sea cursor-grab active:cursor-grabbing"
+                                                      aria-label="Arrastar rota"
+                                                      title="Arrastar rota"
+                                                    >
+                                                      <GripVertical size={13} />
+                                                    </div>
+                                                  ) : null}
                                                   <button
                                                     type="button"
                                                     onClick={(event) => {
                                                       event.stopPropagation();
-                                                      openMapApp(mapAddress);
+                                                      openDetailsModal(item);
                                                     }}
-                                                    className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
-                                                    aria-label="Abrir mapa"
-                                                    title="Abrir mapa"
+                                                    className="rounded-full border border-sea/20 bg-white px-1.5 py-1 text-[10px] text-sea hover:border-sea"
+                                                    aria-label="Visualizar detalhes da empresa"
+                                                    title="Visualizar detalhes da empresa"
                                                   >
-                                                    <MapPin size={12} />
+                                                    <Eye size={12} />
                                                   </button>
+                                                  {mapAddress ? (
+                                                    <button
+                                                      type="button"
+                                                      onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        openMapApp(mapAddress);
+                                                      }}
+                                                      className="rounded-full border border-sea/20 bg-white px-1.5 py-1 text-[10px] text-sea hover:border-sea"
+                                                      aria-label="Abrir mapa"
+                                                      title="Abrir mapa"
+                                                    >
+                                                      <MapPin size={12} />
+                                                    </button>
+                                                  ) : null}
+                                                  {canManage && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => {
+                                                        if (isCompleted) return;
+                                                        setEditState((prev) => ({
+                                                          ...prev,
+                                                          [item.id]:
+                                                            prev[item.id] ?? {
+                                                              vendorId: item.assigned_to_user_id ?? "",
+                                                              date: toDateInput(item.visit_date),
+                                                            },
+                                                        }));
+                                                        setEditingVisits((prev) => ({
+                                                          ...prev,
+                                                          [item.id]: !isEditing,
+                                                        }));
+                                                      }}
+                                                      disabled={isCompleted}
+                                                      className="rounded-full border border-sea/20 bg-white px-1.5 py-1 text-[10px] text-sea hover:border-sea"
+                                                      aria-label="Editar visita"
+                                                      title="Editar visita"
+                                                    >
+                                                      <Pencil size={12} />
+                                                    </button>
+                                                  )}
+                                                </div>
+                                              </div>
+
+                                              <div className="min-w-0">
+                                                <p className="break-words text-sm font-bold leading-tight text-ink dark:text-white">
+                                                  {item.agenda?.empresa ?? "Sem nome"}
+                                                </p>
+                                              </div>
+
+                                              <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
+                                                <span className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full border border-sea/20 bg-sea/15 px-2.5 py-1.5 text-[10px] font-semibold leading-none text-sea dark:border-sea/30 dark:bg-sea/20 dark:text-emerald-300">
+                                                  <span className="truncate">COD {item.agenda?.cod_1 ?? "-"}</span>
+                                                </span>
+                                                {item.agenda?.situacao ? (
+                                                  <span className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-100 px-2.5 py-1.5 text-[10px] font-semibold leading-none text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300">
+                                                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500" />
+                                                    <span className="truncate">{item.agenda.situacao}</span>
+                                                  </span>
                                                 ) : null}
-                                                {canManage && (
+                                                {canManage && item.agenda?.categoria ? (
+                                                  <span className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full border border-amber-300 bg-amber-100 px-2.5 py-1.5 text-[10px] font-semibold leading-none text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200">
+                                                    <TriangleAlert size={12} />
+                                                    <span className="truncate">{item.agenda.categoria}</span>
+                                                  </span>
+                                                ) : null}
+                                                {isSupervisorVisit ? (
+                                                  <span className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full border border-violet-300 bg-violet-100 px-2.5 py-1.5 text-[10px] font-semibold leading-none text-violet-700 dark:border-violet-400/60 dark:bg-violet-500/20 dark:text-violet-200">
+                                                    Visita supervisor
+                                                  </span>
+                                                ) : null}
+                                                {isSupervisorVisit && supervisorReasonLabel ? (
+                                                  <span className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[10px] font-semibold leading-none text-violet-700 dark:border-violet-400/55 dark:bg-violet-500/15 dark:text-violet-200">
+                                                    <span className="truncate">{supervisorReasonLabel}</span>
+                                                  </span>
+                                                ) : null}
+                                              </div>
+
+                                              <div className="grid gap-3 border-t border-white/10 pt-3 dark:border-white/10 md:grid-cols-2">
+                                                <div className="space-y-2">
+                                                  <div className="flex items-center gap-2 text-xs font-semibold text-ink/75 dark:text-white/75">
+                                                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-xl border border-sea/20 bg-white text-sea dark:border-white/10 dark:bg-white/5">
+                                                      <Eye size={12} />
+                                                    </span>
+                                                    <span>Contato</span>
+                                                  </div>
+                                                  <div className="space-y-1 text-xs text-ink dark:text-white">
+                                                    <p>
+                                                      <span className="font-semibold text-ink/55 dark:text-white/55">Pessoa:</span>{" "}
+                                                      {item.agenda?.pessoa ?? "-"}
+                                                    </p>
+                                                    <p>
+                                                      <span className="font-semibold text-ink/55 dark:text-white/55">Contato:</span>{" "}
+                                                      {item.agenda?.contato ?? "-"}
+                                                    </p>
+                                                  </div>
+                                                </div>
+                                                <div className="space-y-2">
+                                                  <div className="flex items-center gap-2 text-xs font-semibold text-ink/75 dark:text-white/75">
+                                                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-xl border border-sea/20 bg-white text-sea dark:border-white/10 dark:bg-white/5">
+                                                      <Calendar size={12} />
+                                                    </span>
+                                                    <span>Visita</span>
+                                                  </div>
+                                                  <div className="space-y-1 text-xs text-ink dark:text-white">
+                                                    <p>
+                                                      <span className="font-semibold text-ink/55 dark:text-white/55">
+                                                        Perfil visita:
+                                                      </span>{" "}
+                                                      {item.perfil_visita ?? item.perfil_visita_opcoes ?? item.agenda?.perfil_visita ?? "-"}
+                                                    </p>
+                                                    {item.visit_time ? (
+                                                      <p>
+                                                        <span className="font-semibold text-ink/55 dark:text-white/55">
+                                                          Horario visita:
+                                                        </span>{" "}
+                                                        {item.visit_time.slice(0, 5)}
+                                                      </p>
+                                                    ) : null}
+                                                    {instructionText ? (
+                                                      <p>
+                                                        <span className="font-semibold text-ink/55 dark:text-white/55">
+                                                          Instrucoes:
+                                                        </span>{" "}
+                                                        {instructionText}
+                                                      </p>
+                                                    ) : null}
+                                                    {item.no_visit_reason ? (
+                                                      <p>
+                                                        <span className="font-semibold text-ink/55 dark:text-white/55">Motivo:</span>{" "}
+                                                        {item.no_visit_reason}
+                                                      </p>
+                                                    ) : null}
+                                                    <div className="flex items-center gap-2">
+                                                      <p>
+                                                        <span className="font-semibold text-ink/55 dark:text-white/55">Vidas:</span>{" "}
+                                                        {item.completed_vidas ?? "-"}
+                                                      </p>
+                                                      {item.no_visit_observation?.trim() ? (
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => openNoVisitObservationModal(item, seller)}
+                                                          className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-amber-300 bg-amber-100 text-amber-700 hover:border-amber-400 dark:border-amber-500/50 dark:bg-amber-500/15 dark:text-amber-300"
+                                                          title="Ver observacao"
+                                                          aria-label="Ver observacao"
+                                                        >
+                                                          <TriangleAlert size={12} />
+                                                        </button>
+                                                      ) : null}
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                              </div>
+
+                                              {isCompleted ? (
+                                                <div className="rounded-xl border border-amber-300 bg-amber-100 px-3 py-2 text-[11px] font-semibold text-red-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-red-300">
+                                                  <div className="flex items-center gap-2">
+                                                    <TriangleAlert size={14} />
+                                                    <span>Visita registrada. Edicao bloqueada.</span>
+                                                  </div>
+                                                </div>
+                                              ) : null}
+
+                                              {canLoggedSupervisorRegister ? (
+                                                <div className="pt-1">
                                                   <button
                                                     type="button"
-                                                    onClick={() => {
-                                                      if (isCompleted) return;
-                                                      setEditState((prev) => ({
-                                                        ...prev,
-                                                        [item.id]:
-                                                          prev[item.id] ?? {
-                                                            vendorId: item.assigned_to_user_id ?? "",
-                                                            date: toDateInput(item.visit_date),
-                                                          },
-                                                      }));
-                                                      setEditingVisits((prev) => ({
-                                                        ...prev,
-                                                        [item.id]: !isEditing,
-                                                      }));
-                                                    }}
-                                                    disabled={isCompleted}
-                                                    className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
-                                                    aria-label="Editar visita"
-                                                    title="Editar visita"
+                                                    onClick={() => handleStartRegister(item)}
+                                                    disabled={Boolean(item.no_visit_reason)}
+                                                    className={registerVisitButtonClass}
                                                   >
-                                                    <Pencil size={12} />
+                                                    {isCompleted
+                                                      ? item.no_visit_reason
+                                                        ? "Visita nao realizada"
+                                                        : "Editar registro"
+                                                      : "Registrar visita"}
                                                   </button>
-                                                )}
+                                                </div>
+                                              ) : null}
+                                            </div>
+
+                                            <div className="hidden space-y-3 md:block">
+                                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <div>
+                                                  <div className="flex items-center gap-2">
+                                                    <span
+                                                      className={[
+                                                        "inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-semibold",
+                                                        isEditingOrder
+                                                          ? "border-sea/30 bg-sea/15 text-sea"
+                                                          : "border-sea/15 bg-white text-ink/60",
+                                                      ].join(" ")}
+                                                    >
+                                                      {itemOrderLabel}
+                                                    </span>
+                                                    <p className="text-sm font-semibold text-ink">
+                                                      {item.agenda?.empresa ?? "Sem nome"}
+                                                    </p>
+                                                    <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
+                                                      COD {item.agenda?.cod_1 ?? "-"}
+                                                    </span>
+                                                    {item.agenda?.situacao ? (
+                                                      <span className="inline-flex rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
+                                                        {item.agenda.situacao}
+                                                      </span>
+                                                    ) : null}
+                                                    {canManage && item.agenda?.categoria ? (
+                                                      <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                                                        {item.agenda.categoria}
+                                                      </span>
+                                                    ) : null}
+                                                    {isSupervisorVisit ? (
+                                                      <span className="inline-flex rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/60 dark:bg-violet-500/20 dark:text-violet-200">
+                                                        Visita supervisor
+                                                      </span>
+                                                    ) : null}
+                                                    {isSupervisorVisit && supervisorReasonLabel ? (
+                                                      <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/55 dark:bg-violet-500/15 dark:text-violet-200">
+                                                        {supervisorReasonLabel}
+                                                      </span>
+                                                    ) : null}
+                                                  </div>
+                                                  <p className="text-[11px] text-ink/70">
+                                                    Pessoa: {item.agenda?.pessoa ?? "-"}
+                                                  </p>
+                                                  <p className="text-[11px] text-ink/70">
+                                                    Contato: {item.agenda?.contato ?? "-"}
+                                                  </p>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                  {isEditingOrder ? (
+                                                    <div
+                                                      {...dragProvided.dragHandleProps}
+                                                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sea/30 bg-sea/10 text-sea cursor-grab active:cursor-grabbing"
+                                                      aria-label="Arrastar rota"
+                                                      title="Arrastar rota"
+                                                    >
+                                                      <GripVertical size={13} />
+                                                    </div>
+                                                  ) : null}
+                                                  <button
+                                                    type="button"
+                                                    onClick={(event) => {
+                                                      event.stopPropagation();
+                                                      openDetailsModal(item);
+                                                    }}
+                                                    className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
+                                                    aria-label="Visualizar detalhes da empresa"
+                                                    title="Visualizar detalhes da empresa"
+                                                  >
+                                                    <Eye size={12} />
+                                                  </button>
+                                                  {mapAddress ? (
+                                                    <button
+                                                      type="button"
+                                                      onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        openMapApp(mapAddress);
+                                                      }}
+                                                      className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
+                                                      aria-label="Abrir mapa"
+                                                      title="Abrir mapa"
+                                                    >
+                                                      <MapPin size={12} />
+                                                    </button>
+                                                  ) : null}
+                                                  {canManage && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => {
+                                                        if (isCompleted) return;
+                                                        setEditState((prev) => ({
+                                                          ...prev,
+                                                          [item.id]:
+                                                            prev[item.id] ?? {
+                                                              vendorId: item.assigned_to_user_id ?? "",
+                                                              date: toDateInput(item.visit_date),
+                                                            },
+                                                        }));
+                                                        setEditingVisits((prev) => ({
+                                                          ...prev,
+                                                          [item.id]: !isEditing,
+                                                        }));
+                                                      }}
+                                                      disabled={isCompleted}
+                                                      className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
+                                                      aria-label="Editar visita"
+                                                      title="Editar visita"
+                                                    >
+                                                      <Pencil size={12} />
+                                                    </button>
+                                                  )}
+                                                </div>
                                               </div>
                                             </div>
                                             {canManage && isEditing && !isCompleted ? (
@@ -3997,25 +4240,14 @@ export default function Visitas() {
                                     </div>
                                   </div>
                                 ) : canManage ? (
-                                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                                  <div className="hidden mt-3 flex-wrap items-center justify-between gap-2 md:flex">
                                     <div className="grid gap-1 text-[11px] text-ink/60">
-                                      <span>
-                                        Perfil visita: {item.perfil_visita ?? item.perfil_visita_opcoes ?? item.agenda?.perfil_visita ?? "-"}
-                                      </span>
                                       {item.visit_time ? <span>Horario visita: {item.visit_time.slice(0, 5)}</span> : null}
                                       {instructionText ? (
                                         <span>Instrucoes: {instructionText}</span>
                                       ) : null}
-                                      {isCompleted ? (
-                                        <span className="rounded-lg border border-amber-300 bg-amber-100 px-2 py-1 text-[11px] font-semibold text-red-600">
-                                          Visita registrada. Edicao bloqueada.
-                                        </span>
-                                      ) : null}
                                       {item.no_visit_reason ? (
                                         <span>Motivo: {item.no_visit_reason}</span>
-                                      ) : null}
-                                      {isCompleted ? (
-                                        <span>Vidas: {item.completed_vidas ?? "-"}</span>
                                       ) : null}
                                     </div>
                                     {canLoggedSupervisorRegister ? (
@@ -4034,7 +4266,7 @@ export default function Visitas() {
                                     ) : null}
                                   </div>
                                 ) : (
-                                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                                  <div className="hidden mt-3 flex-wrap items-center justify-between gap-2 md:flex">
                                     <div className="grid gap-1 text-[11px] text-ink/60">
                                       <span>
                                         Perfil visita: {item.perfil_visita ?? item.perfil_visita_opcoes ?? item.agenda?.perfil_visita ?? "-"}
@@ -4047,7 +4279,20 @@ export default function Visitas() {
                                         <span>Motivo: {item.no_visit_reason}</span>
                                       ) : null}
                                       {isCompleted ? (
-                                        <span>Vidas: {item.completed_vidas ?? "-"}</span>
+                                        <div className="flex items-center gap-2">
+                                          <span>Vidas: {item.completed_vidas ?? "-"}</span>
+                                          {item.no_visit_observation?.trim() ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => openNoVisitObservationModal(item, seller)}
+                                            className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-amber-300 bg-amber-100 text-amber-700 hover:border-amber-400 dark:border-amber-500/50 dark:bg-amber-500/15 dark:text-amber-300"
+                                              title="Ver observacao"
+                                              aria-label="Ver observacao"
+                                            >
+                                              <TriangleAlert size={12} />
+                                            </button>
+                                          ) : null}
+                                        </div>
                                       ) : null}
                                     </div>
                                     <button
@@ -4360,6 +4605,34 @@ export default function Visitas() {
                   <p className="mt-1">-</p>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {noVisitObservationModal && (
+        <div className="fixed inset-0 z-[55] flex items-center justify-center overflow-y-auto px-4 py-6">
+          <button
+            type="button"
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setNoVisitObservationModal(null)}
+          />
+          <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 text-ink shadow-card dark:border-sea/30 dark:bg-white/95 dark:text-white">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-display text-lg text-ink dark:text-white">Observacao da rota</h3>
+                <p className="mt-1 text-xs text-ink/60 dark:text-white/65">{noVisitObservationModal.seller}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNoVisitObservationModal(null)}
+                className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea dark:border-sea/30 dark:bg-white/80 dark:text-white/80 dark:hover:text-white"
+              >
+                Fechar
+              </button>
+            </div>
+            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-ink/80 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-white/90">
+              <p className="whitespace-pre-wrap break-words">{noVisitObservationModal.observation}</p>
             </div>
           </div>
         </div>
@@ -4914,8 +5187,8 @@ export default function Visitas() {
                 type="button"
                 onClick={() => {
                   setConfirmVisit(null);
-                  setNoVisit({ id: confirmVisit.id, reason: "" });
-                }}
+                setNoVisit({ id: confirmVisit.id, reason: "", observation: "" });
+              }}
                 className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
               >
                 Nao
@@ -4962,9 +5235,23 @@ export default function Visitas() {
                 {NO_VISIT_REASONS.map((reason) => (
                   <option key={reason} value={reason}>
                     {reason}
-                  </option>
-                ))}
+                </option>
+              ))}
               </select>
+            </div>
+            <div className="mt-4">
+              <label className="block text-xs font-semibold text-ink/70">
+                Observacao (opcional)
+                <textarea
+                  value={noVisit.observation}
+                  onChange={(event) =>
+                    setNoVisit((prev) => (prev ? { ...prev, observation: event.target.value } : prev))
+                  }
+                  rows={4}
+                  placeholder="Descreva a observacao desta rota"
+                  className="mt-2 w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                />
+              </label>
             </div>
             <div className="mt-6 flex flex-wrap justify-end gap-2">
               <button
