@@ -168,7 +168,7 @@ const parseNumberFromUnknown = (value: unknown): number | null => {
 };
 
 const sanitizeDigits = (value: string) => value.replace(/\D/g, "");
-const NUMERIC_CLIENTE_FIELDS = new Set(["corte", "venc", "valor"]);
+const NUMERIC_CLIENTE_FIELDS = new Set(["corte", "venc", "valor", "vidas_qtde"]);
 
 const normalizeCnpj = (value: string | null | undefined) => {
   const digits = sanitizeDigits(value ?? "").slice(0, 14);
@@ -385,6 +385,12 @@ const buildClienteUpdatePayload = (empresa: Record<string, unknown>, payload: un
 
   const valor = resolveValorTitular(empresa);
   if (valor !== null) updates.valor = valor;
+
+  const vidasQtde =
+    parseNumberFromUnknown(
+      readRecordValueByKeys(empresa, ["AssociadoTotal", "associadoTotal", "associado_total"]),
+    ) ?? parseNumberFromUnknown(readStringByKeysFromUnknown(payload, ["AssociadoTotal", "associadoTotal", "associado_total"]));
+  if (vidasQtde !== null) updates.vidas_qtde = vidasQtde;
 
   const situacao =
     readStringByKeysFromUnknown(empresa, ["NomeSituacao", "nomeSituacao", "situacao", "status"]) ??

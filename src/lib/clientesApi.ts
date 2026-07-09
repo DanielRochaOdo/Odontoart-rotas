@@ -3,7 +3,7 @@ import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import { extractCustomTimes, normalizePerfilVisitaValue } from "./perfilVisita";
 const DEFAULT_SITUACAO = "Ativo";
 const CLIENTES_SELECT_COLUMNS =
-  "id, codigo, corte, venc, valor, reajuste_pct, competencia, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, regra_visita_observacao, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf, latitude, longitude, geocode_source, geocode_updated_at, created_at";
+  "id, codigo, corte, venc, valor, reajuste_pct, competencia, vidas_qtde, data_da_ultima_visita, cep, cnpj, empresa, pessoa, contato, grupo, obs_comercial, obs, regra_visita_observacao, nome_fantasia, complemento, perfil_visita, situacao, categoria, endereco, bairro, cidade, uf, latitude, longitude, geocode_source, geocode_updated_at, created_at";
 const MAX_CLIENTES_PAGE_SIZE = 100;
 
 export type ClienteListRow = Pick<
@@ -153,6 +153,7 @@ export const createCliente = async (payload: {
   valor?: number | null;
   reajuste_pct?: number | null;
   competencia?: string | null;
+  vidas_qtde?: number | null;
   data_da_ultima_visita?: string | null;
   cep?: string | null;
   cnpj?: string | null;
@@ -183,6 +184,7 @@ export const createCliente = async (payload: {
       valor: payload.valor ?? null,
       reajuste_pct: payload.reajuste_pct ?? null,
       competencia: payload.competencia ?? null,
+      vidas_qtde: payload.vidas_qtde ?? null,
       data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
       cep: payload.cep ?? null,
       cnpj: payload.cnpj ?? null,
@@ -225,6 +227,7 @@ export const updateCliente = async (id: string, payload: Partial<ClienteRow>) =>
   setIfDefined("valor");
   setIfDefined("reajuste_pct");
   setIfDefined("competencia");
+  setIfDefined("vidas_qtde");
   setIfDefined("data_da_ultima_visita");
   setIfDefined("cep");
   setIfDefined("cnpj");
@@ -316,6 +319,7 @@ export const upsertClientes = async (
     bairro?: string | null;
     cidade?: string | null;
     uf?: string | null;
+    vidas_qtde?: number | null;
   }>,
   options?: {
     skipDataUltimaVisitaSync?: boolean;
@@ -329,6 +333,7 @@ export const upsertClientes = async (
     venc: payload.venc ?? null,
     data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
     valor: payload.valor ?? null,
+    vidas_qtde: payload.vidas_qtde ?? null,
     cep: payload.cep ?? null,
     cnpj: payload.cnpj ?? null,
     empresa: payload.empresa ?? null,
