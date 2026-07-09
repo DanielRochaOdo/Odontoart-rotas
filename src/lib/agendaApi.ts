@@ -694,6 +694,7 @@ export type AgendaVisitVendor = {
   completed_at: string | null;
   completed_vidas: number | null;
   no_visit_reason: string | null;
+  no_visit_observation: string | null;
   route_id: string | null;
   visit_type?: string | null;
   supervisor_reason?: string | null;
@@ -1085,7 +1086,7 @@ export const fetchAgendaVisitVendors = async (clienteIds: string[]) => {
   const { data, error } = await supabase
     .from("visits")
     .select(
-      "cliente_id, visit_date, assigned_to_user_id, assigned_to_name, completed_at, completed_vidas, no_visit_reason, route_id, visit_type, supervisor_reason",
+      "cliente_id, visit_date, assigned_to_user_id, assigned_to_name, completed_at, completed_vidas, no_visit_reason, no_visit_observation, route_id, visit_type, supervisor_reason",
     )
     .in("cliente_id", clienteIds)
     .order("completed_at", { ascending: false })
