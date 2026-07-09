@@ -710,7 +710,7 @@ type AgendaQueryContext = {
 };
 
 const AGENDA_LITE_SELECT_COLUMNS =
-  "id, data_da_ultima_visita, visit_completed_vidas, cod_1:codigo, empresa, cep, pessoa, contato, perfil_visita, corte, venc, valor, reajuste_pct, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, obs_comercial, situacao, categoria, regra_visita_observacao, visit_generated_at, created_at";
+  "id, data_da_ultima_visita, visit_completed_vidas, cod_1:codigo, empresa, cep, pessoa, contato, perfil_visita, corte, venc, valor, reajuste_pct, vidas_qtde, endereco, complemento, bairro, cidade, uf, supervisor, vendedor, nome_fantasia, grupo, obs_comercial, situacao, categoria, regra_visita_observacao, visit_generated_at, created_at";
 
 const normalizeAgendaLiteRows = (rows: AgendaRow[]) =>
   rows.map((row) => ({

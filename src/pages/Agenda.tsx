@@ -5224,6 +5224,12 @@ export default function Agenda() {
                 ["Venc", detailsModalRow.venc ?? null],
                 ["Valor", null],
                 ["Reajuste %", formatPercentDisplay(detailsModalRow.reajuste_pct)],
+                [
+                  "Quantidade de vidas",
+                  detailsModalRow.vidas_qtde !== null && detailsModalRow.vidas_qtde !== undefined
+                    ? String(detailsModalRow.vidas_qtde)
+                    : "-",
+                ],
                 ["Data da ultima visita", formatDate(detailsModalRow.data_da_ultima_visita)],
                 ["CEP", detailsModalRow.cep],
                 ["Empresa", detailsModalRow.empresa],
@@ -5274,6 +5280,12 @@ export default function Agenda() {
                     </div>
                   ) : label === "Reajuste %" ? (
                     <span>{formatPercentDisplay(detailsModalRow.reajuste_pct)}</span>
+                  ) : label === "Quantidade de vidas" ? (
+                    <span>
+                      {detailsModalRow.vidas_qtde !== null && detailsModalRow.vidas_qtde !== undefined
+                        ? detailsModalRow.vidas_qtde
+                        : "-"}
+                    </span>
                   ) : (
                     <span>{value ?? "-"}</span>
                   )}

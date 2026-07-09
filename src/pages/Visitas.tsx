@@ -4019,7 +4019,24 @@ export default function Visitas() {
                                                 </div>
                                               ) : null}
 
-                                              {canLoggedSupervisorRegister ? (
+                                              {canManage ? (
+                                                canLoggedSupervisorRegister ? (
+                                                  <div className="pt-1">
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleStartRegister(item)}
+                                                      disabled={Boolean(item.no_visit_reason)}
+                                                      className={registerVisitButtonClass}
+                                                    >
+                                                      {isCompleted
+                                                        ? item.no_visit_reason
+                                                          ? "Visita nao realizada"
+                                                          : "Editar registro"
+                                                        : "Registrar visita"}
+                                                    </button>
+                                                  </div>
+                                                ) : null
+                                              ) : (
                                                 <div className="pt-1">
                                                   <button
                                                     type="button"
@@ -4034,7 +4051,7 @@ export default function Visitas() {
                                                       : "Registrar visita"}
                                                   </button>
                                                 </div>
-                                              ) : null}
+                                              )}
                                             </div>
 
                                             <div className="hidden space-y-3 md:block">

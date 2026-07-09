@@ -122,6 +122,7 @@ type CadastroFormState = {
   valor: string;
   reajuste_pct: string;
   competencia: string;
+  vidas_qtde: string;
   data_da_ultima_visita: string;
   cep: string;
   empresa: string;
@@ -159,7 +160,7 @@ type FilialCadastroModalState = {
 };
 
 type RegraVisitaModalState = {
-  target: "create" | "edit";
+  target: "create" | "edit" | "filial";
 };
 
 type ClientesViewState = {
@@ -186,6 +187,7 @@ type ImportPayload = {
   valor?: number | null;
   reajuste_pct?: number | null;
   cep?: string | null;
+  vidas_qtde?: number | null;
   empresa?: string | null;
   pessoa?: string | null;
   contato?: string | null;
@@ -229,6 +231,7 @@ const buildClientePayloadFromImport = (payload: ImportPayload) => ({
   corte: payload.corte ?? null,
   venc: payload.venc ?? null,
   valor: payload.valor ?? null,
+  vidas_qtde: payload.vidas_qtde ?? null,
   data_da_ultima_visita: payload.data_da_ultima_visita ?? null,
   cep: payload.cep ?? null,
   empresa: payload.empresa ?? null,
@@ -538,6 +541,8 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
   const grupoFromApi =
     (empresa.EmpresaGrupo ?? empresa.empresaGrupo ?? "").trim() ||
     readStringByKeysFromUnknown(empresa, ["EmpresaGrupo", "empresaGrupo", "Grupo", "grupo"]);
+  const vidasQtdeFromApi =
+    readNumberLikeStringByKeysFromUnknown(empresa, ["AssociadoTotal", "associadoTotal", "associado_total"]) || "";
 
   return {
     codigo,
@@ -547,6 +552,7 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
     valor: valorTitular !== null ? formatCurrency(valorTitular) : "",
     reajuste_pct: "",
     data_da_ultima_visita: "",
+    vidas_qtde: vidasQtdeFromApi,
     cep: resolveCepFromEmpresa(empresa),
     empresa: resolveEmpresaFromApi(empresa),
     pessoa: "",
@@ -746,6 +752,7 @@ const buildInitialCadastroForm = (): CadastroFormState => ({
   valor: "",
   reajuste_pct: "",
   competencia: "",
+  vidas_qtde: "",
   data_da_ultima_visita: "",
   cep: "",
   empresa: "",
@@ -777,6 +784,7 @@ const restoreCadastroForm = (value: unknown): CadastroFormState => {
     "valor",
     "reajuste_pct",
     "competencia",
+    "vidas_qtde",
     "data_da_ultima_visita",
     "cep",
     "empresa",
@@ -973,9 +981,22 @@ const applyApiFieldsToFilialForm = (
       corte: apiForm.corte,
       venc: apiForm.venc,
       valor: apiForm.valor,
+      vidas_qtde: apiForm.vidas_qtde,
       situacao: apiForm.situacao,
     },
-    { forceFields: ["cnpj", "empresa", "grupo", "obs_comercial", "corte", "venc", "valor", "situacao"] },
+    {
+      forceFields: [
+        "cnpj",
+        "empresa",
+        "grupo",
+        "obs_comercial",
+        "corte",
+        "venc",
+        "valor",
+        "vidas_qtde",
+        "situacao",
+      ],
+    },
   );
 
 const preserveFilialCommonFields = (
@@ -1393,18 +1414,19 @@ export default function Clientes() {
     setHistorySupervisorId("all");
     setHistoryDateFrom("");
     setHistoryDateTo("");
-    setEditForm({
-      codigo: selected.codigo ?? "",
-      cnpj: selected.cnpj ?? "",
-      corte: selected.corte !== null && selected.corte !== undefined ? String(selected.corte) : "",
-      venc: selected.venc !== null && selected.venc !== undefined ? String(selected.venc) : "",
-      valor: selected.valor !== null && selected.valor !== undefined ? formatCurrency(selected.valor) : "",
+      setEditForm({
+        codigo: selected.codigo ?? "",
+        cnpj: selected.cnpj ?? "",
+        corte: selected.corte !== null && selected.corte !== undefined ? String(selected.corte) : "",
+        venc: selected.venc !== null && selected.venc !== undefined ? String(selected.venc) : "",
+        valor: selected.valor !== null && selected.valor !== undefined ? formatCurrency(selected.valor) : "",
       reajuste_pct:
         selected.reajuste_pct !== null && selected.reajuste_pct !== undefined
           ? formatPercentInput(String(selected.reajuste_pct))
           : "",
-      competencia: selected.competencia ?? "",
-      data_da_ultima_visita: toDateInput(selected.data_da_ultima_visita),
+        competencia: selected.competencia ?? "",
+        vidas_qtde: selected.vidas_qtde !== null && selected.vidas_qtde !== undefined ? String(selected.vidas_qtde) : "",
+        data_da_ultima_visita: toDateInput(selected.data_da_ultima_visita),
       cep: selected.cep ?? "",
       empresa: selected.empresa ?? "",
       pessoa: selected.pessoa ?? "",
@@ -1619,7 +1641,8 @@ export default function Clientes() {
     const parsedVenc = Number.isFinite(vencValue ?? NaN) ? vencValue : null;
     const competencia = sourceForm.competencia ? formatCompetenciaInput(sourceForm.competencia) : null;
     const parsedDataUltimaVisita = toIsoDateInput(sourceForm.data_da_ultima_visita);
-  const created = await createCliente({
+    const parsedVidasQtde = sourceForm.vidas_qtde ? Number(sourceForm.vidas_qtde) : null;
+    const created = await createCliente({
       codigo: sourceForm.codigo.trim() || null,
       cnpj: normalizeCnpj(sourceForm.cnpj),
       corte: parsedCorte,
@@ -1627,6 +1650,7 @@ export default function Clientes() {
       valor: sourceForm.valor ? parseImportCurrency(sourceForm.valor) : null,
       reajuste_pct: sourceForm.reajuste_pct ? parseImportPercent(sourceForm.reajuste_pct) : null,
       competencia,
+      vidas_qtde: Number.isFinite(parsedVidasQtde ?? NaN) ? parsedVidasQtde : null,
       data_da_ultima_visita: parsedDataUltimaVisita,
       cep: sourceForm.cep.trim() || null,
       empresa: sourceForm.empresa.trim() || null,
@@ -2679,6 +2703,7 @@ export default function Clientes() {
       const parsedVenc = Number.isFinite(vencValue ?? NaN) ? vencValue : null;
       const competencia = editForm.competencia ? formatCompetenciaInput(editForm.competencia) : null;
       const parsedDataUltimaVisita = toIsoDateInput(editForm.data_da_ultima_visita);
+      const parsedVidasQtde = editForm.vidas_qtde ? Number(editForm.vidas_qtde) : null;
       const updated = await updateCliente(selected.id, {
         codigo: editForm.codigo.trim() || null,
         cnpj: normalizeCnpj(editForm.cnpj),
@@ -2687,6 +2712,7 @@ export default function Clientes() {
         valor: editForm.valor ? parseImportCurrency(editForm.valor) : null,
         reajuste_pct: editForm.reajuste_pct ? parseImportPercent(editForm.reajuste_pct) : null,
         competencia,
+        vidas_qtde: Number.isFinite(parsedVidasQtde ?? NaN) ? parsedVidasQtde : null,
         data_da_ultima_visita: parsedDataUltimaVisita,
         cep: editForm.cep.trim() || null,
         empresa: editForm.empresa.trim() || null,
@@ -2910,14 +2936,16 @@ export default function Clientes() {
             ? parseImportDate(record.data_da_ultima_visita)
             : null;
           const parsedValor = record.valor ? parseImportCurrency(record.valor) : null;
+          const parsedVidasQtde = record.vidas_qtde ? Number(record.vidas_qtde) : null;
 
           return {
 	            codigo: record.codigo ?? null,
 	            cnpj: normalizeCnpj(record.cnpj),
-	            corte: parsedCorte,
+            corte: parsedCorte,
             venc: parsedVenc,
             valor: parsedValor,
             reajuste_pct: record.reajuste_pct ? parseImportPercent(record.reajuste_pct) : null,
+            vidas_qtde: Number.isFinite(parsedVidasQtde ?? NaN) ? parsedVidasQtde : null,
             competencia,
             data_da_ultima_visita: parsedDataUltimaVisita,
             cep: record.cep ?? null,
@@ -3444,15 +3472,16 @@ export default function Clientes() {
                 className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
               />
             </label>
-            <label className="w-40 flex flex-col gap-1 text-xs font-semibold text-ink/70">
-              Data da ultima visita
+            <label className="w-28 flex flex-col gap-1 text-xs font-semibold text-ink/70">
+              <span>Vidas Qtde.</span>
               <input
-                type="date"
-                value={form.data_da_ultima_visita}
+                value={form.vidas_qtde}
                 onChange={(event) =>
-                  setForm((prev) => ({ ...prev, data_da_ultima_visita: event.target.value }))
+                  setForm((prev) => ({ ...prev, vidas_qtde: sanitizeDigits(event.target.value) }))
                 }
-                className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
+                inputMode="numeric"
+                placeholder="0"
+                className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
               />
             </label>
             <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">
@@ -4453,6 +4482,10 @@ export default function Clientes() {
                   ["Valor", null],
                   ["Reajuste %", formatPercentDisplay(selected.reajuste_pct)],
                   ["Competencia", selected.competencia ? formatCompetenciaInput(selected.competencia) : "-"],
+                  [
+                    "Quantidade de vidas",
+                    selected.vidas_qtde !== null && selected.vidas_qtde !== undefined ? String(selected.vidas_qtde) : "-",
+                  ],
                   ["Data da ultima visita", formatDate(selected.data_da_ultima_visita)],
                   ["CEP", selected.cep],
                   ["CNPJ", selected.cnpj],
@@ -4501,6 +4534,10 @@ export default function Clientes() {
                     ) : label === "Competencia" ? (
                       <span className="text-sm text-ink">
                         {selected.competencia ? formatCompetenciaInput(selected.competencia) : "-"}
+                      </span>
+                    ) : label === "Quantidade de vidas" ? (
+                      <span className="text-sm text-ink">
+                        {selected.vidas_qtde !== null && selected.vidas_qtde !== undefined ? selected.vidas_qtde : "-"}
                       </span>
                     ) : (
                       <span className="text-sm text-ink">{value ?? "-"}</span>
@@ -4776,6 +4813,19 @@ export default function Clientes() {
             <p className="mt-1 text-xs text-ink/60">
               Ja existem {filialCadastroModal.existingCount} cadastro(s) com este codigo.
             </p>
+            <div className="mt-3 rounded-2xl border border-sea/20 bg-sand/20 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-ink/50">Quantidade de vidas do codigo</p>
+                  <p className="mt-1 text-sm font-semibold text-ink">
+                    {filialCadastroModal.form.vidas_qtde.trim() || "-"}
+                  </p>
+                </div>
+                <div className="text-[11px] font-medium text-ink/60">
+                  Distribuicao por filial: nao definida
+                </div>
+              </div>
+            </div>
             <div className="mt-4 grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-3 md:grid-cols-6 md:p-4">
               <label className="min-w-0 flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
                 Codigo
@@ -5072,24 +5122,42 @@ export default function Clientes() {
                     className="w-full rounded-lg border border-sea/20 bg-white px-2 py-2 text-sm text-ink outline-none focus:border-sea"
                   />
                 </label>
-                <label className="w-40 flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                  Data da ultima visita
-                  <input
-                    type="date"
-                    value={filialCadastroModal.form.data_da_ultima_visita}
-                    onChange={(event) =>
-                      setFilialCadastroModal((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              form: { ...prev.form, data_da_ultima_visita: event.target.value },
-                            }
-                          : prev,
-                      )
-                    }
-                    className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea"
-                  />
-                </label>
+                <div className="w-[145px] min-w-[145px] shrink-0 flex h-10 items-center rounded-lg border border-sea/15 bg-sand/20 px-3">
+                  <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap text-xs font-semibold text-ink/70">
+                    <input
+                      type="checkbox"
+                      checked={filialCadastroModal.form.regra_visita_ativa}
+                      onChange={(event) => {
+                        if (!event.target.checked) {
+                          setFilialCadastroModal((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  form: {
+                                    ...prev.form,
+                                    regra_visita_ativa: false,
+                                    regra_visita_observacao: "",
+                                  },
+                                }
+                              : prev,
+                          );
+                          return;
+                        }
+                        setFilialCadastroModal((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                form: { ...prev.form, regra_visita_ativa: true },
+                              }
+                            : prev,
+                        );
+                        setRegraVisitaModal({ target: "filial" });
+                      }}
+                      className="h-4 w-4 accent-sea"
+                    />
+                    Regra Visita
+                  </label>
+                </div>
                 <label className="w-36 flex flex-col gap-1 text-xs font-semibold text-ink/70">
                   Perfil visita
                   <select
@@ -5477,7 +5545,7 @@ export default function Clientes() {
 
       {regraVisitaModal &&
         createPortal(
-          <div className="fixed inset-0 z-[9050] flex items-start justify-center overflow-y-auto px-4 pt-6">
+          <div className="fixed inset-0 z-[10050] flex items-start justify-center overflow-y-auto px-4 pt-6">
             <button
               type="button"
               className="absolute inset-0 bg-ink/30"
@@ -5487,7 +5555,18 @@ export default function Clientes() {
                 if (target === "create") {
                   setForm((prev) => ({ ...prev, regra_visita_ativa: false, regra_visita_observacao: "" }));
                 } else {
-                  setEditForm((prev) => ({ ...prev, regra_visita_ativa: false, regra_visita_observacao: "" }));
+                  if (target === "edit") {
+                    setEditForm((prev) => ({ ...prev, regra_visita_ativa: false, regra_visita_observacao: "" }));
+                  } else {
+                    setFilialCadastroModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            form: { ...prev.form, regra_visita_ativa: false, regra_visita_observacao: "" },
+                          }
+                        : prev,
+                    );
+                  }
                 }
               }}
             />
@@ -5503,14 +5582,25 @@ export default function Clientes() {
                   value={
                     regraVisitaModal.target === "create"
                       ? form.regra_visita_observacao
-                      : editForm.regra_visita_observacao
+                      : regraVisitaModal.target === "edit"
+                        ? editForm.regra_visita_observacao
+                        : filialCadastroModal?.form.regra_visita_observacao ?? ""
                   }
                   onChange={(event) => {
                     const value = event.target.value.slice(0, 50);
                     if (regraVisitaModal.target === "create") {
                       setForm((prev) => ({ ...prev, regra_visita_observacao: value }));
-                    } else {
+                    } else if (regraVisitaModal.target === "edit") {
                       setEditForm((prev) => ({ ...prev, regra_visita_observacao: value }));
+                    } else {
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: { ...prev.form, regra_visita_observacao: value },
+                            }
+                          : prev,
+                      );
                     }
                   }}
                   placeholder="Ex.: Visitar somente pela manha"
@@ -5521,7 +5611,9 @@ export default function Clientes() {
                 {(
                   regraVisitaModal.target === "create"
                     ? form.regra_visita_observacao
-                    : editForm.regra_visita_observacao
+                    : regraVisitaModal.target === "edit"
+                      ? editForm.regra_visita_observacao
+                      : filialCadastroModal?.form.regra_visita_observacao ?? ""
                 ).length}
                 /50
               </div>
@@ -5533,8 +5625,17 @@ export default function Clientes() {
                     setRegraVisitaModal(null);
                     if (target === "create") {
                       setForm((prev) => ({ ...prev, regra_visita_ativa: false, regra_visita_observacao: "" }));
-                    } else {
+                    } else if (target === "edit") {
                       setEditForm((prev) => ({ ...prev, regra_visita_ativa: false, regra_visita_observacao: "" }));
+                    } else {
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: { ...prev.form, regra_visita_ativa: false, regra_visita_observacao: "" },
+                            }
+                          : prev,
+                      );
                     }
                   }}
                   className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea"
@@ -5558,12 +5659,25 @@ export default function Clientes() {
                         regra_visita_ativa: true,
                         regra_visita_observacao: next,
                       }));
-                    } else {
+                    } else if (target === "edit") {
                       setEditForm((prev) => ({
                         ...prev,
                         regra_visita_ativa: true,
                         regra_visita_observacao: next,
                       }));
+                    } else {
+                      setFilialCadastroModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: {
+                                ...prev.form,
+                                regra_visita_ativa: true,
+                                regra_visita_observacao: next,
+                              },
+                            }
+                          : prev,
+                      );
                     }
                     setError(null);
                     setRegraVisitaModal(null);
