@@ -198,12 +198,14 @@ export const unlockErpSyncSection = async (releasePassword: string) => {
 export const previewErpSyncCodes = async (payload: {
   unlockToken: string;
   codes: string[];
+  field?: string;
 }) => {
   const { data, error } = await invokeErpSync({
     action: "preview",
     payload: {
       unlock_token: payload.unlockToken,
       codes: payload.codes,
+      field: payload.field,
     },
   });
 
@@ -216,6 +218,7 @@ export const executeErpSyncWave = async (payload: {
   codes: string[];
   offset: number;
   limit: number;
+  field?: string;
 }) => {
   const { data, error } = await invokeErpSync({
     action: "execute-wave",
@@ -224,6 +227,7 @@ export const executeErpSyncWave = async (payload: {
       codes: payload.codes,
       offset: payload.offset,
       limit: payload.limit,
+      field: payload.field,
     },
   });
 

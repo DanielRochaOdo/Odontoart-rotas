@@ -1,5 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
 import { normalizeText } from "../lib/textNormalize";
@@ -9,13 +8,15 @@ import {
   type CategoriaValue,
 } from "../lib/categorias";
 
+import * as XLSX from "xlsx";
 type ParsedKpiRow = {
   codigo: string;
-  vidasIn: number;
-  vidasOut: number;
-  categoria: CategoriaValue;
-  monthKey: string;
+  associadoTotal: number;
   sourceRow: number;
+  vidasIn?: number;
+  vidasOut?: number;
+  monthKey?: string;
+  categoria?: CategoriaValue;
 };
 
 type ParseSummary = {
@@ -26,8 +27,7 @@ type ParseSummary = {
   unvalidatedCodes: number;
   columns: {
     codigo: string;
-    vidasIn: string;
-    vidasOut: string;
+    associadoTotal: string;
     month: string | null;
   };
 };
@@ -40,11 +40,35 @@ type ApplySummary = {
   updatedRows: number;
 };
 
+type KpiPeriodDays = 1 | 7 | 15 | 30;
+
+type KpiSnapshotRow = {
+  id: string;
+  sync_run_id: string | null;
+  source: "api_daily" | "manual_upload" | "manual_sync" | null;
+  period_days: number;
+  codigo: string;
+  empresa: string | null;
+  categoria: CategoriaValue;
+  vidas_qtde: number | null;
+  status: string;
+  snapshot_at: string;
+  snapshot_date: string;
+  previous_vidas_qtde: number | null;
+  delta: number;
+  vendas_qtde: number;
+  cancelamentos_qtde: number;
+  created_at: string;
+};
+
+type KpiStatus = "inativo" | "so_perda" | "queda" | "crescimento" | "so_venda" | "neutro";
+
 type PersistedColumns = {
   codigo: string;
-  vidasIn: string;
-  vidasOut: string;
-  month: string | null;
+  associadoTotal: string;
+  month?: string | null;
+  vidasIn?: string;
+  vidasOut?: string;
 };
 
 type KpiImportHistoryRow = {
@@ -65,26 +89,19 @@ type KpiImportHistoryRow = {
   applied_at: string | null;
 };
 
-type LatestValidationMeta = {
-  importId: string;
-  sourceFilename: string;
-  createdAt: string;
-};
-
-type PersistedImportRow = {
-  import_id: string;
-  codigo: string;
-  vidas_in: number;
-  vidas_out: number;
-  categoria: CategoriaValue;
-  month_key: string;
-  source_row: number | null;
-};
-
-type UnvalidatedCode = {
-  codigo: string;
-  reason: "NAO_CADASTRADO" | "NAO_ATIVO";
-};
+type SyncRunBanner = {
+  id: string;
+  status: string;
+  total_codes: number;
+  processed_codes: number;
+  failed_codes: number;
+  started_at: string;
+  source: string;
+  current_code: string | null;
+  current_stage: string | null;
+  current_code_started_at: string | null;
+  current_attempt: number | null;
+} | null;
 
 type DonutSlice = {
   label: string;
@@ -94,7 +111,9 @@ type DonutSlice = {
 
 const LOOKUP_CHUNK_SIZE = 400;
 const UPDATE_CHUNK_SIZE = 300;
-const IMPORT_SAVE_CHUNK_SIZE = 500;
+const CLIENTS_READ_CHUNK_SIZE = 1000;
+const KPI_SNAPSHOT_READ_CHUNK_SIZE = 1000;
+const KPI_PERIOD_OPTIONS: KpiPeriodDays[] = [1, 7, 15, 30];
 const DONUT_SIZE = 160;
 const DONUT_STROKE = 22;
 const DONUT_RADIUS = (DONUT_SIZE - DONUT_STROKE) / 2;
@@ -132,15 +151,6 @@ const parseNonNegativeNumber = (value: unknown): number | null => {
   return parsed;
 };
 
-const classifyCategoria = (vidasIn: number, vidasOut: number): CategoriaValue => {
-  if (vidasIn === 0 && vidasOut === 0) return "Inativo";
-  if (vidasIn === 0 && vidasOut > 0) return "So perda";
-  if (vidasIn > 0 && vidasOut === 0) return "So venda";
-  if (vidasIn > vidasOut) return "Crescimento";
-  if (vidasOut > vidasIn) return "Queda";
-  return "Neutro";
-};
-
 const findColumnKey = (keys: string[], aliases: string[]) => {
   const normalizedKeys = keys.map((key) => ({
     raw: key,
@@ -159,6 +169,144 @@ const chunk = <T,>(items: T[], size: number) => {
     result.push(items.slice(index, index + size));
   }
   return result;
+};
+
+const dedupeRowsByCodigo = (rows: KpiSnapshotRow[]) => {
+  const byCode = new Map<string, KpiSnapshotRow>();
+  rows.forEach((row) => {
+    const codigo = normalizeCode(row.codigo);
+    if (!codigo) return;
+    byCode.set(codigo, { ...row, codigo });
+  });
+  return Array.from(byCode.values()).sort((a, b) => a.codigo.localeCompare(b.codigo));
+};
+
+const buildStatusFromDelta = (vendas: number, cancelamentos: number): string =>
+  resolveKpiStatus(vendas, cancelamentos);
+
+const getSnapshotDeltaPayload = (current: number | null, previous: number | null) => {
+  const currentValue = Number(current ?? 0);
+  const previousValue = Number(previous ?? 0);
+  const delta = currentValue - previousValue;
+  return {
+    previous_vidas_qtde: previous,
+    delta,
+    vendas_qtde: delta > 0 ? delta : 0,
+    cancelamentos_qtde: delta < 0 ? Math.abs(delta) : 0,
+  };
+};
+
+const resolveKpiStatus = (vendas: number, cancelamentos: number): KpiStatus => {
+  if (vendas === 0 && cancelamentos === 0) return "inativo";
+  if (vendas === 0 && cancelamentos > 0) return "so_perda";
+  if (vendas > 0 && cancelamentos === 0) return "so_venda";
+  if (vendas > cancelamentos) return "crescimento";
+  if (cancelamentos > vendas) return "queda";
+  return "neutro";
+};
+
+const CLIENTS_SELECT_COLUMNS = "id, codigo, empresa, vidas_qtde";
+const KPI_SYNC_RUN_SELECT_COLUMNS =
+  "id, status, total_codes, processed_codes, failed_codes, started_at, source, current_code, current_stage, current_code_started_at, current_attempt";
+
+const fetchAllClientesRows = async () => {
+  const allRows: Array<{
+    id: string;
+    codigo: string | null;
+    empresa: string | null;
+    vidas_qtde: number | null;
+  }> = [];
+
+  for (let offset = 0; ; offset += CLIENTS_READ_CHUNK_SIZE) {
+    const { data, error } = await supabase
+      .from("clientes")
+      .select(CLIENTS_SELECT_COLUMNS)
+      .order("id", { ascending: true })
+      .range(offset, offset + CLIENTS_READ_CHUNK_SIZE - 1);
+    if (error) throw new Error(error.message);
+
+    const rows = (data ?? []) as typeof allRows;
+    allRows.push(...rows);
+    if (rows.length < CLIENTS_READ_CHUNK_SIZE) break;
+  }
+
+  return allRows;
+};
+
+const fetchAllKpiSnapshotRows = async (periodDays: KpiPeriodDays) => {
+  const allRows: KpiSnapshotRow[] = [];
+
+  for (let offset = 0; ; offset += KPI_SNAPSHOT_READ_CHUNK_SIZE) {
+    const { data, error } = await supabase
+      .from("kpi_sync_snapshots")
+      .select(
+        "id, sync_run_id, source, period_days, codigo, empresa, categoria, vidas_qtde, status, snapshot_at, snapshot_date, previous_vidas_qtde, delta, vendas_qtde, cancelamentos_qtde, created_at",
+      )
+      .eq("period_days", periodDays)
+      .order("snapshot_at", { ascending: false })
+      .range(offset, offset + KPI_SNAPSHOT_READ_CHUNK_SIZE - 1);
+    if (error) throw new Error(error.message);
+
+    const rows = (data ?? []) as KpiSnapshotRow[];
+    allRows.push(...rows);
+    if (rows.length < KPI_SNAPSHOT_READ_CHUNK_SIZE) break;
+  }
+
+  return allRows;
+};
+
+const fetchAllKpiSnapshotRowsByRunId = async (syncRunId: string) => {
+  const allRows: KpiSnapshotRow[] = [];
+  let lastCodigo = "";
+
+  for (;;) {
+    let query = supabase
+      .from("kpi_sync_snapshots")
+      .select(
+        "id, sync_run_id, source, period_days, codigo, empresa, categoria, vidas_qtde, status, snapshot_at, snapshot_date, previous_vidas_qtde, delta, vendas_qtde, cancelamentos_qtde, created_at",
+      )
+      .eq("sync_run_id", syncRunId)
+      .order("codigo", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(KPI_SNAPSHOT_READ_CHUNK_SIZE);
+
+    if (lastCodigo) {
+      query = query.gt("codigo", lastCodigo);
+    }
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+
+    const rows = (data ?? []) as KpiSnapshotRow[];
+    allRows.push(...rows);
+    if (rows.length < KPI_SNAPSHOT_READ_CHUNK_SIZE) break;
+    lastCodigo = rows[rows.length - 1]?.codigo ?? lastCodigo;
+    if (!lastCodigo) break;
+  }
+
+  return allRows;
+};
+
+const fetchLatestSyncRunBanner = async () => {
+  const { data: runningData, error: runningError } = await supabase
+    .from("kpi_sync_runs")
+    .select(KPI_SYNC_RUN_SELECT_COLUMNS)
+    .eq("status", "running")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (runningError) throw new Error(runningError.message);
+  if (runningData) return runningData as SyncRunBanner;
+
+  const { data: lastSuccessData, error: successError } = await supabase
+    .from("kpi_sync_runs")
+    .select(KPI_SYNC_RUN_SELECT_COLUMNS)
+    .eq("status", "success")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (successError) throw new Error(successError.message);
+  return (lastSuccessData as SyncRunBanner) ?? null;
 };
 
 const getCurrentMonthKey = () => {
@@ -234,11 +382,6 @@ const formatChartNumber = (value: number) =>
 const isSituacaoAtiva = (situacao: string | null | undefined) => {
   const normalized = normalizeText(situacao, { letterCase: "upper" });
   return normalized.startsWith("ATIV");
-};
-
-const unvalidatedReasonLabel: Record<UnvalidatedCode["reason"], string> = {
-  NAO_CADASTRADO: "Codigo nao cadastrado",
-  NAO_ATIVO: "Situacao de cadastro nao ativa",
 };
 
 const DonutChartCard = ({
@@ -409,7 +552,7 @@ const DoubleBarChartCard = ({
                 <div
                   key={`bar-group-${label}`}
                   className="flex min-w-[72px] flex-col items-center gap-2"
-                  title={`${label} â€¢ ${firstSeries.label}: ${firstSigned} â€¢ ${secondSeries.label}: ${secondSigned}`}
+                  title={`${label} • ${firstSeries.label}: ${firstSigned} • ${secondSeries.label}: ${secondSigned}`}
                 >
                   <span className="text-[11px] font-semibold text-ink">
                     {signedValues
@@ -466,41 +609,93 @@ export default function KPI() {
   const [parseSummary, setParseSummary] = useState<ParseSummary | null>(null);
   const [applySummary, setApplySummary] = useState<ApplySummary | null>(null);
   const [parsedRows, setParsedRows] = useState<ParsedKpiRow[]>([]);
-  const [missingCodeSamples, setMissingCodeSamples] = useState<string[]>([]);
-  const [unvalidatedCodes, setUnvalidatedCodes] = useState<UnvalidatedCode[]>([]);
   const [pdfError, setPdfError] = useState<string | null>(null);
-  const [activeImportId, setActiveImportId] = useState<string | null>(null);
-  const [historyRows, setHistoryRows] = useState<KpiImportHistoryRow[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const [consultingImportId, setConsultingImportId] = useState<string | null>(null);
-  const [historyExpanded, setHistoryExpanded] = useState(false);
   const [historicalChartRows, setHistoricalChartRows] = useState<ParsedKpiRow[]>([]);
   const [historicalChartLoading, setHistoricalChartLoading] = useState(false);
   const [historicalChartError, setHistoricalChartError] = useState<string | null>(null);
-  const [latestValidationRows, setLatestValidationRows] = useState<ParsedKpiRow[]>([]);
-  const [latestValidationMeta, setLatestValidationMeta] = useState<LatestValidationMeta | null>(null);
-  const [latestValidationLoading, setLatestValidationLoading] = useState(false);
-  const [latestValidationError, setLatestValidationError] = useState<string | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [selectedPeriodDays, setSelectedPeriodDays] = useState<KpiPeriodDays>(30);
+  const [syncingKpi, setSyncingKpi] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncRunBanner, setSyncRunBanner] = useState<SyncRunBanner>(null);
+  const [manualUploadOpen, setManualUploadOpen] = useState(false);
+  const [manualUploadFile, setManualUploadFile] = useState<File | null>(null);
+  const [currentSnapshotRows, setCurrentSnapshotRows] = useState<KpiSnapshotRow[]>([]);
+  const [previousSnapshotRows, setPreviousSnapshotRows] = useState<KpiSnapshotRow[]>([]);
+  const [codesSearch, setCodesSearch] = useState("");
+  const [codesSortKey, setCodesSortKey] = useState<"codigo" | "empresa" | "vidas_qtde" | "categoria">("codigo");
+  const [codesSortDirection, setCodesSortDirection] = useState<"asc" | "desc">("asc");
+  const snapshotLoadSequenceRef = useRef(0);
+  const snapshotLoadKeyRef = useRef("");
+
+  const syncProgressPercent =
+    syncRunBanner && syncRunBanner.total_codes > 0
+      ? Math.min(100, Math.round((syncRunBanner.processed_codes / syncRunBanner.total_codes) * 100))
+      : 0;
+  const syncCurrentCodeDuration =
+    syncRunBanner?.current_code_started_at && syncRunBanner.status === "running"
+      ? Math.max(0, Math.round((Date.now() - new Date(syncRunBanner.current_code_started_at).getTime()) / 1000))
+      : null;
   const fallbackMonthKey = useMemo(() => getCurrentMonthKey(), []);
 
-  const donutSourceRows = useMemo(
-    () => (latestValidationRows.length > 0 ? latestValidationRows : parsedRows),
-    [latestValidationRows, parsedRows],
+  const uniqueSnapshotRows = useMemo(
+    () => dedupeRowsByCodigo(currentSnapshotRows),
+    [currentSnapshotRows],
   );
+
+  const kpiPeriodAnalysis = useMemo(() => {
+    const grouped = new Map<string, KpiSnapshotRow[]>();
+    [...currentSnapshotRows, ...previousSnapshotRows].forEach((row) => {
+      const key = normalizeCode(row.codigo);
+      if (!key) return;
+      const list = grouped.get(key) ?? [];
+      list.push(row);
+      grouped.set(key, list);
+    });
+
+    return Array.from(grouped.entries())
+      .map(([codigo, rows]) => {
+        const ordered = [...rows].sort((a, b) => a.snapshot_at.localeCompare(b.snapshot_at));
+        const vendas = ordered.reduce((sum, row) => sum + Math.max(0, Number(row.vendas_qtde ?? 0)), 0);
+        const cancelamentos = ordered.reduce((sum, row) => sum + Math.max(0, Number(row.cancelamentos_qtde ?? 0)), 0);
+        const saldo = vendas - cancelamentos;
+        const current = ordered[ordered.length - 1] ?? null;
+        return {
+          codigo,
+          empresa: current?.empresa ?? null,
+          associadoTotalAtual: Number(current?.vidas_qtde ?? 0),
+          vendas,
+          cancelamentos,
+          saldo,
+          status: resolveKpiStatus(vendas, cancelamentos),
+        };
+      })
+      .sort((a, b) => a.codigo.localeCompare(b.codigo));
+  }, [currentSnapshotRows, previousSnapshotRows]);
 
   const categoryBreakdown = useMemo(() => {
     const totals = new Map<CategoriaValue, number>();
     CATEGORIA_OPTIONS.forEach((categoria) => totals.set(categoria, 0));
-    donutSourceRows.forEach((row) => {
-      totals.set(row.categoria, (totals.get(row.categoria) ?? 0) + 1);
+    kpiPeriodAnalysis.forEach((row) => {
+      const categoria = row.status === "inativo"
+        ? "Inativo"
+        : row.status === "so_perda"
+          ? "So perda"
+          : row.status === "queda"
+            ? "Queda"
+            : row.status === "crescimento"
+              ? "Crescimento"
+              : row.status === "so_venda"
+                ? "So venda"
+                : "Neutro";
+      totals.set(categoria as CategoriaValue, (totals.get(categoria as CategoriaValue) ?? 0) + 1);
     });
     return CATEGORIA_OPTIONS.map((categoria) => ({
       categoria,
       total: totals.get(categoria) ?? 0,
     }));
-  }, [donutSourceRows]);
+  }, [uniqueSnapshotRows]);
 
   const categoryDonutData = useMemo<DonutSlice[]>(
     () => [
@@ -514,62 +709,24 @@ export default function KPI() {
     [categoryBreakdown],
   );
 
-  const categoryValidationAnalysis = useMemo(
-    () =>
-      CATEGORIA_OPTIONS.map((categoria) => {
-        const rows = parsedRows.filter((row) => row.categoria === categoria);
-        const vidasInTotal = rows.reduce((sum, row) => sum + row.vidasIn, 0);
-        const vidasOutTotal = rows.reduce((sum, row) => sum + row.vidasOut, 0);
-        return {
-          categoria,
-          quantidade: rows.length,
-          vidasInTotal,
-          vidasOutTotal,
-          saldo: vidasInTotal - vidasOutTotal,
-        };
-      }),
-    [parsedRows],
-  );
-
   const vidasDonutData = useMemo<DonutSlice[]>(() => {
-    const vidasInTotal = donutSourceRows.reduce((sum, row) => sum + row.vidasIn, 0);
-    const vidasOutTotal = donutSourceRows.reduce((sum, row) => sum + row.vidasOut, 0);
+    const vidasInTotal = kpiPeriodAnalysis.reduce((sum, row) => sum + row.associadoTotalAtual, 0);
+    const vidasOutTotal = 0;
     return [
       { label: "Vidas In", value: vidasInTotal, color: "#16a34a" },
       { label: "Vidas Out", value: vidasOutTotal, color: "#dc2626" },
     ];
-  }, [donutSourceRows]);
-
-  const trendSourceRows = useMemo(
-    () => (historicalChartRows.length > 0 ? historicalChartRows : parsedRows),
-    [historicalChartRows, parsedRows],
-  );
+  }, [kpiPeriodAnalysis]);
 
   const monthSeries = useMemo(() => {
-    const monthMap = new Map<string, { vidasIn: number; vidasOut: number }>();
-
-    trendSourceRows.forEach((row) => {
-      const current = monthMap.get(row.monthKey) ?? {
-        vidasIn: 0,
-        vidasOut: 0,
-      };
-      current.vidasIn += row.vidasIn;
-      current.vidasOut += row.vidasOut;
-      monthMap.set(row.monthKey, current);
-    });
-
-    const monthKeys = Array.from(monthMap.keys()).sort((a, b) => a.localeCompare(b));
-    const labels = monthKeys.map((monthKey) => formatMonthLabel(monthKey));
-
-    const vidasInValues = monthKeys.map((monthKey) => monthMap.get(monthKey)?.vidasIn ?? 0);
-    const vidasOutValues = monthKeys.map((monthKey) => monthMap.get(monthKey)?.vidasOut ?? 0);
-
+    const currentTotal = kpiPeriodAnalysis.reduce((sum, row) => sum + row.associadoTotalAtual, 0);
+    const previousTotal = 0;
     return {
-      labels,
-      vidasInValues,
-      vidasOutValues,
+      labels: [`${selectedPeriodDays} dia(s)`],
+      vidasInValues: [currentTotal],
+      vidasOutValues: [previousTotal],
     };
-  }, [trendSourceRows]);
+  }, [kpiPeriodAnalysis, selectedPeriodDays]);
 
   const vidasGrowthSeries = useMemo(() => {
     if (monthSeries.labels.length <= 1) {
@@ -593,10 +750,70 @@ export default function KPI() {
     return { labels, vidasInGrowth, vidasOutGrowth };
   }, [monthSeries]);
 
+  const filteredRows = useMemo(() => {
+    const query = codesSearch.trim().toLowerCase();
+    return kpiPeriodAnalysis.filter((row) => {
+      if (!query) return true;
+      return [
+        row.codigo,
+        row.empresa ?? "",
+        row.status,
+        String(row.associadoTotalAtual ?? ""),
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    });
+  }, [codesSearch, kpiPeriodAnalysis]);
+
+  const filteredCodeRows = useMemo(() => {
+    const rows = filteredRows;
+
+    const direction = codesSortDirection === "asc" ? 1 : -1;
+    return [...rows].sort((left, right) => {
+      const leftValue =
+          codesSortKey === "codigo"
+          ? left.codigo
+          : codesSortKey === "empresa"
+            ? left.empresa ?? ""
+            : codesSortKey === "categoria"
+              ? left.status
+              : Number(left.associadoTotalAtual ?? 0);
+      const rightValue =
+        codesSortKey === "codigo"
+          ? right.codigo
+          : codesSortKey === "empresa"
+            ? right.empresa ?? ""
+            : codesSortKey === "categoria"
+              ? right.status
+              : Number(right.associadoTotalAtual ?? 0);
+
+      if (typeof leftValue === "number" && typeof rightValue === "number") {
+        return (leftValue - rightValue) * direction;
+      }
+      return String(leftValue).localeCompare(String(rightValue), "pt-BR", { sensitivity: "base" }) * direction;
+    });
+  }, [codesSortDirection, codesSortKey, filteredRows]);
+
+  const summaryCards = useMemo(
+    () => [
+      { label: "Total de codigos", value: filteredRows.length },
+      { label: "Total de vidas atual", value: filteredRows.reduce((sum, row) => sum + row.associadoTotalAtual, 0) },
+      { label: "Vendas no periodo", value: filteredRows.reduce((sum, row) => sum + row.vendas, 0) },
+      { label: "Cancelamentos no periodo", value: filteredRows.reduce((sum, row) => sum + row.cancelamentos, 0) },
+      { label: "Saldo de vidas", value: filteredRows.reduce((sum, row) => sum + row.saldo, 0) },
+      { label: "Crescimento", value: filteredRows.filter((row) => row.status === "crescimento").length },
+      { label: "Queda", value: filteredRows.filter((row) => row.status === "queda").length },
+      { label: "Inativos", value: filteredRows.filter((row) => row.status === "inativo").length },
+      { label: "Neutros", value: filteredRows.filter((row) => row.status === "neutro").length },
+    ],
+    [filteredRows],
+  );
+
   const handleExportTemplate = () => {
     const workbook = XLSX.utils.book_new();
     const dataSheet = XLSX.utils.aoa_to_sheet([
-      ["codigo", "vidas_in", "vidas_out"],
+      ["codigo", "AssociadoTitular"],
     ]);
     const rulesSheet = XLSX.utils.aoa_to_sheet([
       ["categoria", "descricao"],
@@ -610,6 +827,22 @@ export default function KPI() {
     const month = String(now.getMonth() + 1).padStart(2, "0");
     const year = String(now.getFullYear()).slice(-2);
     XLSX.writeFile(workbook, `modelo_importacao_kpi_${day}_${month}_${year}.xlsx`);
+  };
+
+  const exportKpiExcel = () => {
+    const workbook = XLSX.utils.book_new();
+    const rows = filteredCodeRows.map((row) => ({
+      codigo: row.codigo,
+      empresa: row.empresa ?? "",
+      status: row.status,
+      associadoTotal: row.associadoTotalAtual,
+      vendas: row.vendas,
+      cancelamentos: row.cancelamentos,
+      saldo: row.saldo,
+    }));
+    const sheet = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(workbook, sheet, "kpi");
+    XLSX.writeFile(workbook, `kpi_resultado_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   const exportKpiPdf = async () => {
@@ -730,23 +963,172 @@ export default function KPI() {
     }
   };
 
-  const loadImportHistory = async () => {
-    if (!canAccess) return;
-    setHistoryLoading(true);
-    setHistoryError(null);
+  const loadKpiSnapshots = async (periodDays: KpiPeriodDays) => {
+    const rows = await fetchAllKpiSnapshotRows(periodDays);
+    if (rows.length === 0) {
+      setCurrentSnapshotRows([]);
+      setPreviousSnapshotRows([]);
+      return;
+    }
+
+    const latestSnapshotAt = rows[0]?.snapshot_at ?? null;
+    const current = dedupeRowsByCodigo(rows.filter((row) => row.snapshot_at === latestSnapshotAt));
+      const previousStamp = rows.find((row) => row.snapshot_at !== latestSnapshotAt)?.snapshot_at ?? null;
+    const previous = previousStamp ? dedupeRowsByCodigo(rows.filter((row) => row.snapshot_at === previousStamp)) : [];
+    setCurrentSnapshotRows(current);
+    setPreviousSnapshotRows(previous);
+  };
+
+  const loadKpiSnapshotsForRun = async (syncRunId: string, loadSequence: number) => {
+    console.info("[KPI] snapshot-load-start", {
+      runId: syncRunId,
+      processedCodes: syncRunBanner?.processed_codes,
+      sequence: loadSequence,
+      currentSequence: snapshotLoadSequenceRef.current,
+    });
+    const rows = await fetchAllKpiSnapshotRowsByRunId(syncRunId);
+    console.info("[KPI] snapshot-load-finished", {
+      runId: syncRunId,
+      loadedRows: rows.length,
+      sequence: loadSequence,
+      currentSequence: snapshotLoadSequenceRef.current,
+    });
+    if (loadSequence !== snapshotLoadSequenceRef.current) return;
+    if (rows.length === 0) {
+      setCurrentSnapshotRows([]);
+      setPreviousSnapshotRows([]);
+      return;
+    }
+
+    setCurrentSnapshotRows(dedupeRowsByCodigo(rows));
+    setPreviousSnapshotRows([]);
+  };
+
+  const createSyncSnapshotFromRows = async ({
+    source,
+    rowsByCode,
+  }: {
+    source: "api_daily" | "manual_upload" | "manual_sync";
+    rowsByCode: Map<string, { associadoTotal: number; empresa: string | null }>;
+  }) => {
+    const snapshotAt = new Date().toISOString();
+    const snapshotDate = snapshotAt.slice(0, 10);
+    const normalizedCodes = Array.from(rowsByCode.keys()).sort((a, b) => a.localeCompare(b));
+
+    const syncRunInsert = await supabase
+      .from("kpi_sync_runs")
+      .insert({
+        source,
+        status: "running",
+        started_at: snapshotAt,
+        requested_by_user_id: session?.user?.id ?? null,
+        total_codes: normalizedCodes.length,
+      })
+      .select("id")
+      .single();
+    if (syncRunInsert.error) throw new Error(syncRunInsert.error.message);
+    const syncRunId = String((syncRunInsert.data as { id: string }).id);
+
+    const { data: previousSnapshotsData, error: previousSnapshotsError } = await supabase
+      .from("kpi_sync_snapshots")
+      .select("codigo, vidas_qtde, snapshot_at")
+      .eq("period_days", selectedPeriodDays)
+      .order("snapshot_at", { ascending: false });
+    if (previousSnapshotsError) throw new Error(previousSnapshotsError.message);
+
+    const previousByCode = new Map<string, number>();
+    (previousSnapshotsData ?? []).forEach((item) => {
+      const codigo = normalizeCode((item as { codigo: string | null }).codigo);
+      if (!codigo || previousByCode.has(codigo)) return;
+      previousByCode.set(codigo, Number((item as { vidas_qtde: number | null }).vidas_qtde ?? 0));
+    });
+
+    const snapshotRows: KpiSnapshotRow[] = normalizedCodes.map((codigo) => {
+      const entry = rowsByCode.get(codigo);
+      const current = Number(entry?.associadoTotal ?? 0);
+      const previous = previousByCode.get(codigo) ?? null;
+      const deltaPayload = getSnapshotDeltaPayload(current, previous);
+      return {
+        id: `sync-${syncRunId}-${codigo}`,
+        sync_run_id: syncRunId,
+        source,
+        period_days: selectedPeriodDays,
+        codigo,
+        empresa: entry?.empresa ?? null,
+        categoria: "Neutro" as CategoriaValue,
+        vidas_qtde: current,
+        status: buildStatusFromDelta(deltaPayload.vendas_qtde, deltaPayload.cancelamentos_qtde),
+        snapshot_at: snapshotAt,
+        snapshot_date: snapshotDate,
+        previous_vidas_qtde: previous,
+        delta: deltaPayload.delta,
+        vendas_qtde: deltaPayload.vendas_qtde,
+        cancelamentos_qtde: deltaPayload.cancelamentos_qtde,
+        created_at: snapshotAt,
+      };
+    });
+
+    const { error: insertSnapshotError } = await supabase.from("kpi_sync_snapshots").insert(snapshotRows);
+    if (insertSnapshotError) throw new Error(insertSnapshotError.message);
+
+    for (const codeBatch of chunk(normalizedCodes, LOOKUP_CHUNK_SIZE)) {
+      const batchRows = codeBatch
+        .map((codigo) => ({ codigo, associadoTotal: rowsByCode.get(codigo)?.associadoTotal ?? 0 }))
+        .filter((item) => item.codigo);
+      if (batchRows.length === 0) continue;
+      for (const item of batchRows) {
+        const { error } = await supabase
+          .from("clientes")
+          .update({ vidas_qtde: item.associadoTotal })
+          .eq("codigo", item.codigo);
+        if (error) throw new Error(error.message);
+      }
+    }
+
+    const finishedAt = new Date().toISOString();
+    const { error: runUpdateError } = await supabase
+      .from("kpi_sync_runs")
+      .update({
+        status: "success",
+        finished_at: finishedAt,
+        processed_codes: snapshotRows.length,
+        changed_codes: snapshotRows.filter((row) => row.delta !== 0).length,
+        failed_codes: 0,
+      })
+      .eq("id", syncRunId);
+    if (runUpdateError) throw new Error(runUpdateError.message);
+
+    return { syncRunId, snapshotRows };
+  };
+
+  const runKpiSync = async () => {
+    setSyncingKpi(true);
+    setSyncError(null);
+    setSyncMessage(null);
+
     try {
-      const { data, error } = await supabase
-        .from("kpi_imports")
-        .select("id, source_filename, rows_in_file, valid_rows, ignored_rows, unique_codes, unvalidated_codes, status, detected_columns, found_codes, missing_codes, estimated_companies_updated, updated_rows, created_at, applied_at")
-        .order("created_at", { ascending: false })
-        .limit(20);
-      if (error) throw new Error(error.message);
-      setHistoryRows((data ?? []) as KpiImportHistoryRow[]);
+      const rows = await fetchAllClientesRows();
+      const rowsByCode = new Map<string, { associadoTotal: number; empresa: string | null }>();
+      rows.forEach((row) => {
+        const code = normalizeCode(row.codigo);
+        if (!code) return;
+        rowsByCode.set(code, {
+          associadoTotal: Number(row.vidas_qtde ?? 0),
+          empresa: row.empresa ?? null,
+        });
+      });
+
+      const { snapshotRows } = await createSyncSnapshotFromRows({
+        source: "manual_sync",
+        rowsByCode,
+      });
+      setCurrentSnapshotRows(snapshotRows as KpiSnapshotRow[]);
+      setPreviousSnapshotRows([]);
+      setSyncMessage(`Snapshot do KPI atualizado a partir de clientes. ${snapshotRows.length} registro(s).`);
     } catch (error) {
-      setHistoryRows([]);
-      setHistoryError(error instanceof Error ? error.message : "Erro ao carregar historico de importacoes.");
+      setSyncError(error instanceof Error ? error.message : "Falha ao atualizar KPI.");
     } finally {
-      setHistoryLoading(false);
+      setSyncingKpi(false);
     }
   };
 
@@ -755,66 +1137,28 @@ export default function KPI() {
     setHistoricalChartLoading(true);
     setHistoricalChartError(null);
     try {
-      const { data: importsData, error: importsError } = await supabase
-        .from("kpi_imports")
-        .select("id, created_at")
-        .order("created_at", { ascending: false })
-        .limit(1000);
-      if (importsError) throw new Error(importsError.message);
+      const { data: snapshotsData, error: snapshotsError } = await supabase
+        .from("kpi_sync_snapshots")
+        .select("codigo, vidas_qtde, snapshot_at, previous_vidas_qtde, delta, vendas_qtde, cancelamentos_qtde, source, period_days, empresa, categoria, status")
+        .eq("period_days", selectedPeriodDays)
+        .order("snapshot_at", { ascending: false });
+      if (snapshotsError) throw new Error(snapshotsError.message);
 
-      const imports = (importsData ?? []) as Array<{ id: string; created_at: string }>;
-      if (imports.length === 0) {
+      const snapshots = (snapshotsData ?? []) as KpiSnapshotRow[];
+      if (snapshots.length === 0) {
         setHistoricalChartRows([]);
         return;
       }
-
-      const importCreatedAtMsById = new Map<string, number>();
-      imports.forEach((item) => {
-        const ms = new Date(item.created_at).getTime();
-        importCreatedAtMsById.set(item.id, Number.isFinite(ms) ? ms : 0);
-      });
-
-      const importIds = imports.map((item) => item.id);
-      const allRows: PersistedImportRow[] = [];
-      for (const batch of chunk(importIds, LOOKUP_CHUNK_SIZE)) {
-        const { data: rowsData, error: rowsError } = await supabase
-          .from("kpi_import_rows")
-          .select("import_id, codigo, vidas_in, vidas_out, categoria, month_key, source_row")
-          .in("import_id", batch);
-        if (rowsError) throw new Error(rowsError.message);
-        allRows.push(...((rowsData ?? []) as PersistedImportRow[]));
-      }
-
-      const dedupByMonthAndCode = new Map<
-        string,
-        { importMs: number; row: ParsedKpiRow }
-      >();
-      allRows.forEach((item) => {
-        const code = normalizeCode(item.codigo);
-        const monthKey = String(item.month_key ?? "").trim();
-        if (!code || !monthKey) return;
-        const importMs = importCreatedAtMsById.get(item.import_id) ?? 0;
-        const key = `${monthKey}::${code}`;
-        const row: ParsedKpiRow = {
-          codigo: code,
-          vidasIn: Number(item.vidas_in ?? 0),
-          vidasOut: Number(item.vidas_out ?? 0),
-          categoria: item.categoria,
-          monthKey,
-          sourceRow: Number(item.source_row ?? 0) || 0,
-        };
-
-        const current = dedupByMonthAndCode.get(key);
-        if (!current || importMs >= current.importMs) {
-          dedupByMonthAndCode.set(key, { importMs, row });
-        }
-      });
-
-      setHistoricalChartRows(
-        Array.from(dedupByMonthAndCode.values())
-          .map((item) => item.row)
-          .sort((a, b) => a.monthKey.localeCompare(b.monthKey) || a.codigo.localeCompare(b.codigo)),
-      );
+      const ordered = [...snapshots].sort((a, b) => a.snapshot_at.localeCompare(b.snapshot_at));
+      setHistoricalChartRows(ordered.map((row) => ({
+        codigo: row.codigo,
+        associadoTotal: Number(row.vidas_qtde ?? 0),
+        sourceRow: 0,
+        monthKey: row.snapshot_date,
+        categoria: row.categoria,
+        vidasIn: Number(row.delta > 0 ? row.delta : 0),
+        vidasOut: Number(row.delta < 0 ? Math.abs(row.delta) : 0),
+      })));
     } catch (error) {
       setHistoricalChartRows([]);
       setHistoricalChartError(
@@ -825,225 +1169,53 @@ export default function KPI() {
     }
   };
 
-  const loadLatestValidationRows = async () => {
-    if (!canAccess) return;
-    setLatestValidationLoading(true);
-    setLatestValidationError(null);
-    try {
-      const { data: importData, error: importError } = await supabase
-        .from("kpi_imports")
-        .select("id, source_filename, created_at")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (importError) throw new Error(importError.message);
-
-      if (!importData) {
-        setLatestValidationRows([]);
-        setLatestValidationMeta(null);
-        return;
-      }
-
-      const latestImport = importData as {
-        id: string;
-        source_filename: string | null;
-        created_at: string;
-      };
-
-      const { data: rowsData, error: rowsError } = await supabase
-        .from("kpi_import_rows")
-        .select("codigo, vidas_in, vidas_out, categoria, month_key, source_row")
-        .eq("import_id", latestImport.id)
-        .order("codigo", { ascending: true });
-      if (rowsError) throw new Error(rowsError.message);
-
-      const mappedRows: ParsedKpiRow[] = (rowsData ?? []).map((item, index) => {
-        const row = item as {
-          codigo: string | null;
-          vidas_in: number | null;
-          vidas_out: number | null;
-          categoria: CategoriaValue | null;
-          month_key: string | null;
-          source_row: number | null;
-        };
-        const vidasIn = Number(row.vidas_in ?? 0);
-        const vidasOut = Number(row.vidas_out ?? 0);
-        return {
-          codigo: normalizeCode(row.codigo),
-          vidasIn: Number.isFinite(vidasIn) ? vidasIn : 0,
-          vidasOut: Number.isFinite(vidasOut) ? vidasOut : 0,
-          categoria: row.categoria ?? classifyCategoria(vidasIn, vidasOut),
-          monthKey: row.month_key ?? fallbackMonthKey,
-          sourceRow: row.source_row ?? index + 2,
-        };
-      });
-
-      setLatestValidationRows(mappedRows);
-      setLatestValidationMeta({
-        importId: latestImport.id,
-        sourceFilename: latestImport.source_filename ?? "-",
-        createdAt: latestImport.created_at,
-      });
-    } catch (error) {
-      setLatestValidationRows([]);
-      setLatestValidationMeta(null);
-      setLatestValidationError(
-        error instanceof Error ? error.message : "Erro ao carregar a ultima validacao para os graficos de rosca.",
-      );
-    } finally {
-      setLatestValidationLoading(false);
-    }
-  };
+  useEffect(() => {
+    void loadHistoricalChartRows();
+  }, [canAccess, selectedPeriodDays]);
 
   useEffect(() => {
-    void Promise.all([loadImportHistory(), loadHistoricalChartRows(), loadLatestValidationRows()]);
+    if (!canAccess) return;
+    let cancelled = false;
+
+    const refreshSyncRunBanner = async () => {
+      try {
+        const banner = await fetchLatestSyncRunBanner();
+        if (!cancelled) setSyncRunBanner(banner);
+        if (!cancelled && banner?.id && banner.status === "running") {
+          const loadKey = `${banner.id}:${banner.processed_codes}:${banner.status}`;
+          if (snapshotLoadKeyRef.current === loadKey) return;
+          snapshotLoadKeyRef.current = loadKey;
+          const loadSequence = snapshotLoadSequenceRef.current + 1;
+          snapshotLoadSequenceRef.current = loadSequence;
+          console.info("[KPI] snapshot-load-requested", {
+            runId: banner.id,
+            processedCodes: banner.processed_codes,
+            sequence: loadSequence,
+            trigger: "polling",
+          });
+
+          void loadKpiSnapshotsForRun(banner.id, loadSequence).catch((error) => {
+            if (loadSequence !== snapshotLoadSequenceRef.current) return;
+            setSyncError(error instanceof Error ? error.message : "Erro ao carregar snapshots do KPI.");
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSyncError(error instanceof Error ? error.message : "Erro ao carregar status da sincronizacao.");
+        }
+      }
+    };
+
+    void refreshSyncRunBanner();
+    const timer = window.setInterval(() => {
+      void refreshSyncRunBanner();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [canAccess]);
-
-  const persistValidatedImport = async ({
-    sourceFilename,
-    parseSummaryDraft,
-    validatedRows,
-    unvalidatedRows,
-  }: {
-    sourceFilename: string;
-    parseSummaryDraft: ParseSummary;
-    validatedRows: ParsedKpiRow[];
-    unvalidatedRows: UnvalidatedCode[];
-  }) => {
-    const { data: insertedImport, error: insertImportError } = await supabase
-      .from("kpi_imports")
-      .insert({
-        source_filename: sourceFilename,
-        rows_in_file: parseSummaryDraft.rowsInFile,
-        valid_rows: parseSummaryDraft.validRows,
-        ignored_rows: parseSummaryDraft.ignoredRows,
-        unique_codes: parseSummaryDraft.uniqueCodes,
-        unvalidated_codes: parseSummaryDraft.unvalidatedCodes,
-        detected_columns: parseSummaryDraft.columns,
-        created_by_name: profile?.display_name ?? profile?.nome ?? null,
-      })
-      .select("id")
-      .single();
-    if (insertImportError) throw new Error(insertImportError.message);
-
-    const importId = String((insertedImport as { id: string }).id ?? "").trim();
-    if (!importId) throw new Error("Falha ao salvar historico KPI.");
-
-    const importRowsPayload = validatedRows.map((row) => ({
-      import_id: importId,
-      codigo: row.codigo,
-      vidas_in: row.vidasIn,
-      vidas_out: row.vidasOut,
-      categoria: row.categoria,
-      month_key: row.monthKey,
-      source_row: row.sourceRow,
-    }));
-    for (const batch of chunk(importRowsPayload, IMPORT_SAVE_CHUNK_SIZE)) {
-      if (batch.length === 0) continue;
-      const { error } = await supabase.from("kpi_import_rows").insert(batch);
-      if (error) throw new Error(error.message);
-    }
-
-    const unvalidatedPayload = unvalidatedRows.map((row) => ({
-      import_id: importId,
-      codigo: row.codigo,
-      reason: row.reason,
-    }));
-    for (const batch of chunk(unvalidatedPayload, IMPORT_SAVE_CHUNK_SIZE)) {
-      if (batch.length === 0) continue;
-      const { error } = await supabase.from("kpi_import_unvalidated_codes").insert(batch);
-      if (error) throw new Error(error.message);
-    }
-
-    return importId;
-  };
-
-  const consultImport = async (importRow: KpiImportHistoryRow) => {
-    setConsultingImportId(importRow.id);
-    setParseError(null);
-    setApplyError(null);
-    setPdfError(null);
-    try {
-      const { data: rowsData, error: rowsError } = await supabase
-        .from("kpi_import_rows")
-        .select("codigo, vidas_in, vidas_out, categoria, month_key, source_row")
-        .eq("import_id", importRow.id)
-        .order("codigo", { ascending: true });
-      if (rowsError) throw new Error(rowsError.message);
-
-      const { data: unvalidatedData, error: unvalidatedError } = await supabase
-        .from("kpi_import_unvalidated_codes")
-        .select("codigo, reason")
-        .eq("import_id", importRow.id)
-        .order("codigo", { ascending: true });
-      if (unvalidatedError) throw new Error(unvalidatedError.message);
-
-      const restoredRows: ParsedKpiRow[] = (rowsData ?? []).map((item, index) => {
-        const row = item as {
-          codigo: string | null;
-          vidas_in: number | null;
-          vidas_out: number | null;
-          categoria: CategoriaValue | null;
-          month_key: string | null;
-          source_row: number | null;
-        };
-        const vidasIn = Number(row.vidas_in ?? 0);
-        const vidasOut = Number(row.vidas_out ?? 0);
-        return {
-          codigo: normalizeCode(row.codigo),
-          vidasIn: Number.isFinite(vidasIn) ? vidasIn : 0,
-          vidasOut: Number.isFinite(vidasOut) ? vidasOut : 0,
-          categoria: row.categoria ?? classifyCategoria(vidasIn, vidasOut),
-          monthKey: row.month_key ?? fallbackMonthKey,
-          sourceRow: row.source_row ?? index + 2,
-        };
-      });
-
-      const restoredUnvalidated: UnvalidatedCode[] = (unvalidatedData ?? []).map((item) => {
-        const row = item as { codigo: string | null; reason: "NAO_CADASTRADO" | "NAO_ATIVO" };
-        return {
-          codigo: normalizeCode(row.codigo),
-          reason: row.reason,
-        };
-      });
-
-      setFile(null);
-      setParsedRows(restoredRows);
-      setUnvalidatedCodes(restoredUnvalidated);
-      setMissingCodeSamples([]);
-      setApplySummary(
-        importRow.status === "APLICADO"
-          ? {
-              uniqueCodes: importRow.unique_codes,
-              foundCodes: importRow.found_codes ?? 0,
-              missingCodes: importRow.missing_codes ?? 0,
-              estimatedCompaniesUpdated: importRow.estimated_companies_updated ?? 0,
-              updatedRows: importRow.updated_rows ?? 0,
-            }
-          : null,
-      );
-
-      const columns = importRow.detected_columns;
-      setParseSummary({
-        rowsInFile: importRow.rows_in_file,
-        validRows: importRow.valid_rows,
-        ignoredRows: importRow.ignored_rows,
-        uniqueCodes: importRow.unique_codes,
-        unvalidatedCodes: importRow.unvalidated_codes,
-        columns: {
-          codigo: columns?.codigo ?? "codigo",
-          vidasIn: columns?.vidasIn ?? "vidas_in",
-          vidasOut: columns?.vidasOut ?? "vidas_out",
-          month: columns?.month ?? null,
-        },
-      });
-      setActiveImportId(importRow.id);
-    } catch (error) {
-      setParseError(error instanceof Error ? error.message : "Erro ao consultar importacao salva.");
-    } finally {
-      setConsultingImportId(null);
-    }
-  };
 
   const parseFile = async () => {
     if (!file) {
@@ -1056,8 +1228,6 @@ export default function KPI() {
     setApplyError(null);
     setPdfError(null);
     setApplySummary(null);
-    setMissingCodeSamples([]);
-    setUnvalidatedCodes([]);
 
     try {
       const buffer = await file.arrayBuffer();
@@ -1071,69 +1241,47 @@ export default function KPI() {
 
       const keys = Object.keys(rows[0] ?? {});
       const codigoKey = findColumnKey(keys, ["codigo", "cod", "cod_1", "cod1"]);
-      const vidasInKey = findColumnKey(keys, [
-        "vidas_in",
-        "vidasin",
-        "vidas_entrada",
-        "vidas_venda",
-        "vendas",
-        "venda",
-      ]);
-      const vidasOutKey = findColumnKey(keys, [
-        "vidas_out",
-        "vidasout",
-        "vidas_saida",
-        "vidas_cancelamento",
-        "cancelamentos",
-        "cancelamento",
-      ]);
-      const monthKey = findColumnKey(keys, [
-        "mes",
-        "competencia",
-        "referencia",
-        "month",
+      const associadoTotalKey = findColumnKey(keys, [
+        "associadotitular",
+        "associado_titular",
+        "associado titular",
+        "total_titulares",
       ]);
 
       if (!codigoKey) throw new Error("Coluna de codigo nao encontrada. Esperado: codigo/cod.");
-      if (!vidasInKey) throw new Error("Coluna de vidas_in nao encontrada. Esperado: vidas_in.");
-      if (!vidasOutKey) throw new Error("Coluna de vidas_out nao encontrada. Esperado: vidas_out.");
-      if (vidasInKey === vidasOutKey) {
-        throw new Error("Colunas de vidas_in e vidas_out conflitaram. Ajuste o cabecalho do arquivo.");
-      }
+      if (!associadoTotalKey) throw new Error("Coluna de AssociadoTitular nao encontrada.");
 
       const invalidRows: number[] = [];
       const validRows: ParsedKpiRow[] = [];
       let ignoredRows = 0;
+      const byCode = new Map<string, ParsedKpiRow>();
 
       rows.forEach((row, index) => {
         const sourceRow = index + 2;
         const codigo = normalizeCode(row[codigoKey]);
-        const hasIn = String(row[vidasInKey] ?? "").trim().length > 0;
-        const hasOut = String(row[vidasOutKey] ?? "").trim().length > 0;
-        const hasAnyValue = Boolean(codigo || hasIn || hasOut);
+        const hasTotal = String(row[associadoTotalKey] ?? "").trim().length > 0;
+        const hasAnyValue = Boolean(codigo || hasTotal);
 
         if (!hasAnyValue) {
           ignoredRows += 1;
           return;
         }
 
-        const vidasIn = parseNonNegativeNumber(row[vidasInKey]);
-        const vidasOut = parseNonNegativeNumber(row[vidasOutKey]);
-        const parsedMonth = monthKey ? parseMonthKey(row[monthKey]) : fallbackMonthKey;
-
-        if (!codigo || vidasIn === null || vidasOut === null || !parsedMonth) {
+        const associadoTotal = parseNonNegativeNumber(row[associadoTotalKey]);
+        if (!codigo || associadoTotal === null) {
           invalidRows.push(sourceRow);
           return;
         }
 
-        validRows.push({
-          codigo,
-          vidasIn,
-          vidasOut,
-          categoria: classifyCategoria(vidasIn, vidasOut),
-          monthKey: parsedMonth,
-          sourceRow,
-        });
+        const existing = byCode.get(codigo);
+        if (existing && existing.associadoTotal !== associadoTotal) {
+          invalidRows.push(sourceRow);
+          return;
+        }
+
+        const parsedRow = { codigo, associadoTotal, sourceRow };
+        byCode.set(codigo, parsedRow);
+        validRows.push(parsedRow);
       });
 
       if (invalidRows.length > 0) {
@@ -1145,196 +1293,46 @@ export default function KPI() {
         throw new Error("Nenhuma linha valida encontrada no arquivo.");
       }
 
-      const uniqueCodes = Array.from(new Set(validRows.map((row) => row.codigo)));
-      const codeStatus = new Map<string, { hasAny: boolean; hasActive: boolean }>();
-      uniqueCodes.forEach((code) => codeStatus.set(code, { hasAny: false, hasActive: false }));
-      for (const codeBatch of chunk(uniqueCodes, LOOKUP_CHUNK_SIZE)) {
-        const { data, error } = await supabase
-          .from("clientes")
-          .select("codigo, situacao")
-          .in("codigo", codeBatch);
-        if (error) throw new Error(error.message);
-
-        (data ?? []).forEach((item) => {
-          const codigo = normalizeCode((item as { codigo: string | null }).codigo);
-          if (!codigo) return;
-          const current = codeStatus.get(codigo) ?? { hasAny: false, hasActive: false };
-          current.hasAny = true;
-          current.hasActive = current.hasActive || isSituacaoAtiva((item as { situacao: string | null }).situacao);
-          codeStatus.set(codigo, current);
-        });
-      }
-
-      const unvalidatedMap = new Map<string, UnvalidatedCode>();
-      uniqueCodes.forEach((code) => {
-        const status = codeStatus.get(code) ?? { hasAny: false, hasActive: false };
-        if (!status.hasAny) {
-          unvalidatedMap.set(code, { codigo: code, reason: "NAO_CADASTRADO" });
-          return;
-        }
-        if (!status.hasActive) {
-          unvalidatedMap.set(code, { codigo: code, reason: "NAO_ATIVO" });
-        }
-      });
-      const allowedCodeSet = new Set(
-        uniqueCodes.filter((code) => !unvalidatedMap.has(code)),
-      );
-      const rowsForValidation = validRows.filter((row) => allowedCodeSet.has(row.codigo));
-
-      const byCode = new Map<string, ParsedKpiRow>();
-      const conflicts: string[] = [];
-      rowsForValidation.forEach((row) => {
-        const existing = byCode.get(row.codigo);
-        if (!existing) {
-          byCode.set(row.codigo, row);
-          return;
-        }
-        if (existing.categoria !== row.categoria) {
-          conflicts.push(
-            `codigo ${row.codigo}: ${existing.categoria} x ${row.categoria} (linha ${row.sourceRow})`,
-          );
-        }
-      });
-
-      if (conflicts.length > 0) {
-        const preview = conflicts.slice(0, 8).join("; ");
-        throw new Error(`Conflito de categoria para o mesmo codigo. ${preview}`);
-      }
-
       const normalizedRows = Array.from(byCode.values()).sort((a, b) =>
-        a.codigo.localeCompare(b.codigo),
-      );
-      const unvalidatedSorted = Array.from(unvalidatedMap.values()).sort((a, b) =>
         a.codigo.localeCompare(b.codigo),
       );
 
       const parseSummaryDraft: ParseSummary = {
         rowsInFile: rows.length,
-        validRows: rowsForValidation.length,
+        validRows: validRows.length,
         ignoredRows,
         uniqueCodes: normalizedRows.length,
-        unvalidatedCodes: unvalidatedSorted.length,
+        unvalidatedCodes: 0,
         columns: {
           codigo: codigoKey,
-          vidasIn: vidasInKey,
-          vidasOut: vidasOutKey,
-          month: monthKey,
+          associadoTotal: associadoTotalKey,
+          month: null,
         },
       };
 
-      const persistedImportId = await persistValidatedImport({
-        sourceFilename: file.name,
-        parseSummaryDraft,
-        validatedRows: normalizedRows,
-        unvalidatedRows: unvalidatedSorted,
+      const rowsByCode = new Map(
+        normalizedRows.map((row) => [row.codigo, { associadoTotal: row.associadoTotal, empresa: null }] as const),
+      );
+      const { syncRunId } = await createSyncSnapshotFromRows({
+        source: "manual_upload",
+        rowsByCode,
       });
 
       setParsedRows(normalizedRows);
-      setUnvalidatedCodes(unvalidatedSorted);
       setParseSummary(parseSummaryDraft);
-      setActiveImportId(persistedImportId);
-      await applyCategoriasForRows(normalizedRows, persistedImportId);
+      setApplySummary({
+        uniqueCodes: normalizedRows.length,
+        foundCodes: normalizedRows.length,
+        missingCodes: 0,
+        estimatedCompaniesUpdated: normalizedRows.length,
+        updatedRows: normalizedRows.length,
+      });
     } catch (error) {
       setParsedRows([]);
       setParseSummary(null);
-      setUnvalidatedCodes([]);
-      setActiveImportId(null);
       setParseError(error instanceof Error ? error.message : "Erro ao ler arquivo.");
     } finally {
       setParsing(false);
-    }
-  };
-
-  const applyCategoriasForRows = async (rows: ParsedKpiRow[], importId: string | null) => {
-    if (rows.length === 0) return;
-    setApplying(true);
-    setApplyError(null);
-    setPdfError(null);
-    setApplySummary(null);
-    setMissingCodeSamples([]);
-
-    try {
-      const codeToCategoria = new Map(rows.map((row) => [row.codigo, row.categoria] as const));
-      const allCodes = Array.from(codeToCategoria.keys());
-
-      const codeCountMap = new Map<string, number>();
-      const activeRows: Array<{ id: string; codigo: string }> = [];
-      for (const codeBatch of chunk(allCodes, LOOKUP_CHUNK_SIZE)) {
-        const { data, error } = await supabase
-          .from("clientes")
-          .select("id, codigo, situacao")
-          .in("codigo", codeBatch);
-        if (error) throw new Error(error.message);
-
-        (data ?? []).forEach((item) => {
-          const codigo = normalizeCode((item as { codigo: string | null }).codigo);
-          if (!codigo) return;
-          if (!isSituacaoAtiva((item as { situacao: string | null }).situacao)) return;
-          codeCountMap.set(codigo, (codeCountMap.get(codigo) ?? 0) + 1);
-          const id = String((item as { id: string }).id ?? "").trim();
-          if (id) activeRows.push({ id, codigo });
-        });
-      }
-
-      const foundCodes = allCodes.filter((code) => codeCountMap.has(code));
-      const missingCodes = allCodes.filter((code) => !codeCountMap.has(code));
-
-      const groupedByCategoria = new Map<CategoriaValue, string[]>();
-      activeRows.forEach((row) => {
-        const categoria = codeToCategoria.get(row.codigo);
-        if (!categoria) return;
-        const current = groupedByCategoria.get(categoria) ?? [];
-        current.push(row.id);
-        groupedByCategoria.set(categoria, current);
-      });
-
-      let updatedRows = 0;
-      for (const [categoria, ids] of groupedByCategoria.entries()) {
-        for (const idBatch of chunk(ids, UPDATE_CHUNK_SIZE)) {
-          const { error } = await supabase
-            .from("clientes")
-            .update({ categoria })
-            .in("id", idBatch);
-          if (error) throw new Error(error.message);
-          updatedRows += idBatch.length;
-        }
-      }
-
-      const estimatedCompaniesUpdated = foundCodes.reduce(
-        (sum, code) => sum + (codeCountMap.get(code) ?? 0),
-        0,
-      );
-
-      setMissingCodeSamples(missingCodes.slice(0, 20));
-      const applySummaryDraft: ApplySummary = {
-        uniqueCodes: allCodes.length,
-        foundCodes: foundCodes.length,
-        missingCodes: missingCodes.length,
-        estimatedCompaniesUpdated,
-        updatedRows,
-      };
-      setApplySummary(applySummaryDraft);
-
-      if (importId) {
-        const { error: updateImportError } = await supabase
-          .from("kpi_imports")
-          .update({
-            status: "APLICADO",
-            applied_at: new Date().toISOString(),
-            applied_by_user_id: session?.user?.id ?? null,
-            found_codes: applySummaryDraft.foundCodes,
-            missing_codes: applySummaryDraft.missingCodes,
-            estimated_companies_updated: applySummaryDraft.estimatedCompaniesUpdated,
-            updated_rows: applySummaryDraft.updatedRows,
-          })
-          .eq("id", importId);
-        if (updateImportError) throw new Error(updateImportError.message);
-      }
-      await Promise.all([loadImportHistory(), loadHistoricalChartRows(), loadLatestValidationRows()]);
-    } catch (error) {
-      setApplyError(error instanceof Error ? error.message : "Erro ao aplicar categorias.");
-    } finally {
-      setApplying(false);
     }
   };
 
@@ -1352,115 +1350,142 @@ export default function KPI() {
         <div>
           <h2 className="font-display text-2xl text-ink">KPI</h2>
           <p className="mt-2 text-sm text-ink/60">
-            Upload de arquivo com codigo, vidas_in e vidas_out para atualizar categoria das empresas.
+            Indicadores baseados no AssociadoTitular por codigo, com historico de snapshots e comparacao por periodo.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={exportKpiPdf}
-          disabled={exportingPdf}
-          data-pdf-exclude="true"
-          className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-60 print:hidden"
-        >
-          {exportingPdf ? "Gerando PDF..." : "Exportar PDF"}
-        </button>
-      </header>
-
-      <section className="rounded-2xl border border-sea/20 bg-sand/30 p-3 md:p-4">
-        <div data-pdf-exclude="true" className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-end">
-          <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
-            Arquivo
-            <input
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={(event) => {
-                setFile(event.target.files?.[0] ?? null);
-                setParseError(null);
-                setApplyError(null);
-                setPdfError(null);
-                setParseSummary(null);
-                setApplySummary(null);
-                setParsedRows([]);
-                setMissingCodeSamples([]);
-                setUnvalidatedCodes([]);
-                setActiveImportId(null);
-              }}
-              className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
-            />
-          </label>
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={parseFile}
-            disabled={!file || parsing || applying}
-            className="h-10 rounded-lg bg-sea px-4 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
+            onClick={() => setManualUploadOpen(true)}
+            className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-60 print:hidden"
           >
-            {parsing || applying ? "Processando..." : "Validar, salvar e aplicar"}
+            Atualizar por planilha
           </button>
           <button
             type="button"
-            onClick={handleExportTemplate}
-            disabled={parsing || applying}
-            className="h-10 rounded-lg border border-sea/30 bg-white/90 px-4 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-60"
+            onClick={exportKpiPdf}
+            disabled={exportingPdf}
+            data-pdf-exclude="true"
+            className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-60 print:hidden"
           >
-            Exportar modelo
+            {exportingPdf ? "Gerando PDF..." : "Exportar PDF"}
+          </button>
+          <button
+            type="button"
+            onClick={exportKpiExcel}
+            className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea print:hidden"
+          >
+            Exportar Excel
           </button>
         </div>
+      </header>
 
-        <div className="mt-3 rounded-xl border border-sea/15 bg-white/80 p-3 text-xs text-ink/70">
-          <p className="font-semibold text-ink/80">Regras de classificacao</p>
-          <div className="mt-2 grid gap-1 md:grid-cols-2">
-            {CATEGORIA_OPTIONS.map((categoria) => (
-              <p key={categoria}>
-                <span className="font-semibold text-ink">{categoria}:</span>{" "}
-                {CATEGORIA_DESCRIPTIONS[categoria]}
-              </p>
-            ))}
+      <div className="rounded-2xl border border-sea/20 bg-white/90 p-3 text-xs text-ink/70">
+        {syncRunBanner?.status === "running" ? (
+          <div className="space-y-2">
+            <p className="font-semibold text-amber-700">Sincronizacao automatica em andamento</p>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-3">
+                <p>
+                  Processados: {syncRunBanner.processed_codes} de {syncRunBanner.total_codes} codigos
+                </p>
+                <p className="font-semibold text-ink">{syncProgressPercent}%</p>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-sea/10">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-amber-500 to-emerald-500 transition-all duration-300"
+                  style={{ width: `${syncProgressPercent}%` }}
+                />
+              </div>
+            </div>
+            {syncRunBanner.current_code ? <p>Codigo atual: {syncRunBanner.current_code}</p> : null}
+            {syncRunBanner.current_stage ? <p>Etapa: {syncRunBanner.current_stage}</p> : null}
+            {syncCurrentCodeDuration !== null ? <p>Tempo no codigo: {syncCurrentCodeDuration}s</p> : null}
+            {syncRunBanner.current_attempt ? <p>Tentativa: {syncRunBanner.current_attempt}</p> : null}
+            <p>Snapshots carregados: {currentSnapshotRows.length}</p>
+            <p>Falhas: {syncRunBanner.failed_codes}</p>
+            <p>Iniciada em: {formatDateTime(syncRunBanner.started_at)}</p>
+          </div>
+        ) : (
+          <p className="text-emerald-700">Base consolidada: ultimo fechamento concluido.</p>
+        )}
+        {syncError && <p className="mt-1 text-red-600">{syncError}</p>}
+      </div>
+
+      <section className="rounded-2xl border border-sea/20 bg-sand/30 p-3 md:p-4">
+        <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+          <div className="rounded-xl border border-sea/15 bg-white/85 p-3 text-xs text-ink/70 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200">
+            <p className="font-semibold text-ink">Filtros</p>
+            <p className="mt-1">
+              Base consolidada do ultimo fechamento concluido. Use filtros para isolar periodos, c&oacute;digos e empresas.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <select
+              value={selectedPeriodDays}
+              onChange={(event) => setSelectedPeriodDays(Number(event.target.value) as KpiPeriodDays)}
+              className="h-10 rounded-lg border border-sea/30 bg-white px-3 text-xs font-semibold text-ink/70 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+            >
+              {KPI_PERIOD_OPTIONS.map((period) => (
+                <option key={period} value={period}>
+                  Ultimos {period} dia(s)
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
-        <div className="mt-3 rounded-xl border border-sea/15 bg-white/80 px-3 py-2 text-[11px] text-slate-70">
-          <span className="font-semibold text-slate-80">Base dos graficos de rosca:</span>{" "}
-          ultima validacao salva no KPI.
-          {latestValidationMeta
-            ? ` ${formatDateTime(latestValidationMeta.createdAt)} - arquivo ${latestValidationMeta.sourceFilename}.`
-            : " Nenhuma validacao salva ainda."}
-          {latestValidationLoading ? " Atualizando..." : ""}
-          {latestValidationError ? ` Erro ao carregar: ${latestValidationError}` : ""}
+        <div className="mt-3 rounded-xl border border-sea/15 bg-white/80 p-3 text-xs text-ink/70 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
+          <p className="font-semibold text-ink/80 dark:text-slate-100">Snapshots</p>
+          <p className="mt-1">
+            Base consolidada: ultimo fechamento concluido.
+          </p>
+          {syncMessage ? <p className="mt-1 text-emerald-700">{syncMessage}</p> : null}
+          {syncError ? <p className="mt-1 text-red-600">{syncError}</p> : null}
+        </div>
+
+        <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+          {summaryCards.map((card) => (
+            <div key={card.label} className="rounded-xl border border-sea/15 bg-white p-3">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-ink/50">{card.label}</p>
+              <p className="mt-2 text-2xl font-semibold text-ink">{card.value}</p>
+            </div>
+          ))}
         </div>
 
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
           <DonutChartCard
-            title="Distribuicao por categoria"
-            subtitle="Quantidade de codigos por categoria na ultima validacao salva."
+            title="Distribuicao por status"
+            subtitle="Quantidade de codigos por status na base consolidada."
             data={categoryDonutData}
-            emptyLabel="Ainda nao existe validacao salva para este grafico."
+            emptyLabel="Ainda nao existe fechamento consolidado para este grafico."
           />
           <DonutChartCard
             title="Comparativo de vidas"
-            subtitle="Soma total de vidas_in e vidas_out na ultima validacao salva."
+            subtitle="Soma total de AssociadoTitular na base consolidada."
             data={vidasDonutData}
-            emptyLabel="Ainda nao existe validacao salva para este grafico."
+            emptyLabel="Ainda nao existe fechamento consolidado para este grafico."
           />
         </div>
 
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
-          <div className="rounded-xl border border-sea/20 bg-white px-3 py-2 text-[11px] text-ink">
-            <span className="font-semibold text-ink">Base dos graficos comparativos:</span>{" "}
-            dados historicos salvos no modulo KPI (na ausencia de historico, usa dados da validacao atual).
-            {historicalChartLoading ? " Atualizando historico..." : ""}
+          <div className="rounded-xl border border-sea/20 bg-white px-3 py-2 text-[11px] text-ink dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
+            <span className="font-semibold text-ink dark:text-slate-100">Base dos graficos comparativos:</span>{" "}
+            ultimo fechamento concluido.
+            {historicalChartLoading ? " Atualizando dados..." : ""}
             {historicalChartError ? ` Erro ao carregar historico: ${historicalChartError}` : ""}
           </div>
           <DoubleBarChartCard
-            title="Historico mes a mes"
-            subtitle="Evolucao mensal de vidas_in e vidas_out com base no historico registrado."
+            title="Evolucao por periodo"
+            subtitle="Evolucao do AssociadoTitular com base no ultimo fechamento."
             labels={monthSeries.labels}
             firstSeries={{ label: "Vidas In", color: "#16a34a", values: monthSeries.vidasInValues }}
             secondSeries={{ label: "Vidas Out", color: "#dc2626", values: monthSeries.vidasOutValues }}
             emptyLabel="Valide um arquivo para visualizar este grafico."
           />
           <DoubleBarChartCard
-            title="Tendencia de crescimento/queda de vidas"
-            subtitle="Variacao mensal de vidas_in e vidas_out. Valores positivos indicam crescimento e negativos indicam queda."
+            title="Tendencia de variacao"
+            subtitle="Variacao mensal do AssociadoTitular. Valores positivos indicam crescimento e negativos indicam queda."
             labels={vidasGrowthSeries.labels}
             firstSeries={{ label: "Variacao Vidas In", color: "#16a34a", values: vidasGrowthSeries.vidasInGrowth }}
             secondSeries={{ label: "Variacao Vidas Out", color: "#dc2626", values: vidasGrowthSeries.vidasOutGrowth }}
@@ -1469,262 +1494,142 @@ export default function KPI() {
           />
         </div>
 
+        <div className="mt-3 rounded-xl border border-sea/20 bg-white p-3">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-ink">Codigos e valores</p>
+              <p className="mt-1 text-[11px] text-ink/60">
+                Pesquise por expressao e clique nos titulos para ordenar.
+              </p>
+            </div>
+            <input
+              value={codesSearch}
+              onChange={(event) => setCodesSearch(event.target.value)}
+              placeholder="Pesquisar codigo, empresa, categoria ou valor"
+              className="w-full max-w-sm rounded-lg border border-sea/20 bg-sand/10 px-3 py-2 text-xs text-ink outline-none focus:border-sea md:w-auto"
+            />
+          </div>
+
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-left text-xs text-ink/70">
+              <thead>
+                <tr className="border-b border-sea/20">
+                  {[
+                    ["codigo", "Codigo"],
+                    ["empresa", "Empresa"],
+                    ["categoria", "Status"],
+                    ["vidas_qtde", "Total de titulares"],
+                  ].map(([key, label]) => (
+                    <th key={key} className="px-2 py-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (codesSortKey === key) {
+                            setCodesSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+                          } else {
+                            setCodesSortKey(key as typeof codesSortKey);
+                            setCodesSortDirection("asc");
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 font-semibold text-ink hover:text-sea"
+                      >
+                        {label}
+                        {codesSortKey === key ? (
+                          <span className="text-[10px] text-ink/50">{codesSortDirection === "asc" ? "↑" : "↓"}</span>
+                        ) : null}
+                      </button>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredCodeRows.length === 0 ? (
+                  <tr>
+                    <td className="px-2 py-4 text-center text-xs text-ink/50" colSpan={4}>
+                      Nenhum codigo encontrado.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredCodeRows.map((row) => (
+                    <tr key={row.codigo} className="border-b border-sea/10">
+                      <td className="px-2 py-2 font-semibold text-ink">{row.codigo}</td>
+                      <td className="px-2 py-2">{row.empresa ?? "-"}</td>
+                      <td className="px-2 py-2">{row.status}</td>
+                      <td className="px-2 py-2">{row.associadoTotalAtual}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         {parseError && <p className="mt-3 text-xs text-red-500">{parseError}</p>}
         {applyError && <p className="mt-3 text-xs text-red-500">{applyError}</p>}
         {pdfError && <p className="mt-3 text-xs text-red-500">{pdfError}</p>}
       </section>
 
-      {parseSummary && (
-        <section className="rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="font-display text-lg text-ink">Resumo da validacao</h3>
-              <p className="mt-1 text-xs text-ink/60">
-                Colunas: codigo="{parseSummary.columns.codigo}" | vidas_in="
-                {parseSummary.columns.vidasIn}" | vidas_out="{parseSummary.columns.vidasOut}" | mes="
-                {parseSummary.columns.month ?? "nao informado (usa mes atual)"}"
-              </p>
-              {activeImportId && (
-                <p className="mt-1 text-[11px] text-ink/55">
-                  Importacao salva no historico (ID: {activeImportId}).
-                </p>
-              )}
-              <p className="mt-1 text-[11px] text-ink/55">
-                Aplicacao de categorias: automatica apos a validacao.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-3 md:grid-cols-5">
-            <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-xs text-ink/70">
-              Linhas no arquivo: <span className="font-semibold text-ink">{parseSummary.rowsInFile}</span>
-            </div>
-            <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-xs text-ink/70">
-              Linhas validas: <span className="font-semibold text-ink">{parseSummary.validRows}</span>
-            </div>
-            <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-xs text-ink/70">
-              Linhas ignoradas: <span className="font-semibold text-ink">{parseSummary.ignoredRows}</span>
-            </div>
-            <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-xs text-ink/70">
-              Codigos unicos: <span className="font-semibold text-ink">{parseSummary.uniqueCodes}</span>
-            </div>
-            <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-xs text-ink/70">
-              Codigos nao validados: <span className="font-semibold text-ink">{parseSummary.unvalidatedCodes}</span>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-2 md:grid-cols-3">
-            {categoryBreakdown.map((item) => (
-              <div
-                key={item.categoria}
-                className="rounded-xl border border-sea/15 bg-white px-3 py-2 text-xs text-ink/70"
-              >
-                {item.categoria}: <span className="font-semibold text-ink">{item.total}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-4 rounded-xl border border-sea/15 bg-sand/20 p-3">
-            <p className="text-xs font-semibold text-ink/70">Analise por categoria</p>
-            <div className="mt-2 overflow-x-auto">
-              <table className="w-full text-left text-xs text-ink/70">
-                <thead>
-                  <tr className="border-b border-sea/20">
-                    <th className="px-2 py-1">Categoria</th>
-                    <th className="px-2 py-1 text-right">Qtd. codigos</th>
-                    <th className="px-2 py-1 text-right">Vidas In</th>
-                    <th className="px-2 py-1 text-right">Vidas Out</th>
-                    <th className="px-2 py-1 text-right">Saldo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {categoryValidationAnalysis.map((row) => (
-                    <tr key={`analysis-${row.categoria}`} className="border-b border-sea/10">
-                      <td className="px-2 py-1">{row.categoria}</td>
-                      <td className="px-2 py-1 text-right">{row.quantidade}</td>
-                      <td className="px-2 py-1 text-right">{row.vidasInTotal}</td>
-                      <td className="px-2 py-1 text-right">{row.vidasOutTotal}</td>
-                      <td
-                        className={`px-2 py-1 text-right font-semibold ${
-                          row.saldo >= 0 ? "text-emerald-700" : "text-red-600"
-                        }`}
-                      >
-                        {row.saldo}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t border-sea/20 bg-white/70 font-semibold text-ink">
-                    <td className="px-2 py-1">Total</td>
-                    <td className="px-2 py-1 text-right">
-                      {categoryValidationAnalysis.reduce((sum, row) => sum + row.quantidade, 0)}
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      {categoryValidationAnalysis.reduce((sum, row) => sum + row.vidasInTotal, 0)}
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      {categoryValidationAnalysis.reduce((sum, row) => sum + row.vidasOutTotal, 0)}
-                    </td>
-                    <td
-                      className={`px-2 py-1 text-right ${
-                        categoryValidationAnalysis.reduce((sum, row) => sum + row.saldo, 0) >= 0
-                          ? "text-emerald-700"
-                          : "text-red-600"
-                      }`}
-                    >
-                      {categoryValidationAnalysis.reduce((sum, row) => sum + row.saldo, 0)}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {applySummary && (
-        <section className="rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
-          <h3 className="font-display text-lg text-ink">Resultado da aplicacao</h3>
-          <div className="mt-3 grid gap-3 md:grid-cols-5">
-            <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-xs text-ink/70">
-              Codigos no arquivo: <span className="font-semibold text-ink">{applySummary.uniqueCodes}</span>
-            </div>
-            <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-xs text-ink/70">
-              Codigos encontrados: <span className="font-semibold text-ink">{applySummary.foundCodes}</span>
-            </div>
-            <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-xs text-ink/70">
-              Codigos sem match: <span className="font-semibold text-ink">{applySummary.missingCodes}</span>
-            </div>
-            <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-xs text-ink/70">
-              Empresas atualizadas (estimado):{" "}
-              <span className="font-semibold text-ink">{applySummary.estimatedCompaniesUpdated}</span>
-            </div>
-            <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-xs text-ink/70">
-              Linhas ativas atualizadas:{" "}
-              <span className="font-semibold text-ink">{applySummary.updatedRows}</span>
-            </div>
-          </div>
-
-          {missingCodeSamples.length > 0 && (
-            <p className="mt-3 text-xs text-amber-700">
-              Exemplos de codigos sem correspondencia: {missingCodeSamples.join(", ")}
+      {manualUploadOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-2xl">
+            <h3 className="font-display text-xl text-ink">Atualizacao manual de vidas</h3>
+            <p className="mt-2 text-sm text-ink/60">
+              Use este recurso apenas para atualizacoes forcadas fora da rotina automatica do ERP.
+              Envie uma planilha com codigo e AssociadoTitular/vidas_qtde.
             </p>
-          )}
-        </section>
-      )}
-
-      <section data-pdf-exclude="true" className="rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => setHistoryExpanded((prev) => !prev)}
-            className="flex items-center gap-2 rounded-lg border border-sea/25 bg-sand/20 px-3 py-2 text-left hover:border-sea/45"
-          >
-            <span className="text-[11px] text-ink/70">{historyExpanded ? "▲" : "▼"}</span>
-            <div>
-              <h3 className="font-display text-lg text-ink">Historico de importacoes</h3>
-              <p className="mt-1 text-xs text-ink/60">
-                Os dados validados ficam salvos para consulta posterior.
-              </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button type="button" onClick={handleExportTemplate} className="rounded-lg border px-3 py-2 text-xs font-semibold">
+                Baixar modelo
+              </button>
+              <label className="cursor-pointer rounded-lg border px-3 py-2 text-xs font-semibold">
+                Selecionar planilha
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  onChange={(event) => setManualUploadFile(event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <button
+                type="button"
+                disabled={!manualUploadFile}
+                onClick={() => {
+                  if (!manualUploadFile) return;
+                  setFile(manualUploadFile);
+                  void parseFile();
+                }}
+                className="rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50"
+              >
+                Validar planilha
+              </button>
+              <button
+                type="button"
+                disabled={!manualUploadFile || parsing || applying}
+                onClick={() => {
+                  if (!manualUploadFile) return;
+                  setFile(manualUploadFile);
+                  void parseFile().then(() => setManualUploadOpen(false));
+                }}
+                className="rounded-lg bg-ink px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                Confirmar atualizacao
+              </button>
+              <button
+                type="button"
+                onClick={() => setManualUploadOpen(false)}
+                className="rounded-lg border px-3 py-2 text-xs font-semibold"
+              >
+                Cancelar
+              </button>
             </div>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void Promise.all([loadImportHistory(), loadHistoricalChartRows(), loadLatestValidationRows()]);
-            }}
-            disabled={historyLoading}
-            className="rounded-lg border border-sea/30 bg-white px-3 py-1.5 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-60"
-          >
-            {historyLoading ? "Atualizando..." : "Atualizar historico"}
-          </button>
-        </div>
-
-        {historyExpanded && (
-          <>
-            {historyError && <p className="mt-3 text-xs text-red-500">{historyError}</p>}
-            {historyLoading && historyRows.length === 0 ? (
-              <p className="mt-3 text-xs text-ink/60">Carregando historico...</p>
-            ) : historyRows.length === 0 ? (
-              <p className="mt-3 text-xs text-ink/60">Nenhuma importacao salva.</p>
-            ) : (
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full text-left text-xs text-ink/70">
-                  <thead>
-                    <tr className="border-b border-sea/20">
-                      <th className="px-2 py-1">Data</th>
-                      <th className="px-2 py-1">Arquivo</th>
-                      <th className="px-2 py-1">Status</th>
-                      <th className="px-2 py-1">Validos</th>
-                      <th className="px-2 py-1">Nao validados</th>
-                      <th className="px-2 py-1">Acao</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {historyRows.map((row) => (
-                      <tr
-                        key={row.id}
-                        className={`border-b border-sea/10 ${activeImportId === row.id ? "bg-sea/5" : ""}`}
-                      >
-                        <td className="px-2 py-1">{formatDateTime(row.created_at)}</td>
-                        <td className="px-2 py-1">{row.source_filename}</td>
-                        <td className="px-2 py-1">
-                          {row.status === "APLICADO" ? "Aplicado" : "Validado"}
-                        </td>
-                        <td className="px-2 py-1">{row.valid_rows}</td>
-                        <td className="px-2 py-1">{row.unvalidated_codes}</td>
-                        <td className="px-2 py-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void consultImport(row);
-                            }}
-                            disabled={Boolean(consultingImportId)}
-                            className="rounded-md border border-sea/30 px-2 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-60"
-                          >
-                            {consultingImportId === row.id ? "Carregando..." : "Consultar"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </>
-        )}
-      </section>
-
-      <section className="rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
-        <h3 className="font-display text-lg text-ink">Codigos nao validados</h3>
-        <p className="mt-1 text-xs text-ink/60">
-          Esta lista inclui codigos nao cadastrados ou com situacao de cadastro nao ativa.
-        </p>
-
-        {unvalidatedCodes.length === 0 ? (
-          <p className="mt-3 text-xs text-ink/60">Nenhum codigo nao validado.</p>
-        ) : (
-          <div className="mt-3 max-h-[280px] overflow-y-auto rounded-xl border border-sea/15 bg-sand/20 p-2">
-            <table className="w-full text-left text-xs text-ink/70">
-              <thead>
-                <tr className="border-b border-sea/20">
-                  <th className="px-2 py-1">Codigo</th>
-                  <th className="px-2 py-1">Motivo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {unvalidatedCodes.map((item) => (
-                  <tr key={`unvalidated-${item.codigo}`} className="border-b border-sea/10">
-                    <td className="px-2 py-1">{item.codigo}</td>
-                    <td className="px-2 py-1">{unvalidatedReasonLabel[item.reason]}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {manualUploadFile ? <p className="mt-3 text-xs text-ink/60">Arquivo: {manualUploadFile.name}</p> : null}
           </div>
-        )}
-      </section>
+        </div>
+      ) : null}
+
+      {null}
     </div>
   );
 }
+
+

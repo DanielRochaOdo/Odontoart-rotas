@@ -74,9 +74,10 @@ type VisitRow = {
       empresa: string | null;
       nome_fantasia: string | null;
       cod_1?: string | null;
-    corte?: number | null;
-    venc?: number | null;
-    valor?: number | null;
+      vidas_qtde?: number | null;
+      corte?: number | null;
+      venc?: number | null;
+      valor?: number | null;
       obs_contrato_1?: string | null;
       pessoa: string | null;
       contato: string | null;
@@ -132,6 +133,7 @@ type ClienteListRow = {
 };
 
 type ClienteDetailsRow = ClienteListRow & {
+  vidas_qtde: number | null;
   corte: number | null;
   venc: number | null;
   valor: number | null;
@@ -256,7 +258,7 @@ const extractVisitDateKey = (value: string | null | undefined) => {
 const normalize = (value: string | null) => normalizeSearchText(value);
 
 const CLIENTE_CANONICAL_MODAL_SELECT =
-  "id, codigo, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, categoria, regra_visita_observacao, endereco, bairro, cidade, uf";
+  "id, codigo, vidas_qtde, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, categoria, regra_visita_observacao, endereco, bairro, cidade, uf";
 const CLIENTE_LIST_SELECT =
   "id, codigo, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, categoria, perfil_visita";
 const CLIENTE_DETAILS_SELECT = CLIENTE_CANONICAL_MODAL_SELECT;
@@ -509,6 +511,12 @@ export default function Visitas() {
       categoria: cliente.categoria,
       perfil_visita: cliente.perfil_visita,
       supervisor: null,
+      vidas_qtde:
+        "vidas_qtde" in cliente
+          ? cliente.vidas_qtde
+          : "quantidade_vidas" in (cliente as Record<string, unknown>)
+            ? ((cliente as Record<string, unknown>).quantidade_vidas as number | null)
+            : null,
     });
 
     return rows.map((row) => {
@@ -4530,14 +4538,14 @@ export default function Visitas() {
                 </p>
               </div>
               <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
-                <p className="text-[11px] font-semibold text-ink/60">Categoria</p>
-                <p className="mt-1">{detailsVisit.agenda?.categoria ?? "-"}</p>
-              </div>
-              <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
                 <p className="text-[11px] font-semibold text-ink/60">Regra visita</p>
                 <p className="mt-1">{detailsVisit.agenda?.regra_visita_observacao ?? "-"}</p>
               </div>
-              <div className="grid gap-2 sm:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-4">
+                <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-ink/60">Quantidade de vidas</p>
+                  <p className="mt-1">{detailsVisit.agenda?.vidas_qtde ?? "-"}</p>
+                </div>
                 <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
                   <p className="text-[11px] font-semibold text-ink/60">Corte</p>
                   <p className="mt-1">{detailsVisit.agenda?.corte ?? "-"}</p>
