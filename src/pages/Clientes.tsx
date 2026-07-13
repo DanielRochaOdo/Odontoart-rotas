@@ -542,7 +542,7 @@ const mapEmpresaApiToClienteForm = (empresa: OdontoartEmpresaResponseRow, codigo
     (empresa.EmpresaGrupo ?? empresa.empresaGrupo ?? "").trim() ||
     readStringByKeysFromUnknown(empresa, ["EmpresaGrupo", "empresaGrupo", "Grupo", "grupo"]);
   const vidasQtdeFromApi =
-    readNumberLikeStringByKeysFromUnknown(empresa, ["AssociadoTotal", "associadoTotal", "associado_total"]) || "";
+    readNumberLikeStringByKeysFromUnknown(empresa, ["AssociadoTitular", "associadoTitular", "associado_titular"]) || "";
 
   return {
     codigo,

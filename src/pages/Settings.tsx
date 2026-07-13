@@ -73,6 +73,7 @@ const EVENT_MONTH_LABELS = [
 const EVENT_WEEKDAY_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"];
 const ERP_SYNC_DEFAULT_WAVE_LIMIT = 20;
 const ERP_SYNC_MAX_WAVE_LIMIT = 50;
+const ERP_SYNC_PREVIEW_PAGE_SIZE = 10;
 
 const isValidTabKey = (value: unknown): value is TabKey =>
   value === "SUPERVISORES" ||
@@ -217,14 +218,33 @@ const ERP_SYNC_FIELD_LABELS: Record<string, string> = {
   corte: "Corte",
   venc: "Vencimento",
   valor: "Valor",
-  vidas_qtde: "Qtde. vidas",
+  vidas_qtde: "Vidas Qtde",
   situacao: "Situação",
   cidade: "Cidade",
   uf: "UF",
   endereco: "Endereço",
+  complemento: "Complemento",
   bairro: "Bairro",
   cep: "CEP",
 };
+
+const ERP_SYNC_SELECTABLE_FIELDS = [
+  "cnpj",
+  "empresa",
+  "grupo",
+  "obs_comercial",
+  "corte",
+  "venc",
+  "valor",
+  "vidas_qtde",
+  "situacao",
+  "cidade",
+  "uf",
+  "endereco",
+  "complemento",
+  "bairro",
+  "cep",
+] as const;
 
 const formatErpSyncStatusLabel = (status: string) => ERP_SYNC_STATUS_LABELS[status] ?? status;
 const formatErpSyncFieldLabel = (field: string) => ERP_SYNC_FIELD_LABELS[field] ?? field;
@@ -248,13 +268,14 @@ const ERP_SYNC_FIELD_ORDER = [
   "corte",
   "venc",
   "valor",
-  "vidas_qtde",
   "situacao",
   "cidade",
   "uf",
   "endereco",
+  "complemento",
   "bairro",
   "cep",
+  "vidas_qtde",
 ];
 const sortErpSyncFields = (fields: string[]) =>
   [...fields].sort((left, right) => {
@@ -265,6 +286,45 @@ const sortErpSyncFields = (fields: string[]) =>
     if (rightIndex === -1) return -1;
     return leftIndex - rightIndex;
   });
+
+const renderErpSyncFieldCard = (
+  resultCode: string,
+  fieldName: string,
+  fieldDetail: {
+    field: string;
+    from_values: Array<string | number | null>;
+    to_value: string | number | null;
+    changed: boolean;
+    changed_rows: number;
+  } | null,
+) => {
+  const changed = fieldDetail?.changed ?? false;
+  const fromValues = fieldDetail?.from_values ?? [];
+  const toValue = fieldDetail?.to_value ?? null;
+
+  return (
+    <div
+      key={`${resultCode}-${fieldName}`}
+      className={[
+        "rounded-lg border px-3 py-2 text-[11px] transition-colors",
+        changed
+          ? "border-emerald-400 bg-emerald-50 text-emerald-950 dark:border-emerald-500/60 dark:bg-emerald-950/35 dark:text-emerald-50"
+          : "border-sea/15 bg-sand/20 text-ink/70 dark:border-sea/30 dark:bg-slate-900/60 dark:text-slate-200",
+      ].join(" ")}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="font-semibold text-ink dark:text-slate-100">{formatErpSyncFieldLabel(fieldName)}</p>
+        <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink/70 dark:bg-slate-800 dark:text-slate-200">
+          Atualizado: {formatErpSyncBooleanLabel(changed)}
+        </span>
+      </div>
+      <p className="mt-1">
+        Antes: {fromValues.length ? fromValues.map((value) => formatErpSyncValue(value)).join(" / ") : "-"}
+      </p>
+      <p>Depois: {formatErpSyncValue(toValue)}</p>
+    </div>
+  );
+};
 
 const parseCodesFromWorkbook = (workbook: XLSX.WorkBook) => {
   const firstSheetName = workbook.SheetNames[0];
@@ -341,7 +401,9 @@ export default function Settings() {
   const [erpPreview, setErpPreview] = useState<ErpSyncPreviewResult | null>(null);
   const [erpPreviewLoading, setErpPreviewLoading] = useState(false);
   const [erpWaveLimitInput, setErpWaveLimitInput] = useState(String(ERP_SYNC_DEFAULT_WAVE_LIMIT));
+  const [erpSelectedField, setErpSelectedField] = useState<(typeof ERP_SYNC_SELECTABLE_FIELDS)[number]>("empresa");
   const [erpExecuteOffset, setErpExecuteOffset] = useState(0);
+  const [erpPreviewPage, setErpPreviewPage] = useState(0);
   const [erpExecuteLoading, setErpExecuteLoading] = useState(false);
   const [erpLastWaveResults, setErpLastWaveResults] = useState<ErpSyncExecuteItem[]>([]);
   const [erpExecutionSummary, setErpExecutionSummary] = useState<{
@@ -491,6 +553,31 @@ export default function Settings() {
   const erpCodesForExecution = erpPreview?.normalized_codes ?? erpNormalizedCodes;
   const erpHasUnlock = Boolean(erpUnlockToken);
   const erpRemainingCount = Math.max(0, erpCodesForExecution.length - erpExecuteOffset);
+  const erpPreviewTotalPages = erpPreview ? Math.max(1, Math.ceil(erpPreview.items.length / ERP_SYNC_PREVIEW_PAGE_SIZE)) : 0;
+  const erpWaveLimitSafe = Math.max(
+    1,
+    Math.min(
+      Number.isFinite(Number(erpWaveLimitInput || ERP_SYNC_DEFAULT_WAVE_LIMIT))
+        ? Math.floor(Number(erpWaveLimitInput || ERP_SYNC_DEFAULT_WAVE_LIMIT))
+        : ERP_SYNC_DEFAULT_WAVE_LIMIT,
+      ERP_SYNC_MAX_WAVE_LIMIT,
+    ),
+  );
+  const erpExecutionProgress = erpCodesForExecution.length
+    ? Math.min(100, Math.round((erpExecuteOffset / erpCodesForExecution.length) * 100))
+    : 0;
+  const erpCurrentWaveProgress = erpExecuteLoading
+    ? Math.min(
+        100,
+        Math.round((Math.min(erpExecuteOffset + erpWaveLimitSafe, erpCodesForExecution.length) / Math.max(1, erpWaveLimitSafe)) * 100),
+      )
+    : 0;
+  const erpPreviewItemsPage = useMemo(() => {
+    if (!erpPreview) return [];
+    const safePage = Math.min(Math.max(erpPreviewPage, 0), erpPreviewTotalPages - 1);
+    const start = safePage * ERP_SYNC_PREVIEW_PAGE_SIZE;
+    return erpPreview.items.slice(start, start + ERP_SYNC_PREVIEW_PAGE_SIZE);
+  }, [erpPreview, erpPreviewPage, erpPreviewTotalPages]);
 
   useEffect(() => {
     setSelectedEventDate((prev) => {
@@ -1203,9 +1290,11 @@ export default function Settings() {
       const preview = await previewErpSyncCodes({
         unlockToken: erpUnlockToken,
         codes: erpNormalizedCodes,
+        field: erpSelectedField,
       });
       setErpPreview(preview);
       setErpExecuteOffset(0);
+      setErpPreviewPage(0);
       setErpLastWaveResults([]);
       setErpExecutionSummary(null);
       const recommendedWave = String(Math.min(preview.recommended_wave_limit, preview.max_wave_limit));
@@ -1245,6 +1334,7 @@ export default function Settings() {
         codes: erpCodesForExecution,
         offset: erpExecuteOffset,
         limit: safeLimit,
+        field: erpSelectedField,
       });
 
       setErpExecuteOffset(wave.next_offset);
@@ -1259,6 +1349,77 @@ export default function Settings() {
       }
     } catch (err) {
       setErpCodesMessage(err instanceof Error ? err.message : "Falha ao executar onda.");
+    } finally {
+      setErpExecuteLoading(false);
+    }
+  };
+
+  const handleExecuteAllErpWaves = async () => {
+    if (!erpUnlockToken) {
+      setErpUnlockError("Desbloqueie a secao para continuar.");
+      return;
+    }
+    if (!erpCodesForExecution.length) {
+      setErpCodesMessage("Nao ha codigos para processar.");
+      return;
+    }
+    if (erpExecuteOffset >= erpCodesForExecution.length) {
+      setErpCodesMessage("Todas as ondas ja foram processadas.");
+      return;
+    }
+
+    const parsedLimit = Number(erpWaveLimitInput || ERP_SYNC_DEFAULT_WAVE_LIMIT);
+    const safeLimit = Math.max(
+      1,
+      Math.min(Number.isFinite(parsedLimit) ? Math.floor(parsedLimit) : ERP_SYNC_DEFAULT_WAVE_LIMIT, ERP_SYNC_MAX_WAVE_LIMIT),
+    );
+
+    setErpExecuteLoading(true);
+    setErpCodesMessage(null);
+    try {
+      let offset = erpExecuteOffset;
+      const allResults: ErpSyncExecuteItem[] = [];
+      const summary = {
+        updated: 0,
+        no_changes: 0,
+        local_not_found: 0,
+        erp_not_found: 0,
+        no_mapped_fields: 0,
+        failed: 0,
+      };
+
+      while (offset < erpCodesForExecution.length) {
+        const wave = await executeErpSyncWave({
+          unlockToken: erpUnlockToken,
+          codes: erpCodesForExecution,
+          offset,
+          limit: safeLimit,
+          field: erpSelectedField,
+        });
+
+        allResults.push(...wave.results);
+        summary.updated += wave.summary.updated;
+        summary.no_changes += wave.summary.no_changes;
+        summary.local_not_found += wave.summary.local_not_found;
+        summary.erp_not_found += wave.summary.erp_not_found;
+        summary.no_mapped_fields += wave.summary.no_mapped_fields;
+        summary.failed += wave.summary.failed;
+        offset = wave.next_offset;
+        setErpExecuteOffset(offset);
+        setErpLastWaveResults([...allResults]);
+        setErpExecutionSummary({ ...summary });
+        setErpCodesMessage(
+          wave.has_more
+            ? `Processando ondas... concluido ${offset}/${erpCodesForExecution.length}.`
+            : "Sincronizacao concluida para todos os codigos da lista.",
+        );
+      }
+
+      setErpExecuteOffset(offset);
+      setErpLastWaveResults(allResults);
+      setErpExecutionSummary(summary);
+    } catch (err) {
+      setErpCodesMessage(err instanceof Error ? err.message : "Falha ao executar sincronizacao completa.");
     } finally {
       setErpExecuteLoading(false);
     }
@@ -1991,10 +2152,11 @@ export default function Settings() {
                         value={erpCodesInput}
                         onChange={(event) => {
                           setErpCodesInput(event.target.value);
-                          setErpPreview(null);
-                          setErpExecuteOffset(0);
-                          setErpLastWaveResults([]);
-                          setErpExecutionSummary(null);
+      setErpPreview(null);
+      setErpExecuteOffset(0);
+      setErpPreviewPage(0);
+      setErpLastWaveResults([]);
+      setErpExecutionSummary(null);
                         }}
                         rows={10}
                         placeholder="Um codigo por linha ou separado por virgula"
@@ -2018,12 +2180,33 @@ export default function Settings() {
                             onChange={(event) => void handleUploadErpCodes(event)}
                           />
                         </label>
-                        <p className="text-[11px] text-ink/60">
-                          Informe a coluna <code>codigo</code> ou use a primeira coluna do arquivo.
-                        </p>
+                      <p className="text-[11px] text-ink/60">
+                        Informe a coluna <code>codigo</code> ou use a primeira coluna do arquivo.
+                      </p>
+                    </div>
+
+                      <div className="space-y-2 rounded-lg border border-sea/10 bg-sand/10 p-3">
+                        <div>
+                          <div className="mb-1 flex items-center justify-between text-[11px] text-ink/60">
+                            <span>Execucao total</span>
+                            <span>{erpExecutionProgress}%</span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-sand/40">
+                            <div className="h-full rounded-full bg-sea transition-all" style={{ width: `${erpExecutionProgress}%` }} />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="mb-1 flex items-center justify-between text-[11px] text-ink/60">
+                            <span>Onda atual</span>
+                            <span>{erpExecuteLoading ? "em andamento" : erpExecuteOffset >= erpCodesForExecution.length ? "concluida" : "aguardando"}</span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-sand/40">
+                            <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${erpCurrentWaveProgress}%` }} />
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="grid gap-3 sm:grid-cols-[1fr_auto] lg:grid-cols-[1fr_auto_auto] lg:items-end">
+                      <div className="grid gap-3 sm:grid-cols-[1fr_auto] lg:grid-cols-[1fr_auto_auto_auto] lg:items-end">
                         <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
                           Limite do lote (max {ERP_SYNC_MAX_WAVE_LIMIT})
                           <input
@@ -2031,6 +2214,22 @@ export default function Settings() {
                             onChange={(event) => setErpWaveLimitInput(sanitizeWaveLimit(event.target.value))}
                             className="w-full rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
                           />
+                        </label>
+                        <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
+                          Campo a atualizar
+                          <select
+                            value={erpSelectedField}
+                            onChange={(event) =>
+                              setErpSelectedField(event.target.value as (typeof ERP_SYNC_SELECTABLE_FIELDS)[number])
+                            }
+                            className="w-full rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                          >
+                            {ERP_SYNC_SELECTABLE_FIELDS.map((field) => (
+                              <option key={field} value={field}>
+                                {formatErpSyncFieldLabel(field)}
+                              </option>
+                            ))}
+                          </select>
                         </label>
                         <button
                           type="button"
@@ -2049,6 +2248,15 @@ export default function Settings() {
                         >
                           {erpExecuteLoading ? <LoaderCircle size={14} className="animate-spin" /> : null}
                           {erpExecuteLoading ? "Executando lote" : "Executar próximo lote"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleExecuteAllErpWaves()}
+                          disabled={erpExecuteLoading || !erpCodesForExecution.length || erpRemainingCount <= 0}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/80 hover:border-sea disabled:opacity-60"
+                        >
+                          {erpExecuteLoading ? <LoaderCircle size={14} className="animate-spin" /> : null}
+                          {erpExecuteLoading ? "Executando tudo" : "Executar tudo"}
                         </button>
                       </div>
                     </div>
@@ -2069,6 +2277,46 @@ export default function Settings() {
                         <p>Nao encontrados local: {erpPreview.missing_local_count}</p>
                         <p>Restante para ondas: {erpRemainingCount}</p>
                       </div>
+                      {erpPreview.items.length > 0 && (
+                        <div className="mt-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-[11px] font-semibold text-ink/70">
+                              Pagina {erpPreviewPage + 1} de {erpPreviewTotalPages}
+                            </p>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setErpPreviewPage((page) => Math.max(0, page - 1))}
+                                disabled={erpPreviewPage <= 0}
+                                className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 disabled:opacity-50"
+                              >
+                                Anterior
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setErpPreviewPage((page) => Math.min(erpPreviewTotalPages - 1, page + 1))}
+                                disabled={erpPreviewPage >= erpPreviewTotalPages - 1}
+                                className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-[11px] font-semibold text-ink/70 disabled:opacity-50"
+                              >
+                                Proxima
+                              </button>
+                            </div>
+                          </div>
+                          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                            {erpPreviewItemsPage.map((item) => (
+                              <div
+                                key={item.code}
+                                className="rounded-lg border border-sea/15 bg-sand/20 px-3 py-2 text-[11px] text-ink/70"
+                              >
+                                <p className="font-semibold text-ink">Codigo {item.code}</p>
+                                <p>Local: {item.local_rows_count}</p>
+                                <p>Empresa: {item.sample_company ?? "-"}</p>
+                                <p>Encontrado: {item.found_local ? "Sim" : "Nao"}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       {erpPreview.missing_local_codes.length > 0 && (
                         <p className="mt-2 text-[11px] text-amber-700">
                           Codigos sem cadastro local: {erpPreview.missing_local_codes.slice(0, 20).join(", ")}
@@ -2081,6 +2329,9 @@ export default function Settings() {
                   {erpExecutionSummary && (
                     <div className="rounded-xl border border-sea/15 bg-white/90 p-3 text-xs text-ink/80">
                       <p className="font-semibold text-ink">Resumo da ultima onda</p>
+                      <p className="mt-1 text-[11px] text-ink/60">
+                        Campo filtrado: {formatErpSyncFieldLabel(erpSelectedField)}
+                      </p>
                       <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
                         <p>Atualizados: {erpExecutionSummary.updated}</p>
                         <p>Sem mudanca: {erpExecutionSummary.no_changes}</p>
@@ -2108,55 +2359,17 @@ export default function Settings() {
                               <span>Atualizados: {result.updated_rows}</span>
                               <span>Alterados: {result.changed_rows}</span>
                               <span>Campos lidos: {result.fields.length}</span>
+                              <span>Filtro: {formatErpSyncFieldLabel(erpSelectedField)}</span>
                             </div>
                           </div>
 
                           <div className="mt-3 space-y-3">
                             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                              {(result.field_details ?? []).length ? (
-                                sortErpSyncFields((result.field_details ?? []).map((field) => field.field)).map((fieldName) => {
-                                  const field = (result.field_details ?? []).find((item) => item.field === fieldName);
-                                  if (!field) return null;
-                                  return (
-                                  <div
-                                    key={`${result.code}-${field.field}`}
-                                    className={[
-                                      "rounded-lg border px-3 py-2 text-[11px] transition-colors",
-                                      field.changed
-                                        ? "border-emerald-400 bg-emerald-50 text-emerald-950 dark:border-emerald-500/60 dark:bg-emerald-950/35 dark:text-emerald-50"
-                                        : "border-sea/15 bg-sand/20 text-ink/70 dark:border-sea/30 dark:bg-slate-900/60 dark:text-slate-200",
-                                    ].join(" ")}
-                                  >
-                                    <div className="flex items-center justify-between gap-2">
-                                      <p className="font-semibold text-ink dark:text-slate-100">{formatErpSyncFieldLabel(field.field)}</p>
-                                      <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink/70 dark:bg-slate-800 dark:text-slate-200">
-                                        Atualizado: {formatErpSyncBooleanLabel(field.changed)}
-                                      </span>
-                                    </div>
-                                    <p className="mt-1">
-                                      Antes:{" "}
-                                      {field.from_values.length ? field.from_values.map((value) => formatErpSyncValue(value)).join(" / ") : "-"}
-                                    </p>
-                                    <p>Depois: {formatErpSyncValue(field.to_value)}</p>
-                                  </div>
-                                  );
+                              {result.fields.length ? (
+                                sortErpSyncFields(result.fields.filter((fieldName) => fieldName === erpSelectedField)).map((fieldName) => {
+                                  const field = (result.field_details ?? []).find((item) => item.field === fieldName) ?? null;
+                                  return renderErpSyncFieldCard(result.code, fieldName, field);
                                 })
-                              ) : result.fields.length ? (
-                                sortErpSyncFields(result.fields).map((field) => (
-                                  <div
-                                    key={`${result.code}-${field}`}
-                                    className="rounded-lg border border-sea/15 bg-sand/20 px-3 py-2 text-[11px] text-ink/70 dark:border-sea/30 dark:bg-slate-900/60 dark:text-slate-200"
-                                  >
-                                    <div className="flex items-center justify-between gap-2">
-                                      <p className="font-semibold text-ink dark:text-slate-100">{formatErpSyncFieldLabel(field)}</p>
-                                      <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink/70 dark:bg-slate-800 dark:text-slate-200">
-                                        Atualizado: Nao
-                                      </span>
-                                    </div>
-                                    <p className="mt-1">Antes: -</p>
-                                    <p>Depois: -</p>
-                                  </div>
-                                ))
                               ) : (
                                 <p className="text-xs text-ink/60 dark:text-slate-300">Nenhum campo lido.</p>
                               )}
@@ -2166,9 +2379,11 @@ export default function Settings() {
                               <div className="rounded-lg border border-sea/15 bg-white px-3 py-2 text-[11px] text-ink/70 dark:border-sea/30 dark:bg-slate-950/70 dark:text-slate-200">
                                 <p className="mb-1 font-semibold text-ink dark:text-slate-100">Campos alterados</p>
                                 <div className="space-y-1">
-                                  {result.changes.map((change) => (
+                                  {result.changes
+                                    .filter((change) => change.field === erpSelectedField)
+                                    .map((change) => (
                                     <p key={`${result.code}-${change.field}`}>{formatErpSyncChangeSummary(change)}</p>
-                                  ))}
+                                    ))}
                                 </div>
                               </div>
                             )}

@@ -35,6 +35,7 @@ type UnlockPayload = {
 type PreviewPayload = {
   unlock_token?: string;
   codes?: unknown;
+  field?: unknown;
 };
 
 type ExecuteWavePayload = {
@@ -42,6 +43,7 @@ type ExecuteWavePayload = {
   codes?: unknown;
   offset?: number;
   limit?: number;
+  field?: unknown;
 };
 
 type SyncResult = {
@@ -180,6 +182,37 @@ const normalizeCep = (value: string | null | undefined) => {
   const digits = sanitizeDigits(value ?? "").slice(0, 8);
   if (digits.length !== 8) return null;
   return `${digits.slice(0, 5)}-${digits.slice(5)}`;
+};
+
+const ERP_SYNC_FIELDS = [
+  "cnpj",
+  "empresa",
+  "grupo",
+  "obs_comercial",
+  "corte",
+  "venc",
+  "valor",
+  "vidas_qtde",
+  "situacao",
+  "cidade",
+  "uf",
+  "endereco",
+  "complemento",
+  "bairro",
+  "cep",
+] as const;
+
+const parseSelectedField = (value: unknown) => {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  const aliases: Record<string, string> = {
+    "quantidade_vidas": "vidas_qtde",
+    "quantidade_vida": "vidas_qtde",
+    "qtd_vidas": "vidas_qtde",
+    "vidas": "vidas_qtde",
+  };
+  const resolved = aliases[normalized] ?? normalized;
+  return (ERP_SYNC_FIELDS as readonly string[]).includes(resolved) ? resolved : null;
 };
 
 const readRecordValueByKeyInsensitive = (record: Record<string, unknown>, key: string) => {
@@ -386,10 +419,9 @@ const buildClienteUpdatePayload = (empresa: Record<string, unknown>, payload: un
   const valor = resolveValorTitular(empresa);
   if (valor !== null) updates.valor = valor;
 
-  const vidasQtde =
-    parseNumberFromUnknown(
-      readRecordValueByKeys(empresa, ["AssociadoTotal", "associadoTotal", "associado_total"]),
-    ) ?? parseNumberFromUnknown(readStringByKeysFromUnknown(payload, ["AssociadoTotal", "associadoTotal", "associado_total"]));
+  const vidasQtde = parseNumberFromUnknown(
+    readRecordValueByKeys(empresa, ["AssociadoTotal", "associadoTotal", "associado_total"]),
+  );
   if (vidasQtde !== null) updates.vidas_qtde = vidasQtde;
 
   const situacao =
@@ -427,6 +459,14 @@ const buildClienteUpdatePayload = (empresa: Record<string, unknown>, payload: un
   if (cep) updates.cep = cep;
 
   return updates;
+};
+
+const filterUpdatesByField = (
+  updates: Record<string, string | number | null>,
+  selectedField: string | null,
+) => {
+  if (!selectedField) return updates;
+  return selectedField in updates ? { [selectedField]: updates[selectedField] } : {};
 };
 
 const validateUnlockSession = async (unlockTokenRaw: string | undefined, callerUserId: string) => {
@@ -484,7 +524,14 @@ const isMatrizClienteRow = (row: Record<string, unknown>) => {
   return obs === null || obs === undefined;
 };
 
-const syncOneCode = async (code: string): Promise<SyncResult> => {
+const getRowCreatedAtMs = (row: Record<string, unknown>) => {
+  const raw = row.created_at;
+  if (typeof raw !== "string" || !raw.trim()) return 0;
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+};
+
+const syncOneCode = async (code: string, selectedField: string | null): Promise<SyncResult> => {
   try {
     const payload = await fetchOdontoartPayload(code);
     const empresa = extractEmpresaFromPayload(payload);
@@ -502,7 +549,7 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
       };
     }
 
-    const updates = buildClienteUpdatePayload(empresa, payload);
+    const updates = filterUpdatesByField(buildClienteUpdatePayload(empresa, payload), selectedField);
     const fields = Object.keys(updates);
 
     if (!fields.length) {
@@ -518,7 +565,7 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
       };
     }
 
-    const selectColumns = Array.from(new Set(["id", ...fields])).join(", ");
+    const selectColumns = Array.from(new Set(["id", "obs", "created_at", ...fields])).join(", ");
     const { data: localRows, error: localReadError } = await supabase
       .from("clientes")
       .select(selectColumns)
@@ -550,11 +597,13 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
       };
     }
 
-    const matrizRows = localRows
-      .filter((row) => isMatrizClienteRow(row as Record<string, unknown>))
-      .map((row) => row as Record<string, unknown>);
+    const normalizedLocalRows = (localRows ?? []).map((row) => row as Record<string, unknown>);
+    const matrizRows = normalizedLocalRows.filter((row) => isMatrizClienteRow(row));
+    const targetRows = matrizRows.length
+      ? matrizRows
+      : [...normalizedLocalRows].sort((left, right) => getRowCreatedAtMs(left) - getRowCreatedAtMs(right)).slice(0, 1);
 
-    if (!matrizRows.length) {
+    if (!targetRows.length) {
       return {
         code,
         status: "no_mapped_fields",
@@ -563,7 +612,7 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
         fields,
         field_details: [],
         changes: [],
-        message: "Nenhuma matriz encontrada para este codigo. Filiais foram ignoradas.",
+        message: "Nenhum registro local encontrado para este codigo.",
       };
     }
 
@@ -575,7 +624,7 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
         const fromValuesSeen = new Set<string>();
         let changedRowsCount = 0;
 
-        matrizRows.forEach((rowRecord) => {
+        targetRows.forEach((rowRecord) => {
           const currentValue = normalizeComparableValue(field, rowRecord[field]);
           const equalValues = currentValue === toValue;
           if (equalValues) return;
@@ -622,7 +671,6 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
       .from("clientes")
       .update(updates)
       .eq("codigo", code)
-      .or("obs.is.null,obs.eq.")
       .select("id");
 
     if (updateError) {
@@ -663,7 +711,7 @@ const syncOneCode = async (code: string): Promise<SyncResult> => {
   }
 };
 
-const runWave = async (codes: string[]) => {
+const runWave = async (codes: string[], selectedField: string | null) => {
   const results = new Array<SyncResult>(codes.length);
   let cursor = 0;
 
@@ -672,7 +720,7 @@ const runWave = async (codes: string[]) => {
       const current = cursor;
       cursor += 1;
       if (current >= codes.length) return;
-      results[current] = await syncOneCode(codes[current]);
+      results[current] = await syncOneCode(codes[current], selectedField);
       await sleep(120);
     }
   };
@@ -845,6 +893,7 @@ serve(async (req) => {
     try {
       await validateUnlockSession(payload.unlock_token, callerUserId);
       const codes = parseCodesFromUnknown(payload.codes);
+      const selectedField = parseSelectedField(payload.field);
       if (!codes.length) {
         return jsonResponse(400, { error: "Informe ao menos um codigo para sincronizar." });
       }
@@ -873,7 +922,7 @@ serve(async (req) => {
         });
       }
 
-      const results = await runWave(waveCodes);
+      const results = await runWave(waveCodes, selectedField);
       const nextOffset = offset + waveCodes.length;
       const remainingCount = Math.max(0, codes.length - nextOffset);
       const summary = {
