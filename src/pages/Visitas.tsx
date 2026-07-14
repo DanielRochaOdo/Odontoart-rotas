@@ -69,6 +69,7 @@ type VisitRow = {
   no_visit_observation: string | null;
   instructions: string | null;
   visit_supervisors?: Array<{ supervisor_user_id: string | null }> | null;
+  supervisor_register?: VisitSupervisorRegisterRow | null;
     agenda?: {
       id: string;
       empresa: string | null;
@@ -260,7 +261,7 @@ const normalize = (value: string | null) => normalizeSearchText(value);
 const CLIENTE_CANONICAL_MODAL_SELECT =
   "id, codigo, vidas_qtde, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, categoria, regra_visita_observacao, endereco, bairro, cidade, uf";
 const CLIENTE_LIST_SELECT =
-  "id, codigo, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, categoria, perfil_visita";
+  "id, codigo, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, categoria, perfil_visita, vidas_qtde, pessoa, contato";
 const CLIENTE_DETAILS_SELECT = CLIENTE_CANONICAL_MODAL_SELECT;
 
 const formatCurrency = (value?: number | null) => {
@@ -473,15 +474,15 @@ export default function Visitas() {
     );
 
     const cache = mode === "details" ? clientesDetailsCacheRef.current : clientesLiteCacheRef.current;
-    const select = mode === "details" ? CLIENTE_DETAILS_SELECT : CLIENTE_LIST_SELECT;
     const clientesById = new Map<string, ClienteListRow | ClienteDetailsRow>();
     for (let index = 0; index < clienteIds.length; index += 500) {
       const chunk = clienteIds.slice(index, index + 500).filter((id) => !cache.has(id));
       if (chunk.length === 0) continue;
-      const { data: clientesChunk, error: clientesError } = await supabase
-        .from("clientes")
-        .select(select)
-        .in("id", chunk);
+      const query =
+        mode === "details"
+          ? supabase.from("clientes").select(CLIENTE_DETAILS_SELECT).in("id", chunk)
+          : supabase.from("clientes").select(CLIENTE_LIST_SELECT).in("id", chunk);
+      const { data: clientesChunk, error: clientesError } = await query;
       if (clientesError) throw new Error(clientesError.message);
       (clientesChunk ?? []).forEach((cliente) => {
         const row = cliente as unknown as ClienteListRow | ClienteDetailsRow;
@@ -1351,6 +1352,21 @@ export default function Visitas() {
       return supervisorLinks.includes(session.user.id);
     },
     [role, session?.user.id],
+  );
+
+  const isVisitAssignedToLoggedUser = useCallback(
+    (visit: VisitRow) => {
+      if (!session?.user.id) return false;
+      if (visit.assigned_to_user_id === session.user.id) return true;
+      const normalizedAssignedName = normalize(visit.assigned_to_name);
+      const normalizedDisplayName = normalize(profile?.display_name ?? null);
+      const normalizedEmail = normalize(session.user.email ?? null);
+      return (
+        Boolean(normalizedAssignedName) &&
+        (normalizedAssignedName === normalizedDisplayName || normalizedAssignedName === normalizedEmail)
+      );
+    },
+    [profile?.display_name, session?.user.email, session?.user.id],
   );
 
   const supervisorPinDates = useMemo(() => {
@@ -2885,11 +2901,14 @@ export default function Visitas() {
 
     void (async () => {
       try {
-        const { data, error } = await supabase
-          .from("visits")
-          .select("id, instructions")
-          .eq("id", item.id)
-          .maybeSingle<{ id: string; instructions: string | null }>();
+        const [{ data, error }, supervisorRegister] = await Promise.all([
+          supabase
+            .from("visits")
+            .select("id, instructions")
+            .eq("id", item.id)
+            .maybeSingle<{ id: string; instructions: string | null }>(),
+          fetchSupervisorRegister(item.id).catch(() => null),
+        ]);
 
         if (detailsObsRequestRef.current !== requestId) return;
         if (error) {
@@ -2903,6 +2922,7 @@ export default function Visitas() {
             ? {
                 ...prev,
                 instructions: data?.instructions ?? prev.instructions,
+                supervisor_register: supervisorRegister,
               }
             : prev,
         );
@@ -2938,6 +2958,7 @@ export default function Visitas() {
                   ...prev,
                   agenda: hydratedVisit.agenda ?? prev.agenda,
                   cliente: hydratedVisit.cliente ?? prev.cliente,
+                  supervisor_register: prev.supervisor_register ?? hydratedVisit.supervisor_register ?? null,
                 }
               : prev,
           );
@@ -3828,7 +3849,7 @@ export default function Visitas() {
                                               dragSnapshot.isDragging ? "scale-[1.03] shadow-2xl" : "",
                                             ].join(" ")}
                                           >
-                                            <div className="space-y-3 md:hidden">
+                                            <div className="space-y-3">
                                               <div className="flex items-start justify-between gap-3">
                                                 <div className="flex min-w-0 items-center gap-3">
                                                   <span
@@ -4027,24 +4048,7 @@ export default function Visitas() {
                                                 </div>
                                               ) : null}
 
-                                              {canManage ? (
-                                                canLoggedSupervisorRegister ? (
-                                                  <div className="pt-1">
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => handleStartRegister(item)}
-                                                      disabled={Boolean(item.no_visit_reason)}
-                                                      className={registerVisitButtonClass}
-                                                    >
-                                                      {isCompleted
-                                                        ? item.no_visit_reason
-                                                          ? "Visita nao realizada"
-                                                          : "Editar registro"
-                                                        : "Registrar visita"}
-                                                    </button>
-                                                  </div>
-                                                ) : null
-                                              ) : (
+                                              {role === "VENDEDOR" || isVisitAssignedToLoggedUser(item) ? (
                                                 <div className="pt-1">
                                                   <button
                                                     type="button"
@@ -4059,282 +4063,100 @@ export default function Visitas() {
                                                       : "Registrar visita"}
                                                   </button>
                                                 </div>
-                                              )}
-                                            </div>
-
-                                            <div className="hidden space-y-3 md:block">
-                                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                                <div>
-                                                  <div className="flex items-center gap-2">
-                                                    <span
-                                                      className={[
-                                                        "inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-semibold",
-                                                        isEditingOrder
-                                                          ? "border-sea/30 bg-sea/15 text-sea"
-                                                          : "border-sea/15 bg-white text-ink/60",
-                                                      ].join(" ")}
-                                                    >
-                                                      {itemOrderLabel}
-                                                    </span>
-                                                    <p className="text-sm font-semibold text-ink">
-                                                      {item.agenda?.empresa ?? "Sem nome"}
-                                                    </p>
-                                                    <span className="rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
-                                                      COD {item.agenda?.cod_1 ?? "-"}
-                                                    </span>
-                                                    {item.agenda?.situacao ? (
-                                                      <span className="inline-flex rounded-full bg-sea/10 px-2 py-0.5 text-[10px] font-semibold text-sea">
-                                                        {item.agenda.situacao}
-                                                      </span>
-                                                    ) : null}
-                                                    {canManage && item.agenda?.categoria ? (
-                                                      <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                                                        {item.agenda.categoria}
-                                                      </span>
-                                                    ) : null}
-                                                    {isSupervisorVisit ? (
-                                                      <span className="inline-flex rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/60 dark:bg-violet-500/20 dark:text-violet-200">
-                                                        Visita supervisor
-                                                      </span>
-                                                    ) : null}
-                                                    {isSupervisorVisit && supervisorReasonLabel ? (
-                                                      <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/55 dark:bg-violet-500/15 dark:text-violet-200">
-                                                        {supervisorReasonLabel}
-                                                      </span>
-                                                    ) : null}
-                                                  </div>
-                                                  <p className="text-[11px] text-ink/70">
-                                                    Pessoa: {item.agenda?.pessoa ?? "-"}
-                                                  </p>
-                                                  <p className="text-[11px] text-ink/70">
-                                                    Contato: {item.agenda?.contato ?? "-"}
-                                                  </p>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                  {isEditingOrder ? (
-                                                    <div
-                                                      {...dragProvided.dragHandleProps}
-                                                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sea/30 bg-sea/10 text-sea cursor-grab active:cursor-grabbing"
-                                                      aria-label="Arrastar rota"
-                                                      title="Arrastar rota"
-                                                    >
-                                                      <GripVertical size={13} />
-                                                    </div>
-                                                  ) : null}
-                                                  <button
-                                                    type="button"
-                                                    onClick={(event) => {
-                                                      event.stopPropagation();
-                                                      openDetailsModal(item);
-                                                    }}
-                                                    className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
-                                                    aria-label="Visualizar detalhes da empresa"
-                                                    title="Visualizar detalhes da empresa"
-                                                  >
-                                                    <Eye size={12} />
-                                                  </button>
-                                                  {mapAddress ? (
-                                                    <button
-                                                      type="button"
-                                                      onClick={(event) => {
-                                                        event.stopPropagation();
-                                                        openMapApp(mapAddress);
-                                                      }}
-                                                      className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
-                                                      aria-label="Abrir mapa"
-                                                      title="Abrir mapa"
-                                                    >
-                                                      <MapPin size={12} />
-                                                    </button>
-                                                  ) : null}
-                                                  {canManage && (
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => {
-                                                        if (isCompleted) return;
+                                              ) : null}
+                                              {canManage && isEditing && !isCompleted ? (
+                                                <div className="mt-3 grid gap-2 md:grid-cols-3">
+                                                  <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
+                                                    {isSupervisorVisit ? "Responsavel" : "Vendedor"}
+                                                    <select
+                                                      value={state.vendorId}
+                                                      onChange={(event) =>
                                                         setEditState((prev) => ({
                                                           ...prev,
-                                                          [item.id]:
-                                                            prev[item.id] ?? {
-                                                              vendorId: item.assigned_to_user_id ?? "",
-                                                              date: toDateInput(item.visit_date),
-                                                            },
-                                                        }));
-                                                        setEditingVisits((prev) => ({
-                                                          ...prev,
-                                                          [item.id]: !isEditing,
-                                                        }));
-                                                      }}
-                                                      disabled={isCompleted}
-                                                      className="rounded-full border border-sea/20 bg-white px-2 py-1 text-[11px] text-sea hover:border-sea"
-                                                      aria-label="Editar visita"
-                                                      title="Editar visita"
+                                                          [item.id]: { ...state, vendorId: event.target.value },
+                                                        }))
+                                                      }
+                                                      className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
                                                     >
-                                                      <Pencil size={12} />
+                                                      <option value="">Selecione</option>
+                                                      {isSupervisorVisit
+                                                        ? supervisorRouteAssignees.map((assignee) => (
+                                                            <option key={assignee.user_id} value={assignee.user_id}>
+                                                              {(assignee.display_name ?? assignee.user_id) +
+                                                                (assignee.role === "SUPERVISOR"
+                                                                  ? " (Supervisor)"
+                                                                  : " (Vendedor)")}
+                                                            </option>
+                                                          ))
+                                                        : vendors.map((vendor) => (
+                                                            <option key={vendor.user_id} value={vendor.user_id}>
+                                                              {vendor.display_name ?? vendor.user_id}
+                                                            </option>
+                                                          ))}
+                                                    </select>
+                                                  </label>
+                                                  <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
+                                                    Data
+                                                    <input
+                                                      type="date"
+                                                      value={state.date}
+                                                      onChange={(event) =>
+                                                        setEditState((prev) => ({
+                                                          ...prev,
+                                                          [item.id]: { ...state, date: event.target.value },
+                                                        }))
+                                                      }
+                                                      className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
+                                                    />
+                                                  </label>
+                                                  <div className="flex flex-wrap items-end gap-2">
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleSaveVisit(item.id, item)}
+                                                      disabled={savingId === item.id || addingVendorId === item.id}
+                                                      className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-sea text-white hover:bg-seaLight disabled:opacity-60"
+                                                      aria-label="Salvar visita"
+                                                      title="Salvar visita"
+                                                    >
+                                                      {savingId === item.id ? (
+                                                        <LoaderCircle size={14} className="animate-spin" />
+                                                      ) : (
+                                                        <CheckCircle2 size={14} />
+                                                      )}
                                                     </button>
-                                                  )}
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleAddVendorToVisit(item.id, item)}
+                                                      disabled={addingVendorId === item.id || savingId === item.id}
+                                                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sea/30 bg-white text-sea hover:border-sea hover:bg-sea/5 disabled:opacity-60"
+                                                      aria-label={isSupervisorVisit ? "Adicionar responsavel" : "Adicionar vendedor"}
+                                                      title={isSupervisorVisit ? "Adicionar responsavel" : "Adicionar vendedor"}
+                                                    >
+                                                      {addingVendorId === item.id ? (
+                                                        <LoaderCircle size={14} className="animate-spin" />
+                                                      ) : (
+                                                        <Plus size={14} />
+                                                      )}
+                                                    </button>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleRemoveVisit(item.id, item)}
+                                                      disabled={removingId === item.id || addingVendorId === item.id}
+                                                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600 hover:border-red-300 disabled:opacity-60"
+                                                      aria-label="Remover visita"
+                                                      title="Remover visita"
+                                                    >
+                                                      {removingId === item.id ? (
+                                                        <LoaderCircle size={14} className="animate-spin" />
+                                                      ) : (
+                                                        <Trash2 size={14} />
+                                                      )}
+                                                    </button>
+                                                  </div>
                                                 </div>
-                                              </div>
+                                              ) : null}
                                             </div>
-                                            {canManage && isEditing && !isCompleted ? (
-                                              <div className="mt-3 grid gap-2 md:grid-cols-3">
-                                    <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
-                                      {isSupervisorVisit ? "Responsavel" : "Vendedor"}
-                                      <select
-                                        value={state.vendorId}
-                                        onChange={(event) =>
-                                          setEditState((prev) => ({
-                                            ...prev,
-                                            [item.id]: { ...state, vendorId: event.target.value },
-                                          }))
-                                        }
-                                        className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
-                                      >
-                                        <option value="">Selecione</option>
-                                        {isSupervisorVisit
-                                          ? supervisorRouteAssignees.map((assignee) => (
-                                              <option key={assignee.user_id} value={assignee.user_id}>
-                                                {(assignee.display_name ?? assignee.user_id) +
-                                                  (assignee.role === "SUPERVISOR" ? " (Supervisor)" : " (Vendedor)")}
-                                              </option>
-                                            ))
-                                          : vendors.map((vendor) => (
-                                              <option key={vendor.user_id} value={vendor.user_id}>
-                                                {vendor.display_name ?? vendor.user_id}
-                                              </option>
-                                            ))}
-                                      </select>
-                                    </label>
-                                    <label className="flex flex-col gap-1 text-[11px] font-semibold text-ink/70">
-                                      Data
-                                      <input
-                                        type="date"
-                                        value={state.date}
-                                        onChange={(event) =>
-                                          setEditState((prev) => ({
-                                            ...prev,
-                                            [item.id]: { ...state, date: event.target.value },
-                                          }))
-                                        }
-                                        className="rounded-lg border border-sea/20 bg-white px-2 py-1 text-xs text-ink outline-none focus:border-sea"
-                                      />
-                                    </label>
-                                    <div className="flex flex-wrap items-end gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleSaveVisit(item.id, item)}
-                                        disabled={savingId === item.id || addingVendorId === item.id}
-                                        className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-sea text-white hover:bg-seaLight disabled:opacity-60"
-                                        aria-label="Salvar visita"
-                                        title="Salvar visita"
-                                      >
-                                        {savingId === item.id ? (
-                                          <LoaderCircle size={14} className="animate-spin" />
-                                        ) : (
-                                          <CheckCircle2 size={14} />
-                                        )}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleAddVendorToVisit(item.id, item)}
-                                        disabled={addingVendorId === item.id || savingId === item.id}
-                                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sea/30 bg-white text-sea hover:border-sea hover:bg-sea/5 disabled:opacity-60"
-                                        aria-label={isSupervisorVisit ? "Adicionar responsavel" : "Adicionar vendedor"}
-                                        title={isSupervisorVisit ? "Adicionar responsavel" : "Adicionar vendedor"}
-                                      >
-                                        {addingVendorId === item.id ? (
-                                          <LoaderCircle size={14} className="animate-spin" />
-                                        ) : (
-                                          <Plus size={14} />
-                                        )}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleRemoveVisit(item.id, item)}
-                                        disabled={removingId === item.id || addingVendorId === item.id}
-                                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600 hover:border-red-300 disabled:opacity-60"
-                                        aria-label="Remover visita"
-                                        title="Remover visita"
-                                      >
-                                        {removingId === item.id ? (
-                                          <LoaderCircle size={14} className="animate-spin" />
-                                        ) : (
-                                          <Trash2 size={14} />
-                                        )}
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : canManage ? (
-                                  <div className="hidden mt-3 flex-wrap items-center justify-between gap-2 md:flex">
-                                    <div className="grid gap-1 text-[11px] text-ink/60">
-                                      {item.visit_time ? <span>Horario visita: {item.visit_time.slice(0, 5)}</span> : null}
-                                      {instructionText ? (
-                                        <span>Instrucoes: {instructionText}</span>
-                                      ) : null}
-                                      {item.no_visit_reason ? (
-                                        <span>Motivo: {item.no_visit_reason}</span>
-                                      ) : null}
-                                    </div>
-                                    {canLoggedSupervisorRegister ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleStartRegister(item)}
-                                        disabled={Boolean(item.no_visit_reason)}
-                                        className={registerVisitButtonClass}
-                                      >
-                                        {isCompleted
-                                          ? item.no_visit_reason
-                                            ? "Visita nao realizada"
-                                            : "Editar registro"
-                                          : "Registrar visita"}
-                                      </button>
-                                    ) : null}
-                                  </div>
-                                ) : (
-                                  <div className="hidden mt-3 flex-wrap items-center justify-between gap-2 md:flex">
-                                    <div className="grid gap-1 text-[11px] text-ink/60">
-                                      <span>
-                                        Perfil visita: {item.perfil_visita ?? item.perfil_visita_opcoes ?? item.agenda?.perfil_visita ?? "-"}
-                                      </span>
-                                      {item.visit_time ? <span>Horario visita: {item.visit_time.slice(0, 5)}</span> : null}
-                                      {instructionText ? (
-                                        <span>Instrucoes: {instructionText}</span>
-                                      ) : null}
-                                      {item.no_visit_reason ? (
-                                        <span>Motivo: {item.no_visit_reason}</span>
-                                      ) : null}
-                                      {isCompleted ? (
-                                        <div className="flex items-center gap-2">
-                                          <span>Vidas: {item.completed_vidas ?? "-"}</span>
-                                          {item.no_visit_observation?.trim() ? (
-                                            <button
-                                              type="button"
-                                              onClick={() => openNoVisitObservationModal(item, seller)}
-                                            className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-amber-300 bg-amber-100 text-amber-700 hover:border-amber-400 dark:border-amber-500/50 dark:bg-amber-500/15 dark:text-amber-300"
-                                              title="Ver observacao"
-                                              aria-label="Ver observacao"
-                                            >
-                                              <TriangleAlert size={12} />
-                                            </button>
-                                          ) : null}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleStartRegister(item)}
-                                      disabled={Boolean(item.no_visit_reason)}
-                                      className={registerVisitButtonClass}
-                                    >
-                                      {isCompleted
-                                        ? item.no_visit_reason
-                                          ? "Visita nao realizada"
-                                          : "Editar registro"
-                                        : "Registrar visita"}
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
+                                          </div>
                                 )}
                               </Draggable>
                             );
@@ -4541,6 +4363,36 @@ export default function Visitas() {
                 <p className="text-[11px] font-semibold text-ink/60">Regra visita</p>
                 <p className="mt-1">{detailsVisit.agenda?.regra_visita_observacao ?? "-"}</p>
               </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-ink/60">Tipo da rota</p>
+                  <p className="mt-1">{detailsVisit.visit_type ?? "-"}</p>
+                </div>
+                <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-ink/60">Responsavel</p>
+                  <p className="mt-1">{detailsVisit.assigned_to_name ?? "-"}</p>
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-ink/60">Status</p>
+                  <p className="mt-1">
+                    {detailsVisit.no_visit_reason
+                      ? "Nao realizada"
+                      : detailsVisit.completed_at
+                        ? "Registrada"
+                        : "Pendente"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-ink/60">Data de registro</p>
+                  <p className="mt-1">{detailsVisit.completed_at ? format(new Date(detailsVisit.completed_at), "dd/MM/yyyy HH:mm") : "-"}</p>
+                </div>
+                <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-ink/60">Horario da visita</p>
+                  <p className="mt-1">{detailsVisit.visit_time?.slice(0, 5) ?? "-"}</p>
+                </div>
+              </div>
               <div className="grid gap-2 sm:grid-cols-4">
                 <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
                   <p className="text-[11px] font-semibold text-ink/60">Quantidade de vidas</p>
@@ -4575,6 +4427,34 @@ export default function Visitas() {
                   </div>
                 </div>
               </div>
+              {detailsVisit.no_visit_reason ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-red-700">Motivo da nao realizacao</p>
+                  <p className="mt-1 text-sm text-red-800">{detailsVisit.no_visit_reason}</p>
+                  {detailsVisit.no_visit_observation?.trim() ? (
+                    <p className="mt-2 text-sm text-red-800">{detailsVisit.no_visit_observation}</p>
+                  ) : null}
+                </div>
+              ) : null}
+              {detailsVisit.supervisor_register ? (
+                <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-violet-700">Registro da rota</p>
+                  <div className="mt-1 grid gap-1 text-sm text-violet-900 sm:grid-cols-2">
+                    <p>Vidas: {detailsVisit.supervisor_register.quantidade_vidas ?? "-"}</p>
+                    <p>Funcionarios: {detailsVisit.supervisor_register.quantidade_funcionarios ?? "-"}</p>
+                    <p>Pessoa: {detailsVisit.supervisor_register.pessoa ?? "-"}</p>
+                    <p>Contato: {detailsVisit.supervisor_register.contato ?? "-"}</p>
+                  </div>
+                  <p className="mt-2 text-sm text-violet-900">
+                    Pessoa e contato iguais: {detailsVisit.supervisor_register.pessoa_contato_mesma ? "Sim" : "Nao"}
+                  </p>
+                  {detailsVisit.supervisor_register.descricao_visita ? (
+                    <p className="mt-1 text-sm text-violet-900">
+                      Descricao: {detailsVisit.supervisor_register.descricao_visita}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
                 <p className="text-[11px] font-semibold text-ink/60">Instrucoes</p>
                 {canManageInstruction ? (
