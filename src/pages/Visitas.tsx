@@ -474,15 +474,15 @@ export default function Visitas() {
     );
 
     const cache = mode === "details" ? clientesDetailsCacheRef.current : clientesLiteCacheRef.current;
-    const select = mode === "details" ? CLIENTE_DETAILS_SELECT : CLIENTE_LIST_SELECT;
     const clientesById = new Map<string, ClienteListRow | ClienteDetailsRow>();
     for (let index = 0; index < clienteIds.length; index += 500) {
       const chunk = clienteIds.slice(index, index + 500).filter((id) => !cache.has(id));
       if (chunk.length === 0) continue;
-      const { data: clientesChunk, error: clientesError } = await supabase
-        .from("clientes")
-        .select(select)
-        .in("id", chunk);
+      const query =
+        mode === "details"
+          ? supabase.from("clientes").select(CLIENTE_DETAILS_SELECT).in("id", chunk)
+          : supabase.from("clientes").select(CLIENTE_LIST_SELECT).in("id", chunk);
+      const { data: clientesChunk, error: clientesError } = await query;
       if (clientesError) throw new Error(clientesError.message);
       (clientesChunk ?? []).forEach((cliente) => {
         const row = cliente as unknown as ClienteListRow | ClienteDetailsRow;
