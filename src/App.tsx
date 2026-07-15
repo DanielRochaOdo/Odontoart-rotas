@@ -13,6 +13,7 @@ const Fila = lazy(() => import("./pages/Fila"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Logs = lazy(() => import("./pages/Logs"));
 const KPI = lazy(() => import("./pages/KPI"));
+const Novidades = lazy(() => import("./pages/Novidades"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const shouldUseHashRouter = () => {
@@ -38,6 +39,7 @@ function AppRoutes() {
             <Route path="clientes" element={<Clientes />} />
             <Route path="fila" element={<Fila />} />
             <Route path="kpi" element={<KPI />} />
+            <Route path="novidades" element={<Novidades />} />
             <Route path="configuracoes" element={<Settings />} />
             <Route path="logs" element={<Logs />} />
           </Route>

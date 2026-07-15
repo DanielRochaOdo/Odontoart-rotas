@@ -413,7 +413,7 @@ const mapInactiveCompanies = (
 const getCategoriaBadgeStyles = (value: string | null | undefined) => {
   const normalized = normalizeText(value, { letterCase: "upper" });
   const baseClassName =
-    "inline-flex shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.02em]"
+    "inline-flex max-w-full min-w-0 whitespace-normal break-words rounded-md px-2 py-0.5 text-[10px] font-bold uppercase leading-tight tracking-[0.02em] [overflow-wrap:anywhere]";
   if (!normalized) {
     return {
       label: "-",
@@ -460,6 +460,11 @@ const getCategoriaBadgeStyles = (value: string | null | undefined) => {
     label: value?.trim() || "-",
     className: `${baseClassName} bg-slate-700 text-slate-100`,
   };
+};
+
+const renderCategoriaBadge = (value: string | null | undefined) => {
+  const badge = getCategoriaBadgeStyles(value);
+  return <span className={badge.className}>{badge.label}</span>;
 };
 
 const getSupervisorFlagDotStyles = (color: "CINZA" | "VERDE" | "AMARELO" | "VERMELHO") => {
@@ -5663,6 +5668,7 @@ export default function Agenda() {
                                 {badgeText}
                               </button>
                             ) : null}
+                            <div className="shrink-0">{renderCategoriaBadge(row.categoria)}</div>
                             {hasAnyHistoryDate ? (
                               <button
                                 type="button"
@@ -5864,6 +5870,7 @@ export default function Agenda() {
                                     />
                                   </span>
                                 ) : null}
+                                <div className="shrink-0">{renderCategoriaBadge(original.categoria)}</div>
                                 {hasAnyHistoryDate ? (
                                   <button
                                     type="button"
