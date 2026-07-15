@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, PencilLine } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Eye, EyeOff, Plus, Trash2, PencilLine } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { ROLE_LABELS, type UserRole } from "../types/roles";
 import {
@@ -9,11 +10,12 @@ import {
   requestSystemNewsAdminAccess,
   type SystemNewsFilters,
   type SystemNewsModule,
-  type SystemNewsRow,
+  type SystemNewsRowWithRead,
   type SystemNewsType,
   updateSystemNews,
   SYSTEM_NEWS_PAGE_SIZE,
 } from "../lib/systemNewsApi";
+import { markSystemUpdateAsRead } from "../services/systemUpdateNotifications";
 
 const ADMIN_EMAIL = "daniel.rocha@odontoart.com";
 const TYPES: Array<SystemNewsType | "TODOS"> = ["TODOS", "MELHORIA", "ATUALIZACAO", "CORRECAO", "MANUTENCAO", "AVISO"];
@@ -30,20 +32,23 @@ const formatDate = (value: string) =>
 
 export default function Novidades() {
   const { role, session } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const canManage = session?.user?.email === ADMIN_EMAIL;
   const [filters, setFilters] = useState<SystemNewsFilters>({ from: "", to: "", modulo: "TODOS", tipo: "TODOS", ativo: "TODOS", search: "" });
   const [page, setPage] = useState(1);
-  const [rows, setRows] = useState<SystemNewsRow[]>([]);
+  const [rows, setRows] = useState<SystemNewsRowWithRead[]>([]);
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [adminModalOpen, setAdminModalOpen] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
+  const [showAdminPassword, setShowAdminPassword] = useState(false);
   const [pendingAction, setPendingAction] = useState<"save" | "delete" | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  const [editingRow, setEditingRow] = useState<SystemNewsRow | null>(null);
+  const [editingRow, setEditingRow] = useState<SystemNewsRowWithRead | null>(null);
   const [saving, setSaving] = useState(false);
+  const highlightRef = useRef<HTMLElement | null>(null);
   const [form, setForm] = useState({
     titulo: "",
     descricao: "",
@@ -74,6 +79,23 @@ export default function Novidades() {
     void load();
   }, [load]);
 
+  const openNewsId = useMemo(() => searchParams.get("id"), [searchParams]);
+
+  useEffect(() => {
+    if (!openNewsId) return;
+    const node = highlightRef.current;
+    if (node) node.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [openNewsId, rows]);
+
+  useEffect(() => {
+    if (!openNewsId) return;
+    const nextRow = rows.find((row) => row.id === openNewsId);
+    if (!nextRow || nextRow.isRead) return;
+    void markSystemUpdateAsRead(nextRow.id).then(() => void load()).catch(() => {
+      // ignore read-state failures; content still renders
+    });
+  }, [load, openNewsId, rows]);
+
   const resetFilters = () => {
     setFilters({ from: "", to: "", modulo: "TODOS", tipo: "TODOS", ativo: "TODOS", search: "" });
     setPage(1);
@@ -93,7 +115,7 @@ export default function Novidades() {
     setFormOpen(true);
   };
 
-  const openEdit = (row: SystemNewsRow) => {
+  const openEdit = (row: SystemNewsRowWithRead) => {
     setEditingRow(row);
     setForm({
       titulo: row.titulo,
@@ -110,21 +132,54 @@ export default function Novidades() {
   const askAdmin = async (action: "save" | "delete") => {
     if (!canManage) return false;
     if (adminUnlocked) return true;
+    setError(null);
     setPendingAction(action);
     setAdminModalOpen(true);
     return false;
   };
 
+  const persistCurrentForm = async () => {
+    const payload = {
+      ...form,
+      descricao: sanitizeHtml(form.descricao),
+      data_publicacao: new Date(form.data_publicacao).toISOString(),
+      created_by: null,
+      updated_by: null,
+    } as never;
+    if (editingRow) {
+      await updateSystemNews(editingRow.id, payload);
+    } else {
+      await createSystemNews(payload);
+    }
+  };
+
   const handleAdminPassword = async () => {
     try {
-      await requestSystemNewsAdminAccess(adminPassword);
+      const password = adminPassword.trim();
+      if (!password) {
+        setError("Informe a senha administrativa.");
+        return;
+      }
+      await requestSystemNewsAdminAccess(password);
       setAdminUnlocked(true);
       setAdminModalOpen(false);
       setAdminPassword("");
+      setShowAdminPassword(false);
+      setError(null);
       const nextAction = pendingAction;
       setPendingAction(null);
       if (nextAction === "save") {
-        void handleSave();
+        setSaving(true);
+        try {
+          await persistCurrentForm();
+          setFormOpen(false);
+          setPage(1);
+          await load();
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Erro ao salvar.");
+        } finally {
+          setSaving(false);
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Senha invalida.");
@@ -135,12 +190,7 @@ export default function Novidades() {
     if (!(await askAdmin("save"))) return;
     setSaving(true);
     try {
-      const payload = { ...form, descricao: sanitizeHtml(form.descricao), data_publicacao: new Date(form.data_publicacao).toISOString(), created_by: null, updated_by: null } as never;
-      if (editingRow) {
-        await updateSystemNews(editingRow.id, payload);
-      } else {
-        await createSystemNews(payload);
-      }
+      await persistCurrentForm();
       setFormOpen(false);
       setPage(1);
       await load();
@@ -151,7 +201,7 @@ export default function Novidades() {
     }
   };
 
-  const handleDelete = async (row: SystemNewsRow) => {
+  const handleDelete = async (row: SystemNewsRowWithRead) => {
     if (!(await askAdmin("delete"))) return;
     if (!window.confirm("Tem certeza de que deseja excluir esta publicação? Esta ação não poderá ser desfeita.")) return;
     await deleteSystemNews(row.id);
@@ -218,6 +268,11 @@ export default function Novidades() {
                     <span className="rounded-full bg-sea/10 px-2 py-1">{row.tipo}</span>
                     <span className="rounded-full bg-sand/40 px-2 py-1">{row.modulo}</span>
                     {!row.ativo ? <span className="rounded-full bg-red-100 px-2 py-1 text-red-700">Inativa</span> : null}
+                    {row.isRead ? (
+                      <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">Lida</span>
+                    ) : (
+                      <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-700">Nova</span>
+                    )}
                   </div>
                   <h3 className="text-lg font-semibold text-ink">{row.titulo}</h3>
                   <div className="prose prose-sm max-w-none text-ink/80" dangerouslySetInnerHTML={{ __html: sanitizeHtml(row.descricao) }} />
@@ -230,9 +285,22 @@ export default function Novidades() {
                   </div>
                 ) : null}
               </div>
-              {canManage ? (
-                <div className="mt-3 text-xs text-ink/60">Roles: {row.roles_permitidos.map((r) => ROLE_LABELS[r]).join(", ")}</div>
-              ) : null}
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                {canManage ? (
+                  <div className="text-xs text-ink/60">Roles: {row.roles_permitidos.map((r) => ROLE_LABELS[r]).join(", ")}</div>
+                ) : (
+                  <div className="text-xs text-ink/50">{row.isRead ? "Conteúdo já visualizado." : "Conteúdo ainda não visualizado."}</div>
+                )}
+                {openNewsId === row.id ? (
+                  <button
+                    type="button"
+                    onClick={() => void markSystemUpdateAsRead(row.id).then(() => void load())}
+                    className="rounded-lg border border-sea/20 px-3 py-1.5 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea"
+                  >
+                    Marcar como lida
+                  </button>
+                ) : null}
+              </div>
             </article>
           ))
         )}
@@ -250,7 +318,22 @@ export default function Novidades() {
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-4">
             <h3 className="font-semibold">Senha administrativa</h3>
-            <input type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} className="mt-3 w-full rounded-lg border px-3 py-2 text-sm" />
+            <div className="mt-3 flex items-center gap-2 rounded-lg border px-3 py-2">
+              <input
+                type={showAdminPassword ? "text" : "password"}
+                value={adminPassword}
+                onChange={(e) => setAdminPassword(e.target.value)}
+                className="w-full bg-transparent text-sm outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => setShowAdminPassword((prev) => !prev)}
+                className="text-ink/60 transition hover:text-ink"
+                aria-label={showAdminPassword ? "Ocultar senha" : "Mostrar senha"}
+              >
+                {showAdminPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" onClick={() => setAdminModalOpen(false)} className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-xs text-ink dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">Cancelar</button>
               <button

@@ -23,6 +23,7 @@ import PwaInstallHint from "../components/PwaInstallHint";
 import { useAutoFormDraftPersistence } from "../hooks/useAutoFormDraftPersistence";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import FilaAlertsModal from "../components/FilaAlertsModal";
+import NotificationsBell from "../components/notifications/NotificationsBell";
 
 type NavItem = {
   label: string;
@@ -128,6 +129,7 @@ export default function AppLayout() {
           >
             <Menu size={18} />
           </button>
+          <NotificationsBell />
         </div>
         <div className="px-4 pt-3">
           <PwaInstallHint />
@@ -280,6 +282,9 @@ export default function AppLayout() {
             </nav>
 
             <div className={["mt-auto border-t p-3", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
+              <div className="mb-3 flex justify-end">
+                <NotificationsBell />
+              </div>
               {enableVendorSettingsInSidebar ? (
                 effectiveVendorSettingsOpen ? (
                   <div className="flex flex-col gap-2">
@@ -447,6 +452,9 @@ export default function AppLayout() {
               >
                 <X size={16} />
               </button>
+            </div>
+            <div className="mt-3 flex justify-end">
+              <NotificationsBell />
             </div>
 
             <div className="mt-5 rounded-2xl border border-sea/20 bg-sand/60 px-4 py-3">
