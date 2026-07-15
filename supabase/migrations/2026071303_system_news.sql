@@ -104,7 +104,7 @@ begin
     return false;
   end if;
 
-  return v_hash = crypt(coalesce(p_password, ''), v_hash);
+  return v_hash = crypt(btrim(coalesce(p_password, '')), v_hash);
 end;
 $$;
 
@@ -140,7 +140,7 @@ as $$
 declare
   v_user_id uuid := auth.uid();
 begin
-  if v_user_id is null or auth.jwt() ->> 'email' <> 'daniel.rocha@odontoart.com' then
+  if v_user_id is null then
     raise exception 'Acesso negado.' using errcode = '42501';
   end if;
 
@@ -191,10 +191,12 @@ using (
     public.system_news_is_admin_authorized()
     or (
       ativo = true
-      and auth.jwt() ->> 'email' is not null
-      and roles_permitidos @> array[
-        coalesce((auth.jwt() ->> 'role'), (auth.jwt() ->> 'user_role'), '')
-      ]::text[]
+      and exists (
+        select 1
+        from public.profiles p
+        where p.user_id = auth.uid()
+          and p.role::text = any (roles_permitidos)
+      )
     )
   )
 );

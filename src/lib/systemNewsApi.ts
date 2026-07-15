@@ -28,6 +28,10 @@ export type SystemNewsRow = {
   updated_by: string | null;
 };
 
+export type SystemNewsRowWithRead = SystemNewsRow & {
+  isRead: boolean;
+};
+
 export type SystemNewsFilters = {
   from: string;
   to: string;
@@ -67,11 +71,29 @@ export const fetchSystemNews = async ({
 
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);
-  return { rows: (data ?? []) as SystemNewsRow[], count: count ?? 0, role };
+  const rows = (data ?? []) as SystemNewsRow[];
+  const ids = rows.map((row) => row.id);
+  let readIds = new Set<string>();
+  if (ids.length > 0) {
+    const { data: readsData, error: readsError } = await supabase
+      .from("system_news_reads")
+      .select("update_id")
+      .in("update_id", ids);
+    if (readsError) throw new Error(readsError.message);
+    readIds = new Set((readsData ?? []).map((row) => String((row as { update_id: string }).update_id)));
+  }
+  return {
+    rows: rows.map((row) => ({ ...row, isRead: readIds.has(row.id) })) as SystemNewsRowWithRead[],
+    count: count ?? 0,
+    role,
+  };
 };
 
 export const requestSystemNewsAdminAccess = async (password: string) => {
-  const { data, error } = await supabase.rpc("system_news_request_admin_access", { p_password: password });
+  const sanitizedPassword = password.trim();
+  const { data, error } = await supabase.rpc("system_news_request_admin_access", {
+    p_password: sanitizedPassword,
+  });
   if (error) throw new Error(error.message);
   return Boolean(data);
 };
