@@ -15,6 +15,7 @@ import {
   History,
   ChartNoAxesCombined,
   ListChecks,
+  Megaphone,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { ROLE_LABELS } from "../types/roles";
@@ -39,6 +40,7 @@ const navItems: NavItem[] = [
   { label: "Fila", to: "/fila", icon: ListChecks, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "KPI", to: "/kpi", icon: ChartNoAxesCombined, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Logs", to: "/logs", icon: History, roles: ["SUPERVISOR"] },
+  { label: "Novidades", to: "/novidades", icon: Megaphone, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
   { label: "Configuracoes", to: "/configuracoes", icon: Settings, roles: ["SUPERVISOR"] },
 ];
 

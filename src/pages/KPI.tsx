@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
 import { normalizeText } from "../lib/textNormalize";
@@ -8,7 +9,6 @@ import {
   type CategoriaValue,
 } from "../lib/categorias";
 
-import * as XLSX from "xlsx";
 type ParsedKpiRow = {
   codigo: string;
   associadoTotal: number;
@@ -101,6 +101,7 @@ type SyncRunBanner = {
   current_stage: string | null;
   current_code_started_at: string | null;
   current_attempt: number | null;
+  last_progress_at: string | null;
 } | null;
 
 type DonutSlice = {
@@ -109,11 +110,27 @@ type DonutSlice = {
   color: string;
 };
 
+type KpiCardDetailModalState = {
+  title: string;
+  metricLabel: string;
+  rows: Array<{
+    empresa: string;
+    codigo: string;
+    value: number;
+  }>;
+};
+
+type KpiCardDetailModalViewState = {
+  page: number;
+  search: string;
+};
+
 const LOOKUP_CHUNK_SIZE = 400;
 const UPDATE_CHUNK_SIZE = 300;
 const CLIENTS_READ_CHUNK_SIZE = 1000;
 const KPI_SNAPSHOT_READ_CHUNK_SIZE = 1000;
 const KPI_PERIOD_OPTIONS: KpiPeriodDays[] = [1, 7, 15, 30];
+const KPI_ACTIVE_RUN_STORAGE_KEY = "kpi_active_sync_run_id";
 const DONUT_SIZE = 160;
 const DONUT_STROKE = 22;
 const DONUT_RADIUS = (DONUT_SIZE - DONUT_STROKE) / 2;
@@ -207,7 +224,7 @@ const resolveKpiStatus = (vendas: number, cancelamentos: number): KpiStatus => {
 
 const CLIENTS_SELECT_COLUMNS = "id, codigo, empresa, vidas_qtde";
 const KPI_SYNC_RUN_SELECT_COLUMNS =
-  "id, status, total_codes, processed_codes, failed_codes, started_at, source, current_code, current_stage, current_code_started_at, current_attempt";
+  "id, status, total_codes, processed_codes, failed_codes, started_at, source, current_code, current_stage, current_code_started_at, current_attempt, last_progress_at";
 
 const fetchAllClientesRows = async () => {
   const allRows: Array<{
@@ -309,6 +326,48 @@ const fetchLatestSyncRunBanner = async () => {
   return (lastSuccessData as SyncRunBanner) ?? null;
 };
 
+const fetchLatestFinishedSyncRunId = async () => {
+  const { data, error } = await supabase
+    .from("kpi_sync_runs")
+    .select("id, status")
+    .in("status", ["success", "failed"])
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? String((data as { id: string }).id) : null;
+};
+
+const fetchSyncRunBannerById = async (syncRunId: string) => {
+  const { data, error } = await supabase
+    .from("kpi_sync_runs")
+    .select(KPI_SYNC_RUN_SELECT_COLUMNS)
+    .eq("id", syncRunId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as SyncRunBanner) ?? null;
+};
+
+const readActiveSyncRunId = () => {
+  try {
+    return window.localStorage.getItem(KPI_ACTIVE_RUN_STORAGE_KEY)?.trim() || "";
+  } catch {
+    return "";
+  }
+};
+
+const writeActiveSyncRunId = (syncRunId: string | null) => {
+  try {
+    if (syncRunId) {
+      window.localStorage.setItem(KPI_ACTIVE_RUN_STORAGE_KEY, syncRunId);
+    } else {
+      window.localStorage.removeItem(KPI_ACTIVE_RUN_STORAGE_KEY);
+    }
+  } catch {
+    // ignore storage failures
+  }
+};
+
 const getCurrentMonthKey = () => {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -341,10 +400,9 @@ const parseMonthKey = (value: unknown): string | null => {
   }
 
   if (typeof value === "number" && Number.isFinite(value)) {
-    const parsedDate = XLSX.SSF.parse_date_code(value);
-    if (parsedDate?.y && parsedDate?.m) {
-      return `${parsedDate.y}-${String(parsedDate.m).padStart(2, "0")}`;
-    }
+    const month = Math.floor(value % 12) || 1;
+    const year = Math.floor(value);
+    if (Number.isFinite(year) && year > 1900) return `${year}-${String(month).padStart(2, "0")}`;
   }
 
   const fallbackDate = new Date(raw);
@@ -597,19 +655,74 @@ const DoubleBarChartCard = ({
   );
 };
 
+const TopCodesChartCard = ({
+  title,
+  subtitle,
+  rows,
+  accentColor,
+  emptyLabel,
+}: {
+  title: string;
+  subtitle: string;
+  rows: Array<{
+    codigo: string;
+    empresa: string | null;
+    saldo: number;
+  }>;
+  accentColor: string;
+  emptyLabel: string;
+}) => {
+  const hasData = rows.length > 0;
+  const maxAbs = Math.max(1, ...rows.map((row) => Math.abs(row.saldo)));
+
+  return (
+    <div className="rounded-xl border border-sea/15 bg-white/90 p-4">
+      <h4 className="text-sm font-semibold text-ink">{title}</h4>
+      <p className="mt-1 text-[11px] text-ink/60">{subtitle}</p>
+      {!hasData ? (
+        <p className="mt-4 text-xs text-ink/60">{emptyLabel}</p>
+      ) : (
+        <div className="mt-4 space-y-2">
+          {rows.map((row) => {
+            const width = `${Math.max(8, Math.round((Math.abs(row.saldo) / maxAbs) * 100))}%`;
+            const isNegative = row.saldo < 0;
+            return (
+              <div key={row.codigo} className="space-y-1">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="truncate text-ink">{row.codigo}</span>
+                  <span className={`font-semibold ${isNegative ? "text-red-600" : "text-emerald-600"}`}>
+                    {formatChartNumber(row.saldo)}
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-sea/10">
+                  <div
+                    className="h-2 rounded-full"
+                    style={{
+                      width,
+                      backgroundColor: isNegative ? "#dc2626" : accentColor,
+                    }}
+                  />
+                </div>
+                <p className="truncate text-[10px] text-ink/50">{row.empresa ?? "Sem empresa"}</p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default function KPI() {
   const { role, profile, session } = useAuth();
   const canAccess = role === "SUPERVISOR" || role === "ASSISTENTE";
 
-  const [file, setFile] = useState<File | null>(null);
-  const [parsing, setParsing] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [parseError, setParseError] = useState<string | null>(null);
-  const [applyError, setApplyError] = useState<string | null>(null);
-  const [parseSummary, setParseSummary] = useState<ParseSummary | null>(null);
-  const [applySummary, setApplySummary] = useState<ApplySummary | null>(null);
-  const [parsedRows, setParsedRows] = useState<ParsedKpiRow[]>([]);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const [kpiCardDetailModal, setKpiCardDetailModal] = useState<KpiCardDetailModalState | null>(null);
+  const [kpiCardDetailModalView, setKpiCardDetailModalView] = useState<KpiCardDetailModalViewState>({
+    page: 1,
+    search: "",
+  });
   const [historicalChartRows, setHistoricalChartRows] = useState<ParsedKpiRow[]>([]);
   const [historicalChartLoading, setHistoricalChartLoading] = useState(false);
   const [historicalChartError, setHistoricalChartError] = useState<string | null>(null);
@@ -619,13 +732,13 @@ export default function KPI() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncRunBanner, setSyncRunBanner] = useState<SyncRunBanner>(null);
-  const [manualUploadOpen, setManualUploadOpen] = useState(false);
-  const [manualUploadFile, setManualUploadFile] = useState<File | null>(null);
+  const [syncPersistedCounts, setSyncPersistedCounts] = useState<{ snapshots: number; errors: number } | null>(null);
   const [currentSnapshotRows, setCurrentSnapshotRows] = useState<KpiSnapshotRow[]>([]);
   const [previousSnapshotRows, setPreviousSnapshotRows] = useState<KpiSnapshotRow[]>([]);
   const [codesSearch, setCodesSearch] = useState("");
   const [codesSortKey, setCodesSortKey] = useState<"codigo" | "empresa" | "vidas_qtde" | "categoria">("codigo");
   const [codesSortDirection, setCodesSortDirection] = useState<"asc" | "desc">("asc");
+  const [codesPage, setCodesPage] = useState(1);
   const snapshotLoadSequenceRef = useRef(0);
   const snapshotLoadKeyRef = useRef("");
 
@@ -637,6 +750,13 @@ export default function KPI() {
     syncRunBanner?.current_code_started_at && syncRunBanner.status === "running"
       ? Math.max(0, Math.round((Date.now() - new Date(syncRunBanner.current_code_started_at).getTime()) / 1000))
       : null;
+  const syncHealthWarning = useMemo(() => {
+    if (!syncRunBanner || syncRunBanner.status !== "running" || !syncRunBanner.last_progress_at) return null;
+    const ageMs = Date.now() - new Date(syncRunBanner.last_progress_at).getTime();
+    if (!Number.isFinite(ageMs) || ageMs < 5 * 60 * 1000) return null;
+    if (ageMs < 15 * 60 * 1000) return "Sincronização sem progresso recente.";
+    return "Sincronização sem atualização há muito tempo.";
+  }, [syncRunBanner]);
   const fallbackMonthKey = useMemo(() => getCurrentMonthKey(), []);
 
   const uniqueSnapshotRows = useMemo(
@@ -660,11 +780,13 @@ export default function KPI() {
         const vendas = ordered.reduce((sum, row) => sum + Math.max(0, Number(row.vendas_qtde ?? 0)), 0);
         const cancelamentos = ordered.reduce((sum, row) => sum + Math.max(0, Number(row.cancelamentos_qtde ?? 0)), 0);
         const saldo = vendas - cancelamentos;
+        const previous = ordered[0] ?? null;
         const current = ordered[ordered.length - 1] ?? null;
         return {
           codigo,
           empresa: current?.empresa ?? null,
           associadoTotalAtual: Number(current?.vidas_qtde ?? 0),
+          associadoTotalAnterior: Number(previous?.vidas_qtde ?? 0),
           vendas,
           cancelamentos,
           saldo,
@@ -695,7 +817,7 @@ export default function KPI() {
       categoria,
       total: totals.get(categoria) ?? 0,
     }));
-  }, [uniqueSnapshotRows]);
+  }, [kpiPeriodAnalysis]);
 
   const categoryDonutData = useMemo<DonutSlice[]>(
     () => [
@@ -709,24 +831,74 @@ export default function KPI() {
     [categoryBreakdown],
   );
 
-  const vidasDonutData = useMemo<DonutSlice[]>(() => {
-    const vidasInTotal = kpiPeriodAnalysis.reduce((sum, row) => sum + row.associadoTotalAtual, 0);
-    const vidasOutTotal = 0;
-    return [
-      { label: "Vidas In", value: vidasInTotal, color: "#16a34a" },
-      { label: "Vidas Out", value: vidasOutTotal, color: "#dc2626" },
-    ];
-  }, [kpiPeriodAnalysis]);
+  const isVidasInStatus = (status: KpiStatus) => status === "crescimento" || status === "so_venda";
+  const isVidasOutStatus = (status: KpiStatus) => status === "so_perda" || status === "queda";
 
   const monthSeries = useMemo(() => {
     const currentTotal = kpiPeriodAnalysis.reduce((sum, row) => sum + row.associadoTotalAtual, 0);
-    const previousTotal = 0;
+    const previousTotal = kpiPeriodAnalysis.reduce(
+      (sum, row) => sum + (isVidasOutStatus(row.status) ? row.associadoTotalAtual : 0),
+      0,
+    );
     return {
       labels: [`${selectedPeriodDays} dia(s)`],
       vidasInValues: [currentTotal],
       vidasOutValues: [previousTotal],
     };
   }, [kpiPeriodAnalysis, selectedPeriodDays]);
+
+  const topGrowthRows = useMemo(
+    () =>
+    [...kpiPeriodAnalysis]
+        .filter((row) => row.saldo > 0)
+        .sort((a, b) => b.saldo - a.saldo)
+        .slice(0, 10),
+    [kpiPeriodAnalysis],
+  );
+
+  const topLossRows = useMemo(
+    () =>
+    [...kpiPeriodAnalysis]
+        .filter((row) => row.saldo < 0)
+        .sort((a, b) => a.saldo - b.saldo)
+        .slice(0, 10),
+    [kpiPeriodAnalysis],
+  );
+
+  const companySeries = useMemo(() => {
+    const grouped = new Map<string, number>();
+    kpiPeriodAnalysis.forEach((row) => {
+      const empresa = row.empresa ?? "Sem empresa";
+      grouped.set(empresa, (grouped.get(empresa) ?? 0) + row.associadoTotalAtual);
+    });
+    const rows = Array.from(grouped.entries())
+      .map(([empresa, total]) => ({ empresa, total }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10);
+    return {
+      labels: rows.map((row) => row.empresa),
+      values: rows.map((row) => row.total),
+    };
+  }, [kpiPeriodAnalysis]);
+
+  const monthlyHistorySeries = useMemo(() => {
+    const grouped = new Map<string, { in: number; out: number }>();
+    historicalChartRows.forEach((row) => {
+      const key = row.monthKey ?? "Sem mes";
+      const bucket = grouped.get(key) ?? { in: 0, out: 0 };
+      bucket.in += Math.max(0, row.vidasIn ?? 0);
+      bucket.out += Math.max(0, row.vidasOut ?? 0);
+      grouped.set(key, bucket);
+    });
+    const rows = Array.from(grouped.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-6);
+    return {
+      labels: rows.map(([month]) => month),
+      vidasInValues: rows.map(([, value]) => value.in),
+      vidasOutValues: rows.map(([, value]) => value.out),
+    };
+  }, [historicalChartRows]);
 
   const vidasGrowthSeries = useMemo(() => {
     if (monthSeries.labels.length <= 1) {
@@ -766,6 +938,10 @@ export default function KPI() {
     });
   }, [codesSearch, kpiPeriodAnalysis]);
 
+  useEffect(() => {
+    setCodesPage(1);
+  }, [codesSearch, codesSortKey, codesSortDirection]);
+
   const filteredCodeRows = useMemo(() => {
     const rows = filteredRows;
 
@@ -795,41 +971,146 @@ export default function KPI() {
     });
   }, [codesSortDirection, codesSortKey, filteredRows]);
 
+  const codesPageSize = 10;
+  const codesTotalPages = Math.max(1, Math.ceil(filteredCodeRows.length / codesPageSize));
+  const safeCodesPage = Math.min(codesPage, codesTotalPages);
+  const pagedCodeRows = useMemo(() => {
+    const start = (safeCodesPage - 1) * codesPageSize;
+    return filteredCodeRows.slice(start, start + codesPageSize);
+  }, [filteredCodeRows, safeCodesPage]);
+
   const summaryCards = useMemo(
     () => [
-      { label: "Total de codigos", value: filteredRows.length },
-      { label: "Total de vidas atual", value: filteredRows.reduce((sum, row) => sum + row.associadoTotalAtual, 0) },
-      { label: "Vendas no periodo", value: filteredRows.reduce((sum, row) => sum + row.vendas, 0) },
-      { label: "Cancelamentos no periodo", value: filteredRows.reduce((sum, row) => sum + row.cancelamentos, 0) },
-      { label: "Saldo de vidas", value: filteredRows.reduce((sum, row) => sum + row.saldo, 0) },
-      { label: "Crescimento", value: filteredRows.filter((row) => row.status === "crescimento").length },
-      { label: "Queda", value: filteredRows.filter((row) => row.status === "queda").length },
-      { label: "Inativos", value: filteredRows.filter((row) => row.status === "inativo").length },
-      { label: "Neutros", value: filteredRows.filter((row) => row.status === "neutro").length },
+      { key: "total_codigos", label: "Total de codigos", value: kpiPeriodAnalysis.length },
+      { key: "vidas_atuais", label: "Total de vidas atual", value: kpiPeriodAnalysis.reduce((sum, row) => sum + row.associadoTotalAtual, 0) },
+      { key: "inativos", label: "Inativo", value: kpiPeriodAnalysis.filter((row) => row.status === "inativo").length },
+      { key: "so_perda", label: "So perda", value: kpiPeriodAnalysis.filter((row) => row.status === "so_perda").length },
+      { key: "queda", label: "Queda", value: kpiPeriodAnalysis.filter((row) => row.status === "queda").length },
+      { key: "crescimento", label: "Crescimento", value: kpiPeriodAnalysis.filter((row) => row.status === "crescimento").length },
+      { key: "so_venda", label: "So venda", value: kpiPeriodAnalysis.filter((row) => row.status === "so_venda").length },
+      { key: "neutros", label: "Neutro", value: kpiPeriodAnalysis.filter((row) => row.status === "neutro").length },
     ],
-    [filteredRows],
+    [kpiPeriodAnalysis],
   );
 
-  const handleExportTemplate = () => {
-    const workbook = XLSX.utils.book_new();
-    const dataSheet = XLSX.utils.aoa_to_sheet([
-      ["codigo", "AssociadoTitular"],
-    ]);
-    const rulesSheet = XLSX.utils.aoa_to_sheet([
-      ["categoria", "descricao"],
-      ...CATEGORIA_OPTIONS.map((categoria) => [categoria, CATEGORIA_DESCRIPTIONS[categoria]]),
-    ]);
+  const openKpiCardDetailModal = (key: string, label: string) => {
+    const modalMap: Record<
+      string,
+      {
+        title: string;
+        metricLabel: string;
+        rows: Array<{ empresa: string; codigo: string; value: number }>;
+      }
+    > = {
+      total_codigos: {
+        title: "Total de codigos",
+        metricLabel: "Codigos",
+        rows: kpiPeriodAnalysis.map((row) => ({
+          empresa: row.empresa ?? "-",
+          codigo: row.codigo,
+          value: 1,
+        })),
+      },
+      vidas_atuais: {
+        title: "Total de vidas atual",
+        metricLabel: "Quantidade de vidas",
+        rows: kpiPeriodAnalysis.map((row) => ({
+          empresa: row.empresa ?? "-",
+          codigo: row.codigo,
+          value: row.associadoTotalAtual,
+        })),
+      },
+      inativos: {
+        title: "Inativo",
+        metricLabel: "Saldo",
+        rows: kpiPeriodAnalysis
+          .filter((row) => row.status === "inativo")
+          .map((row) => ({
+            empresa: row.empresa ?? "-",
+            codigo: row.codigo,
+            value: 0,
+          })),
+      },
+      so_perda: {
+        title: "So perda",
+        metricLabel: "Saidas",
+        rows: kpiPeriodAnalysis
+          .filter((row) => row.status === "so_perda")
+          .map((row) => ({
+            empresa: row.empresa ?? "-",
+            codigo: row.codigo,
+            value: row.cancelamentos,
+          })),
+      },
+      queda: {
+        title: "Queda",
+        metricLabel: "Saidas",
+        rows: kpiPeriodAnalysis
+          .filter((row) => row.status === "queda")
+          .map((row) => ({
+            empresa: row.empresa ?? "-",
+            codigo: row.codigo,
+            value: row.cancelamentos,
+          })),
+      },
+      crescimento: {
+        title: "Crescimento",
+        metricLabel: "Entradas",
+        rows: kpiPeriodAnalysis
+          .filter((row) => row.status === "crescimento")
+          .map((row) => ({
+            empresa: row.empresa ?? "-",
+            codigo: row.codigo,
+            value: row.saldo,
+          })),
+      },
+      so_venda: {
+        title: "So venda",
+        metricLabel: "Entradas",
+        rows: kpiPeriodAnalysis
+          .filter((row) => row.status === "so_venda")
+          .map((row) => ({
+            empresa: row.empresa ?? "-",
+            codigo: row.codigo,
+            value: row.vendas,
+          })),
+      },
+      neutros: {
+        title: "Neutro",
+        metricLabel: "Quantidade de vidas",
+        rows: kpiPeriodAnalysis
+          .filter((row) => row.status === "neutro")
+          .map((row) => ({
+            empresa: row.empresa ?? "-",
+            codigo: row.codigo,
+            value: 0,
+          })),
+      },
+    };
 
-    XLSX.utils.book_append_sheet(workbook, dataSheet, "kpi");
-    XLSX.utils.book_append_sheet(workbook, rulesSheet, "regras");
-    const now = new Date();
-    const day = String(now.getDate()).padStart(2, "0");
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const year = String(now.getFullYear()).slice(-2);
-    XLSX.writeFile(workbook, `modelo_importacao_kpi_${day}_${month}_${year}.xlsx`);
+    const next = modalMap[key];
+    setKpiCardDetailModal(next ?? { title: label, metricLabel: "Quantidade", rows: [] });
+    setKpiCardDetailModalView({ page: 1, search: "" });
   };
 
-  const exportKpiExcel = () => {
+  const filteredKpiCardDetailRows = useMemo(() => {
+    if (!kpiCardDetailModal) return [];
+    const search = kpiCardDetailModalView.search.trim().toLowerCase();
+    const rows = search
+      ? kpiCardDetailModal.rows.filter((row) => row.codigo.toLowerCase().includes(search))
+      : kpiCardDetailModal.rows;
+    return rows.sort((a, b) => a.codigo.localeCompare(b.codigo));
+  }, [kpiCardDetailModal, kpiCardDetailModalView.search]);
+
+  const kpiCardDetailTotalPages = Math.max(1, Math.ceil(filteredKpiCardDetailRows.length / 20));
+  const kpiCardDetailPage = Math.min(kpiCardDetailModalView.page, kpiCardDetailTotalPages);
+  const pagedKpiCardDetailRows = useMemo(() => {
+    const start = (kpiCardDetailPage - 1) * 20;
+    return filteredKpiCardDetailRows.slice(start, start + 20);
+  }, [filteredKpiCardDetailRows, kpiCardDetailPage]);
+
+  const exportKpiExcel = async () => {
+    const [{ default: XLSX }] = await Promise.all([import("xlsx")]);
     const workbook = XLSX.utils.book_new();
     const rows = filteredCodeRows.map((row) => ({
       codigo: row.codigo,
@@ -1004,129 +1285,98 @@ export default function KPI() {
     setPreviousSnapshotRows([]);
   };
 
-  const createSyncSnapshotFromRows = async ({
-    source,
-    rowsByCode,
-  }: {
-    source: "api_daily" | "manual_upload" | "manual_sync";
-    rowsByCode: Map<string, { associadoTotal: number; empresa: string | null }>;
-  }) => {
-    const snapshotAt = new Date().toISOString();
-    const snapshotDate = snapshotAt.slice(0, 10);
-    const normalizedCodes = Array.from(rowsByCode.keys()).sort((a, b) => a.localeCompare(b));
-
-    const syncRunInsert = await supabase
-      .from("kpi_sync_runs")
-      .insert({
-        source,
-        status: "running",
-        started_at: snapshotAt,
-        requested_by_user_id: session?.user?.id ?? null,
-        total_codes: normalizedCodes.length,
-      })
-      .select("id")
-      .single();
-    if (syncRunInsert.error) throw new Error(syncRunInsert.error.message);
-    const syncRunId = String((syncRunInsert.data as { id: string }).id);
-
-    const { data: previousSnapshotsData, error: previousSnapshotsError } = await supabase
-      .from("kpi_sync_snapshots")
-      .select("codigo, vidas_qtde, snapshot_at")
-      .eq("period_days", selectedPeriodDays)
-      .order("snapshot_at", { ascending: false });
-    if (previousSnapshotsError) throw new Error(previousSnapshotsError.message);
-
-    const previousByCode = new Map<string, number>();
-    (previousSnapshotsData ?? []).forEach((item) => {
-      const codigo = normalizeCode((item as { codigo: string | null }).codigo);
-      if (!codigo || previousByCode.has(codigo)) return;
-      previousByCode.set(codigo, Number((item as { vidas_qtde: number | null }).vidas_qtde ?? 0));
-    });
-
-    const snapshotRows: KpiSnapshotRow[] = normalizedCodes.map((codigo) => {
-      const entry = rowsByCode.get(codigo);
-      const current = Number(entry?.associadoTotal ?? 0);
-      const previous = previousByCode.get(codigo) ?? null;
-      const deltaPayload = getSnapshotDeltaPayload(current, previous);
-      return {
-        id: `sync-${syncRunId}-${codigo}`,
-        sync_run_id: syncRunId,
-        source,
-        period_days: selectedPeriodDays,
-        codigo,
-        empresa: entry?.empresa ?? null,
-        categoria: "Neutro" as CategoriaValue,
-        vidas_qtde: current,
-        status: buildStatusFromDelta(deltaPayload.vendas_qtde, deltaPayload.cancelamentos_qtde),
-        snapshot_at: snapshotAt,
-        snapshot_date: snapshotDate,
-        previous_vidas_qtde: previous,
-        delta: deltaPayload.delta,
-        vendas_qtde: deltaPayload.vendas_qtde,
-        cancelamentos_qtde: deltaPayload.cancelamentos_qtde,
-        created_at: snapshotAt,
-      };
-    });
-
-    const { error: insertSnapshotError } = await supabase.from("kpi_sync_snapshots").insert(snapshotRows);
-    if (insertSnapshotError) throw new Error(insertSnapshotError.message);
-
-    for (const codeBatch of chunk(normalizedCodes, LOOKUP_CHUNK_SIZE)) {
-      const batchRows = codeBatch
-        .map((codigo) => ({ codigo, associadoTotal: rowsByCode.get(codigo)?.associadoTotal ?? 0 }))
-        .filter((item) => item.codigo);
-      if (batchRows.length === 0) continue;
-      for (const item of batchRows) {
-        const { error } = await supabase
-          .from("clientes")
-          .update({ vidas_qtde: item.associadoTotal })
-          .eq("codigo", item.codigo);
-        if (error) throw new Error(error.message);
-      }
+  const runKpiSync = async () => {
+    if (syncingKpi) return;
+    if (syncRunBanner?.status === "running") {
+      setSyncMessage("Sincronização em andamento");
+      return;
     }
 
-    const finishedAt = new Date().toISOString();
-    const { error: runUpdateError } = await supabase
-      .from("kpi_sync_runs")
-      .update({
-        status: "success",
-        finished_at: finishedAt,
-        processed_codes: snapshotRows.length,
-        changed_codes: snapshotRows.filter((row) => row.delta !== 0).length,
-        failed_codes: 0,
-      })
-      .eq("id", syncRunId);
-    if (runUpdateError) throw new Error(runUpdateError.message);
-
-    return { syncRunId, snapshotRows };
-  };
-
-  const runKpiSync = async () => {
     setSyncingKpi(true);
     setSyncError(null);
     setSyncMessage(null);
 
     try {
-      const rows = await fetchAllClientesRows();
-      const rowsByCode = new Map<string, { associadoTotal: number; empresa: string | null }>();
-      rows.forEach((row) => {
-        const code = normalizeCode(row.codigo);
-        if (!code) return;
-        rowsByCode.set(code, {
-          associadoTotal: Number(row.vidas_qtde ?? 0),
-          empresa: row.empresa ?? null,
-        });
+      const { data, error } = await supabase.functions.invoke("kpi-sync-daily", {
+        body: {
+          source: "api_daily",
+          triggered_by: "manual_ui_full_sync",
+        },
       });
-
-      const { snapshotRows } = await createSyncSnapshotFromRows({
-        source: "manual_sync",
-        rowsByCode,
-      });
-      setCurrentSnapshotRows(snapshotRows as KpiSnapshotRow[]);
-      setPreviousSnapshotRows([]);
-      setSyncMessage(`Snapshot do KPI atualizado a partir de clientes. ${snapshotRows.length} registro(s).`);
+      if (error) throw new Error(error.message);
+      if (data && typeof data === "object" && "error" in data && typeof (data as { error?: unknown }).error === "string") {
+        throw new Error(String((data as { error?: string }).error));
+      }
+      if (data && typeof data === "object") {
+        const payload = data as {
+          sync_run_id?: string;
+          status?: string;
+          total_codes?: number;
+          processed_codes?: number;
+          remaining_codes?: number;
+          current_stage?: string | null;
+        };
+        if (payload.sync_run_id) {
+          writeActiveSyncRunId(payload.sync_run_id);
+          setSyncRunBanner((current) => ({
+            id: payload.sync_run_id ?? current?.id ?? "",
+            status: payload.status ?? "running",
+            total_codes: payload.total_codes ?? current?.total_codes ?? 0,
+            processed_codes: payload.processed_codes ?? current?.processed_codes ?? 0,
+            failed_codes: current?.failed_codes ?? 0,
+            started_at: current?.started_at ?? new Date().toISOString(),
+            source: current?.source ?? "api_daily",
+            current_code: current?.current_code ?? null,
+            current_stage: payload.current_stage ?? current?.current_stage ?? "queued",
+            current_code_started_at: current?.current_code_started_at ?? null,
+            current_attempt: current?.current_attempt ?? null,
+            last_progress_at: current?.last_progress_at ?? new Date().toISOString(),
+          }));
+        }
+      }
+      setSyncMessage("Sincronização completa iniciada.");
+      const banner = await fetchLatestSyncRunBanner();
+      setSyncRunBanner(banner);
+      if (banner?.id) writeActiveSyncRunId(banner.id);
     } catch (error) {
-      setSyncError(error instanceof Error ? error.message : "Falha ao atualizar KPI.");
+      setSyncError(error instanceof Error ? error.message : "Falha ao iniciar sincronização.");
+    } finally {
+      setSyncingKpi(false);
+    }
+  };
+
+  const loadSyncPersistedCounts = async (syncRunId: string) => {
+    const [{ count: snapshotsCount }, { count: errorsCount }] = await Promise.all([
+      supabase.from("kpi_sync_snapshots").select("id", { count: "exact", head: true }).eq("sync_run_id", syncRunId),
+      supabase.from("kpi_sync_run_errors").select("id", { count: "exact", head: true }).eq("sync_run_id", syncRunId),
+    ]);
+    setSyncPersistedCounts({
+      snapshots: snapshotsCount ?? 0,
+      errors: errorsCount ?? 0,
+    });
+  };
+
+  const stopKpiSync = async () => {
+    if (!syncRunBanner?.id || syncRunBanner.status !== "running") return;
+    setSyncingKpi(true);
+    setSyncError(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("kpi-sync-daily", {
+        body: {
+          mode: "stop",
+          sync_run_id: syncRunBanner.id,
+        },
+      });
+      if (error) throw new Error(error.message);
+      if (data && typeof data === "object" && "error" in data && typeof (data as { error?: unknown }).error === "string") {
+        throw new Error(String((data as { error?: string }).error));
+      }
+      const banner = await fetchLatestSyncRunBanner();
+      setSyncRunBanner(banner);
+      if (banner?.status !== "running") writeActiveSyncRunId(null);
+      setSyncMessage("Sincronização interrompida.");
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : "Falha ao interromper sincronização.");
     } finally {
       setSyncingKpi(false);
     }
@@ -1177,10 +1427,49 @@ export default function KPI() {
     if (!canAccess) return;
     let cancelled = false;
 
+    const hydratePersistedSnapshots = async () => {
+      try {
+        const activeRunId = readActiveSyncRunId();
+        if (activeRunId) return;
+        const banner = await fetchLatestSyncRunBanner();
+        if (cancelled) return;
+        if (banner?.status === "running") return;
+        const finishedRunId = await fetchLatestFinishedSyncRunId();
+        if (cancelled) return;
+        if (finishedRunId) {
+          const loadSequence = snapshotLoadSequenceRef.current + 1;
+          snapshotLoadSequenceRef.current = loadSequence;
+          await loadKpiSnapshotsForRun(finishedRunId, loadSequence);
+          return;
+        }
+        await loadKpiSnapshots(selectedPeriodDays);
+      } catch (error) {
+        if (!cancelled) {
+          setSyncError(error instanceof Error ? error.message : "Erro ao carregar snapshots persistidos.");
+        }
+      }
+    };
+
+    void hydratePersistedSnapshots();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canAccess, selectedPeriodDays]);
+
+  useEffect(() => {
+    if (!canAccess) return;
+    let cancelled = false;
+    let timeoutId: number | null = null;
+    const activeRunId = readActiveSyncRunId();
+
     const refreshSyncRunBanner = async () => {
       try {
-        const banner = await fetchLatestSyncRunBanner();
+        const banner = activeRunId ? await fetchSyncRunBannerById(activeRunId) : await fetchLatestSyncRunBanner();
         if (!cancelled) setSyncRunBanner(banner);
+        if (!cancelled && activeRunId && (!banner || banner.status !== "running")) {
+          writeActiveSyncRunId(null);
+        }
         if (!cancelled && banner?.id && banner.status === "running") {
           const loadKey = `${banner.id}:${banner.processed_codes}:${banner.status}`;
           if (snapshotLoadKeyRef.current === loadKey) return;
@@ -1199,6 +1488,15 @@ export default function KPI() {
             setSyncError(error instanceof Error ? error.message : "Erro ao carregar snapshots do KPI.");
           });
         }
+        if (!cancelled && banner?.id) {
+          void loadSyncPersistedCounts(banner.id).catch((error) => {
+            if (!cancelled) {
+              setSyncError(error instanceof Error ? error.message : "Erro ao carregar contagem persistida do KPI.");
+            }
+          });
+        } else if (!cancelled) {
+          setSyncPersistedCounts(null);
+        }
       } catch (error) {
         if (!cancelled) {
           setSyncError(error instanceof Error ? error.message : "Erro ao carregar status da sincronizacao.");
@@ -1206,135 +1504,25 @@ export default function KPI() {
       }
     };
 
-    void refreshSyncRunBanner();
-    const timer = window.setInterval(() => {
-      void refreshSyncRunBanner();
-    }, 15000);
+    const scheduleRefresh = (delayMs: number) => {
+      if (cancelled) return;
+      timeoutId = window.setTimeout(async () => {
+        await refreshSyncRunBanner();
+        if (cancelled) return;
+        const nextDelay = syncRunBanner?.status === "running" ? 5000 : 15000;
+        scheduleRefresh(nextDelay);
+      }, delayMs);
+    };
+
+    void refreshSyncRunBanner().finally(() => {
+      scheduleRefresh(5000);
+    });
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
   }, [canAccess]);
-
-  const parseFile = async () => {
-    if (!file) {
-      setParseError("Selecione um arquivo para continuar.");
-      return;
-    }
-
-    setParsing(true);
-    setParseError(null);
-    setApplyError(null);
-    setPdfError(null);
-    setApplySummary(null);
-
-    try {
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
-      const firstSheetName = workbook.SheetNames[0];
-      if (!firstSheetName) throw new Error("Arquivo sem abas para leitura.");
-
-      const worksheet = workbook.Sheets[firstSheetName];
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: "" });
-      if (rows.length === 0) throw new Error("Arquivo sem linhas de dados.");
-
-      const keys = Object.keys(rows[0] ?? {});
-      const codigoKey = findColumnKey(keys, ["codigo", "cod", "cod_1", "cod1"]);
-      const associadoTotalKey = findColumnKey(keys, [
-        "associadotitular",
-        "associado_titular",
-        "associado titular",
-        "total_titulares",
-      ]);
-
-      if (!codigoKey) throw new Error("Coluna de codigo nao encontrada. Esperado: codigo/cod.");
-      if (!associadoTotalKey) throw new Error("Coluna de AssociadoTitular nao encontrada.");
-
-      const invalidRows: number[] = [];
-      const validRows: ParsedKpiRow[] = [];
-      let ignoredRows = 0;
-      const byCode = new Map<string, ParsedKpiRow>();
-
-      rows.forEach((row, index) => {
-        const sourceRow = index + 2;
-        const codigo = normalizeCode(row[codigoKey]);
-        const hasTotal = String(row[associadoTotalKey] ?? "").trim().length > 0;
-        const hasAnyValue = Boolean(codigo || hasTotal);
-
-        if (!hasAnyValue) {
-          ignoredRows += 1;
-          return;
-        }
-
-        const associadoTotal = parseNonNegativeNumber(row[associadoTotalKey]);
-        if (!codigo || associadoTotal === null) {
-          invalidRows.push(sourceRow);
-          return;
-        }
-
-        const existing = byCode.get(codigo);
-        if (existing && existing.associadoTotal !== associadoTotal) {
-          invalidRows.push(sourceRow);
-          return;
-        }
-
-        const parsedRow = { codigo, associadoTotal, sourceRow };
-        byCode.set(codigo, parsedRow);
-        validRows.push(parsedRow);
-      });
-
-      if (invalidRows.length > 0) {
-        const sample = invalidRows.slice(0, 10).join(", ");
-        throw new Error(`Linhas invalidas: ${invalidRows.length}. Exemplos: ${sample}`);
-      }
-
-      if (validRows.length === 0) {
-        throw new Error("Nenhuma linha valida encontrada no arquivo.");
-      }
-
-      const normalizedRows = Array.from(byCode.values()).sort((a, b) =>
-        a.codigo.localeCompare(b.codigo),
-      );
-
-      const parseSummaryDraft: ParseSummary = {
-        rowsInFile: rows.length,
-        validRows: validRows.length,
-        ignoredRows,
-        uniqueCodes: normalizedRows.length,
-        unvalidatedCodes: 0,
-        columns: {
-          codigo: codigoKey,
-          associadoTotal: associadoTotalKey,
-          month: null,
-        },
-      };
-
-      const rowsByCode = new Map(
-        normalizedRows.map((row) => [row.codigo, { associadoTotal: row.associadoTotal, empresa: null }] as const),
-      );
-      const { syncRunId } = await createSyncSnapshotFromRows({
-        source: "manual_upload",
-        rowsByCode,
-      });
-
-      setParsedRows(normalizedRows);
-      setParseSummary(parseSummaryDraft);
-      setApplySummary({
-        uniqueCodes: normalizedRows.length,
-        foundCodes: normalizedRows.length,
-        missingCodes: 0,
-        estimatedCompaniesUpdated: normalizedRows.length,
-        updatedRows: normalizedRows.length,
-      });
-    } catch (error) {
-      setParsedRows([]);
-      setParseSummary(null);
-      setParseError(error instanceof Error ? error.message : "Erro ao ler arquivo.");
-    } finally {
-      setParsing(false);
-    }
-  };
 
   if (!canAccess) {
     return (
@@ -1356,11 +1544,22 @@ export default function KPI() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setManualUploadOpen(true)}
-            className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea disabled:opacity-60 print:hidden"
+            onClick={() => void runKpiSync()}
+            disabled={syncingKpi || syncRunBanner?.status === "running"}
+            className="rounded-lg border border-sea/30 bg-sea px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60 print:hidden"
           >
-            Atualizar por planilha
+            {syncingKpi ? "Iniciando..." : syncRunBanner?.status === "running" ? "Sincronização em andamento" : "Sincronizar"}
           </button>
+          {syncRunBanner?.status === "running" ? (
+            <button
+              type="button"
+              onClick={() => void stopKpiSync()}
+              disabled={syncingKpi}
+              className="rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:border-red-500 hover:text-red-800 disabled:opacity-60 print:hidden"
+            >
+              Parar
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={exportKpiPdf}
@@ -1402,7 +1601,12 @@ export default function KPI() {
             {syncRunBanner.current_stage ? <p>Etapa: {syncRunBanner.current_stage}</p> : null}
             {syncCurrentCodeDuration !== null ? <p>Tempo no codigo: {syncCurrentCodeDuration}s</p> : null}
             {syncRunBanner.current_attempt ? <p>Tentativa: {syncRunBanner.current_attempt}</p> : null}
+            {syncRunBanner.last_progress_at ? <p>Ultima atualizacao: {formatDateTime(syncRunBanner.last_progress_at)}</p> : null}
+            {syncHealthWarning ? <p className="text-amber-700">{syncHealthWarning}</p> : null}
             <p>Snapshots carregados: {currentSnapshotRows.length}</p>
+            {syncPersistedCounts ? (
+              <p>Persistido: {syncPersistedCounts.snapshots} snapshots e {syncPersistedCounts.errors} erros</p>
+            ) : null}
             <p>Falhas: {syncRunBanner.failed_codes}</p>
             <p>Iniciada em: {formatDateTime(syncRunBanner.started_at)}</p>
           </div>
@@ -1413,87 +1617,196 @@ export default function KPI() {
       </div>
 
       <section className="rounded-2xl border border-sea/20 bg-sand/30 p-3 md:p-4">
-        <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
-          <div className="rounded-xl border border-sea/15 bg-white/85 p-3 text-xs text-ink/70 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200">
-            <p className="font-semibold text-ink">Filtros</p>
-            <p className="mt-1">
-              Base consolidada do ultimo fechamento concluido. Use filtros para isolar periodos, c&oacute;digos e empresas.
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <select
-              value={selectedPeriodDays}
-              onChange={(event) => setSelectedPeriodDays(Number(event.target.value) as KpiPeriodDays)}
-              className="h-10 rounded-lg border border-sea/30 bg-white px-3 text-xs font-semibold text-ink/70 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-            >
-              {KPI_PERIOD_OPTIONS.map((period) => (
-                <option key={period} value={period}>
-                  Ultimos {period} dia(s)
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="mt-3 rounded-xl border border-sea/15 bg-white/80 p-3 text-xs text-ink/70 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
-          <p className="font-semibold text-ink/80 dark:text-slate-100">Snapshots</p>
-          <p className="mt-1">
-            Base consolidada: ultimo fechamento concluido.
-          </p>
-          {syncMessage ? <p className="mt-1 text-emerald-700">{syncMessage}</p> : null}
-          {syncError ? <p className="mt-1 text-red-600">{syncError}</p> : null}
-        </div>
-
         <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           {summaryCards.map((card) => (
-            <div key={card.label} className="rounded-xl border border-sea/15 bg-white p-3">
+            <button
+              key={card.label}
+              type="button"
+              onClick={() => openKpiCardDetailModal(card.key, card.label)}
+              className="rounded-xl border border-sea/15 bg-white p-3 text-left transition hover:border-sea/40 hover:shadow-sm"
+            >
               <p className="text-[11px] uppercase tracking-[0.16em] text-ink/50">{card.label}</p>
               <p className="mt-2 text-2xl font-semibold text-ink">{card.value}</p>
-            </div>
+            </button>
           ))}
         </div>
 
-        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        {kpiCardDetailModal && typeof document !== "undefined"
+          ? createPortal(
+              <div className="fixed inset-0 z-[70] flex items-center justify-center px-4">
+                <button
+                  type="button"
+                  className="absolute inset-0 bg-ink/40"
+                  onClick={() => setKpiCardDetailModal(null)}
+                />
+                <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-5 shadow-card">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-display text-lg text-ink">{kpiCardDetailModal.title}</h3>
+                      <p className="mt-1 text-xs text-ink/60">{kpiCardDetailModal.metricLabel}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setKpiCardDetailModal(null)}
+                      className="rounded-lg border border-sea/30 bg-white px-2 py-1 text-xs font-semibold text-ink/70 hover:border-sea hover:text-sea"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <input
+                      value={kpiCardDetailModalView.search}
+                      onChange={(event) =>
+                        setKpiCardDetailModalView((prev) => ({
+                          ...prev,
+                          search: event.target.value,
+                          page: 1,
+                        }))
+                      }
+                      placeholder="Buscar codigo"
+                      className="w-full rounded-lg border border-sea/20 bg-sand/10 px-3 py-2 text-xs text-ink outline-none focus:border-sea sm:w-56"
+                    />
+                    <span className="text-xs text-ink/60">
+                      {filteredKpiCardDetailRows.length} resultado(s)
+                    </span>
+                  </div>
+                  <div className="mt-4 max-h-[60vh] space-y-2 overflow-y-auto pr-1">
+                    {pagedKpiCardDetailRows.length === 0 ? (
+                      <p className="text-sm text-ink/60">Nenhum registro para exibir.</p>
+                    ) : (
+                      pagedKpiCardDetailRows.map((row) => (
+                        <div
+                          key={`${row.codigo}-${row.empresa}`}
+                          className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-sm text-ink/80"
+                        >
+                          <p className="font-semibold text-ink">{row.empresa}</p>
+                          <p className="text-xs text-ink/60">Codigo: {row.codigo}</p>
+                          <p className="text-xs text-ink/60">
+                            {kpiCardDetailModal.metricLabel}: {formatChartNumber(row.value)}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  {filteredKpiCardDetailRows.length > 20 ? (
+                    <div className="mt-4 flex items-center justify-between gap-3 text-xs text-ink/70">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setKpiCardDetailModalView((prev) => ({
+                            ...prev,
+                            page: Math.max(1, prev.page - 1),
+                          }))
+                        }
+                        disabled={kpiCardDetailPage <= 1}
+                        className="rounded-lg border border-sea/20 bg-white px-3 py-2 font-semibold disabled:opacity-50"
+                      >
+                        Anterior
+                      </button>
+                      <span>
+                        Pagina {kpiCardDetailPage} de {kpiCardDetailTotalPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setKpiCardDetailModalView((prev) => ({
+                            ...prev,
+                            page: Math.min(kpiCardDetailTotalPages, prev.page + 1),
+                          }))
+                        }
+                        disabled={kpiCardDetailPage >= kpiCardDetailTotalPages}
+                        className="rounded-lg border border-sea/20 bg-white px-3 py-2 font-semibold disabled:opacity-50"
+                      >
+                        Proxima
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>,
+              document.body,
+            )
+          : null}
+
+        <div className="mt-3 grid gap-3 lg:grid-cols-3">
           <DonutChartCard
             title="Distribuicao por status"
-            subtitle="Quantidade de codigos por status na base consolidada."
+            subtitle="Clique num status para filtrar os demais graficos."
             data={categoryDonutData}
             emptyLabel="Ainda nao existe fechamento consolidado para este grafico."
           />
-          <DonutChartCard
-            title="Comparativo de vidas"
-            subtitle="Soma total de AssociadoTitular na base consolidada."
-            data={vidasDonutData}
-            emptyLabel="Ainda nao existe fechamento consolidado para este grafico."
+          <TopCodesChartCard
+            title="Top 10 Crescimentos"
+            subtitle="Maiores saldos positivos no filtro atual."
+            rows={topGrowthRows}
+            accentColor="#16a34a"
+            emptyLabel="Nenhum codigo com crescimento para este filtro."
+          />
+          <TopCodesChartCard
+            title="Top 10 Quedas"
+            subtitle="Maiores saldos negativos no filtro atual."
+            rows={topLossRows}
+            accentColor="#f97316"
+            emptyLabel="Nenhum codigo com queda para este filtro."
           />
         </div>
 
-        <div className="mt-3 grid gap-3 lg:grid-cols-2">
-          <div className="rounded-xl border border-sea/20 bg-white px-3 py-2 text-[11px] text-ink dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
-            <span className="font-semibold text-ink dark:text-slate-100">Base dos graficos comparativos:</span>{" "}
-            ultimo fechamento concluido.
-            {historicalChartLoading ? " Atualizando dados..." : ""}
-            {historicalChartError ? ` Erro ao carregar historico: ${historicalChartError}` : ""}
+        <div className="mt-3 grid gap-3 lg:grid-cols-3">
+          <div className="rounded-xl border border-sea/15 bg-white/90 p-4">
+            <h4 className="text-sm font-semibold text-ink">Comparativo por empresa</h4>
+            <p className="mt-1 text-[11px] text-ink/60">Soma de vidas por empresa na base completa.</p>
+            <div className="mt-3 space-y-2">
+              {companySeries.labels.length === 0 ? (
+                <p className="text-xs text-ink/60">Nenhuma empresa encontrada para o filtro atual.</p>
+              ) : (
+                companySeries.labels.map((empresa, index) => {
+                  const value = companySeries.values[index] ?? 0;
+                  const maxValue = Math.max(1, ...companySeries.values);
+                  const width = `${Math.max(8, Math.round((value / maxValue) * 100))}%`;
+                  return (
+                    <button
+                      key={empresa}
+                      type="button"
+                      onClick={() => setCodesSearch(empresa)}
+                      className="w-full text-left"
+                    >
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="truncate text-ink">{empresa}</span>
+                        <span className="font-semibold text-ink">{formatChartNumber(value)}</span>
+                      </div>
+                      <div className="mt-1 h-2 rounded-full bg-sea/10">
+                        <div className="h-2 rounded-full bg-teal-600" style={{ width }} />
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
           <DoubleBarChartCard
-            title="Evolucao por periodo"
-            subtitle="Evolucao do AssociadoTitular com base no ultimo fechamento."
-            labels={monthSeries.labels}
-            firstSeries={{ label: "Vidas In", color: "#16a34a", values: monthSeries.vidasInValues }}
-            secondSeries={{ label: "Vidas Out", color: "#dc2626", values: monthSeries.vidasOutValues }}
-            emptyLabel="Valide um arquivo para visualizar este grafico."
+            title="Historico por mes"
+            subtitle="Consolidado mensal de entradas e saidas importadas."
+            labels={monthlyHistorySeries.labels}
+            firstSeries={{ label: "Vidas In", color: "#16a34a", values: monthlyHistorySeries.vidasInValues }}
+            secondSeries={{ label: "Vidas Out", color: "#dc2626", values: monthlyHistorySeries.vidasOutValues }}
+            emptyLabel="Ainda nao ha historico mensal suficiente."
           />
           <DoubleBarChartCard
             title="Tendencia de variacao"
-            subtitle="Variacao mensal do AssociadoTitular. Valores positivos indicam crescimento e negativos indicam queda."
+            subtitle="Variacao entre saldos positivos e negativos na base completa."
             labels={vidasGrowthSeries.labels}
-            firstSeries={{ label: "Variacao Vidas In", color: "#16a34a", values: vidasGrowthSeries.vidasInGrowth }}
-            secondSeries={{ label: "Variacao Vidas Out", color: "#dc2626", values: vidasGrowthSeries.vidasOutGrowth }}
+            firstSeries={{ label: "Entrada", color: "#16a34a", values: vidasGrowthSeries.vidasInGrowth }}
+            secondSeries={{ label: "Saida", color: "#dc2626", values: vidasGrowthSeries.vidasOutGrowth }}
             signedValues
             emptyLabel="Sao necessarios pelo menos dois meses para calcular tendencia."
           />
         </div>
 
+        <div className="mt-3 rounded-xl border border-sea/20 bg-white px-3 py-2 text-[11px] text-ink dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
+          <span className="font-semibold text-ink dark:text-slate-100">Base dos graficos comparativos:</span>{" "}
+          base completa.
+          {historicalChartLoading ? " Atualizando dados..." : ""}
+          {historicalChartError ? ` Erro ao carregar historico: ${historicalChartError}` : ""}
+        </div>
         <div className="mt-3 rounded-xl border border-sea/20 bg-white p-3">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -1550,7 +1863,7 @@ export default function KPI() {
                     </td>
                   </tr>
                 ) : (
-                  filteredCodeRows.map((row) => (
+                  pagedCodeRows.map((row) => (
                     <tr key={row.codigo} className="border-b border-sea/10">
                       <td className="px-2 py-2 font-semibold text-ink">{row.codigo}</td>
                       <td className="px-2 py-2">{row.empresa ?? "-"}</td>
@@ -1562,72 +1875,39 @@ export default function KPI() {
               </tbody>
             </table>
           </div>
+          {filteredCodeRows.length > 0 ? (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-sea/10 pt-3 text-xs text-ink/60">
+              <p>
+                Mostrando {Math.min((safeCodesPage - 1) * codesPageSize + 1, filteredCodeRows.length)}-
+                {Math.min(safeCodesPage * codesPageSize, filteredCodeRows.length)} de {filteredCodeRows.length}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCodesPage((prev) => Math.max(1, prev - 1))}
+                  disabled={safeCodesPage === 1}
+                  className="rounded-lg border border-sea/20 px-3 py-1.5 font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Anterior
+                </button>
+                <span className="min-w-20 text-center font-semibold text-ink">
+                  {safeCodesPage}/{codesTotalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCodesPage((prev) => Math.min(codesTotalPages, prev + 1))}
+                  disabled={safeCodesPage === codesTotalPages}
+                  className="rounded-lg border border-sea/20 px-3 py-1.5 font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Proxima
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
 
-        {parseError && <p className="mt-3 text-xs text-red-500">{parseError}</p>}
-        {applyError && <p className="mt-3 text-xs text-red-500">{applyError}</p>}
         {pdfError && <p className="mt-3 text-xs text-red-500">{pdfError}</p>}
       </section>
-
-      {manualUploadOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-2xl">
-            <h3 className="font-display text-xl text-ink">Atualizacao manual de vidas</h3>
-            <p className="mt-2 text-sm text-ink/60">
-              Use este recurso apenas para atualizacoes forcadas fora da rotina automatica do ERP.
-              Envie uma planilha com codigo e AssociadoTitular/vidas_qtde.
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" onClick={handleExportTemplate} className="rounded-lg border px-3 py-2 text-xs font-semibold">
-                Baixar modelo
-              </button>
-              <label className="cursor-pointer rounded-lg border px-3 py-2 text-xs font-semibold">
-                Selecionar planilha
-                <input
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  className="hidden"
-                  onChange={(event) => setManualUploadFile(event.target.files?.[0] ?? null)}
-                />
-              </label>
-              <button
-                type="button"
-                disabled={!manualUploadFile}
-                onClick={() => {
-                  if (!manualUploadFile) return;
-                  setFile(manualUploadFile);
-                  void parseFile();
-                }}
-                className="rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50"
-              >
-                Validar planilha
-              </button>
-              <button
-                type="button"
-                disabled={!manualUploadFile || parsing || applying}
-                onClick={() => {
-                  if (!manualUploadFile) return;
-                  setFile(manualUploadFile);
-                  void parseFile().then(() => setManualUploadOpen(false));
-                }}
-                className="rounded-lg bg-ink px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-              >
-                Confirmar atualizacao
-              </button>
-              <button
-                type="button"
-                onClick={() => setManualUploadOpen(false)}
-                className="rounded-lg border px-3 py-2 text-xs font-semibold"
-              >
-                Cancelar
-              </button>
-            </div>
-            {manualUploadFile ? <p className="mt-3 text-xs text-ink/60">Arquivo: {manualUploadFile.name}</p> : null}
-          </div>
-        </div>
-      ) : null}
-
-      {null}
     </div>
   );
 }
