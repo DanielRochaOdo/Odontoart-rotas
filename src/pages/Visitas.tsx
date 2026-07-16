@@ -4334,7 +4334,7 @@ export default function Visitas() {
       {detailsVisit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
           <button type="button" className="absolute inset-0 bg-ink/30" onClick={closeDetailsModal} />
-          <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+          <div className="relative flex w-full max-w-lg max-h-[calc(100dvh-3rem)] flex-col overflow-hidden rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <div className="flex items-start justify-between gap-3">
               <h3 className="font-display text-lg text-ink">Detalhes da empresa</h3>
               <button
@@ -4345,7 +4345,7 @@ export default function Visitas() {
                 Fechar
               </button>
             </div>
-            <div className="mt-4 space-y-3 text-sm text-ink/80">
+            <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1 text-sm text-ink/80">
               <div className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2">
                 <p className="text-[11px] font-semibold text-ink/60">Nome da empresa</p>
                 <p className="mt-1 font-semibold text-ink">
