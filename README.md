@@ -18,6 +18,18 @@ App web interno da Odontoart para gestao de agenda e rotas comerciais. Uso exclu
 3. Suba o app:
    - `npm run dev`
 
+## Keepalive do Supabase Free
+
+O repositorio possui um workflow diario em `.github/workflows/supabase-keepalive.yml` para manter o projeto Supabase Free ativo. Ele faz somente uma leitura minima, usando a chave publica `anon`, na tabela dedicada `supabase_keepalive`.
+
+Para configurar no GitHub:
+1. Acesse `Settings` > `Secrets and variables` > `Actions` no repositorio.
+2. Cadastre o secret `SUPABASE_URL` com a URL do projeto Supabase.
+3. Cadastre o secret `SUPABASE_ANON_KEY` com a chave publica `anon` do projeto Supabase.
+4. Nao cadastre nem use `service_role` para este workflow.
+
+A tabela e a politica RLS ficam em `supabase/migrations/2026072202_supabase_keepalive.sql`. O workflow executa diariamente às 03:17 UTC (`17 3 * * *`) e tambem pode ser iniciado manualmente pela aba `Actions`.
+
 ## Supabase (migrations)
 Os scripts SQL ficam em `supabase/migrations`.
 - `2026022401_profiles.sql` cria a tabela `profiles`.
