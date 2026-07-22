@@ -6,6 +6,7 @@ import { formatDateBr } from "../lib/dateFormat";
 import { normalizeText } from "../lib/textNormalize";
 import { SUPERVISOR_VISIT_REASON_OPTIONS, VISIT_TYPE } from "../lib/supervisorVisits";
 import DashboardModal from "../components/DashboardModal";
+import { getLocalActionCompletions, getLocalActions, refreshLocalActionCompletions, refreshLocalActions, subscribeLocalActions, type LocalAction, type LocalActionCompletion } from "../lib/localActions";
 
 const formatNumber = (value: number) => new Intl.NumberFormat("pt-BR").format(value);
 const startOfWeek = (date: Date) => {
@@ -151,6 +152,13 @@ type DashboardPendingVisitRow = {
   assigned_to_name: string | null;
   assigned_to_user_id: string | null;
   cliente: { empresa: string | null; nome_fantasia: string | null } | null;
+};
+
+type LocalActionRouteAssignment = {
+  routeDate: string;
+  vendorUserId: string;
+  vendorName: string;
+  companyName: string;
 };
 
 const computeVisitStats = (
@@ -390,6 +398,13 @@ export default function Dashboard() {
   const [supervisorVisitRows, setSupervisorVisitRows] = useState<SupervisorVisitDashboardRow[]>([]);
   const [supervisorVisitLoading, setSupervisorVisitLoading] = useState(false);
   const [supervisorVisitError, setSupervisorVisitError] = useState<string | null>(null);
+  const [dashboardTab, setDashboardTab] = useState<"INDICADORES" | "ACOES">("INDICADORES");
+  const [localActions, setLocalActions] = useState<LocalAction[]>(() => getLocalActions());
+  const [localActionCompletions, setLocalActionCompletions] = useState<LocalActionCompletion[]>(() => getLocalActionCompletions());
+  const [localActionsVersion, setLocalActionsVersion] = useState(0);
+  const [localActionRouteDates, setLocalActionRouteDates] = useState<string[]>([]);
+  const [localActionRouteCompanies, setLocalActionRouteCompanies] = useState<Record<string, string>>({});
+  const [localActionTeamAssignments, setLocalActionTeamAssignments] = useState<LocalActionRouteAssignment[]>([]);
 
   const isVendor = role === "VENDEDOR";
   const canSelectSupervisor = role === "SUPERVISOR" || role === "ASSISTENTE";
@@ -407,10 +422,199 @@ export default function Dashboard() {
   const globalFrom = vendorVidasFrom;
   const globalTo = vendorVidasTo;
   const globalPeriodLabel = `${formatDateBr(globalFrom)} a ${formatDateBr(globalTo)}`;
+  const localActionDashboardRows = useMemo(() => {
+    const actions = localActions.filter((action) =>
+      isVendor ? true : action.endDate >= globalFrom && action.startDate <= globalTo,
+    );
+    const completions = localActionCompletions.filter((completion) => {
+      if (!isVendor && (completion.routeDate < globalFrom || completion.routeDate > globalTo)) return false;
+      if (activeVendorId && completion.vendorUserId !== activeVendorId) return false;
+      if (isVendor && session?.user.id && completion.vendorUserId !== session.user.id) return false;
+      return true;
+    });
+    const vendorRouteDates = isVendor
+      ? Array.from(new Set([
+          ...vendorVisitsRaw.map((visit) => visit.visit_date),
+          ...localActionRouteDates,
+        ].filter((date): date is string => Boolean(date))))
+      : [];
+
+    return actions.map((action) => {
+      const expectedDates = isVendor
+        ? vendorRouteDates.filter((date) => date >= action.startDate && date <= action.endDate)
+        : [];
+      const expectedAssignments = isVendor
+        ? expectedDates.map((routeDate) => ({
+            routeDate,
+            vendorUserId: session?.user.id ?? "",
+            vendorName: profile?.display_name ?? session?.user.email ?? "Vendedor",
+            companyName: localActionRouteCompanies[routeDate] ?? "-",
+          }))
+        : localActionTeamAssignments.filter(
+            (assignment) =>
+              assignment.routeDate >= action.startDate &&
+              assignment.routeDate <= action.endDate &&
+              assignment.routeDate >= globalFrom &&
+              assignment.routeDate <= globalTo &&
+              (!activeVendorId || assignment.vendorUserId === activeVendorId),
+          );
+      const actionCompletions = completions.filter((completion) => completion.actionId === action.id);
+      const expectedCompletions = isVendor && session?.user.id
+        ? expectedAssignments.map((assignment) =>
+            actionCompletions.find(
+              (completion) => completion.routeDate === assignment.routeDate && completion.vendorUserId === assignment.vendorUserId,
+            ) ?? null,
+          )
+        : expectedAssignments.length > 0
+          ? expectedAssignments.map((assignment) =>
+            actionCompletions.find(
+              (completion) => completion.routeDate === assignment.routeDate && completion.vendorUserId === assignment.vendorUserId,
+            ) ?? null,
+            )
+          : actionCompletions;
+      return {
+        action,
+        total: expectedCompletions.length,
+        completed: expectedCompletions.filter(Boolean).length,
+        notEffective: expectedCompletions.filter((completion) => completion && !completion.completed).length,
+        pending: expectedCompletions.filter((completion) => !completion).length,
+        rows: actionCompletions,
+        pendingDates: isVendor
+          ? expectedDates.filter((_, index) => !expectedCompletions[index])
+          : [],
+        pendingAssignments: expectedAssignments.filter((_, index) => !expectedCompletions[index]),
+      };
+    });
+  }, [activeVendorId, globalFrom, globalTo, isVendor, localActionCompletions, localActions, localActionRouteCompanies, localActionRouteDates, localActionTeamAssignments, localActionsVersion, profile?.display_name, session?.user.email, session?.user.id, vendorVisitsRaw]);
   const supervisorReasonLabelByValue = useMemo(
     () => new Map<string, string>(SUPERVISOR_VISIT_REASON_OPTIONS.map((option) => [option.value, option.label])),
     [],
   );
+
+  useEffect(() => {
+    void Promise.all([refreshLocalActions(), refreshLocalActionCompletions()]).then(([actions, completions]) => {
+      setLocalActions(actions);
+      setLocalActionCompletions(completions);
+    }).catch(() => undefined);
+    return subscribeLocalActions(() => {
+      setLocalActions(getLocalActions());
+      setLocalActionCompletions(getLocalActionCompletions());
+      setLocalActionsVersion((value) => value + 1);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isVendor || !session?.user.id) {
+      setLocalActionRouteDates([]);
+      setLocalActionRouteCompanies({});
+      return;
+    }
+    const actions = localActions;
+    if (actions.length === 0) {
+      setLocalActionRouteDates([]);
+      setLocalActionRouteCompanies({});
+      return;
+    }
+    let active = true;
+    const from = actions.reduce((current, action) => (action.startDate < current ? action.startDate : current), actions[0].startDate);
+    const to = actions.reduce((current, action) => (action.endDate > current ? action.endDate : current), actions[0].endDate);
+    void supabase
+      .from("visits")
+      .select("visit_date, cliente_id")
+      .eq("assigned_to_user_id", session.user.id)
+      .gte("visit_date", from)
+      .lte("visit_date", to)
+      .then(({ data, error: routeError }) => {
+        if (!active || routeError) return;
+        const routeRows = (data ?? []) as Array<{ visit_date?: string | null; cliente_id?: string | null }>;
+        setLocalActionRouteDates(Array.from(new Set(routeRows.map((row) => row.visit_date).filter((date): date is string => Boolean(date)))));
+        const clientIds = Array.from(new Set(routeRows.map((row) => row.cliente_id).filter((id): id is string => Boolean(id))));
+        if (clientIds.length === 0) return;
+        void supabase.from("clientes").select("id, empresa, nome_fantasia").in("id", clientIds).then(({ data: clients }) => {
+          if (!active) return;
+          const namesById = new Map((clients ?? []).map((client) => {
+            const row = client as { id: string; empresa?: string | null; nome_fantasia?: string | null };
+            return [row.id, row.empresa ?? row.nome_fantasia ?? "-"] as const;
+          }));
+          const companiesByDate = new Map<string, string[]>();
+          routeRows.forEach((row) => {
+            if (!row.visit_date || !row.cliente_id) return;
+            const name = namesById.get(row.cliente_id);
+            if (!name) return;
+            const names = companiesByDate.get(row.visit_date) ?? [];
+            if (!names.includes(name)) names.push(name);
+            companiesByDate.set(row.visit_date, names);
+          });
+          setLocalActionRouteCompanies(Object.fromEntries(Array.from(companiesByDate.entries()).map(([date, names]) => [date, names.join(", ")])));
+        });
+      });
+    return () => {
+      active = false;
+    };
+  }, [isVendor, localActions, localActionsVersion, session?.user.id]);
+
+  useEffect(() => {
+    if (!canViewTeamStats) {
+      setLocalActionTeamAssignments([]);
+      return;
+    }
+    const actions = localActions;
+    if (actions.length === 0) {
+      setLocalActionTeamAssignments([]);
+      return;
+    }
+    let active = true;
+    const from = actions.reduce((current, action) => (action.startDate < current ? action.startDate : current), actions[0].startDate);
+    const to = actions.reduce((current, action) => (action.endDate > current ? action.endDate : current), actions[0].endDate);
+    void supabase
+      .from("visits")
+      .select("visit_date, assigned_to_user_id, assigned_to_name, cliente_id")
+      .gte("visit_date", from)
+      .lte("visit_date", to)
+      .then(async ({ data, error: routeError }) => {
+        if (!active || routeError) return;
+        const routeRows = (data ?? []) as Array<{ visit_date?: string | null; assigned_to_user_id?: string | null; assigned_to_name?: string | null; cliente_id?: string | null }>;
+        const clientIds = Array.from(new Set(routeRows.map((row) => row.cliente_id).filter((id): id is string => Boolean(id))));
+        const clientsById = new Map<string, string>();
+        if (clientIds.length > 0) {
+          const { data: clients } = await supabase.from("clientes").select("id, empresa, nome_fantasia").in("id", clientIds);
+          (clients ?? []).forEach((client) => {
+            const row = client as { id: string; empresa?: string | null; nome_fantasia?: string | null };
+            clientsById.set(row.id, row.empresa ?? row.nome_fantasia ?? "-");
+          });
+        }
+        if (!active) return;
+        const grouped = new Map<string, LocalActionRouteAssignment>();
+        routeRows.forEach((row) => {
+          if (!row.visit_date) return;
+          const matchedVendor = row.assigned_to_user_id
+            ? vendedores.find((vendor) => vendor.user_id === row.assigned_to_user_id)
+            : vendedores.find(
+                (vendor) =>
+                  Boolean(vendor.display_name) &&
+                  Boolean(row.assigned_to_name) &&
+                  normalizeKey(vendor.display_name ?? "") === normalizeKey(row.assigned_to_name ?? ""),
+              );
+          const vendorUserId = row.assigned_to_user_id ?? matchedVendor?.user_id;
+          if (!vendorUserId) return;
+          const companyName = row.cliente_id ? clientsById.get(row.cliente_id) ?? "-" : "-";
+          const key = `${row.visit_date}|${vendorUserId}`;
+          const current = grouped.get(key);
+          grouped.set(key, {
+            routeDate: row.visit_date,
+            vendorUserId,
+            vendorName: row.assigned_to_name ?? matchedVendor?.display_name ?? vendorUserId,
+            companyName: current && current.companyName !== "-" && companyName !== "-"
+              ? `${current.companyName}, ${companyName}`
+              : companyName,
+          });
+        });
+        setLocalActionTeamAssignments(Array.from(grouped.values()));
+      });
+    return () => {
+      active = false;
+    };
+  }, [canViewTeamStats, localActions, localActionsVersion, vendedores]);
 
   useEffect(() => {
     if (!canSelectSupervisor) return;
@@ -2402,6 +2606,35 @@ export default function Dashboard() {
           </div>
         </div>
       </header>
+
+      <div className="flex flex-wrap gap-2 print:hidden">
+        <button type="button" onClick={() => setDashboardTab("INDICADORES")} className={`rounded-lg px-3 py-2 text-xs font-semibold ${dashboardTab === "INDICADORES" ? "bg-sea text-white" : "border border-sea/20 bg-white text-ink/70"}`}>Indicadores</button>
+        <button type="button" onClick={() => setDashboardTab("ACOES")} className={`rounded-lg px-3 py-2 text-xs font-semibold ${dashboardTab === "ACOES" ? "bg-sea text-white" : "border border-sea/20 bg-white text-ink/70"}`}>Ações</button>
+      </div>
+
+      {dashboardTab === "ACOES" && (
+        <section className="dashboard-card rounded-2xl p-4 md:p-5">
+          <div>
+            <h3 className="font-display text-lg text-ink">Ações</h3>
+            <p className="mt-1 text-xs text-ink/60">Acompanhamento das ações por vendedor, rota e status.</p>
+          </div>
+          {localActionDashboardRows.length === 0 ? (
+            <p className="mt-4 text-sm text-ink/60">Nenhuma ação cadastrada no período.</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {localActionDashboardRows.map((item) => (
+                <div key={item.action.id} className="rounded-xl border border-sea/20 bg-sand/20 p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div><p className="text-sm font-semibold text-ink">{item.action.notes}</p><p className="text-xs text-ink/60">{formatDateBr(item.action.startDate)} a {formatDateBr(item.action.endDate)}</p></div>
+                    <div className="flex flex-wrap gap-3 text-xs"><span className="font-semibold text-emerald-700">Concluído: {item.completed}</span><span className="font-semibold text-ink/60">Não efetiva: {item.notEffective}</span><span className="font-semibold text-ink/60">Pendente: {item.pending}</span></div>
+                  </div>
+                  <div className="mt-3 overflow-x-auto rounded-lg border border-sea/15 bg-white/90"><table className="w-full min-w-[620px] text-left text-xs"><thead className="bg-sand/30 text-ink/60"><tr>{!isVendor && <th className="px-3 py-2">Vendedor</th>}<th className="px-3 py-2">Empresa</th><th className="px-3 py-2">Data</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Observação</th></tr></thead><tbody className="divide-y divide-sea/10">{item.rows.map((row) => <tr key={row.id}>{!isVendor && <td className="px-3 py-2 text-ink">{row.vendorName}</td>}<td className="px-3 py-2 text-ink">{row.companyName ?? "-"}</td><td className="px-3 py-2 text-ink/70">{formatDateBr(row.routeDate)}</td><td className="px-3 py-2 font-semibold">Concluída{row.completed ? "" : " — não efetiva"}</td><td className="px-3 py-2 text-ink/70">{row.reason ?? "-"}</td></tr>)}{item.pendingDates.map((routeDate) => <tr key={`${item.action.id}-${routeDate}-pending`}>{!isVendor && <td className="px-3 py-2 text-ink">{profile?.display_name ?? session?.user.email ?? "Vendedor"}</td>}<td className="px-3 py-2 text-ink">{localActionRouteCompanies[routeDate] ?? "-"}</td><td className="px-3 py-2 text-ink/70">{formatDateBr(routeDate)}</td><td className="px-3 py-2 font-semibold text-ink/70">Pendente</td><td className="px-3 py-2 text-ink/70">{item.action.notes}</td></tr>)}{item.pendingAssignments.map((assignment) => <tr key={`${item.action.id}-${assignment.routeDate}-${assignment.vendorUserId}-pending`}>{!isVendor && <td className="px-3 py-2 text-ink">{assignment.vendorName}</td>}<td className="px-3 py-2 text-ink">{assignment.companyName}</td><td className="px-3 py-2 text-ink/70">{formatDateBr(assignment.routeDate)}</td><td className="px-3 py-2 font-semibold text-ink/70">Pendente</td><td className="px-3 py-2 text-ink/70">{item.action.notes}</td></tr>)}</tbody></table></div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {loading ? (
         <div className="glass-pane rounded-2xl p-4 text-sm text-ink/70 md:p-6">
