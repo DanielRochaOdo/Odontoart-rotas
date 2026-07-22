@@ -140,6 +140,7 @@ type ClienteListRow = {
   situacao: string | null;
   categoria: string | null;
   perfil_visita: string | null;
+  regra_visita_observacao?: string | null;
 };
 
 type ClienteDetailsRow = ClienteListRow & {
@@ -278,7 +279,7 @@ const normalize = (value: string | null) => normalizeSearchText(value);
 const CLIENTE_CANONICAL_MODAL_SELECT =
   "id, codigo, vidas_qtde, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, categoria, regra_visita_observacao, endereco, bairro, cidade, uf";
 const CLIENTE_LIST_SELECT =
-  "id, codigo, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, categoria, perfil_visita, vidas_qtde, pessoa, contato";
+  "id, codigo, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, categoria, perfil_visita, regra_visita_observacao, vidas_qtde, pessoa, contato";
 const CLIENTE_DETAILS_SELECT = CLIENTE_CANONICAL_MODAL_SELECT;
 
 const formatCurrency = (value?: number | null) => {
@@ -527,6 +528,7 @@ export default function Visitas() {
       uf: cliente.uf,
       situacao: cliente.situacao,
       categoria: cliente.categoria,
+      regra_visita_observacao: cliente.regra_visita_observacao ?? null,
       perfil_visita: cliente.perfil_visita,
       supervisor: null,
       vidas_qtde:
@@ -4086,6 +4088,12 @@ export default function Visitas() {
                                                         Perfil visita:
                                                       </span>{" "}
                                                       {item.perfil_visita ?? item.perfil_visita_opcoes ?? item.agenda?.perfil_visita ?? "-"}
+                                                    </p>
+                                                    <p>
+                                                      <span className="font-semibold text-ink/55 dark:text-white/55">
+                                                        Regra visita:
+                                                      </span>{" "}
+                                                      {item.agenda?.regra_visita_observacao?.trim() || "-"}
                                                     </p>
                                                     {item.visit_time ? (
                                                       <p>
