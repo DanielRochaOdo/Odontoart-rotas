@@ -24,6 +24,7 @@ import {
 } from "../lib/routeEventsApi";
 import { emitProfilesUpdated } from "../lib/profileEvents";
 import { normalizeSearchText } from "../lib/textNormalize";
+import { deleteLocalAction, getLocalActions, refreshLocalActions, saveLocalAction, subscribeLocalActions, type LocalAction } from "../lib/localActions";
 import {
   executeErpSyncWave,
   previewErpSyncCodes,
@@ -386,11 +387,15 @@ export default function Settings() {
     return { year: today.getFullYear(), month: today.getMonth() };
   });
   const [selectedEventDate, setSelectedEventDate] = useState(() => toDateKey(new Date()));
-  const [eventType, setEventType] = useState<RouteEventType | "">("");
+  const [eventType, setEventType] = useState<RouteEventType | "ACAO" | "">("");
   const [eventTime, setEventTime] = useState("");
   const [eventNotes, setEventNotes] = useState("");
   const [eventFormResetKey, setEventFormResetKey] = useState(0);
   const [deletingEventId, setDeletingEventId] = useState<string | null>(null);
+  const [actionStartDate, setActionStartDate] = useState(() => toDateKey(new Date()));
+  const [actionEndDate, setActionEndDate] = useState(() => toDateKey(new Date()));
+  const [actionObservation, setActionObservation] = useState("");
+  const [localActions, setLocalActions] = useState<LocalAction[]>([]);
   const [erpReleasePassword, setErpReleasePassword] = useState("");
   const [erpUnlockToken, setErpUnlockToken] = useState<string | null>(null);
   const [erpUnlockExpiresAt, setErpUnlockExpiresAt] = useState<string | null>(null);
@@ -530,6 +535,10 @@ export default function Settings() {
   const selectedDateEvents = useMemo(
     () => eventRowsByDate.get(selectedEventDate) ?? [],
     [eventRowsByDate, selectedEventDate],
+  );
+  const selectedDateActions = useMemo(
+    () => localActions.filter((action) => action.active && action.startDate <= selectedEventDate && action.endDate >= selectedEventDate),
+    [localActions, selectedEventDate],
   );
   const eventCalendarCells = useMemo(() => {
     const firstDayOfMonth = new Date(eventsYear, eventsMonth, 1);
@@ -1164,6 +1173,28 @@ export default function Settings() {
       setEventsError("Selecione o tipo do evento.");
       return;
     }
+    if (eventType === "ACAO") {
+      if (!actionStartDate || !actionEndDate || actionStartDate > actionEndDate) {
+        setEventsError("Informe um intervalo de datas valido para a acao.");
+        return;
+      }
+      if (!eventNotes.trim()) {
+        setEventsError("A observacao da acao e obrigatoria.");
+        return;
+      }
+      setEventsSaving(true);
+      try {
+        await saveLocalAction({ startDate: actionStartDate, endDate: actionEndDate, notes: eventNotes.trim() });
+        setEventType("");
+        setEventNotes("");
+        setEventsError(null);
+      } catch (err) {
+        setEventsError(err instanceof Error ? err.message : "Erro ao salvar ação.");
+      } finally {
+        setEventsSaving(false);
+      }
+      return;
+    }
     setEventsSaving(true);
     setEventsError(null);
     try {
@@ -1211,6 +1242,13 @@ export default function Settings() {
       setDeletingEventId(null);
     }
   };
+
+  useEffect(() => {
+    void refreshLocalActions()
+      .then((actions) => setLocalActions(actions))
+      .catch((error) => setEventsError(error instanceof Error ? error.message : "Erro ao carregar ações."));
+    return subscribeLocalActions(() => setLocalActions(getLocalActions()));
+  }, []);
 
   const handleUnlockErpSection = async () => {
     const releasePassword = erpReleasePassword.trim();
@@ -2455,7 +2493,8 @@ export default function Settings() {
                       const dateKey = toDateKey(date);
                       const isSelected = selectedEventDate === dateKey;
                       const dayEvents = eventRowsByDate.get(dateKey) ?? [];
-                      const hasEvents = dayEvents.length > 0;
+                      const dayActions = localActions.filter((action) => action.active && action.startDate <= dateKey && action.endDate >= dateKey);
+                      const hasEvents = dayEvents.length > 0 || dayActions.length > 0;
                       return (
                         <button
                           key={dateKey}
@@ -2471,7 +2510,7 @@ export default function Settings() {
                           ].join(" ")}
                         >
                           <span className="font-semibold">{date.getDate()}</span>
-                          {hasEvents && <span className="mt-1 block text-[10px]">{dayEvents.length} evento(s)</span>}
+                          {hasEvents && <span className="mt-1 block text-[10px]">{dayEvents.length + dayActions.length} item(ns)</span>}
                         </button>
                       );
                     })}
@@ -2487,15 +2526,27 @@ export default function Settings() {
                       Tipo (obrigatorio)
                       <select
                         value={eventType}
-                        onChange={(event) => setEventType(event.target.value as RouteEventType | "")}
+                        onChange={(event) => setEventType(event.target.value as RouteEventType | "ACAO" | "")}
                         className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
                       >
                         <option value="">Selecione</option>
                         <option value="TREINAMENTO">TREINAMENTO</option>
+                        <option value="ACAO">AÇÃO</option>
                         <option value="REUNIAO">REUNIÃO</option>
                       </select>
                     </label>
-                    <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                    {eventType === "ACAO" ? (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                          Data inicial
+                          <input type="date" value={actionStartDate} onChange={(event) => setActionStartDate(event.target.value)} className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink" />
+                        </label>
+                        <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                          Data final
+                          <input type="date" value={actionEndDate} onChange={(event) => setActionEndDate(event.target.value)} className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink" />
+                        </label>
+                      </div>
+                    ) : <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
                       Horario (opcional)
                       <input
                         type="time"
@@ -2503,9 +2554,9 @@ export default function Settings() {
                         onChange={(event) => setEventTime(event.target.value)}
                         className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink outline-none focus:border-sea"
                       />
-                    </label>
+                    </label>}
                     <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
-                      Observacao (opcional)
+                      Observacao {eventType === "ACAO" ? "(obrigatoria)" : "(opcional)"}
                       <textarea
                         rows={3}
                         value={eventNotes}
@@ -2520,7 +2571,7 @@ export default function Settings() {
                       className="inline-flex items-center justify-center gap-2 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
                     >
                       <Plus size={13} />
-                      {eventsSaving ? "Salvando..." : "Salvar evento"}
+                      {eventsSaving ? "Salvando..." : eventType === "ACAO" ? "Salvar ação" : "Salvar evento"}
                     </button>
                   </div>
                 </div>
@@ -2532,7 +2583,7 @@ export default function Settings() {
                 </h4>
                 {eventsLoading ? (
                   <p className="mt-2 text-xs text-ink/60">Carregando eventos...</p>
-                ) : selectedDateEvents.length === 0 ? (
+                ) : selectedDateEvents.length === 0 && selectedDateActions.length === 0 ? (
                   <p className="mt-2 text-xs text-ink/60">Nenhum evento para esta data.</p>
                 ) : (
                   <div className="mt-3 space-y-2">
@@ -2560,6 +2611,58 @@ export default function Settings() {
                     ))}
                   </div>
                 )}
+              </div>
+
+              {selectedDateActions.length > 0 && (
+                <div className="mt-4 rounded-2xl border border-sea/20 bg-sand/20 p-3">
+                  <h4 className="text-sm font-semibold text-ink">Ações de {formatEventDate(selectedEventDate)}</h4>
+                  <div className="mt-3 space-y-2">
+                    {selectedDateActions.map((action) => (
+                      <div key={action.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2">
+                        <div>
+                          <p className="text-xs font-semibold text-ink">AÇÃO · {formatEventDate(action.startDate)} a {formatEventDate(action.endDate)}</p>
+                          <p className="text-xs text-ink/60">{action.notes}</p>
+                        </div>
+                        <button type="button" onClick={() => void deleteLocalAction(action.id)} className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600">Excluir</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="hidden">
+                <h4 className="text-sm font-semibold text-ink">Ações (modo local de teste)</h4>
+                <p className="mt-1 text-xs text-ink/60">
+                  Estes dados ficam somente neste navegador e não alteram o banco de dados.
+                </p>
+                <div className="mt-3 grid gap-3 md:grid-cols-3">
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                    Data inicial
+                    <input type="date" value={actionStartDate} onChange={(event) => setActionStartDate(event.target.value)} className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink" />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
+                    Data final
+                    <input type="date" value={actionEndDate} onChange={(event) => setActionEndDate(event.target.value)} className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink" />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
+                    Observação obrigatória
+                    <textarea rows={2} value={actionObservation} onChange={(event) => setActionObservation(event.target.value)} className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink" placeholder="Descreva a ação" />
+                  </label>
+                </div>
+                <button type="button" onClick={() => undefined} className="mt-3 inline-flex items-center gap-2 rounded-lg bg-sea px-3 py-2 text-xs font-semibold text-white hover:bg-seaLight">
+                  <Plus size={13} /> Salvar ação local
+                </button>
+                <div className="mt-3 space-y-2">
+                  {localActions.length === 0 ? <p className="text-xs text-ink/60">Nenhuma ação local cadastrada.</p> : localActions.map((action) => (
+                    <div key={action.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2">
+                      <div className="text-xs text-ink">
+                        <p className="font-semibold">{formatEventDate(action.startDate)} a {formatEventDate(action.endDate)}</p>
+                        <p className="text-ink/60">{action.notes}</p>
+                      </div>
+                      <button type="button" onClick={() => undefined} className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600">Excluir</button>
+                    </div>
+                  ))}
+                </div>
               </div>
             </section>
           )}

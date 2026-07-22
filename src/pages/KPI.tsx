@@ -96,6 +96,7 @@ type SyncRunBanner = {
   processed_codes: number;
   failed_codes: number;
   started_at: string;
+  finished_at: string | null;
   source: string;
   current_code: string | null;
   current_stage: string | null;
@@ -224,7 +225,7 @@ const resolveKpiStatus = (vendas: number, cancelamentos: number): KpiStatus => {
 
 const CLIENTS_SELECT_COLUMNS = "id, codigo, empresa, vidas_qtde";
 const KPI_SYNC_RUN_SELECT_COLUMNS =
-  "id, status, total_codes, processed_codes, failed_codes, started_at, source, current_code, current_stage, current_code_started_at, current_attempt, last_progress_at";
+  "id, status, total_codes, processed_codes, failed_codes, started_at, finished_at, source, current_code, current_stage, current_code_started_at, current_attempt, last_progress_at";
 
 const fetchAllClientesRows = async () => {
   const allRows: Array<{
@@ -432,6 +433,21 @@ const formatDateTime = (value: string | null | undefined) => {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+};
+
+const formatLastSync = (value: string | null | undefined) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(date);
+  const getPart = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${getPart("day")}/${getPart("month")}/${getPart("year")} as ${getPart("hour")}:${getPart("minute")} Hrs`;
 };
 
 const formatChartNumber = (value: number) =>
@@ -1325,6 +1341,7 @@ export default function KPI() {
             processed_codes: payload.processed_codes ?? current?.processed_codes ?? 0,
             failed_codes: current?.failed_codes ?? 0,
             started_at: current?.started_at ?? new Date().toISOString(),
+            finished_at: current?.finished_at ?? null,
             source: current?.source ?? "api_daily",
             current_code: current?.current_code ?? null,
             current_stage: payload.current_stage ?? current?.current_stage ?? "queued",
@@ -1611,7 +1628,10 @@ export default function KPI() {
             <p>Iniciada em: {formatDateTime(syncRunBanner.started_at)}</p>
           </div>
         ) : (
-          <p className="text-emerald-700">Base consolidada: ultimo fechamento concluido.</p>
+          <p className="text-emerald-700">
+            Base consolidada: ultimo fechamento concluido.
+            {formatLastSync(syncRunBanner?.finished_at) ? ` | Ultima sincronização em ${formatLastSync(syncRunBanner?.finished_at)}` : ""}
+          </p>
         )}
         {syncError && <p className="mt-1 text-red-600">{syncError}</p>}
       </div>

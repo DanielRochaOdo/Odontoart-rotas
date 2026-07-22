@@ -24,6 +24,15 @@ import {
   Droppable,
 } from "@hello-pangea/dnd";
 import { supabase } from "../lib/supabase";
+import {
+  getActiveLocalActionsForDate,
+  getLocalActionCompletion,
+  refreshLocalActionCompletions,
+  refreshLocalActions,
+  saveLocalActionCompletion,
+  subscribeLocalActions,
+  type LocalAction,
+} from "../lib/localActions";
 import { useAuth } from "../context/AuthContext";
 import { fetchVendedores } from "../lib/agendaApi";
 import { emitProfilesUpdated, onProfilesUpdated } from "../lib/profileEvents";
@@ -153,6 +162,14 @@ type PlanoValoresModalState = {
   valores: OdontoartPlanoValor[];
   loading: boolean;
   error: string | null;
+};
+
+type LocalActionModalState = {
+  action: LocalAction;
+  routeDate: string;
+  vendorUserId: string;
+  vendorName: string;
+  companyName: string;
 };
 
 const hasPlanoValores = (planos: OdontoartPlanoValor[]) =>
@@ -741,6 +758,11 @@ export default function Visitas() {
   const [vendorDashboardAccessSaving, setVendorDashboardAccessSaving] = useState(false);
   const [vendorDashboardAccessError, setVendorDashboardAccessError] = useState<string | null>(null);
   const [releasedVendorIdsForDate, setReleasedVendorIdsForDate] = useState<string[]>([]);
+  const [localActionsVersion, setLocalActionsVersion] = useState(0);
+  const [localActionModal, setLocalActionModal] = useState<LocalActionModalState | null>(null);
+  const [localActionAnswer, setLocalActionAnswer] = useState<boolean | null>(null);
+  const [localActionReason, setLocalActionReason] = useState("");
+  const [localActionSaving, setLocalActionSaving] = useState(false);
   const detailsObsRequestRef = useRef(0);
   const ignoreRealtimeRef = useRef(0);
   const isInteracting =
@@ -759,6 +781,10 @@ export default function Visitas() {
     detailsInstructionSaving ||
     addVendorsSaving ||
     vendorDashboardAccessSaving;
+  useEffect(() => {
+    void Promise.all([refreshLocalActions(), refreshLocalActionCompletions()]).catch(() => undefined);
+    return subscribeLocalActions(() => setLocalActionsVersion((value) => value + 1));
+  }, []);
   const requestRefresh = useCallback(() => {
     ignoreRealtimeRef.current += 1;
     setHasUpdatesAvailable(false);
@@ -1083,6 +1109,8 @@ export default function Visitas() {
           ),
         ).sort();
 
+        await Promise.all([refreshLocalActions(), refreshLocalActionCompletions()]);
+
         let maxDate = endInclusive;
         let blockReason: string | null = null;
 
@@ -1138,6 +1166,17 @@ export default function Visitas() {
               break;
             }
 
+            if (session?.user.id) {
+              const pendingActions = getActiveLocalActionsForDate(checkedRouteDate).filter(
+                (action) => !getLocalActionCompletion(action.id, checkedRouteDate, session.user.id),
+              );
+              if (pendingActions.length > 0) {
+                maxDate = checkedRouteDate;
+                blockReason = `Conclua as ações da rota (${formatRouteDate(checkedRouteDate)}) para liberar as proximas rotas.`;
+                break;
+              }
+            }
+
             maxDate = checkedRouteDate;
           }
 
@@ -1173,7 +1212,7 @@ export default function Visitas() {
     return () => {
       active = false;
     };
-  }, [isVendor, routeGateKey]);
+  }, [isVendor, localActionsVersion, routeGateKey, session?.user.id]);
 
   useEffect(() => {
     const monthStart = toYmd(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
@@ -1798,6 +1837,57 @@ export default function Visitas() {
     if (!normalizedSeller) return null;
     return vendorByName.get(normalizedSeller) ?? null;
   }, [vendorById, vendorByName]);
+
+  const getSellerActions = useCallback((seller: string, items: VisitRow[]) => {
+    const date = selectedDateKey;
+    const vendorUserId = isVendor && session?.user.id ? session.user.id : resolveSellerVendor(seller, items)?.user_id;
+    if (!date || !vendorUserId) return [];
+    return getActiveLocalActionsForDate(date).map((action) => ({
+      action,
+      completion: getLocalActionCompletion(action.id, date, vendorUserId),
+    }));
+  }, [isVendor, resolveSellerVendor, selectedDateKey, session?.user.id]);
+
+  const openLocalActionModal = (action: LocalAction, seller: string, items: VisitRow[]) => {
+    const vendorUserId = isVendor && session?.user.id ? session.user.id : resolveSellerVendor(seller, items)?.user_id;
+    if (!vendorUserId) return;
+    setLocalActionAnswer(null);
+    setLocalActionReason("");
+    const companyName = items
+      .map((item) => item.agenda?.empresa ?? item.agenda?.nome_fantasia ?? "")
+      .filter(Boolean)
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .join(", ");
+    setLocalActionModal({ action, routeDate: selectedDateKey, vendorUserId, vendorName: seller, companyName });
+  };
+
+  const handleSaveLocalActionCompletion = async () => {
+    if (!localActionModal || localActionAnswer === null) return;
+    if (!localActionAnswer && !localActionReason.trim()) {
+      setError("Informe o motivo quando a ação não for concluída.");
+      return;
+    }
+    setLocalActionSaving(true);
+    try {
+      await saveLocalActionCompletion({
+        actionId: localActionModal.action.id,
+        routeDate: localActionModal.routeDate,
+        vendorUserId: localActionModal.vendorUserId,
+        vendorName: localActionModal.vendorName,
+        companyName: localActionModal.companyName || null,
+        completed: localActionAnswer,
+        reason: localActionAnswer ? null : localActionReason.trim(),
+      });
+      setLocalActionModal(null);
+      setLocalActionAnswer(null);
+      setLocalActionReason("");
+      setRefreshKey((value) => value + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao registrar a ação.");
+    } finally {
+      setLocalActionSaving(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -3638,6 +3728,7 @@ export default function Visitas() {
                   const totalCompanies = items.length;
                   const allCompleted = totalCompanies > 0 && completedCompanies === totalCompanies;
                   const sellerVendor = resolveSellerVendor(seller, items);
+                  const sellerActions = getSellerActions(seller, items);
                   const canAccessNextRouteDashboard = Boolean(
                     sellerVendor && releasedVendorIdSet.has(sellerVendor.user_id),
                   );
@@ -4048,8 +4139,23 @@ export default function Visitas() {
                                                 </div>
                                               ) : null}
 
+                                              {sellerActions.map(({ action, completion }) => (
+                                                <div key={action.id} className="rounded-xl border border-amber-300 bg-amber-100 px-3 py-2 text-[11px] font-semibold text-red-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-red-300">
+                                                  <div className="flex items-center gap-2">
+                                                    <TriangleAlert size={14} />
+                                                    <span>
+                                                      AÇÃO: {completion
+                                                        ? completion.completed
+                                                          ? "CONCLUÍDA."
+                                                          : "CONCLUÍDA — NÃO EFETIVA."
+                                                        : "PENDENTE."}
+                                                    </span>
+                                                  </div>
+                                                </div>
+                                              ))}
+
                                               {role === "VENDEDOR" || isVisitAssignedToLoggedUser(item) ? (
-                                                <div className="pt-1">
+                                                <div className="flex flex-wrap items-center gap-2 pt-1">
                                                   <button
                                                     type="button"
                                                     onClick={() => handleStartRegister(item)}
@@ -4062,6 +4168,16 @@ export default function Visitas() {
                                                         : "Editar registro"
                                                       : "Registrar visita"}
                                                   </button>
+                                                  {sellerActions.filter(({ completion }) => !completion).map(({ action }) => (
+                                                    <button
+                                                      key={action.id}
+                                                      type="button"
+                                                      onClick={() => openLocalActionModal(action, seller, items)}
+                                                      className="rounded-lg border border-sea bg-sea px-3 py-2 text-[11px] font-semibold text-white shadow-sm hover:bg-seaLight dark:border-seaLight dark:bg-seaLight dark:text-white dark:hover:bg-sea"
+                                                    >
+                                                      Concluir ação
+                                                    </button>
+                                                  ))}
                                                 </div>
                                               ) : null}
                                               {canManage && isEditing && !isCompleted ? (
@@ -4638,6 +4754,33 @@ export default function Visitas() {
               >
                 {vendorDashboardAccessSaving ? "Salvando..." : "Sim"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {localActionModal && (
+        <div className="fixed inset-0 z-[65] flex items-center justify-center overflow-y-auto px-4 py-6">
+          <button type="button" className="absolute inset-0 bg-ink/30" onClick={() => setLocalActionModal(null)} />
+          <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+            <h3 className="font-display text-lg text-ink">Concluir ação</h3>
+            <p className="mt-2 text-sm text-ink/80">A ação foi concluída?</p>
+            <p className="mt-2 rounded-xl border border-sea/20 bg-sand/30 px-3 py-2 text-xs text-ink/80">
+              {localActionModal.action.notes}
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button type="button" onClick={() => setLocalActionAnswer(true)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${localActionAnswer === true ? "bg-sea text-white" : "border border-sea/30 bg-white text-ink/70"}`}>Sim</button>
+              <button type="button" onClick={() => setLocalActionAnswer(false)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${localActionAnswer === false ? "bg-sea text-white" : "border border-sea/30 bg-white text-ink/70"}`}>Não</button>
+            </div>
+            {localActionAnswer === false ? (
+              <label className="mt-4 block text-xs font-semibold text-ink/70">
+                Observação obrigatória: informe por que a ação não foi efetiva
+                <textarea rows={3} value={localActionReason} onChange={(event) => setLocalActionReason(event.target.value)} className="mt-1 w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink" placeholder="Informe o motivo" />
+              </label>
+            ) : null}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setLocalActionModal(null)} className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70">Cancelar</button>
+              <button type="button" onClick={handleSaveLocalActionCompletion} disabled={localActionSaving || localActionAnswer === null} className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white disabled:opacity-60">Salvar</button>
             </div>
           </div>
         </div>

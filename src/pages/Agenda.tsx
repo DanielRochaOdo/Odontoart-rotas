@@ -42,6 +42,7 @@ import AgendaDrawer from "../components/agenda/AgendaDrawer";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { onProfilesUpdated } from "../lib/profileEvents";
+import { getActiveLocalActionsForDate, refreshLocalActions, subscribeLocalActions, type LocalAction } from "../lib/localActions";
 import {
   clearRoutesModuleDraft,
   readRoutesModuleDraft,
@@ -654,10 +655,15 @@ export default function Agenda() {
   const [inactiveWarningViewed, setInactiveWarningViewed] = useState(false);
   const [visitRuleWarningViewed, setVisitRuleWarningViewed] = useState(false);
   const [eventWarningViewed, setEventWarningViewed] = useState(false);
+  const [actionWarningsPreview, setActionWarningsPreview] = useState<LocalAction[]>([]);
+  const [actionWarningChecked, setActionWarningChecked] = useState(false);
+  const [actionWarningViewed, setActionWarningViewed] = useState(false);
+  const [actionWarningDetails, setActionWarningDetails] = useState<LocalAction[] | null>(null);
   const [inactiveCompaniesWarning, setInactiveCompaniesWarning] = useState<InactiveCompanyWarningItem[] | null>(null);
   const [visitRuleCompaniesWarning, setVisitRuleCompaniesWarning] = useState<InactiveCompanyWarningItem[] | null>(null);
   const hasInactiveWarning = inactiveCompaniesPreview.length > 0;
   const hasEventWarning = eventWarningsPreview.length > 0;
+  const hasActionWarning = actionWarningsPreview.length > 0;
   const [refreshKey, setRefreshKey] = useState(0);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [detailsModalRow, setDetailsModalRow] = useState<AgendaRow | null>(null);
@@ -760,6 +766,10 @@ export default function Agenda() {
       setVisitRuleWarningViewed(false);
       setEventWarningViewed(false);
       setVisitRuleCompaniesWarning(null);
+      setActionWarningsPreview([]);
+      setActionWarningChecked(false);
+      setActionWarningViewed(false);
+      setActionWarningDetails(null);
       return;
     }
     if (!visitDate) {
@@ -786,6 +796,20 @@ export default function Agenda() {
     return () => {
       active = false;
     };
+  }, [showGenerateModal, visitDate]);
+
+  useEffect(() => {
+    if (!showGenerateModal || !visitDate) {
+      setActionWarningsPreview([]);
+      setActionWarningChecked(false);
+      setActionWarningViewed(false);
+      return;
+    }
+    const loadActions = () => {
+      setActionWarningsPreview(getActiveLocalActionsForDate(visitDate));
+    };
+    void refreshLocalActions().then(loadActions).catch(() => setActionWarningsPreview([]));
+    return subscribeLocalActions(loadActions);
   }, [showGenerateModal, visitDate]);
 
   useEffect(() => {
@@ -1776,7 +1800,7 @@ export default function Agenda() {
     [selectedGenerateRows],
   );
   const hasVisitRuleWarning = visitRuleCompaniesPreview.length > 0;
-  const shouldShowWarningBlock = hasInactiveWarning || hasVisitRuleWarning || hasEventWarning;
+  const shouldShowWarningBlock = hasInactiveWarning || hasVisitRuleWarning || hasEventWarning || hasActionWarning;
 
   const excludedAgendaSet = useMemo(() => new Set(excludedAgendaIds), [excludedAgendaIds]);
 
@@ -4694,6 +4718,38 @@ export default function Agenda() {
                         </div>
                       )}
 
+                      {hasActionWarning && (
+                        <div className="flex items-start justify-between gap-2 rounded-lg border border-sea/20 bg-white/90 px-2 py-2">
+                          <label className="flex cursor-pointer items-start gap-2 text-xs text-ink">
+                            <input
+                              type="checkbox"
+                              checked={actionWarningChecked}
+                              onChange={(event) => setActionWarningChecked(event.target.checked)}
+                              disabled={!actionWarningViewed}
+                              className="mt-0.5 h-4 w-4 accent-sea disabled:opacity-50"
+                            />
+                            <span>
+                              <span className="block">{`Li o aviso de ação (${actionWarningsPreview.length} ação(ões)).`}</span>
+                              {!actionWarningViewed && (
+                                <span className="mt-0.5 block text-[10px] font-semibold text-sea">
+                                  Clique em Ver detalhes para habilitar o checkbox.
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActionWarningViewed(true);
+                              setActionWarningDetails(actionWarningsPreview);
+                            }}
+                            className="rounded-lg border border-sea/30 bg-white/90 px-2 py-1 text-[11px] font-semibold text-ink/80 hover:border-sea"
+                          >
+                            Ver detalhes
+                          </button>
+                        </div>
+                      )}
+
                       {hasEventWarning && (
                         <div className="flex items-start justify-between gap-2 rounded-lg border border-sea/20 bg-white/90 px-2 py-2">
                           <label className="flex cursor-pointer items-start gap-2 text-xs text-ink">
@@ -4797,6 +4853,7 @@ export default function Agenda() {
                   (hasInactiveWarning && !inactiveWarningChecked) ||
                   (hasVisitRuleWarning && !visitRuleWarningChecked) ||
                   (hasEventWarning && !eventWarningChecked) ||
+                  (hasActionWarning && !actionWarningChecked) ||
                   generating
                 }
                 className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight disabled:opacity-60"
@@ -4940,6 +4997,30 @@ export default function Agenda() {
                 >
                   Fechar
                 </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {actionWarningDetails && actionWarningDetails.length > 0 &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+            <button type="button" className="absolute inset-0 bg-ink/30" onClick={() => setActionWarningDetails(null)} aria-label="Fechar aviso de ação" />
+            <div className="relative w-full max-w-xl rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
+              <h3 className="font-display text-lg text-ink">Aviso de ação</h3>
+              <p className="mt-1 text-xs text-ink/70">Ações cadastradas para o período da rota.</p>
+              <div className="mt-4 max-h-64 space-y-2 overflow-auto rounded-xl border border-sea/20 bg-sand/30 p-2">
+                {actionWarningDetails.map((action) => (
+                  <div key={action.id} className="rounded-lg border border-sea/15 bg-white/90 px-3 py-2 text-xs text-ink">
+                    <p className="font-semibold">AÇÃO · {formatDate(action.startDate)} a {formatDate(action.endDate)}</p>
+                    <p className="mt-1 text-[11px] text-ink/70">{action.notes}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button type="button" onClick={() => setActionWarningDetails(null)} className="rounded-lg border border-sea/30 bg-white px-3 py-2 text-xs font-semibold text-ink/70 hover:border-sea">Fechar</button>
               </div>
             </div>
           </div>,
