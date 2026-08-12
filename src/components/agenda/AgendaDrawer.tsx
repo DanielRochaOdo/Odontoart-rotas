@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DollarSign, LoaderCircle } from "lucide-react";
 import type { AgendaRow } from "../../types/agenda";
 import { supabase } from "../../lib/supabase";
@@ -156,6 +156,15 @@ const FIELDS = [
 type FieldKey = (typeof FIELDS)[number]["key"];
 type AgendaFormState = Record<FieldKey, string>;
 
+type AgendaDrawerDraft = {
+  formState: Partial<AgendaFormState>;
+  isEditing: boolean;
+  perfilCustomEnabled: boolean;
+  perfilCustomTimes: string[];
+  perfilSingleTimeBase: string;
+  perfilSingleTimeValue: string;
+};
+
 type AgendaDrawerProps = {
   row: AgendaRow | null;
   onClose: () => void;
@@ -209,6 +218,7 @@ export default function AgendaDrawer({
   onUpdated,
   onDeleted,
 }: AgendaDrawerProps) {
+  const rowId = row?.id ?? null;
   const [isEditing, setIsEditing] = useState(false);
   const [hydratedRow, setHydratedRow] = useState<AgendaRow | null>(row);
   const displayRow = hydratedRow ?? row;
@@ -236,10 +246,66 @@ export default function AgendaDrawer({
   const [scopedInstruction, setScopedInstruction] = useState<string | null>(
     normalizeInstruction(initialFormState?.instructions),
   );
+  const initializedRowRef = useRef<string | null>(null);
+  const [draftReady, setDraftReady] = useState(false);
+
+  const draftStorageKey = rowId ? `agendaDrawerDraft:${rowId}` : null;
 
   useEffect(() => {
+    if (!rowId || !initialFormState || initializedRowRef.current === rowId) return;
+    initializedRowRef.current = rowId;
     setFormState(initialFormState);
-  }, [initialFormState]);
+  }, [initialFormState, rowId]);
+
+  useEffect(() => {
+    setDraftReady(false);
+    if (!draftStorageKey || !initialFormState) return;
+    try {
+      const raw = localStorage.getItem(draftStorageKey);
+      if (!raw) {
+        setDraftReady(true);
+        return;
+      }
+      const draft = JSON.parse(raw) as Partial<AgendaDrawerDraft>;
+      if (draft.formState && typeof draft.formState === "object") {
+        setFormState({ ...initialFormState, ...draft.formState });
+      }
+      if (typeof draft.isEditing === "boolean") setIsEditing(draft.isEditing);
+      if (typeof draft.perfilCustomEnabled === "boolean") setPerfilCustomEnabled(draft.perfilCustomEnabled);
+      if (Array.isArray(draft.perfilCustomTimes)) setPerfilCustomTimes(draft.perfilCustomTimes);
+      if (typeof draft.perfilSingleTimeBase === "string") setPerfilSingleTimeBase(draft.perfilSingleTimeBase);
+      if (typeof draft.perfilSingleTimeValue === "string") setPerfilSingleTimeValue(draft.perfilSingleTimeValue);
+    } catch {
+      // Ignore an invalid or unavailable draft.
+    }
+    setDraftReady(true);
+  }, [draftStorageKey, initialFormState]);
+
+  useEffect(() => {
+    if (!draftStorageKey || !formState || !draftReady) return;
+    try {
+      const draft: AgendaDrawerDraft = {
+        formState,
+        isEditing,
+        perfilCustomEnabled,
+        perfilCustomTimes,
+        perfilSingleTimeBase,
+        perfilSingleTimeValue,
+      };
+      localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+    } catch {
+      // Ignore storage failures.
+    }
+  }, [
+    draftStorageKey,
+    draftReady,
+    formState,
+    isEditing,
+    perfilCustomEnabled,
+    perfilCustomTimes,
+    perfilSingleTimeBase,
+    perfilSingleTimeValue,
+  ]);
 
   useEffect(() => {
     setHydratedRow(row);
@@ -329,8 +395,6 @@ export default function AgendaDrawer({
     }
     return values;
   }, [supervisorOptions, formState?.supervisor]);
-  const rowId = row?.id ?? null;
-
   useLayoutEffect(() => {
     const root = document.querySelector<HTMLElement>('[data-agenda-drawer-content="true"]');
     if (!root) return;
@@ -358,7 +422,10 @@ export default function AgendaDrawer({
       if (error) {
         setInstructionScopeVisitId(null);
         setScopedInstruction(null);
-        setFormState((prev) => (prev ? { ...prev, instructions: "" } : prev));
+        const savedDraft = draftStorageKey ? localStorage.getItem(draftStorageKey) : null;
+        if (!savedDraft || !savedDraft.includes('"instructions"')) {
+          setFormState((prev) => (prev ? { ...prev, instructions: "" } : prev));
+        }
         return;
       }
 
@@ -368,7 +435,10 @@ export default function AgendaDrawer({
       const nextInstruction = normalizeInstruction(latest?.instructions ?? null);
       setInstructionScopeVisitId(latest?.id ?? null);
       setScopedInstruction(nextInstruction);
-      setFormState((prev) => (prev ? { ...prev, instructions: nextInstruction ?? "" } : prev));
+      const savedDraft = draftStorageKey ? localStorage.getItem(draftStorageKey) : null;
+      if (!savedDraft || !savedDraft.includes('"instructions"')) {
+        setFormState((prev) => (prev ? { ...prev, instructions: nextInstruction ?? "" } : prev));
+      }
     };
 
     void loadScopedInstruction();
@@ -376,7 +446,7 @@ export default function AgendaDrawer({
     return () => {
       active = false;
     };
-  }, [rowId]);
+  }, [draftStorageKey, rowId]);
 
   if (!row || !formState) return null;
 
@@ -583,6 +653,13 @@ export default function AgendaDrawer({
       syncPerfilState(updatedRowWithScopedInstruction.perfil_visita ?? "");
       setIsEditing(false);
       setStatus(instructionWarning ?? (instructionsChanged && !shouldSyncModules ? "Instrucoes atualizadas." : "Dados atualizados."));
+      if (draftStorageKey) {
+        try {
+          localStorage.removeItem(draftStorageKey);
+        } catch {
+          // Ignore storage failures.
+        }
+      }
       onUpdated?.(updatedRowWithScopedInstruction);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Erro ao salvar dados.");

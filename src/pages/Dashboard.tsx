@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, LoaderCircle } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { supabaseDash } from "../lib/supabaseDashboard";
 import { useAuth } from "../context/AuthContext";
@@ -159,6 +160,42 @@ type LocalActionRouteAssignment = {
   vendorUserId: string;
   vendorName: string;
   companyName: string;
+};
+
+type ActionVendor = {
+  id: string;
+  name: string;
+  actionIds: string[];
+  from: string;
+  to: string;
+};
+
+type ActionClientRow = {
+  id: string;
+  companyName: string;
+  clientStatus: string;
+  date: string;
+  actionStatus: string;
+  observation: string;
+};
+
+const addDaysToDateKey = (dateKey: string, amount: number) => {
+  const date = new Date(`${dateKey}T12:00:00`);
+  date.setDate(date.getDate() + amount);
+  return toLocalDateInput(date);
+};
+
+const getMonthCalendarDays = (monthKey: string) => {
+  const [year, month] = monthKey.split("-").map(Number);
+  const first = new Date(year, month - 1, 1, 12);
+  const mondayOffset = (first.getDay() + 6) % 7;
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(year, month - 1, 1 + index - mondayOffset, 12);
+    return {
+      key: toLocalDateInput(date),
+      inMonth: date.getMonth() === month - 1,
+    };
+  });
 };
 
 const computeVisitStats = (
@@ -405,6 +442,12 @@ export default function Dashboard() {
   const [localActionRouteDates, setLocalActionRouteDates] = useState<string[]>([]);
   const [localActionRouteCompanies, setLocalActionRouteCompanies] = useState<Record<string, string>>({});
   const [localActionTeamAssignments, setLocalActionTeamAssignments] = useState<LocalActionRouteAssignment[]>([]);
+  const [selectedActionVendor, setSelectedActionVendor] = useState<ActionVendor | null>(null);
+  const [actionCalendarMonth, setActionCalendarMonth] = useState(() => toLocalDateInput(startOfMonth(new Date())).slice(0, 7));
+  const [selectedActionDates, setSelectedActionDates] = useState<string[]>([]);
+  const [actionClientRows, setActionClientRows] = useState<ActionClientRow[]>([]);
+  const [actionClientsLoading, setActionClientsLoading] = useState(false);
+  const [actionClientsError, setActionClientsError] = useState<string | null>(null);
 
   const isVendor = role === "VENDEDOR";
   const canSelectSupervisor = role === "SUPERVISOR" || role === "ASSISTENTE";
@@ -490,6 +533,124 @@ export default function Dashboard() {
     () => new Map<string, string>(SUPERVISOR_VISIT_REASON_OPTIONS.map((option) => [option.value, option.label])),
     [],
   );
+
+  const actionVendors = useMemo(() => {
+    const byId = new Map<string, ActionVendor>();
+    localActionDashboardRows.forEach((item) => {
+      item.rows.forEach((row) => {
+        const current = byId.get(row.vendorUserId) ?? {
+          id: row.vendorUserId,
+          name: row.vendorName || row.vendorUserId,
+          actionIds: [],
+          from: item.action.startDate,
+          to: item.action.endDate,
+        };
+        if (!current.actionIds.includes(item.action.id)) current.actionIds.push(item.action.id);
+        current.from = current.from < item.action.startDate ? current.from : item.action.startDate;
+        current.to = current.to > item.action.endDate ? current.to : item.action.endDate;
+        byId.set(row.vendorUserId, current);
+      });
+      item.pendingAssignments.forEach((assignment) => {
+        const current = byId.get(assignment.vendorUserId) ?? {
+          id: assignment.vendorUserId,
+          name: assignment.vendorName || assignment.vendorUserId,
+          actionIds: [],
+          from: item.action.startDate,
+          to: item.action.endDate,
+        };
+        if (!current.actionIds.includes(item.action.id)) current.actionIds.push(item.action.id);
+        current.from = current.from < item.action.startDate ? current.from : item.action.startDate;
+        current.to = current.to > item.action.endDate ? current.to : item.action.endDate;
+        byId.set(assignment.vendorUserId, current);
+      });
+    });
+    return Array.from(byId.values()).sort((left, right) => left.name.localeCompare(right.name, "pt-BR"));
+  }, [localActionDashboardRows]);
+
+  const actionCalendarDays = useMemo(() => getMonthCalendarDays(actionCalendarMonth), [actionCalendarMonth]);
+
+  useEffect(() => {
+    if (!selectedActionVendor || selectedActionDates.length === 0) {
+      setActionClientRows([]);
+      return;
+    }
+    let active = true;
+    setActionClientsLoading(true);
+    setActionClientsError(null);
+    const loadActionClients = async () => {
+      const dates = [...selectedActionDates].sort();
+      const { data: visits, error: visitsError } = await supabase
+        .from("visits")
+        .select("id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, completed_at, no_visit_reason, no_visit_observation")
+        .eq("assigned_to_user_id", selectedActionVendor.id)
+        .in("visit_date", dates)
+        .order("visit_date", { ascending: true });
+      if (visitsError) throw visitsError;
+
+      const visitRows = (visits ?? []) as Array<{
+        id: string;
+        cliente_id: string | null;
+        visit_date: string | null;
+        completed_at: string | null;
+        no_visit_reason: string | null;
+        no_visit_observation?: string | null;
+      }>;
+      const clientIds = Array.from(new Set(visitRows.map((visit) => visit.cliente_id).filter((id): id is string => Boolean(id))));
+      const clientsById = new Map<string, { name: string; status: string }>();
+      if (clientIds.length > 0) {
+        const { data: clients, error: clientsError } = await supabase
+          .from("clientes")
+          .select("id, empresa, nome_fantasia, situacao")
+          .in("id", clientIds);
+        if (clientsError) throw clientsError;
+        (clients ?? []).forEach((client) => {
+          const row = client as { id: string; empresa?: string | null; nome_fantasia?: string | null; situacao?: string | null };
+          clientsById.set(row.id, {
+            name: row.empresa ?? row.nome_fantasia ?? "Sem empresa",
+            status: row.situacao ?? "-",
+          });
+        });
+      }
+
+      const completions = localActionCompletions.filter(
+        (completion) =>
+          completion.vendorUserId === selectedActionVendor.id &&
+          selectedActionVendor.actionIds.includes(completion.actionId) &&
+          dates.includes(completion.routeDate),
+      );
+      const nextRows = visitRows.flatMap((visit) => {
+        if (!visit.visit_date) return [];
+        const client = visit.cliente_id ? clientsById.get(visit.cliente_id) : null;
+        const completion = completions.find((item) => item.routeDate === visit.visit_date);
+        const actionStatus = completion
+          ? completion.completed
+            ? "Concluída"
+            : "Concluída — não efetiva"
+          : visit.completed_at
+            ? visit.no_visit_reason
+              ? "Concluída — não efetiva"
+              : "Concluída"
+            : "Pendente";
+        return [{
+          id: `${visit.id}-${visit.visit_date}`,
+          companyName: client?.name ?? "Empresa não encontrada",
+          clientStatus: client?.status ?? "-",
+          date: visit.visit_date,
+          actionStatus,
+          observation: completion?.reason ?? visit.no_visit_observation ?? "-",
+        }];
+      });
+      if (active) setActionClientRows(nextRows);
+    };
+    void loadActionClients().catch((error: unknown) => {
+      if (active) setActionClientsError(error instanceof Error ? error.message : "Erro ao carregar clientes da data.");
+    }).finally(() => {
+      if (active) setActionClientsLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [localActionCompletions, selectedActionDates, selectedActionVendor]);
 
   useEffect(() => {
     void Promise.all([refreshLocalActions(), refreshLocalActionCompletions()]).then(([actions, completions]) => {
@@ -2612,7 +2773,40 @@ export default function Dashboard() {
         <button type="button" onClick={() => setDashboardTab("ACOES")} className={`rounded-lg px-3 py-2 text-xs font-semibold ${dashboardTab === "ACOES" ? "bg-sea text-white" : "border border-sea/20 bg-white text-ink/70"}`}>Ações</button>
       </div>
 
-      {dashboardTab === "ACOES" && (
+      {dashboardTab === "ACOES" && actionVendors.length > 0 && (
+        <section className="dashboard-card rounded-2xl p-4 md:p-5">
+          <h3 className="font-display text-lg text-ink">Ações por vendedor</h3>
+          <p className="mt-1 text-xs text-ink/60">Clique no nome do vendedor para escolher uma ou mais datas.</p>
+          <div className="mt-4 grid gap-4 lg:grid-cols-[240px_360px_1fr]">
+            <div className="rounded-xl border border-sea/20 bg-sand/20 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-ink/60">Vendedores</p>
+              <div className="mt-2 space-y-1">
+                {actionVendors.map((vendor) => (
+                  <button key={vendor.id} type="button" onClick={() => { setSelectedActionVendor(vendor); setSelectedActionDates([]); setActionCalendarMonth(vendor.from.slice(0, 7)); }} className={`block w-full rounded-lg px-3 py-2 text-left text-sm font-semibold ${selectedActionVendor?.id === vendor.id ? "bg-sea text-white" : "text-ink hover:bg-sea/10"}`}>
+                    {vendor.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {selectedActionVendor ? (
+              <div className="rounded-xl border border-sea/20 bg-sand/20 p-3">
+                <div className="flex items-center justify-between gap-2"><span className="text-sm font-semibold text-ink">{selectedActionVendor.name}</span><div className="flex items-center gap-1"><button type="button" onClick={() => setActionCalendarMonth(addDaysToDateKey(`${actionCalendarMonth}-01`, -1).slice(0, 7))} className="rounded p-1 hover:bg-sea/10"><ChevronLeft size={16} /></button><span className="text-xs font-semibold text-ink">{formatDateBr(`${actionCalendarMonth}-01`).slice(3)}</span><button type="button" onClick={() => setActionCalendarMonth(addDaysToDateKey(`${actionCalendarMonth}-28`, 5).slice(0, 7))} className="rounded p-1 hover:bg-sea/10"><ChevronRight size={16} /></button></div></div>
+                <p className="mt-1 text-[11px] text-ink/60">Selecione uma ou mais datas</p>
+                <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[10px] font-semibold text-ink/50">{['S', 'T', 'Q', 'Q', 'S', 'S', 'D'].map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}{actionCalendarDays.map((day) => { const available = day.key >= selectedActionVendor.from && day.key <= selectedActionVendor.to; const selected = selectedActionDates.includes(day.key); return <button key={day.key} type="button" disabled={!day.inMonth || !available} onClick={() => setSelectedActionDates((current) => selected ? current.filter((date) => date !== day.key) : [...current, day.key].sort())} className={`rounded-md py-1 text-xs ${!day.inMonth ? "text-ink/20" : !available ? "text-ink/30" : selected ? "bg-sea text-white" : "text-ink hover:bg-sea/10"}`}>{Number(day.key.slice(-2))}</button>; })}</div>
+              </div>
+            ) : <div className="rounded-xl border border-sea/20 bg-sand/20 p-4 text-sm text-ink/60">Clique em um vendedor para abrir o calendário.</div>}
+            <div className="min-w-0 rounded-xl border border-sea/20 bg-sand/20 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-ink/60">Clientes</p>{actionClientsLoading ? <div className="mt-4 flex items-center gap-2 text-xs text-ink/60"><LoaderCircle size={14} className="animate-spin" /> Carregando...</div> : actionClientsError ? <p className="mt-4 text-xs text-red-600">{actionClientsError}</p> : actionClientRows.length === 0 ? <p className="mt-4 text-xs text-ink/60">Escolha uma ou mais datas.</p> : <div className="mt-3 max-h-[360px] overflow-auto rounded-lg border border-sea/15"><table className="w-full text-left text-xs"><thead className="bg-sand/30 text-ink/60"><tr><th className="px-2 py-2">Cliente</th><th className="px-2 py-2">Data</th><th className="px-2 py-2">Status</th><th className="px-2 py-2">Observação</th></tr></thead><tbody className="divide-y divide-sea/10">{actionClientRows.map((row) => <tr key={row.id}><td className="px-2 py-2 text-ink"><span className="font-semibold">{row.companyName}</span><span className="block text-[10px] text-ink/50">{row.clientStatus}</span></td><td className="px-2 py-2 text-ink/70">{formatDateBr(row.date)}</td><td className="px-2 py-2 font-semibold text-ink">{row.actionStatus}</td><td className="px-2 py-2 text-ink/70">{row.observation}</td></tr>)}</tbody></table></div>}</div>
+          </div>
+        </section>
+      )}
+
+      {dashboardTab === "ACOES" && actionVendors.length === 0 && (
+        <section className="dashboard-card rounded-2xl p-4 md:p-5">
+          <p className="text-sm text-ink/60">Nenhuma ação cadastrada no período.</p>
+        </section>
+      )}
+
+      {false && dashboardTab === "ACOES" && (
         <section className="dashboard-card rounded-2xl p-4 md:p-5">
           <div>
             <h3 className="font-display text-lg text-ink">Ações</h3>
