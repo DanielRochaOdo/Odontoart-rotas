@@ -308,6 +308,13 @@ type ColumnChipRemovalModalState = {
   hasManualCompanySelection: boolean;
 };
 
+type SelectedCompanyPreview = {
+  id: string;
+  name: string;
+  code: string;
+  status: string;
+};
+
 type PlanoValoresModalState = {
   codigo: string;
   empresa: string | null;
@@ -677,6 +684,9 @@ export default function Agenda() {
   const [excludedAgendaIds, setExcludedAgendaIds] = useState<string[]>([]);
   const [columnChipRemovalModal, setColumnChipRemovalModal] = useState<ColumnChipRemovalModalState | null>(null);
   const [columnChipRemovalPageIndex, setColumnChipRemovalPageIndex] = useState(0);
+  const [selectedCompaniesModalOpen, setSelectedCompaniesModalOpen] = useState(false);
+  const [selectedCompaniesLoading, setSelectedCompaniesLoading] = useState(false);
+  const [selectedCompanyPreviews, setSelectedCompanyPreviews] = useState<SelectedCompanyPreview[]>([]);
   const [vendorRouteEditors, setVendorRouteEditors] = useState<Record<string, VendorRouteEditorState>>(
     {},
   );
@@ -1913,6 +1923,42 @@ export default function Agenda() {
     setSelectedAgendaIds((prev) =>
       prev.includes(agendaId) ? prev.filter((id) => id !== agendaId) : [...prev, agendaId],
     );
+  };
+
+  const openSelectedCompaniesModal = async () => {
+    setSelectedCompaniesModalOpen(true);
+    setSelectedCompaniesLoading(true);
+    try {
+      const rows = await fetchAgendaForGeneration(appliedFilters, selectedAgendaIds);
+      setSelectedCompanyPreviews(
+        rows.map((row) => ({
+          id: row.id,
+          name: row.empresa ?? row.nome_fantasia ?? "Sem empresa",
+          code: row.cod_1 ?? "-",
+          status: row.situacao ?? "-",
+        })),
+      );
+    } catch {
+      const byId = new Map(data.map((row) => [row.id, row] as const));
+      setSelectedCompanyPreviews(
+        selectedAgendaIds.map((id) => {
+          const row = byId.get(id);
+          return {
+            id,
+            name: row?.empresa ?? row?.nome_fantasia ?? "Empresa selecionada",
+            code: row?.cod_1 ?? "-",
+            status: row?.situacao ?? "-",
+          };
+        }),
+      );
+    } finally {
+      setSelectedCompaniesLoading(false);
+    }
+  };
+
+  const removeSelectedCompany = (id: string) => {
+    setSelectedAgendaIds((prev) => prev.filter((item) => item !== id));
+    setSelectedCompanyPreviews((prev) => prev.filter((item) => item.id !== id));
   };
 
   const setVisibleSelection = (checked: boolean) => {
@@ -4293,9 +4339,15 @@ export default function Agenda() {
                   <div className="rounded-full border border-sea/15 bg-white/90 px-3 py-1.5 text-xs text-ink dark:border-emerald-400/15 dark:bg-slate-900/70 dark:text-slate-200">
                     <span className="text-ink/55 dark:text-slate-400">Empresas:</span> {totalCount ?? "..."}
                   </div>
-                  <div className="rounded-full border border-sea/15 bg-white/90 px-3 py-1.5 text-xs text-ink dark:border-emerald-400/15 dark:bg-slate-900/70 dark:text-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => void openSelectedCompaniesModal()}
+                    disabled={selectedAgendaIds.length === 0}
+                    className="rounded-full border border-sea/15 bg-white/90 px-3 py-1.5 text-xs text-ink transition hover:border-sea disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-400/15 dark:bg-slate-900/70 dark:text-slate-200"
+                    title="Ver empresas selecionadas"
+                  >
                     <span className="text-ink/55 dark:text-slate-400">Selecionadas:</span> {selectedAgendaIds.length}
-                  </div>
+                  </button>
                 </div>
               </div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
@@ -4475,6 +4527,64 @@ export default function Agenda() {
             </div>
           </div>
         </div>,
+          document.body,
+        )}
+
+      {selectedCompaniesModalOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+            <button
+              type="button"
+              className="absolute inset-0 bg-ink/40"
+              onClick={() => setSelectedCompaniesModalOpen(false)}
+              aria-label="Fechar empresas selecionadas"
+            />
+            <div className="relative flex max-h-[80vh] w-[min(94vw,680px)] flex-col rounded-2xl border border-sea/20 bg-white p-5 shadow-card">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-display text-lg text-ink">Empresas selecionadas</h3>
+                  <p className="mt-1 text-xs text-ink/60">Desmarque uma empresa para removê-la da rota.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedCompaniesModalOpen(false)}
+                  className="rounded-lg border border-sea/20 p-2 text-ink/60 hover:border-sea hover:text-sea"
+                  aria-label="Fechar"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="mt-4 min-h-0 overflow-y-auto space-y-2">
+                {selectedCompaniesLoading ? (
+                  <p className="py-6 text-center text-xs text-ink/60">Carregando empresas...</p>
+                ) : selectedCompanyPreviews.length === 0 ? (
+                  <p className="py-6 text-center text-xs text-ink/60">Nenhuma empresa selecionada.</p>
+                ) : (
+                  selectedCompanyPreviews.map((company) => (
+                    <label key={company.id} className="flex cursor-pointer items-center gap-3 rounded-xl border border-sea/15 px-3 py-2 hover:bg-sea/5">
+                      <input
+                        type="checkbox"
+                        checked={selectedAgendaSet.has(company.id)}
+                        onChange={() => removeSelectedCompany(company.id)}
+                        className="h-4 w-4 accent-sea"
+                        aria-label={`Selecionar ${company.name}`}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-semibold text-ink">{company.name}</span>
+                        <span className="block text-[11px] text-ink/60">COD {company.code} · {company.status}</span>
+                      </span>
+                    </label>
+                  ))
+                )}
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button type="button" onClick={() => setSelectedCompaniesModalOpen(false)} className="rounded-lg bg-sea px-4 py-2 text-xs font-semibold text-white hover:bg-seaLight">
+                  Concluir ({selectedAgendaIds.length})
+                </button>
+              </div>
+            </div>
+          </div>,
           document.body,
         )}
 
