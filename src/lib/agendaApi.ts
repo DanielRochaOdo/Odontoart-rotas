@@ -136,7 +136,7 @@ const applyFilaRoutingExclusionsToClientesQuery = <T,>(
   blocks: Pick<FilaRoutingBlockLists, "blockedEmpresaIds" | "blockedCodigos"> | null,
 ): T => {
   // Avoid generating huge `id=not.in(...)` URLs that trigger statement timeout.
-  // Exclusions are applied client-side for first-page list flow.
+  // Each caller filters the returned rows/ids client-side.
   void blocks;
   return query;
 };
@@ -319,6 +319,15 @@ const excludeFilaBlockedIds = (
   if (!ids || !filaBlocks?.blockedEmpresaIds.length) return ids;
   const blocked = new Set(filaBlocks.blockedEmpresaIds);
   return ids.filter((id) => !blocked.has(id));
+};
+
+const excludeFilaBlockedRows = <T extends { id?: string | null }>(
+  rows: T[],
+  filaBlocks: Pick<FilaRoutingBlockLists, "blockedEmpresaIds"> | null,
+) => {
+  if (!filaBlocks?.blockedEmpresaIds.length) return rows;
+  const blocked = new Set(filaBlocks.blockedEmpresaIds);
+  return rows.filter((row) => !row.id || !blocked.has(row.id));
 };
 
 const fetchAgendaIdsByLatestRegisteredVisitDate = async (
@@ -746,7 +755,7 @@ const fetchAgendaFirstPageLiteDirect = async (
     .from("clientes")
     .select(AGENDA_LITE_SELECT_COLUMNS)
     .order("visit_generated_at", { ascending: false, nullsFirst: false })
-    .order("data_da_ultima_visita", { ascending: false, nullsFirst: false })
+    .order("data_da_ultima_visita", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true });
 
   query = applyFilaRoutingExclusionsToClientesQuery(query, context.filaBlocks);
@@ -774,7 +783,8 @@ const fetchAgendaFirstPageLiteDirect = async (
   if (response.error) throw new Error(response.error.message);
   const rows = (response.data ?? []) as AgendaRow[];
   const deduped = dedupeAgendaRows(rows);
-  return normalizeAgendaLiteRows(deduped as AgendaRow[]);
+  const routeable = excludeFilaBlockedRows(deduped, context.filaBlocks);
+  return normalizeAgendaLiteRows(routeable as AgendaRow[]);
 };
 
 const buildAgendaRpcFilters = (filters: AgendaFilters): Record<string, unknown> => {
@@ -932,7 +942,7 @@ const fetchAgendaCountExactDirect = async (
 
   const queryFilters = context.restrictedAgendaIds ? stripLastVisitDateRange(filters) : filters;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let query: any = supabase.from("clientes").select("id", { count: "exact", head: true });
+  let query: any = supabase.from("clientes").select("id");
   query = applyFilaRoutingExclusionsToClientesQuery(query, context.filaBlocks);
   query = applyFilters(query, queryFilters);
 
@@ -958,9 +968,22 @@ const fetchAgendaCountExactDirect = async (
     }
   }
 
-  const { count, error } = await query;
-  if (error) throw new Error(error.message);
-  return count ?? 0;
+  const matchingIds: string[] = [];
+  const pageSize = 1000;
+  let from = 0;
+  while (true) {
+    const { data, error } = await query.range(from, from + pageSize - 1);
+    if (error) throw new Error(error.message);
+    const batch = (data ?? []) as Array<{ id?: string | null }>;
+    if (batch.length === 0) break;
+    batch.forEach((row) => {
+      if (row.id) matchingIds.push(row.id);
+    });
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return excludeFilaBlockedIds(matchingIds, context.filaBlocks)?.length ?? 0;
 };
 
 export const fetchAgendaCountExact = async (
@@ -1037,7 +1060,8 @@ export const fetchAgendaFirstPageLite = async (
     throw new Error(response.error.message);
   }
   const deduped = dedupeAgendaRows(rows);
-  const normalized = normalizeAgendaLiteRows(deduped as AgendaRow[]);
+  const routeable = excludeFilaBlockedRows(deduped, context.filaBlocks);
+  const normalized = normalizeAgendaLiteRows(routeable as AgendaRow[]);
   return normalized;
 };
 
@@ -1225,7 +1249,8 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
     const deduped = dedupeAgendaRows(
       results as Partial<AgendaRow>[] as AgendaRow[],
     ) as unknown as AgendaPerfilRow[];
-    return deduped.map((item) => ({
+    const routeable = excludeFilaBlockedRows(deduped, filaBlocks);
+    return routeable.map((item) => ({
       id: item.id,
       perfil_visita: item.perfil_visita ?? null,
       instructions: (item as { instructions?: string | null }).instructions ?? null,
@@ -1294,7 +1319,8 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
   const deduped = dedupeAgendaRows(
     results as Partial<AgendaRow>[] as AgendaRow[],
   ) as unknown as AgendaPerfilRow[];
-  return deduped.map((item) => ({
+  const routeable = excludeFilaBlockedRows(deduped, filaBlocks);
+  return routeable.map((item) => ({
     id: item.id,
     perfil_visita: item.perfil_visita ?? null,
     instructions: (item as { instructions?: string | null }).instructions ?? null,

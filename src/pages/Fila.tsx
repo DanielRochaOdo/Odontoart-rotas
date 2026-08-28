@@ -165,8 +165,8 @@ export default function Fila() {
 
       await syncFilaAutoRegistration({
         minIntervalMs: shouldForce ? 0 : undefined,
-        maxCandidates: shouldForce ? 120 : undefined,
-        maxRegistrations: shouldForce ? 30 : undefined,
+        maxCandidates: shouldForce ? 500 : undefined,
+        maxRegistrations: shouldForce ? 200 : undefined,
         reconcileExisting: shouldForce,
       });
 
@@ -194,8 +194,8 @@ export default function Fila() {
     void (async () => {
       try {
         await runMaintenance();
-      } catch (err) {
-        const maybeError = err as { message?: string };
+      } catch {
+        // A manutencao automatica nao pode impedir o carregamento da tela.
       }
     })();
   }, [canManage, loadData, runMaintenance]);
