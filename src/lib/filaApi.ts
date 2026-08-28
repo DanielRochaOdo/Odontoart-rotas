@@ -1,6 +1,10 @@
 import { supabase } from "./supabase";
 import { fetchEmpresaByEmpresaId } from "./odontoartEmpresaApi";
-import { DATA_CORTE_FILA, evaluateDataContratoForFila } from "./filaDataContrato";
+import {
+  DATA_CORTE_FILA,
+  evaluateDataContratoForFila,
+  evaluateFilaEmpresaForQueue,
+} from "./filaDataContrato";
 
 export type FilaState =
   | "PENDING_WAIT"
@@ -76,6 +80,7 @@ export type FilaRoutingBlockLists = {
 type SupabaseLikeError = { code?: string; message?: string } | null;
 const FILA_MANUAL_RELEASE_CUTOFF_MS = Date.parse("2026-06-02T00:00:00-03:00");
 const FILA_AUTO_SYNC_STORAGE_KEY = "filaAutoSyncAtMsV1";
+const FILA_AUTO_SYNC_CURSOR_STORAGE_KEY = "filaAutoSyncCursorV1";
 const FILA_AUTO_SYNC_DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
 const FILA_ROUTING_BLOCKS_CACHE_MS = 60 * 1000;
 export const FILA_ANO_MES_PRIMEIRO_PAGAMENTO_CORTE = DATA_CORTE_FILA;
@@ -99,6 +104,43 @@ const writeAutoSyncStorageTimestamp = (timestamp: number) => {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(FILA_AUTO_SYNC_STORAGE_KEY, String(timestamp));
+  } catch {
+    // ignore
+  }
+};
+
+type FilaAutoSyncCursor = {
+  featureStartAt: string;
+  createdAt: string;
+  id: string;
+};
+
+const readAutoSyncCursor = (): FilaAutoSyncCursor | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(FILA_AUTO_SYNC_CURSOR_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<FilaAutoSyncCursor>;
+    if (!parsed.featureStartAt || !parsed.createdAt || !parsed.id) return null;
+    return { featureStartAt: parsed.featureStartAt, createdAt: parsed.createdAt, id: parsed.id };
+  } catch {
+    return null;
+  }
+};
+
+const writeAutoSyncCursor = (cursor: FilaAutoSyncCursor) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(FILA_AUTO_SYNC_CURSOR_STORAGE_KEY, JSON.stringify(cursor));
+  } catch {
+    // ignore
+  }
+};
+
+const clearAutoSyncCursor = () => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(FILA_AUTO_SYNC_CURSOR_STORAGE_KEY);
   } catch {
     // ignore
   }
@@ -250,8 +292,66 @@ export const registerFilaEmpresa = async (payload: {
     p_waiting_days: payload.waiting_days ?? null,
   });
   if (error) throw error;
+  clearFilaRoutingBlocksCache();
   if (Array.isArray(data)) return (data[0] ?? null) as FilaControlRow | null;
   return (data ?? null) as FilaControlRow | null;
+};
+
+export const registerFilaForNewCliente = async (payload: {
+  empresa_id: string;
+  codigo?: string | null;
+}) => {
+  const codigo = (payload.codigo ?? "").trim();
+  if (!codigo) return { eligible: false, reason: "CODIGO_AUSENTE" } as const;
+
+  const empresa = await fetchEmpresaByEmpresaId(codigo);
+  const evaluation = evaluateFilaEmpresaForQueue(empresa);
+  if (!evaluation.eligible) {
+    return { eligible: false, reason: evaluation.reason } as const;
+  }
+
+  await registerFilaEmpresa({
+    empresa_id: payload.empresa_id,
+    data_contrato: evaluation.dataContratoIso,
+  });
+
+  return { eligible: true, reason: evaluation.reason } as const;
+};
+
+export const registerFilaForNewClientes = async (
+  clientes: Array<{ id: string; codigo?: string | null }>,
+) => {
+  const candidates = clientes.filter((cliente) => cliente.id && cliente.codigo?.trim());
+  if (!candidates.length) {
+    return [] as Array<{ empresa_id: string; eligible: boolean; reason: string }>;
+  }
+
+  const results: Array<{ empresa_id: string; eligible: boolean; reason: string }> = [];
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(6, candidates.length) }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= candidates.length) return;
+
+      const candidate = candidates[index];
+      try {
+        const result = await registerFilaForNewCliente({
+          empresa_id: candidate.id,
+          codigo: candidate.codigo,
+        });
+        results[index] = { empresa_id: candidate.id, ...result };
+      } catch (error) {
+        results[index] = {
+          empresa_id: candidate.id,
+          eligible: false,
+          reason: error instanceof Error ? error.message : "ERRO_AO_REGISTRAR_FILA",
+        };
+      }
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
 };
 
 export const removeFilaEmpresa = async (payload: {
@@ -263,6 +363,7 @@ export const removeFilaEmpresa = async (payload: {
     p_reason: payload.reason ?? null,
   });
   if (error) throw error;
+  clearFilaRoutingBlocksCache();
   return Boolean(data);
 };
 
@@ -295,12 +396,11 @@ export const reconcileFilaEmpresaByCodigo = async (codigo: string) => {
   try {
     empresa = await fetchEmpresaByEmpresaId(normalized);
   } catch {
-    // Sem dado confiavel de DataContrato da API, nao altera estado atual.
+    // Sem dado confiavel da API, nao altera estado atual.
     return { found: true, changed: false, reason: "API_DATA_CONTRATO_NAO_RETORNADA" } as const;
   }
 
-  const dataContratoRaw = empresa?.DataContrato ?? empresa?.dataContrato ?? null;
-  const evaluation = evaluateDataContratoForFila(dataContratoRaw);
+  const evaluation = evaluateFilaEmpresaForQueue(empresa);
   const hasQueueEntry = Boolean(controlData?.empresa_id);
   const currentQueueDataContrato = controlData?.data_contrato ?? null;
 
@@ -316,7 +416,11 @@ export const reconcileFilaEmpresaByCodigo = async (codigo: string) => {
   }
 
   if (!hasQueueEntry) {
-    return { found: true, changed: false, reason: evaluation.reason } as const;
+    await registerFilaEmpresa({
+      empresa_id: clienteData.id,
+      data_contrato: evaluation.dataContratoIso,
+    });
+    return { found: true, changed: true, reason: evaluation.reason } as const;
   }
 
   if (currentQueueDataContrato !== evaluation.dataContratoIso) {
@@ -349,6 +453,7 @@ export const applyFilaAction = async (payload: {
     p_reason: payload.reason ?? null,
   });
   if (error) throw error;
+  clearFilaRoutingBlocksCache();
   if (Array.isArray(data)) return (data[0] ?? null) as FilaControlRow | null;
   return (data ?? null) as FilaControlRow | null;
 };
@@ -378,7 +483,7 @@ export const fetchFilaControlsByEmpresaIds = async (empresaIds: string[]) => {
   const uniqueIds = Array.from(new Set(empresaIds.filter(Boolean)));
   if (!uniqueIds.length) return [] as Array<Pick<FilaControlRow, "empresa_id" | "codigo" | "effective_state" | "eligible_at" | "manual_block_until">>;
 
-  const chunkSize = 500;
+  const chunkSize = 100;
   const allRows: Array<Pick<FilaControlRow, "empresa_id" | "codigo" | "effective_state" | "eligible_at" | "manual_block_until">> = [];
 
   for (let index = 0; index < uniqueIds.length; index += chunkSize) {
@@ -408,6 +513,10 @@ const isFilaControlEligibleForRoutes = (row: {
   return Number.isFinite(eligibleAtMs) && eligibleAtMs < FILA_MANUAL_RELEASE_CUTOFF_MS;
 };
 
+export const clearFilaRoutingBlocksCache = () => {
+  filaRoutingBlocksCache = null;
+};
+
 export const fetchFilaRoutingBlockLists = async (options?: { force?: boolean }) => {
   const force = Boolean(options?.force);
   if (!force && filaRoutingBlocksCache) {
@@ -427,6 +536,7 @@ export const fetchFilaRoutingBlockLists = async (options?: { force?: boolean }) 
     if (error) throw error;
 
     const blockedEmpresaIds = new Set<string>();
+    const blockedCodigos = new Set<string>();
 
     ((data ?? []) as Array<{
       empresa_id: string;
@@ -437,12 +547,13 @@ export const fetchFilaRoutingBlockLists = async (options?: { force?: boolean }) 
       const eligible = isFilaControlEligibleForRoutes(row);
       if (!eligible) {
         blockedEmpresaIds.add(row.empresa_id);
+        if (row.codigo?.trim()) blockedCodigos.add(row.codigo.trim());
       }
     });
 
     const snapshot: FilaRoutingBlockLists = {
       blockedEmpresaIds: Array.from(blockedEmpresaIds),
-      blockedCodigos: [],
+      blockedCodigos: Array.from(blockedCodigos),
       cachedAt: Date.now(),
     };
     filaRoutingBlocksCache = snapshot;
@@ -478,31 +589,48 @@ export const syncFilaAutoRegistration = async (options?: {
       settings = await ensureCurrentMonthFeatureStart(settings);
 
       const startAt = settings.feature_start_at;
-      const { data: candidatesData, error: candidatesError } = await supabase
+      if (reconcileExisting) clearAutoSyncCursor();
+      const savedCursor = reconcileExisting ? null : readAutoSyncCursor();
+      const cursor = savedCursor?.featureStartAt === startAt ? savedCursor : null;
+      let candidatesQuery = supabase
         .from("clientes")
         .select("id, codigo, empresa, cnpj, created_at")
         .gte("created_at", startAt)
         .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
         .limit(maxCandidates);
+
+      if (cursor) {
+        candidatesQuery = candidatesQuery.or(
+          `created_at.gt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.gt.${cursor.id})`,
+        );
+      }
+
+      const { data: candidatesData, error: candidatesError } = await candidatesQuery;
 
       if (candidatesError) throw candidatesError;
       const candidates = (candidatesData ?? []) as FilaClienteCandidate[];
-      if (!candidates.length) return 0;
+      if (!candidates.length) {
+        clearAutoSyncCursor();
+        return 0;
+      }
 
       const controls = await fetchFilaControlsByEmpresaIds(candidates.map((row) => row.id));
       const controlledIds = new Set(controls.map((row) => row.empresa_id));
-      const missing = candidates.filter((row) => !controlledIds.has(row.id));
-      const targetCandidates = reconcileExisting ? candidates : missing;
-      if (!targetCandidates.length) return 0;
 
       let registered = 0;
       let removed = 0;
+      let lastProcessedCursor: FilaAutoSyncCursor | null = null;
 
-      for (const candidate of targetCandidates) {
+      for (const candidate of candidates) {
         const codigo = (candidate.codigo ?? "").trim();
         const baseLog = `[fila:auto-register] empresa_id=${candidate.id} codigo=${codigo || "-"}`;
         const alreadyInQueue = controlledIds.has(candidate.id);
         if (registered >= maxRegistrations) break;
+        lastProcessedCursor = candidate.created_at
+          ? { featureStartAt: startAt, createdAt: candidate.created_at, id: candidate.id }
+          : lastProcessedCursor;
+        if (!reconcileExisting && alreadyInQueue) continue;
         if (!codigo) {
           if (reconcileExisting && alreadyInQueue) {
             try {
@@ -511,8 +639,8 @@ export const syncFilaAutoRegistration = async (options?: {
                 reason: "API_DATA_CONTRATO_NAO_RETORNADA",
               });
               removed += 1;
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error ?? "");
+            } catch {
+              // Falha na remocao nao deve interromper a reconciliacao dos demais cadastros.
             }
           }
           continue;
@@ -540,13 +668,12 @@ export const syncFilaAutoRegistration = async (options?: {
           continue;
         }
 
-        const dataContratoRaw = empresa?.DataContrato ?? empresa?.dataContrato ?? null;
-        const evaluation = evaluateDataContratoForFila(dataContratoRaw);
+        const evaluation = evaluateFilaEmpresaForQueue(empresa);
         if (!evaluation.eligible) {
           const detail =
             evaluation.detailReason === "DATA_CONTRATO_FORA_DO_CORTE"
               ? `dataContratoIso=${evaluation.dataContratoIso}`
-              : `dataContratoRaw=${String(dataContratoRaw ?? "")}`;
+              : `reason=${evaluation.detailReason}`;
           void detail;
           if (reconcileExisting && alreadyInQueue) {
             try {
@@ -590,6 +717,9 @@ export const syncFilaAutoRegistration = async (options?: {
         }
       }
 
+      if (lastProcessedCursor) {
+        writeAutoSyncCursor(lastProcessedCursor);
+      }
       void removed;
       return registered;
     } finally {

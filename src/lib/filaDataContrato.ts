@@ -83,6 +83,15 @@ export const parseDataContratoToIso = (value: unknown): string | null => {
     return buildIso(year, month, day);
   }
 
+  const yyyyMmDdCompact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (yyyyMmDdCompact) {
+    const year = toInt(yyyyMmDdCompact[1]);
+    const month = toInt(yyyyMmDdCompact[2]);
+    const day = toInt(yyyyMmDdCompact[3]);
+    if (!isValidDateParts(year, month, day)) return null;
+    return buildIso(year, month, day);
+  }
+
   const yyyyMm = raw.match(/^(\d{4})-(\d{2})$/);
   if (yyyyMm) {
     const year = toInt(yyyyMm[1]);
@@ -99,11 +108,59 @@ export const parseDataContratoToIso = (value: unknown): string | null => {
     return buildIso(year, month, 1);
   }
 
+  const yyyyMmCompact = raw.match(/^(\d{4})(\d{2})$/);
+  if (yyyyMmCompact) {
+    const year = toInt(yyyyMmCompact[1]);
+    const month = toInt(yyyyMmCompact[2]);
+    if (!isValidDateParts(year, month, 1)) return null;
+    return buildIso(year, month, 1);
+  }
+
   return null;
 };
 
 export const isDataContratoElegivelParaFila = (dataContratoIso: string) =>
   dataContratoIso >= DATA_CORTE_FILA;
+
+const readObjectValueByKeys = (value: unknown, keys: string[]) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const keyMap = new Map(Object.keys(record).map((key) => [key.toLowerCase(), key]));
+
+  for (const key of keys) {
+    const mappedKey = keyMap.get(key.toLowerCase());
+    if (!mappedKey) continue;
+    const candidate = record[mappedKey];
+    if (candidate !== null && candidate !== undefined && String(candidate).trim() !== "") {
+      return candidate;
+    }
+  }
+
+  return undefined;
+};
+
+const parseAnoMesPrimeiroPagamentoToIso = (value: unknown) => {
+  if (value === null || value === undefined || String(value).trim() === "") return null;
+  return parseDataContratoToIso(value);
+};
+
+export const resolveFilaDataContratoToIso = (empresa: unknown) => {
+  const primeiroPagamento = readObjectValueByKeys(empresa, [
+    "AnoMesPrimeiroPagamento",
+    "anoMesPrimeiroPagamento",
+    "AnoMesPrimeiroPgto",
+    "anoMesPrimeiroPgto",
+    "ANO_MES_PRIMEIRO_PAGAMENTO",
+  ]);
+  const primeiroPagamentoIso = parseAnoMesPrimeiroPagamentoToIso(primeiroPagamento);
+  if (primeiroPagamentoIso) return primeiroPagamentoIso;
+
+  const dataContrato = readObjectValueByKeys(empresa, ["DataContrato", "dataContrato"]);
+  return parseDataContratoToIso(dataContrato);
+};
+
+export const evaluateFilaEmpresaForQueue = (empresa: unknown) =>
+  evaluateDataContratoForFila(resolveFilaDataContratoToIso(empresa));
 
 export const evaluateDataContratoForFila = (value: unknown): DataContratoEvaluation => {
   if (value === null || value === undefined || String(value).trim() === "") {

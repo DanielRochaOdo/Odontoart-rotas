@@ -23,6 +23,7 @@ import {
   Draggable,
   Droppable,
 } from "@hello-pangea/dnd";
+import { useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import {
   getActiveLocalActionsForDate,
@@ -72,6 +73,8 @@ type VisitRow = {
   perfil_visita: string | null;
   perfil_visita_opcoes?: string | null;
   route_id: string | null;
+  route_stop_id?: string | null;
+  route_stop_order?: number | null;
   completed_at: string | null;
   completed_vidas: number | null;
   no_visit_reason: string | null;
@@ -245,6 +248,52 @@ const formatDateKey = (value: string) => {
   return format(new Date(value), "yyyy-MM-dd");
 };
 
+const VISITAS_VIEW_STATE_KEY = "visitasViewState";
+const VISITAS_SUPERVISOR_QUERY_KEY = "agenda_supervisor";
+const VISITAS_VENDOR_QUERY_KEY = "agenda_vendedor";
+
+type VisitasViewState = {
+  currentMonth: string;
+  selectedDate: string | null;
+  expandedVendor: string | null;
+  selectedSupervisorId: string;
+  selectedVendorId: string;
+};
+
+let cachedVisitasViewState: Partial<VisitasViewState> | null = null;
+
+const readVisitasViewState = (): Partial<VisitasViewState> | null => {
+  if (typeof window === "undefined") return null;
+  if (cachedVisitasViewState) return cachedVisitasViewState;
+
+  for (const storage of [window.localStorage, window.sessionStorage]) {
+    try {
+      const raw = storage.getItem(VISITAS_VIEW_STATE_KEY);
+      if (!raw) continue;
+      cachedVisitasViewState = JSON.parse(raw) as Partial<VisitasViewState>;
+      return cachedVisitasViewState;
+    } catch {
+      // Try the other storage or start with the default view.
+    }
+  }
+
+  return null;
+};
+
+const writeVisitasViewState = (payload: VisitasViewState) => {
+  if (typeof window === "undefined") return;
+  cachedVisitasViewState = payload;
+  const serialized = JSON.stringify(payload);
+
+  for (const storage of [window.localStorage, window.sessionStorage]) {
+    try {
+      storage.setItem(VISITAS_VIEW_STATE_KEY, serialized);
+    } catch {
+      // Ignore storage failures and keep the in-memory view working.
+    }
+  }
+};
+
 const getDateKey = (date: Date) => {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 10);
@@ -360,6 +409,7 @@ const openMapApp = async (address: string) => {
 
 export default function Visitas() {
   const { role, session, profile } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isVendor = role === "VENDEDOR";
   const canManage = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canManageVendorRouteAccess =
@@ -394,8 +444,14 @@ export default function Visitas() {
   const [supervisores, setSupervisores] = useState<
     { id: string; user_id: string | null; display_name: string | null }[]
   >([]);
-  const [selectedSupervisorId, setSelectedSupervisorId] = useState<string>("all");
-  const [selectedVendorId, setSelectedVendorId] = useState<string>("all");
+  const [storedViewState] = useState<Partial<VisitasViewState> | null>(() => readVisitasViewState());
+  const [viewStateRestored, setViewStateRestored] = useState(false);
+  const [selectedSupervisorId, setSelectedSupervisorId] = useState(
+    () => searchParams.get(VISITAS_SUPERVISOR_QUERY_KEY) ?? storedViewState?.selectedSupervisorId ?? "all",
+  );
+  const [selectedVendorId, setSelectedVendorId] = useState(
+    () => searchParams.get(VISITAS_VENDOR_QUERY_KEY) ?? storedViewState?.selectedVendorId ?? "all",
+  );
   const [monthSummaryCounts, setMonthSummaryCounts] = useState<Map<string, number>>(new Map());
   const [dayDetailsByDate, setDayDetailsByDate] = useState<Record<string, VisitRow[]>>({});
   const [dayDetailsLoadingDateKey, setDayDetailsLoadingDateKey] = useState<string | null>(null);
@@ -509,6 +565,38 @@ export default function Visitas() {
       });
     }
 
+    const routeIds = Array.from(
+      new Set(
+        rows
+          .map((item) => item.route_id)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const routeStopByVisitKey = new Map<
+      string,
+      { id: string; stop_order: number | null }
+    >();
+    for (let index = 0; index < routeIds.length; index += 500) {
+      const chunk = routeIds.slice(index, index + 500);
+      const { data: routeStops, error: routeStopsError } = await supabase
+        .from("route_stops")
+        .select("id, route_id, cliente_id, stop_order")
+        .in("route_id", chunk)
+        .order("stop_order", { ascending: true, nullsFirst: false });
+      if (routeStopsError) throw new Error(routeStopsError.message);
+
+      (routeStops ?? []).forEach((stop) => {
+        if (!stop.route_id || !stop.cliente_id || !stop.id) return;
+        const key = `${stop.route_id}|${stop.cliente_id}`;
+        if (!routeStopByVisitKey.has(key)) {
+          routeStopByVisitKey.set(key, {
+            id: stop.id,
+            stop_order: stop.stop_order ?? null,
+          });
+        }
+      });
+    }
+
     const agendaFromCliente = (cliente: ClienteListRow | ClienteDetailsRow): NonNullable<VisitRow["agenda"]> => ({
       id: cliente.id,
       empresa: cliente.empresa,
@@ -542,7 +630,17 @@ export default function Visitas() {
     return rows.map((row) => {
       const item = row as VisitRowJoin;
       const cliente = item.cliente_id ? clientesById.get(item.cliente_id) ?? cache.get(item.cliente_id) ?? null : null;
-      return { ...item, agenda: cliente ? agendaFromCliente(cliente) : null, cliente };
+      const routeStop =
+        item.route_id && item.cliente_id
+          ? routeStopByVisitKey.get(`${item.route_id}|${item.cliente_id}`)
+          : undefined;
+      return {
+        ...item,
+        route_stop_id: routeStop?.id ?? null,
+        route_stop_order: routeStop?.stop_order ?? null,
+        agenda: cliente ? agendaFromCliente(cliente) : null,
+        cliente,
+      };
     }) as VisitRow[];
   }, []);
 
@@ -593,51 +691,52 @@ export default function Visitas() {
   useEffect(() => {
     if (restoredViewRef.current) return;
     try {
-      const raw = sessionStorage.getItem("visitasViewState");
-      if (!raw) {
+      if (!storedViewState) {
         restoredViewRef.current = true;
+        setViewStateRestored(true);
         return;
       }
-      const parsed = JSON.parse(raw) as Partial<{
-        currentMonth: string;
-        selectedDate: string | null;
-        expandedVendor: string | null;
-        selectedSupervisorId: string;
-        selectedVendorId: string;
-      }>;
-      if (!isVendor && parsed.currentMonth) setCurrentMonth(new Date(parsed.currentMonth));
-      if (!isVendor && parsed.selectedDate) setSelectedDate(new Date(parsed.selectedDate));
-      if (parsed.expandedVendor) setExpandedVendor(parsed.expandedVendor);
-      if (parsed.selectedSupervisorId) setSelectedSupervisorId(parsed.selectedSupervisorId);
-      if (parsed.selectedVendorId) setSelectedVendorId(parsed.selectedVendorId);
+      if (!isVendor && storedViewState.currentMonth) {
+        setCurrentMonth(new Date(storedViewState.currentMonth));
+      }
+      if (!isVendor && storedViewState.selectedDate) {
+        setSelectedDate(new Date(storedViewState.selectedDate));
+      }
+      if (storedViewState.expandedVendor) setExpandedVendor(storedViewState.expandedVendor);
       restoredViewRef.current = true;
+      setViewStateRestored(true);
     } catch {
       restoredViewRef.current = true;
+      setViewStateRestored(true);
     }
-  }, []);
+  }, [isVendor, storedViewState]);
 
   useEffect(() => {
-    if (!restoredViewRef.current) return;
+    const hasSupervisorQuery = searchParams.has(VISITAS_SUPERVISOR_QUERY_KEY);
+    const hasVendorQuery = searchParams.has(VISITAS_VENDOR_QUERY_KEY);
+    if (!hasSupervisorQuery && !hasVendorQuery) return;
+
+    const supervisorFromUrl = searchParams.get(VISITAS_SUPERVISOR_QUERY_KEY) || "all";
+    const vendorFromUrl = searchParams.get(VISITAS_VENDOR_QUERY_KEY) || "all";
+    setSelectedSupervisorId((current) => (current === supervisorFromUrl ? current : supervisorFromUrl));
+    setSelectedVendorId((current) => (current === vendorFromUrl ? current : vendorFromUrl));
+  }, [searchParams, supervisores, vendors]);
+
+  useEffect(() => {
+    if (!viewStateRestored) return;
     if (isVendor && !vendorInitialViewRef.current) {
       const today = new Date();
       const nextMonth = startOfMonth(today);
       vendorInitialViewRef.current = true;
       setCurrentMonth(nextMonth);
       setSelectedDate(today);
-      try {
-        sessionStorage.setItem(
-          "visitasViewState",
-          JSON.stringify({
-            currentMonth: nextMonth.toISOString(),
-            selectedDate: today.toISOString(),
-            expandedVendor,
-            selectedSupervisorId,
-            selectedVendorId,
-          }),
-        );
-      } catch {
-        // ignore
-      }
+      writeVisitasViewState({
+        currentMonth: nextMonth.toISOString(),
+        selectedDate: today.toISOString(),
+        expandedVendor,
+        selectedSupervisorId,
+        selectedVendorId,
+      });
       return;
     }
     const payload = {
@@ -647,12 +746,43 @@ export default function Visitas() {
       selectedSupervisorId,
       selectedVendorId,
     };
-    try {
-      sessionStorage.setItem("visitasViewState", JSON.stringify(payload));
-    } catch {
-      // ignore
-    }
-  }, [currentMonth, expandedVendor, isVendor, selectedDate, selectedSupervisorId, selectedVendorId]);
+    writeVisitasViewState(payload);
+  }, [
+    currentMonth,
+    expandedVendor,
+    isVendor,
+    selectedDate,
+    selectedSupervisorId,
+    selectedVendorId,
+    viewStateRestored,
+  ]);
+
+  const persistFilterChange = useCallback(
+    (overrides: Pick<VisitasViewState, "selectedSupervisorId" | "selectedVendorId">) => {
+      writeVisitasViewState({
+        currentMonth: currentMonth.toISOString(),
+        selectedDate: selectedDate ? selectedDate.toISOString() : null,
+        expandedVendor,
+        ...overrides,
+      });
+
+      const nextSearchParams = new URLSearchParams(searchParams);
+      if (overrides.selectedSupervisorId === "all") {
+        nextSearchParams.delete(VISITAS_SUPERVISOR_QUERY_KEY);
+      } else {
+        nextSearchParams.set(VISITAS_SUPERVISOR_QUERY_KEY, overrides.selectedSupervisorId);
+      }
+      if (overrides.selectedVendorId === "all") {
+        nextSearchParams.delete(VISITAS_VENDOR_QUERY_KEY);
+      } else {
+        nextSearchParams.set(VISITAS_VENDOR_QUERY_KEY, overrides.selectedVendorId);
+      }
+      if (nextSearchParams.toString() !== searchParams.toString()) {
+        setSearchParams(nextSearchParams, { replace: true });
+      }
+    },
+    [currentMonth, expandedVendor, searchParams, selectedDate, setSearchParams],
+  );
 
   useEffect(() => {
     try {
@@ -1279,10 +1409,15 @@ export default function Visitas() {
     if (supervisor?.id) supervisorIds.add(supervisor.id);
     if (supervisor?.user_id) supervisorIds.add(supervisor.user_id);
     if (supervisorIds.size === 0) return [];
-    return vendors.filter((vendor) =>
+    const scopedVendors = vendors.filter((vendor) =>
       vendor.supervisor_id ? supervisorIds.has(vendor.supervisor_id) : false,
     );
-  }, [canFilterBySupervisor, selectedSupervisorId, supervisores, vendors]);
+    const selectedVendor = vendors.find((vendor) => vendor.user_id === selectedVendorId);
+    if (selectedVendor && !scopedVendors.some((vendor) => vendor.user_id === selectedVendorId)) {
+      return [selectedVendor, ...scopedVendors];
+    }
+    return scopedVendors;
+  }, [canFilterBySupervisor, selectedSupervisorId, selectedVendorId, supervisores, vendors]);
 
   const selectedSupervisorUserIds = useMemo(() => {
     if (!canFilterBySupervisor || selectedSupervisorId === "all") return new Set<string>();
@@ -1311,13 +1446,6 @@ export default function Visitas() {
     },
     [selectedSupervisorUserIds],
   );
-
-  useEffect(() => {
-    if (!canFilterBySupervisor) return;
-    setSelectedVendorId((prev) =>
-      prev !== "all" && selectableVendors.some((vendor) => vendor.user_id === prev) ? prev : "all",
-    );
-  }, [canFilterBySupervisor, selectableVendors]);
 
   const filteredVisits = useMemo(() => {
     let scopedVisits = visits;
@@ -1812,6 +1940,12 @@ export default function Visitas() {
           const aSupervisor = isSupervisorVisitType(a.visit_type);
           const bSupervisor = isSupervisorVisitType(b.visit_type);
           if (aSupervisor !== bSupervisor) return aSupervisor ? -1 : 1;
+          const sameRoute = Boolean(a.route_id && b.route_id && a.route_id === b.route_id);
+          if (sameRoute) {
+            const aOrder = a.route_stop_order ?? Number.POSITIVE_INFINITY;
+            const bOrder = b.route_stop_order ?? Number.POSITIVE_INFINITY;
+            if (aOrder !== bOrder) return aOrder - bOrder;
+          }
           const aEmpresa = a.agenda?.empresa ?? a.agenda?.nome_fantasia ?? "";
           const bEmpresa = b.agenda?.empresa ?? b.agenda?.nome_fantasia ?? "";
           return aEmpresa.localeCompare(bEmpresa, "pt-BR");
@@ -2101,22 +2235,53 @@ export default function Visitas() {
         if (!routeGroups.has(item.route_id)) routeGroups.set(item.route_id, []);
         routeGroups.get(item.route_id)!.push(item);
       });
-
-      for (const [routeId, routeItems] of routeGroups.entries()) {
-        const updates = routeItems
-          .filter((item) => Boolean(item.cliente_id))
-          .map((item, index) =>
-            supabase
-              .from("route_stops")
-              .update({ stop_order: index + 1 })
-              .eq("route_id", routeId)
-              .eq("cliente_id", item.cliente_id as string),
-          );
-        for (const update of updates) {
-          const { error } = await update;
-          if (error) throw new Error(error.message);
-        }
+      if (routeGroups.size === 0) {
+        throw new Error("Nao foi encontrada uma rota para salvar a ordenacao.");
       }
+
+      const orderByVisitId = new Map<string, number>();
+      await Promise.all(
+        Array.from(routeGroups.entries()).map(async ([routeId, routeItems]) => {
+          const updates = routeItems.map((item, index) => {
+            if (!item.cliente_id || !item.route_stop_id) {
+              throw new Error("Nao foi encontrada a parada de uma empresa da rota.");
+            }
+            orderByVisitId.set(item.id, index + 1);
+            return {
+              id: item.route_stop_id,
+              route_id: routeId,
+              cliente_id: item.cliente_id,
+              stop_order: index + 1,
+            };
+          });
+
+          const { data, error } = await supabase
+            .from("route_stops")
+            .upsert(updates, { onConflict: "id" })
+            .select("id");
+          if (error) throw new Error(error.message);
+          if ((data ?? []).length !== updates.length) {
+            throw new Error("A ordem da rota nao foi persistida para todas as paradas.");
+          }
+        }),
+      );
+
+      setVisits((prev) =>
+        prev.map((item) => {
+          const nextOrder = orderByVisitId.get(item.id);
+          return nextOrder ? { ...item, route_stop_order: nextOrder } : item;
+        }),
+      );
+      setDayDetailsByDate((prev) => {
+        const next: Record<string, VisitRow[]> = {};
+        Object.entries(prev).forEach(([key, rows]) => {
+          next[key] = rows.map((item) => {
+            const nextOrder = orderByVisitId.get(item.id);
+            return nextOrder ? { ...item, route_stop_order: nextOrder } : item;
+          });
+        });
+        return next;
+      });
 
       setRouteOrderEditVendor(null);
       setRouteOrderDraftByVendor((prev) => ({
@@ -3548,7 +3713,15 @@ export default function Visitas() {
                   id="visitas-supervisor-select"
                   name="visitasSupervisorSelect"
                   value={selectedSupervisorId}
-                  onChange={(event) => setSelectedSupervisorId(event.target.value || "all")}
+                  onChange={(event) => {
+                    const nextSupervisorId = event.target.value || "all";
+                    setSelectedSupervisorId(nextSupervisorId);
+                    setSelectedVendorId("all");
+                    persistFilterChange({
+                      selectedSupervisorId: nextSupervisorId,
+                      selectedVendorId: "all",
+                    });
+                  }}
                   className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
                 >
                   <option value="all">Todos</option>
@@ -3569,7 +3742,14 @@ export default function Visitas() {
                   id="visitas-vendor-select"
                   name="visitasVendorSelect"
                   value={selectedVendorId}
-                  onChange={(event) => setSelectedVendorId(event.target.value || "all")}
+                  onChange={(event) => {
+                    const nextVendorId = event.target.value || "all";
+                    setSelectedVendorId(nextVendorId);
+                    persistFilterChange({
+                      selectedSupervisorId,
+                      selectedVendorId: nextVendorId,
+                    });
+                  }}
                   className="rounded-lg border border-sea/20 bg-white/90 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
                 >
                   <option value="all">Todos</option>

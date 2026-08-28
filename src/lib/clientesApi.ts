@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { registerFilaForNewCliente, registerFilaForNewClientes } from "./filaApi";
 import type { ClienteHistoryRow, ClienteRow } from "../types/clientes";
 import { extractCustomTimes, normalizePerfilVisitaValue } from "./perfilVisita";
 const DEFAULT_SITUACAO = "Ativo";
@@ -209,7 +210,24 @@ export const createCliente = async (payload: {
     .single();
 
   if (error) throw new Error(error.message);
-  return data as ClienteRow;
+  const cliente = data as ClienteRow;
+  if (cliente.codigo) {
+    try {
+      await registerFilaForNewCliente({
+        empresa_id: cliente.id,
+        codigo: cliente.codigo,
+      });
+    } catch (error) {
+      // A empresa nao elegivel ou uma indisponibilidade temporaria do ERP/fila
+      // nao deve desfazer o cadastro; a sincronizacao posterior continua como fallback.
+      console.warn("[fila] falha ao registrar empresa recem-cadastrada", {
+        empresa_id: cliente.id,
+        codigo: cliente.codigo,
+        error: error instanceof Error ? error.message : String(error ?? ""),
+      });
+    }
+  }
+  return cliente;
 };
 
 export const updateCliente = async (id: string, payload: Partial<ClienteRow>) => {
@@ -359,7 +377,24 @@ export const upsertClientes = async (
     .upsert(clientesRows, { onConflict: "dedupe_key", ignoreDuplicates: true })
     .select(CLIENTES_SELECT_COLUMNS);
   if (error) throw new Error(error.message);
-  return (data ?? []) as ClienteRow[];
+  const createdClientes = (data ?? []) as ClienteRow[];
+  if (createdClientes.length > 0) {
+    // A importacao tambem cria empresas novas e precisa passar pela mesma
+    // regra da fila usada no cadastro individual.
+    const filaResults = await registerFilaForNewClientes(createdClientes);
+    const expectedReasons = new Set([
+      "CODIGO_AUSENTE",
+      "DATA_CONTRATO_FORA_DO_CORTE",
+      "DATA_CONTRATO_INVALIDA_OU_AUSENTE",
+    ]);
+    const failures = filaResults.filter(
+      (result) => !result.eligible && !expectedReasons.has(result.reason),
+    );
+    if (failures.length > 0) {
+      console.warn("[fila] falhas ao registrar empresas importadas", failures);
+    }
+  }
+  return createdClientes;
 };
 
 export const fetchClienteHistory = async (cliente: ClienteRow) => {

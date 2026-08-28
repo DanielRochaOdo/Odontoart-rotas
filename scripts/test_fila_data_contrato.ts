@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   DATA_CORTE_FILA,
   evaluateDataContratoForFila,
+  evaluateFilaEmpresaForQueue,
   parseDataContratoToIso,
 } from "../src/lib/filaDataContrato";
 
@@ -83,7 +84,24 @@ const run = () => {
   }
   assert.equal(parseDataContratoToIso("31/02/2026"), null);
 
-  // Cenario 8: created_at recente nao pode liberar contrato antigo.
+  // Cenario 8: o primeiro pagamento e a data oficial da regra da fila.
+  assert.equal(parseDataContratoToIso("202608"), "2026-08-01");
+  assert.equal(parseDataContratoToIso("20260815"), "2026-08-15");
+  {
+    const result = evaluateFilaEmpresaForQueue({
+      DataContrato: "05/2025",
+      AnoMesPrimeiroPagamento: "2026/06",
+    });
+    assert.equal(result.eligible, true);
+    assert.equal(result.dataContratoIso, "2026-06-01");
+  }
+  {
+    const result = evaluateFilaEmpresaForQueue({ DataContrato: "2026-05-22" });
+    assert.equal(result.eligible, true);
+    assert.equal(result.dataContratoIso, "2026-05-22");
+  }
+
+  // Cenario 9: created_at recente nao pode liberar contrato antigo.
   {
     const result = shouldAutoRegisterInQueue("10/2018", "2026-05-01T00:00:00.000Z");
     assert.equal(result.eligible, false);
@@ -91,7 +109,7 @@ const run = () => {
     assert.equal(result.dataContratoIso, "2018-10-01");
   }
 
-  // Cenario 9: API sem DataContrato (undefined) => bloqueia.
+  // Cenario 10: API sem DataContrato (undefined) => bloqueia.
   {
     const result = shouldAutoRegisterInQueue(undefined, "2026-05-01T00:00:00.000Z");
     assert.equal(result.eligible, false);
@@ -99,7 +117,7 @@ const run = () => {
     assert.equal(result.detailReason, "API_DATA_CONTRATO_NAO_RETORNADA");
   }
 
-  console.log("OK: test_fila_data_contrato (9 cenarios + validacoes extras)");
+  console.log("OK: test_fila_data_contrato (10 cenarios + validacoes extras)");
 };
 
 run();
