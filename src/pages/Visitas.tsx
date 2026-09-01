@@ -137,6 +137,7 @@ type ClienteListRow = {
   empresa: string | null;
   nome_fantasia: string | null;
   endereco: string | null;
+  complemento: string | null;
   bairro: string | null;
   cidade: string | null;
   uf: string | null;
@@ -328,7 +329,7 @@ const normalize = (value: string | null) => normalizeSearchText(value);
 const CLIENTE_CANONICAL_MODAL_SELECT =
   "id, codigo, vidas_qtde, corte, venc, valor, data_da_ultima_visita, empresa, pessoa, contato, obs_comercial, nome_fantasia, complemento, perfil_visita, situacao, categoria, regra_visita_observacao, endereco, bairro, cidade, uf";
 const CLIENTE_LIST_SELECT =
-  "id, codigo, empresa, nome_fantasia, endereco, bairro, cidade, uf, situacao, categoria, perfil_visita, regra_visita_observacao, vidas_qtde, pessoa, contato";
+  "id, codigo, empresa, nome_fantasia, endereco, complemento, bairro, cidade, uf, situacao, categoria, perfil_visita, regra_visita_observacao, vidas_qtde, pessoa, contato";
 const CLIENTE_DETAILS_SELECT = CLIENTE_CANONICAL_MODAL_SELECT;
 
 const formatCurrency = (value?: number | null) => {
