@@ -36,6 +36,7 @@ import {
 import { fetchRouteStops, fetchSupervisorLatestVisitByEmpresa } from "../lib/routesApi";
 import type { AgendaRow } from "../types/agenda";
 import { useAgendaFilters } from "../hooks/useAgendaFilters";
+import { compareAgendaRowsByDefaultOrder } from "../lib/agendaOrder";
 import MultiSelectFilter from "../components/agenda/MultiSelectFilter";
 import CategoriaLegendPopover from "../components/agenda/CategoriaLegendPopover";
 import AgendaDrawer from "../components/agenda/AgendaDrawer";
@@ -1818,15 +1819,10 @@ export default function Agenda() {
 
   const displayData = useMemo(() => {
     const sortedRows =
-      data.length <= 1
+      data.length <= 1 || !sorting[0] || sorting[0].id !== "obs"
         ? data
         : (() => {
-            const primarySort = sorting[0];
-            if (primarySort && primarySort.id !== "obs") {
-              return data;
-            }
-
-            const descending = primarySort?.desc ?? true;
+            const descending = sorting[0].desc ?? true;
             return [...data].sort((left, right) => {
               const leftObsTimestamp = toSortableTimestamp(
                 resolveScheduledObsVisit(left.id)?.visitDate,
@@ -1837,15 +1833,7 @@ export default function Agenda() {
               const obsComparison = compareNullableTimestamps(leftObsTimestamp, rightObsTimestamp, descending);
               if (obsComparison !== 0) return obsComparison;
 
-              const leftLastVisit = toSortableTimestamp(left.data_da_ultima_visita);
-              const rightLastVisit = toSortableTimestamp(right.data_da_ultima_visita);
-              const lastVisitComparison = compareNullableTimestamps(leftLastVisit, rightLastVisit, true);
-              if (lastVisitComparison !== 0) return lastVisitComparison;
-
-              return (left.empresa ?? left.nome_fantasia ?? "").localeCompare(
-                right.empresa ?? right.nome_fantasia ?? "",
-                "pt-BR",
-              );
+              return compareAgendaRowsByDefaultOrder(left, right);
             });
           })();
 

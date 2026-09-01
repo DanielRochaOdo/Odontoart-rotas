@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import type { AgendaFilters, AgendaRow } from "../types/agenda";
+import { compareAgendaRowsByDefaultOrder } from "./agendaOrder";
 import type { SortingState } from "@tanstack/react-table";
 import { normalizeText } from "./textNormalize";
 import {
@@ -728,6 +729,51 @@ const normalizeAgendaLiteRows = (rows: AgendaRow[]) =>
     obs_contrato_1: row.obs_contrato_1 ?? null,
   }));
 
+const getFortalezaTodayDate = () => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Fortaleza",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
+
+const hydrateAgendaUpcomingRoutePresence = async (rows: AgendaRow[]) => {
+  const rowsWithGeneratedVisit = rows.map((row) => ({
+    ...row,
+    has_upcoming_route: false,
+  }));
+  const clienteIds = Array.from(new Set(rows.map((row) => row.id).filter(Boolean)));
+  if (clienteIds.length === 0) return rowsWithGeneratedVisit;
+
+  const routeClienteIds = new Set<string>();
+  const today = getFortalezaTodayDate();
+  const chunkSize = 500;
+
+  for (let index = 0; index < clienteIds.length; index += chunkSize) {
+    const chunk = clienteIds.slice(index, index + chunkSize);
+    const { data, error } = await supabase
+      .from("visits")
+      .select("cliente_id")
+      .in("cliente_id", chunk)
+      .not("route_id", "is", null)
+      .is("completed_at", null)
+      .gte("visit_date", today);
+
+    if (error) continue;
+    (data ?? []).forEach((row) => {
+      if (row.cliente_id) routeClienteIds.add(row.cliente_id);
+    });
+  }
+
+  return rowsWithGeneratedVisit.map((row) => ({
+    ...row,
+    has_upcoming_route: routeClienteIds.has(row.id),
+  }));
+};
+
 const hasActiveLastVisitDateRange = (filters: AgendaFilters) => {
   const dateRange = filters.dateRanges.data_da_ultima_visita;
   return Boolean(
@@ -754,8 +800,6 @@ const fetchAgendaFirstPageLiteDirect = async (
   let query: any = supabase
     .from("clientes")
     .select(AGENDA_LITE_SELECT_COLUMNS)
-    .order("visit_generated_at", { ascending: false, nullsFirst: false })
-    .order("data_da_ultima_visita", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true });
 
   query = applyFilaRoutingExclusionsToClientesQuery(query, context.filaBlocks);
@@ -779,12 +823,29 @@ const fetchAgendaFirstPageLiteDirect = async (
     query = applyEnderecoContainsFilter(query, context.companyAddress);
   }
 
-  const response = await query.range(pageOffset, pageOffset + pageSize - 1);
-  if (response.error) throw new Error(response.error.message);
-  const rows = (response.data ?? []) as AgendaRow[];
+  const rows: AgendaRow[] = [];
+  const batchSize = 1000;
+  let from = 0;
+
+  while (true) {
+    const response = await query.range(from, from + batchSize - 1);
+    if (response.error) throw new Error(response.error.message);
+
+    const batch = (response.data ?? []) as AgendaRow[];
+    if (batch.length === 0) break;
+    rows.push(...batch);
+    if (batch.length < batchSize) break;
+    from += batchSize;
+  }
+
   const deduped = dedupeAgendaRows(rows);
   const routeable = excludeFilaBlockedRows(deduped, context.filaBlocks);
-  return normalizeAgendaLiteRows(routeable as AgendaRow[]);
+  const normalized = normalizeAgendaLiteRows(
+    await hydrateAgendaUpcomingRoutePresence(routeable as AgendaRow[]),
+  );
+  return normalized
+    .sort(compareAgendaRowsByDefaultOrder)
+    .slice(pageOffset, pageOffset + pageSize);
 };
 
 const buildAgendaRpcFilters = (filters: AgendaFilters): Record<string, unknown> => {
