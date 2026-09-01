@@ -29,6 +29,7 @@
   categoria: string | null;
   obs_contrato_1: string | null;
   visit_generated_at?: string | null;
+  has_upcoming_route?: boolean | null;
   visit_assigned_to?: string | null;
   visit_route_id?: string | null;
   visit_completed_at?: string | null;
