@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, BarChart3, Building2, CalendarDays, Check, CheckCircle2, Filter, MapPinned, TrendingUp, Users } from "lucide-react";
 import { supabaseDash } from "../lib/supabaseDashboard";
 import { useAuth } from "../context/AuthContext";
+import { formatDateBr } from "../lib/dateFormat";
 import DashboardLegacy from "./Dashboard";
 import DashboardModal from "../components/DashboardModal";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
@@ -568,6 +569,8 @@ export default function DashboardEstrategico() {
   const [loading, setLoading] = useState(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exportingReason, setExportingReason] = useState<string | null>(null);
+  const [exportReasonError, setExportReasonError] = useState<string | null>(null);
   const [visits, setVisits] = useState<VisitLite[]>([]);
   const [historicalVisits, setHistoricalVisits] = useState<VisitLite[]>([]);
   const [aceites, setAceites] = useState<AceiteLite[]>([]);
@@ -1190,6 +1193,64 @@ export default function DashboardEstrategico() {
       semData,
     };
   }, [allClientes, clientesMap, filteredAceites, filteredVisits, from, profilesMap, to, totalClientes]);
+
+  const exportNoVisitReason = async (reason: string) => {
+    setExportingReason(reason);
+    setExportReasonError(null);
+
+    try {
+      const xlsxModule = await import("xlsx");
+      const XLSX = xlsxModule.default ?? xlsxModule;
+      const rows = filteredVisits
+        .filter((visit) => visit.no_visit_reason === reason)
+        .map((visit) => {
+          const cliente = clientesMap.get(visit.cliente_id ?? "");
+          const vendedor = getSellerLabelFromVisit(visit, profilesMap);
+          const supervisorId = visit.assigned_to_user_id
+            ? vendorSupervisorMap.get(visit.assigned_to_user_id) ?? null
+            : null;
+
+          return {
+            "Motivo da nao visita": visit.no_visit_reason ?? reason,
+            "Data da visita": formatDateBr(visit.visit_date),
+            Vendedor: vendedor,
+            Supervisor: supervisorId ? supervisorNameMap.get(supervisorId) ?? supervisorId : "-",
+            "Codigo da empresa": cliente?.codigo ?? "-",
+            Empresa: cliente?.empresa ?? "Sem nome",
+            "Cidade da empresa": cliente?.cidade ?? "-",
+            "Bairro da empresa": cliente?.bairro ?? "-",
+            "Situacao da empresa": cliente?.situacao ?? "-",
+            "Vendedor cadastrado na empresa": cliente?.vendedor ?? "-",
+            Categoria: cliente?.categoria ?? "-",
+            Grupo: cliente?.grupo ?? "-",
+            "Vidas registradas": visit.completed_vidas ?? 0,
+            Status: visit.completed_at ? "Nao realizada" : "Pendente",
+          };
+        });
+
+      if (rows.length === 0) {
+        setExportReasonError("Nenhum registro encontrado para este motivo no recorte atual.");
+        return;
+      }
+
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      worksheet["!autofilter"] = { ref: worksheet["!ref"] ?? "A1" };
+      worksheet["!cols"] = Object.keys(rows[0]).map((key) => ({
+        wch: Math.min(36, Math.max(14, key.length + 2)),
+      }));
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Motivos nao visita");
+
+      const safeReason = normalizeFilterValue(reason).replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "");
+      XLSX.writeFile(workbook, `motivo_nao_visita_${safeReason || "sem_motivo"}_${from}_${to}.xlsx`);
+    } catch (exportError) {
+      setExportReasonError(
+        exportError instanceof Error ? exportError.message : "Nao foi possivel gerar o arquivo XLSX.",
+      );
+    } finally {
+      setExportingReason(null);
+    }
+  };
 
   const kpiDetailItems = useMemo(() => {
     const formatCompany = (visit: VisitLite) => {
@@ -2228,6 +2289,9 @@ export default function DashboardEstrategico() {
               </article>
               <article className="dashboard-card rounded-2xl p-4 xl:col-span-2">
                 <h3 className="font-display text-lg text-ink">Motivos de nao visita</h3>
+                {exportReasonError ? (
+                  <p className="mt-2 text-xs text-red-600">{exportReasonError}</p>
+                ) : null}
                 <div className="mt-3 space-y-2">
                   {model.byReason.length === 0 ? (
                     <p className="text-sm text-ink/60">Sem registros de nao visita no recorte.</p>
@@ -2235,7 +2299,16 @@ export default function DashboardEstrategico() {
                     model.byReason.map((item) => (
                       <div key={item.reason} className="flex items-center justify-between text-sm">
                         <span className="text-ink/70">{item.reason}</span>
-                        <span className="font-semibold text-amber-700">{formatNumber(item.count)}</span>
+                        <button
+                          type="button"
+                          onClick={() => void exportNoVisitReason(item.reason)}
+                          disabled={exportingReason !== null}
+                          className="rounded px-1 font-semibold text-amber-700 transition hover:bg-amber-100 hover:text-amber-800 disabled:cursor-wait disabled:opacity-60"
+                          title="Baixar XLSX com os registros deste motivo"
+                          aria-label={`Baixar XLSX de ${item.reason}`}
+                        >
+                          {exportingReason === item.reason ? "..." : formatNumber(item.count)}
+                        </button>
                       </div>
                     ))
                   )}
