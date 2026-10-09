@@ -1,0 +1,300 @@
+/* ODONTOART / Rotas — KPI Glass V2
+ * Estilo restrito ao modulo KPI e ao seu portal de detalhamento.
+ * Graficos preservam cores e geometrias originais. */
+.rotas-kpi-v2,
+.rotas-kpi-v2-portal {
+  --kv2-pane: rgba(245, 255, 250, .46);
+  --kv2-pane-strong: rgba(253, 255, 253, .65);
+  --kv2-pane-soft: rgba(244, 255, 251, .51);
+  --kv2-row: rgba(250, 255, 252, .81);
+  --kv2-control: rgba(252, 255, 254, .84);
+  --kv2-border: rgba(255, 255, 255, .83);
+  --kv2-glint: rgba(255, 255, 255, .96);
+  --kv2-shadow: rgba(6, 73, 66, .16);
+  --kv2-glow: rgba(31, 222, 160, .19);
+}
+.dark .rotas-kpi-v2,
+.dark .rotas-kpi-v2-portal {
+  --kv2-pane: rgba(8, 35, 44, .34);
+  --kv2-pane-strong: rgba(10, 39, 49, .49);
+  --kv2-pane-soft: rgba(12, 44, 54, .46);
+  --kv2-row: rgba(12, 34, 44, .86);
+  --kv2-control: rgba(10, 33, 43, .91);
+  --kv2-border: rgba(207, 255, 236, .30);
+  --kv2-glint: rgba(255, 255, 255, .32);
+  --kv2-shadow: rgba(0, 0, 0, .38);
+  --kv2-glow: rgba(27, 224, 162, .17);
+}
+
+/* A classe principal esta no #kpi-export-root e e retirada SOMENTE
+ * do clone temporario do PDF, mantendo o relatorio branco e imprimivel. */
+.rotas-kpi-v2 {
+  position: relative;
+  min-width: 0;
+  padding: clamp(12px, 2.2vw, 28px);
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, .66);
+  background:
+    radial-gradient(ellipse 49% 26% at 1% 2%, rgba(32, 229, 161, .55), transparent 83%),
+    radial-gradient(ellipse 45% 24% at 100% 11%, rgba(76, 173, 228, .44), transparent 83%),
+    radial-gradient(ellipse 55% 33% at 47% 75%, rgba(97, 226, 181, .30), transparent 85%),
+    linear-gradient(139deg, #c6e9dd 0%, #dbeaf0 52%, #d6f3e3 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .84), 0 25px 62px rgba(7, 65, 59, .11);
+}
+.dark .rotas-kpi-v2 {
+  border-color: rgba(201, 255, 236, .18);
+  background:
+    radial-gradient(ellipse 51% 28% at 0% 0%, rgba(14, 211, 151, .40), transparent 83%),
+    radial-gradient(ellipse 48% 27% at 100% 13%, rgba(20, 141, 203, .40), transparent 85%),
+    radial-gradient(ellipse 63% 35% at 49% 77%, rgba(14, 149, 110, .24), transparent 85%),
+    linear-gradient(137deg, #061720, #122f39 54%, #071b22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), 0 28px 70px rgba(0, 0, 0, .28);
+}
+
+/* Cabeçalho elevado e barra de sincronização. */
+.rotas-kpi-v2 > .rotas-kpi-v2-hero,
+.rotas-kpi-v2 > .rotas-kpi-v2-status,
+.rotas-kpi-v2 > .rotas-kpi-v2-main {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--kv2-border) !important;
+  background:
+    linear-gradient(130deg, rgba(255, 255, 255, .26), rgba(255, 255, 255, .015) 51%, rgba(255, 255, 255, .10)),
+    var(--kv2-pane) !important;
+  box-shadow: inset 0 1px 0 var(--kv2-glint), inset 0 -1px 0 rgba(255, 255, 255, .10),
+              0 17px 45px var(--kv2-shadow), 0 2px 6px rgba(0, 0, 0, .06);
+  -webkit-backdrop-filter: blur(37px) saturate(185%);
+  backdrop-filter: blur(37px) saturate(185%);
+}
+.rotas-kpi-v2 > .rotas-kpi-v2-hero {
+  border-radius: 23px;
+  padding: clamp(15px, 2vw, 24px);
+  background:
+    radial-gradient(ellipse at 0% -40%, rgba(43, 244, 175, .19), transparent 58%),
+    linear-gradient(131deg, rgba(255, 255, 255, .36), rgba(255, 255, 255, .02) 60%),
+    var(--kv2-pane-strong) !important;
+  box-shadow: inset 0 1px 0 var(--kv2-glint), 0 21px 49px var(--kv2-shadow), 0 0 34px var(--kv2-glow);
+  -webkit-backdrop-filter: blur(43px) saturate(193%);
+  backdrop-filter: blur(43px) saturate(193%);
+}
+.rotas-kpi-v2-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+  padding: 6px 11px;
+  border: 1px solid rgba(40, 203, 147, .36);
+  border-radius: 999px;
+  background: rgba(21, 190, 139, .14);
+  color: #12684e;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .60);
+}
+.rotas-kpi-v2-eyebrow::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: #3be4a7;
+  box-shadow: 0 0 12px rgba(22, 219, 153, .83);
+}
+.dark .rotas-kpi-v2-eyebrow {
+  color: #b4ffe3;
+  border-color: rgba(168, 255, 224, .33);
+  background: rgba(19, 197, 142, .16);
+}
+.rotas-kpi-v2 > .rotas-kpi-v2-status {
+  padding: clamp(14px, 1.8vw, 19px);
+  border-radius: 19px;
+  background:
+    linear-gradient(128deg, rgba(255, 255, 255, .29), transparent 68%),
+    var(--kv2-pane-strong) !important;
+}
+.rotas-kpi-v2 > .rotas-kpi-v2-main {
+  padding: clamp(13px, 1.9vw, 20px);
+  border-radius: 24px;
+  background:
+    radial-gradient(ellipse 56% 17% at 0% 0%, rgba(38, 223, 165, .13), transparent 84%),
+    linear-gradient(130deg, rgba(255, 255, 255, .20), transparent 70%),
+    var(--kv2-pane) !important;
+}
+
+/* Seis cartões de métricas, botões interativos. */
+.rotas-kpi-v2 .rotas-kpi-v2-metric {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--kv2-border) !important;
+  background:
+    radial-gradient(ellipse at 0% 0%, rgba(74, 245, 184, .14), transparent 70%),
+    linear-gradient(130deg, rgba(255, 255, 255, .33), rgba(255, 255, 255, .025) 56%),
+    var(--kv2-pane-strong) !important;
+  box-shadow: inset 0 1px 0 var(--kv2-glint), 0 11px 29px var(--kv2-shadow);
+  -webkit-backdrop-filter: blur(30px) saturate(181%);
+  backdrop-filter: blur(30px) saturate(181%);
+  transition: transform .17s ease, box-shadow .17s ease, border-color .17s ease;
+}
+.rotas-kpi-v2 .rotas-kpi-v2-metric:hover {
+  transform: translateY(-3px);
+  border-color: rgba(54, 236, 174, .72) !important;
+  box-shadow: inset 0 1px 0 var(--kv2-glint), 0 19px 41px var(--kv2-shadow), 0 0 24px var(--kv2-glow);
+}
+
+/* Painéis dos gráficos. Os SVGs, barras, labels e cores de séries são intocados. */
+.rotas-kpi-v2 .rotas-kpi-v2-chart,
+.rotas-kpi-v2 .rotas-kpi-v2-chart-note,
+.rotas-kpi-v2 .rotas-kpi-v2-table-panel {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--kv2-border) !important;
+  background:
+    linear-gradient(127deg, rgba(255, 255, 255, .24), rgba(255, 255, 255, .018) 56%),
+    var(--kv2-pane-soft) !important;
+  box-shadow: inset 0 1px 0 var(--kv2-glint), 0 12px 31px var(--kv2-shadow);
+  -webkit-backdrop-filter: blur(30px) saturate(176%);
+  backdrop-filter: blur(30px) saturate(176%);
+}
+.rotas-kpi-v2 .rotas-kpi-v2-chart {
+  border-radius: 19px;
+}
+.rotas-kpi-v2 .rotas-kpi-v2-chart-note {
+  border-radius: 15px;
+  padding: 11px 14px;
+}
+.rotas-kpi-v2 .rotas-kpi-v2-table-panel { border-radius: 19px; }
+
+/* Campos de busca, paginação e ações mantendo contraste. Preserva o botão
+ * Parar com cor vermelha e os estados âmbar/vermelho do andamento. */
+.rotas-kpi-v2 :is(.rotas-kpi-v2-hero, .rotas-kpi-v2-table-panel) :is(button[class*="bg-white"], input),
+.rotas-kpi-v2-portal > .rotas-kpi-v2-dialog :is(input, button[class*="bg-white"]) {
+  background: var(--kv2-control) !important;
+  color: rgb(var(--theme-text)) !important;
+  border-color: var(--kv2-border) !important;
+  box-shadow: inset 0 1px 0 var(--kv2-glint), 0 4px 13px var(--kv2-shadow);
+}
+.rotas-kpi-v2 :is(button, input, select, textarea):focus-visible,
+.rotas-kpi-v2-portal :is(button, input, select, textarea):focus-visible {
+  outline: 2px solid rgb(var(--theme-accent-action));
+  outline-offset: 3px;
+}
+.rotas-kpi-v2 .rotas-kpi-v2-table-scroll {
+  overflow-x: auto;
+  border: 1px solid rgba(132, 206, 172, .25);
+  border-radius: 16px;
+  background: var(--kv2-pane-soft);
+  box-shadow: inset 0 1px 0 var(--kv2-glint);
+}
+.rotas-kpi-v2 .rotas-kpi-v2-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.rotas-kpi-v2 .rotas-kpi-v2-table thead {
+  background: rgba(35, 185, 135, .13);
+}
+.dark .rotas-kpi-v2 .rotas-kpi-v2-table thead { background: rgba(26, 177, 140, .19); }
+.rotas-kpi-v2 .rotas-kpi-v2-table th {
+  color: rgb(var(--theme-text-secondary));
+  border-bottom: 1px solid rgba(73, 179, 136, .25);
+}
+.rotas-kpi-v2 .rotas-kpi-v2-table tbody tr {
+  background: var(--kv2-row);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+.rotas-kpi-v2 .rotas-kpi-v2-table tbody tr:nth-child(even) {
+  background: linear-gradient(90deg, rgba(40, 218, 153, .055), transparent 66%), var(--kv2-row);
+}
+.rotas-kpi-v2 .rotas-kpi-v2-table tbody tr:hover {
+  background: linear-gradient(94deg, rgba(28, 216, 153, .14), transparent 73%), var(--kv2-row);
+}
+.rotas-kpi-v2 .rotas-kpi-v2-table td {
+  border-bottom: 1px solid rgba(85, 181, 143, .17);
+}
+
+/* Modal portal do drill-down de cada métrica (document.body). */
+.rotas-kpi-v2-portal {
+  background: rgba(3, 24, 32, .47) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(139%);
+  backdrop-filter: blur(12px) saturate(139%);
+}
+.rotas-kpi-v2-portal > .rotas-kpi-v2-dialog {
+  border: 1px solid rgba(224, 255, 242, .81) !important;
+  background:
+    linear-gradient(133deg, rgba(255, 255, 255, .33), rgba(255, 255, 255, .025) 56%),
+    rgba(238, 255, 248, .89) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .97),
+              0 30px 79px rgba(0, 32, 29, .31), 0 0 33px rgba(17, 213, 150, .13);
+  -webkit-backdrop-filter: blur(43px) saturate(190%);
+  backdrop-filter: blur(43px) saturate(190%);
+}
+.dark .rotas-kpi-v2-portal > .rotas-kpi-v2-dialog {
+  border-color: rgba(201, 255, 236, .34) !important;
+  background:
+    linear-gradient(130deg, rgba(255, 255, 255, .15), rgba(255, 255, 255, .015) 61%),
+    rgba(7, 30, 40, .94) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28),
+              0 30px 80px rgba(0, 0, 0, .48), 0 0 35px rgba(15, 217, 146, .14);
+}
+.rotas-kpi-v2-portal .rotas-kpi-v2-detail {
+  border: 1px solid var(--kv2-border) !important;
+  background: var(--kv2-row) !important;
+  box-shadow: inset 0 1px 0 var(--kv2-glint);
+}
+
+/* PDF html2canvas: classe rotas-kpi-v2 retirada apenas da cópia do conteúdo
+ * em KPI.tsx. Esta regra assegura compatibilidade com impressão direta. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .rotas-kpi-v2, .dark .rotas-kpi-v2,
+  .rotas-kpi-v2-portal, .dark .rotas-kpi-v2-portal {
+    --kv2-pane: rgb(var(--theme-surface-strong) / .96);
+    --kv2-pane-strong: rgb(var(--theme-surface-strong) / .98);
+    --kv2-pane-soft: rgb(var(--theme-surface-strong) / .96);
+    --kv2-row: rgb(var(--theme-surface-strong) / .99);
+    --kv2-control: rgb(var(--theme-surface-strong) / .99);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .rotas-kpi-v2, .dark .rotas-kpi-v2,
+  .rotas-kpi-v2-portal, .dark .rotas-kpi-v2-portal {
+    --kv2-pane: rgb(var(--theme-surface-strong) / .97);
+    --kv2-pane-strong: rgb(var(--theme-surface-strong) / .99);
+    --kv2-pane-soft: rgb(var(--theme-surface-strong) / .97);
+    --kv2-row: rgb(var(--theme-surface-strong) / .99);
+    --kv2-control: rgb(var(--theme-surface-strong) / .99);
+  }
+  .rotas-kpi-v2 :is(.rotas-kpi-v2-hero, .rotas-kpi-v2-status, .rotas-kpi-v2-main,
+                     .rotas-kpi-v2-metric, .rotas-kpi-v2-chart, .rotas-kpi-v2-table-panel),
+  .rotas-kpi-v2-portal,
+  .rotas-kpi-v2-portal > .rotas-kpi-v2-dialog {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rotas-kpi-v2 .rotas-kpi-v2-metric { transition: none; }
+  .rotas-kpi-v2 .rotas-kpi-v2-metric:hover { transform: none; }
+}
+@media (max-width: 640px) {
+  .rotas-kpi-v2 { padding: 11px; border-radius: 18px; }
+  .rotas-kpi-v2 > .rotas-kpi-v2-hero { padding: 14px; border-radius: 18px; }
+  .rotas-kpi-v2 > .rotas-kpi-v2-main { padding: 11px; border-radius: 18px; }
+  .rotas-kpi-v2 .rotas-kpi-v2-metric:hover { transform: none; }
+  .rotas-kpi-v2-portal > .rotas-kpi-v2-dialog {
+    margin: 12px;
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+  }
+}
+@media print {
+  .rotas-kpi-v2, .dark .rotas-kpi-v2 {
+    background: #fff !important; border: 0 !important; box-shadow: none !important;
+  }
+  .rotas-kpi-v2 :is(.rotas-kpi-v2-hero, .rotas-kpi-v2-status, .rotas-kpi-v2-main,
+                     .rotas-kpi-v2-metric, .rotas-kpi-v2-chart, .rotas-kpi-v2-chart-note,
+                     .rotas-kpi-v2-table-panel, .rotas-kpi-v2-table tbody tr) {
+    background: #fff !important; box-shadow: none !important;
+    -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+  }
+}
