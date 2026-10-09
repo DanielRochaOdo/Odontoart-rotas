@@ -6,46 +6,14 @@ import { formatDateBr } from "../lib/dateFormat";
 import DashboardLegacy from "./Dashboard";
 import DashboardModal from "../components/DashboardModal";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
+import { createDashboardLoader, type VisitLite, type AceiteLite, type ClienteLite, type HistoricalLives } from "../lib/dashboardData";
+import { DASHBOARD_DATA_CHANGED } from "../lib/dashboardCacheEvents";
+import { startActivePolling } from "../lib/activePolling";
+
+const dashboardLoader = createDashboardLoader(supabaseDash);
 
 type TabKey = "visao" | "performance" | "comercial" | "cobertura" | "qualidade";
 type LineMetric = "visitas" | "concluidas" | "vidas";
-
-type VisitLite = {
-  id: string;
-  cliente_id: string | null;
-  visit_date: string | null;
-  completed_at: string | null;
-  no_visit_reason: string | null;
-  assigned_to_user_id: string | null;
-  assigned_to_name: string | null;
-  completed_vidas: number | null;
-};
-
-type AceiteLite = {
-  entry_date: string | null;
-  vendor_user_id: string | null;
-  vidas: number | null;
-};
-
-type ClienteLite = {
-  id: string;
-  codigo?: string | null;
-  empresa?: string | null;
-  cidade: string | null;
-  bairro: string | null;
-  situacao: string | null;
-  vendedor: string | null;
-  categoria: string | null;
-  grupo: string | null;
-};
-
-type ProfileLite = {
-  id?: string | null;
-  user_id: string | null;
-  display_name: string | null;
-  role?: string | null;
-  supervisor_id?: string | null;
-};
 
 type TrendSummary = {
   currentTotal: number;
@@ -72,24 +40,6 @@ type DashboardEstrategicoUiState = {
 
 type DashboardKpiDetailMode = "visitas" | "concluidas" | "pendentes" | "empresas" | "cobertura" | "vidas" | "taxa";
 
-type DashboardEstrategicoDataCache = {
-  visits: VisitLite[];
-  historicalVisits: VisitLite[];
-  previousVisits: VisitLite[];
-  previousMonthVisits: VisitLite[];
-  aceites: AceiteLite[];
-  previousAceites: AceiteLite[];
-  clientesMapEntries: Array<[string, ClienteLite]>;
-  allClientes: ClienteLite[];
-  profilesMapEntries: Array<[string, string]>;
-  vendorSupervisorEntries: Array<[string, string]>;
-  supervisorNameEntries: Array<[string, string]>;
-  totalClientes: number;
-  cachedAt: number;
-};
-
-const VISITS_PAGE_SIZE = 1000;
-const CLIENTES_UNIVERSE_PAGE_SIZE = 300;
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "visao", label: "Geral" },
   { key: "performance", label: "Performance" },
@@ -192,12 +142,9 @@ const getPreviousMonthSameRange = (from: string, to: string) => {
   return { prevMonthFrom: toYmd(start), prevMonthTo: toYmd(end) };
 };
 
-const getSellerLabelFromVisit = (visit: VisitLite, profilesMap: Map<string, string>) =>
+const getSellerLabelFromVisit = (visit: Pick<VisitLite, "assigned_to_name" | "assigned_to_user_id">, profilesMap: Map<string, string>) =>
   visit.assigned_to_name ??
   (visit.assigned_to_user_id ? profilesMap.get(visit.assigned_to_user_id) ?? visit.assigned_to_user_id : "Sem nome");
-
-const buildDashboardDataCacheKey = (userId: string | null | undefined, from: string, to: string) =>
-  `dashboardEstrategicoDataCacheV1:${userId ?? "anon"}:${from}:${to}`;
 
 function DailyBarChart({
   title,
@@ -532,6 +479,12 @@ function MonthlyCommercialBarChart({
 
 export default function DashboardEstrategico() {
   const { role, session } = useAuth();
+  if (!session || !role) return null;
+  return <DashboardEstrategicoForUser key={`${session.user.id}:${role}`} />;
+}
+
+function DashboardEstrategicoForUser() {
+  const { role, session } = useAuth();
   const isVendor = role === "VENDEDOR";
   const canViewTeam = role === "SUPERVISOR" || role === "ASSISTENTE";
   const visibleTabs = isVendor ? TABS.filter((item) => item.key === "visao") : TABS;
@@ -572,7 +525,7 @@ export default function DashboardEstrategico() {
   const [exportingReason, setExportingReason] = useState<string | null>(null);
   const [exportReasonError, setExportReasonError] = useState<string | null>(null);
   const [visits, setVisits] = useState<VisitLite[]>([]);
-  const [historicalVisits, setHistoricalVisits] = useState<VisitLite[]>([]);
+  const [historicalVisits, setHistoricalVisits] = useState<HistoricalLives[]>([]);
   const [aceites, setAceites] = useState<AceiteLite[]>([]);
   const [previousVisits, setPreviousVisits] = useState<VisitLite[]>([]);
   const [previousMonthVisits, setPreviousMonthVisits] = useState<VisitLite[]>([]);
@@ -583,7 +536,8 @@ export default function DashboardEstrategico() {
   const [vendorSupervisorMap, setVendorSupervisorMap] = useState<Map<string, string>>(new Map());
   const [supervisorNameMap, setSupervisorNameMap] = useState<Map<string, string>>(new Map());
   const [totalClientes, setTotalClientes] = useState(0);
-  const dashboardCacheKey = buildDashboardDataCacheKey(session?.user?.id, from, to);
+  const needsStrategicData = tab !== "visao";
+  const needsHistory = tab === "comercial";
 
   const hasPendingFilterChanges =
     draftFrom !== from ||
@@ -651,248 +605,66 @@ export default function DashboardEstrategico() {
   }, [isVendor]);
 
   useEffect(() => {
+    if (!needsStrategicData || !session?.user.id || !role) return;
     let active = true;
+    let version = 0;
+    const scope = { userId: session.user.id, role };
     const load = async () => {
-      if (!hasLoadedOnce && typeof window !== "undefined") {
-        try {
-          const raw = window.sessionStorage.getItem(dashboardCacheKey);
-          if (raw) {
-            const cached = JSON.parse(raw) as DashboardEstrategicoDataCache;
-            setVisits(cached.visits ?? []);
-            setHistoricalVisits(cached.historicalVisits ?? []);
-            setPreviousVisits(cached.previousVisits ?? []);
-            setPreviousMonthVisits(cached.previousMonthVisits ?? []);
-            setAceites(cached.aceites ?? []);
-            setPreviousAceites(cached.previousAceites ?? []);
-            setClientesMap(new Map(cached.clientesMapEntries ?? []));
-            setAllClientes(cached.allClientes ?? []);
-            setProfilesMap(new Map(cached.profilesMapEntries ?? []));
-            setVendorSupervisorMap(new Map(cached.vendorSupervisorEntries ?? []));
-            setSupervisorNameMap(new Map(cached.supervisorNameEntries ?? []));
-            setTotalClientes(cached.totalClientes ?? 0);
-            setHasLoadedOnce(true);
-            setLoading(false);
-          }
-        } catch {
-          // ignore cache parse failures
-        }
-      }
+      const requestVersion = ++version;
       setLoading(true);
       setError(null);
-      const toExclusive = endExclusive(to);
-      const { prevFrom, prevTo } = getPreviousRange(from, to);
-      const prevToExclusive = endExclusive(prevTo);
-      const { prevMonthFrom, prevMonthTo } = getPreviousMonthSameRange(from, to);
-      const prevMonthToExclusive = endExclusive(prevMonthTo);
-
-      const fetchVisitsRange = async (fromDate: string, toExclusiveDate: string) => {
-        const accumulator: VisitLite[] = [];
-        let fromIndex = 0;
-        while (true) {
-          let query = supabaseDash
-            .from("v_dash_visits_active")
-            .select(
-              "id, cliente_id, visit_date, completed_at, no_visit_reason, assigned_to_user_id, assigned_to_name, completed_vidas",
-            )
-            .gte("visit_date", fromDate)
-            .lt("visit_date", toExclusiveDate)
-            .order("visit_date", { ascending: true })
-            .range(fromIndex, fromIndex + VISITS_PAGE_SIZE - 1);
-          if (isVendor && session?.user.id) query = query.eq("assigned_to_user_id", session.user.id);
-          const { data, error: pageError } = await query;
-          if (pageError) throw new Error(pageError.message);
-          const page = (data ?? []) as VisitLite[];
-          accumulator.push(...page);
-          if (page.length < VISITS_PAGE_SIZE) break;
-          fromIndex += VISITS_PAGE_SIZE;
-        }
-        return accumulator;
-      };
-
-      const fetchHistoricalVisits = async () => {
-        const accumulator: VisitLite[] = [];
-        let fromIndex = 0;
-        while (true) {
-          let query = supabaseDash
-            .from("v_dash_visits_active")
-            .select(
-              "id, cliente_id, visit_date, completed_at, no_visit_reason, assigned_to_user_id, assigned_to_name, completed_vidas",
-            )
-            .not("visit_date", "is", null)
-            .order("visit_date", { ascending: true })
-            .range(fromIndex, fromIndex + VISITS_PAGE_SIZE - 1);
-          if (isVendor && session?.user.id) query = query.eq("assigned_to_user_id", session.user.id);
-          const { data, error: pageError } = await query;
-          if (pageError) throw new Error(pageError.message);
-          const page = (data ?? []) as VisitLite[];
-          accumulator.push(...page);
-          if (page.length < VISITS_PAGE_SIZE) break;
-          fromIndex += VISITS_PAGE_SIZE;
-        }
-        return accumulator;
-      };
-
-      const fetchAceitesRange = async (fromDate: string, toExclusiveDate: string) => {
-        let query = supabaseDash
-          .from("v_dash_aceite_digital_active")
-          .select("entry_date, vendor_user_id, vidas")
-          .gte("entry_date", fromDate)
-          .lt("entry_date", toExclusiveDate);
-        if (isVendor && session?.user.id) query = query.eq("vendor_user_id", session.user.id);
-        const { data, error: aceiteError } = await query;
-        if (aceiteError) throw new Error(aceiteError.message);
-        return (data ?? []) as AceiteLite[];
-      };
-
-      let visitsAccumulator: VisitLite[] = [];
-      let historicalVisitsAccumulator: VisitLite[] = [];
-      let previousVisitsAccumulator: VisitLite[] = [];
-      let previousMonthVisitsAccumulator: VisitLite[] = [];
-      let aceiteData: AceiteLite[] = [];
-      let previousAceiteData: AceiteLite[] = [];
       try {
-        [
-          visitsAccumulator,
-          historicalVisitsAccumulator,
-          previousVisitsAccumulator,
-          previousMonthVisitsAccumulator,
-          aceiteData,
-          previousAceiteData,
-        ] = await Promise.all([
-          fetchVisitsRange(from, toExclusive),
-          fetchHistoricalVisits(),
-          fetchVisitsRange(prevFrom, prevToExclusive),
-          fetchVisitsRange(prevMonthFrom, prevMonthToExclusive),
-          fetchAceitesRange(from, toExclusive),
-          fetchAceitesRange(prevFrom, prevToExclusive),
+        const { prevFrom, prevTo } = getPreviousRange(from, to);
+        const { prevMonthFrom, prevMonthTo } = getPreviousMonthSameRange(from, to);
+        const [current, previous, previousMonth, aceitesData, previousAceitesData, clients, profiles, history] = await Promise.all([
+          dashboardLoader.visits(scope, from, endExclusive(to)),
+          dashboardLoader.visits(scope, prevFrom, endExclusive(prevTo)),
+          dashboardLoader.visits(scope, prevMonthFrom, endExclusive(prevMonthTo)),
+          dashboardLoader.aceites(scope, from, endExclusive(to)),
+          dashboardLoader.aceites(scope, prevFrom, endExclusive(prevTo)),
+          dashboardLoader.clientes(scope),
+          dashboardLoader.profiles(scope),
+          needsHistory ? dashboardLoader.historicalLives(scope) : Promise.resolve([]),
         ]);
+        if (!active || requestVersion !== version) return;
+        const names = new Map<string, string>();
+        const vendorSupervisors = new Map<string, string>();
+        const supervisorNames = new Map<string, string>();
+        for (const profile of profiles) {
+          if (profile.user_id) names.set(profile.user_id, profile.display_name ?? profile.user_id);
+          if (profile.role === "SUPERVISOR" && profile.id) supervisorNames.set(profile.id, profile.display_name ?? profile.user_id ?? profile.id);
+          if (profile.role === "VENDEDOR" && profile.user_id && profile.supervisor_id) vendorSupervisors.set(profile.user_id, profile.supervisor_id);
+        }
+        setVisits(current);
+        setPreviousVisits(previous);
+        setPreviousMonthVisits(previousMonth);
+        setAceites(aceitesData);
+        setPreviousAceites(previousAceitesData);
+        setHistoricalVisits(history);
+        setAllClientes(clients);
+        setClientesMap(new Map(clients.map((client) => [client.id, client])));
+        setTotalClientes(clients.length);
+        setProfilesMap(names);
+        setVendorSupervisorMap(vendorSupervisors);
+        setSupervisorNameMap(supervisorNames);
+        setHasLoadedOnce(true);
       } catch (loadError) {
-        if (!active) return;
-        setError(loadError instanceof Error ? loadError.message : "Erro ao carregar dados");
-        setLoading(false);
-        return;
-      }
-
-      const clienteIds = Array.from(
-        new Set(
-          [...visitsAccumulator, ...historicalVisitsAccumulator, ...previousVisitsAccumulator, ...previousMonthVisitsAccumulator]
-            .map((v) => v.cliente_id)
-            .filter(Boolean),
-        ),
-      ) as string[];
-      const clientesById = new Map<string, ClienteLite>();
-      for (let i = 0; i < clienteIds.length; i += 500) {
-        const chunk = clienteIds.slice(i, i + 500);
-        const { data: clientesData, error: clientesError } = await supabaseDash
-          .from("v_dash_clientes_active")
-          .select("id, codigo, empresa, cidade, bairro, situacao, vendedor, categoria, grupo")
-          .in("id", chunk);
-        if (clientesError) {
-          if (!active) return;
-          setError(clientesError.message);
-          setLoading(false);
-          return;
-        }
-        (clientesData ?? []).forEach((row) => {
-          const item = row as ClienteLite;
-          clientesById.set(item.id, item);
-        });
-      }
-
-      const clientesUniverse: ClienteLite[] = [];
-      let clientesFrom = 0;
-      while (true) {
-        const { data: pageClientes, error: pageClientesError } = await supabaseDash
-          .from("v_dash_clientes_active")
-          .select("id, codigo, empresa, cidade, bairro, situacao, vendedor, categoria, grupo")
-          .order("empresa", { ascending: true })
-          .range(clientesFrom, clientesFrom + CLIENTES_UNIVERSE_PAGE_SIZE - 1);
-        if (pageClientesError) {
-          // Non-blocking: keep dashboard alive even if full universe fails.
-          break;
-        }
-        const page = (pageClientes ?? []) as ClienteLite[];
-        clientesUniverse.push(...page);
-        if (page.length < CLIENTES_UNIVERSE_PAGE_SIZE) break;
-        clientesFrom += CLIENTES_UNIVERSE_PAGE_SIZE;
-      }
-
-      const [{ data: profilesData, error: profilesError }, { count, error: countError }] =
-        await Promise.all([
-          supabaseDash.from("v_dash_profiles_active").select("id, user_id, display_name, role, supervisor_id").in("role", ["VENDEDOR", "SUPERVISOR"]),
-          supabaseDash.from("v_dash_clientes_active").select("id", { head: true, count: "exact" }),
-        ]);
-
-      if (!active) return;
-      if (profilesError) {
-        setError(profilesError.message);
-        setLoading(false);
-        return;
-      }
-      if (countError) {
-        // Non-blocking: fallback to loaded universe size.
-      }
-
-      const profileMap = new Map<string, string>();
-      const vendorSupervisorByUserId = new Map<string, string>();
-      const supervisorNameById = new Map<string, string>();
-      (profilesData ?? []).forEach((row) => {
-        const profile = row as ProfileLite;
-        if (profile.user_id) profileMap.set(profile.user_id, profile.display_name ?? profile.user_id);
-        if (profile.role === "SUPERVISOR" && profile.id) {
-          supervisorNameById.set(profile.id, profile.display_name ?? profile.user_id ?? profile.id);
-        }
-      });
-      (profilesData ?? []).forEach((row) => {
-        const profile = row as ProfileLite;
-        if (profile.role === "VENDEDOR" && profile.user_id && profile.supervisor_id) {
-          vendorSupervisorByUserId.set(profile.user_id, profile.supervisor_id);
-        }
-      });
-
-      setVisits(visitsAccumulator);
-      setHistoricalVisits(historicalVisitsAccumulator);
-      setPreviousVisits(previousVisitsAccumulator);
-      setPreviousMonthVisits(previousMonthVisitsAccumulator);
-      setAceites(aceiteData);
-      setPreviousAceites(previousAceiteData);
-      setClientesMap(clientesById);
-      setAllClientes(clientesUniverse);
-      setProfilesMap(profileMap);
-      setVendorSupervisorMap(vendorSupervisorByUserId);
-      setSupervisorNameMap(supervisorNameById);
-      setTotalClientes(count ?? clientesUniverse.length);
-      setLoading(false);
-      setHasLoadedOnce(true);
-      if (typeof window !== "undefined") {
-        try {
-          const payload: DashboardEstrategicoDataCache = {
-            visits: visitsAccumulator,
-            historicalVisits: historicalVisitsAccumulator,
-            previousVisits: previousVisitsAccumulator,
-            previousMonthVisits: previousMonthVisitsAccumulator,
-            aceites: aceiteData,
-            previousAceites: previousAceiteData,
-            clientesMapEntries: Array.from(clientesById.entries()),
-            allClientes: clientesUniverse,
-            profilesMapEntries: Array.from(profileMap.entries()),
-            vendorSupervisorEntries: Array.from(vendorSupervisorByUserId.entries()),
-            supervisorNameEntries: Array.from(supervisorNameById.entries()),
-            totalClientes: count ?? clientesUniverse.length,
-            cachedAt: Date.now(),
-          };
-          window.sessionStorage.setItem(dashboardCacheKey, JSON.stringify(payload));
-        } catch {
-          // ignore cache write failures
-        }
+        if (active && requestVersion === version) setError((loadError as { message?: string }).message ?? "Erro ao carregar dados");
+      } finally {
+        if (active && requestVersion === version) setLoading(false);
       }
     };
-
-    void load();
+    const stop = startActivePolling(load, 30_000, () => undefined, false);
+    const onChanged = () => {
+      if (document.visibilityState === "visible" && navigator.onLine) void load();
+    };
+    window.addEventListener(DASHBOARD_DATA_CHANGED, onChanged);
     return () => {
       active = false;
+      stop();
+      window.removeEventListener(DASHBOARD_DATA_CHANGED, onChanged);
     };
-  }, [dashboardCacheKey, from, hasLoadedOnce, isVendor, session?.user.id, to]);
+  }, [from, needsHistory, needsStrategicData, role, session?.user.id, to]);
 
   const supervisors = useMemo(() => {
     return Array.from(supervisorNameMap.entries())
@@ -1560,7 +1332,7 @@ export default function DashboardEstrategico() {
       if (selectedSeller !== "all" && normalizeFilterValue(seller) !== normalizeFilterValue(selectedSeller)) return;
       if (activeSeller && normalizeFilterValue(seller) !== normalizeFilterValue(activeSeller)) return;
       if (activeTeam && supervisorId !== activeTeam) return;
-      const month = getMonthKey(visit.visit_date ?? visit.completed_at);
+      const month = getMonthKey(visit.visit_date);
       const value = Number(visit.completed_vidas ?? 0);
       if (!month || !Number.isFinite(value) || value <= 0) return;
       historicalMonthlyTotals.set(month, (historicalMonthlyTotals.get(month) ?? 0) + value);

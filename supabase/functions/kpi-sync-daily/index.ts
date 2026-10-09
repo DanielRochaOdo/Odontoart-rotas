@@ -435,28 +435,23 @@ const getPreviousByCode = async (periodDays: number, currentSyncRunId: string) =
   return previousByCode;
 };
 
-const updateRunProgressFromItems = async (syncRunId: string) => {
-  const [{ count: completed }, { count: failed }, { count: stopped }, { count: processing }, { count: retrying }, { count: pending }] = await Promise.all([
-    supabase.from("kpi_sync_run_items").select("id", { count: "exact", head: true }).eq("run_id", syncRunId).eq("status", "completed"),
-    supabase.from("kpi_sync_run_items").select("id", { count: "exact", head: true }).eq("run_id", syncRunId).eq("status", "failed"),
-    supabase.from("kpi_sync_run_items").select("id", { count: "exact", head: true }).eq("run_id", syncRunId).eq("status", "stopped"),
-    supabase.from("kpi_sync_run_items").select("id", { count: "exact", head: true }).eq("run_id", syncRunId).eq("status", "processing"),
-    supabase.from("kpi_sync_run_items").select("id", { count: "exact", head: true }).eq("run_id", syncRunId).eq("status", "retrying"),
-    supabase.from("kpi_sync_run_items").select("id", { count: "exact", head: true }).eq("run_id", syncRunId).eq("status", "pending"),
-  ]);
+type RunProgress = {
+  processed: number;
+  remaining: number;
+  failed: number;
+  changed: number;
+  finished: boolean;
+  status: RunStatus;
+};
 
-  const processed = (completed ?? 0) + (failed ?? 0) + (stopped ?? 0);
-  const remaining = (pending ?? 0) + (processing ?? 0) + (retrying ?? 0);
-  const changed = await supabase.from("kpi_sync_run_items").select("id", { count: "exact", head: true }).eq("run_id", syncRunId).eq("changed", true);
-  const { error } = await supabase.from("kpi_sync_runs").update({
-    processed_codes: processed,
-    changed_codes: changed.count ?? 0,
-    failed_codes: failed ?? 0,
-    remaining_codes: remaining,
-    last_progress_at: nowIso(),
-  }).eq("id", syncRunId);
+const updateRunProgressFromItems = async (syncRunId: string, finalize = false): Promise<RunProgress> => {
+  const { data, error } = await supabase.rpc("kpi_refresh_run_progress", {
+    p_run_id: syncRunId,
+    p_finalize: finalize,
+  });
   if (error) throw new Error(error.message);
-  return { processed, remaining, failed: failed ?? 0, changed: changed.count ?? 0 };
+  if (!data) throw new Error("Progresso KPI nao retornado pelo banco.");
+  return data as RunProgress;
 };
 
 const claimNextItems = async (syncRunId: string, workerId: string) => {
@@ -539,13 +534,11 @@ const buildSnapshotRow = (
 };
 
 const upsertClientesForCode = async (code: string, vidasQtde: number, status: KpiStatus) => {
-  const { error } = await supabase
-    .from("clientes")
-    .update({
-      vidas_qtde: vidasQtde,
-      categoria: resolveClienteCategoryFromStatus(status),
-    })
-    .eq("codigo", code);
+  const { error } = await supabase.rpc("kpi_update_cliente_if_changed", {
+    p_codigo: code,
+    p_vidas_qtde: vidasQtde,
+    p_categoria: resolveClienteCategoryFromStatus(status),
+  });
   if (error) throw new Error(error.message);
 };
 
@@ -612,17 +605,11 @@ const processSingleCode = async (params: {
     const previous = previousByCode.get(item.codigo) ?? associadoTitular;
     const changed = previous !== associadoTitular;
     const status = resolveKpiStatus(Math.max(0, associadoTitular - previous), Math.max(0, previous - associadoTitular));
-    if (changed) {
-      await upsertClientesForCode(item.codigo, associadoTitular, status);
-      const snapshotRow = buildSnapshotRow(syncRunId, snapshotAt, snapshotDate, periodDays, source, item.codigo, empresaNome, associadoTitular, previous);
-      const { error } = await supabase.from("kpi_sync_snapshots").upsert(snapshotRow, { onConflict: "sync_run_id,codigo" });
-      if (error) throw new Error(error.message);
-    } else {
-      await upsertClientesForCode(item.codigo, associadoTitular, status);
-      const snapshotRow = buildSnapshotRow(syncRunId, snapshotAt, snapshotDate, periodDays, source, item.codigo, empresaNome, associadoTitular, previous);
-      const { error } = await supabase.from("kpi_sync_snapshots").upsert(snapshotRow, { onConflict: "sync_run_id,codigo" });
-      if (error) throw new Error(error.message);
-    }
+    // Preserve every snapshot, even when no customer values need rewriting.
+    await upsertClientesForCode(item.codigo, associadoTitular, status);
+    const snapshotRow = buildSnapshotRow(syncRunId, snapshotAt, snapshotDate, periodDays, source, item.codigo, empresaNome, associadoTitular, previous);
+    const { error } = await supabase.from("kpi_sync_snapshots").upsert(snapshotRow, { onConflict: "sync_run_id,codigo" });
+    if (error) throw new Error(error.message);
 
     await finalizeItem(item.id, workerId, {
       status: "completed",
@@ -650,52 +637,6 @@ const processSingleCode = async (params: {
       durationMs: Date.now() - startedAt,
     });
   }
-};
-
-const syncRunFinished = async (syncRunId: string) => {
-  const { data, error } = await supabase
-    .from("kpi_sync_run_items")
-    .select("status")
-    .eq("run_id", syncRunId);
-  if (error) throw new Error(error.message);
-  const statuses = (data ?? []).map((row) => String((row as { status: string }).status));
-  const pending = statuses.some((s) => s === "pending" || s === "processing" || s === "retrying");
-  return {
-    finished: !pending,
-    failedCount: statuses.filter((s) => s === "failed").length,
-  };
-};
-
-const finalizeRunIfDone = async (syncRunId: string) => {
-  const [{ count: failed }, { count: completed }, { count: changed }] = await Promise.all([
-    supabase.from("kpi_sync_run_items").select("id", { count: "exact", head: true }).eq("run_id", syncRunId).eq("status", "failed"),
-    supabase.from("kpi_sync_run_items").select("id", { count: "exact", head: true }).eq("run_id", syncRunId).eq("status", "completed"),
-    supabase.from("kpi_sync_run_items").select("id", { count: "exact", head: true }).eq("run_id", syncRunId).eq("changed", true),
-  ]);
-  const { data: remainingRows, error } = await supabase
-    .from("kpi_sync_run_items")
-    .select("id")
-    .eq("run_id", syncRunId)
-    .in("status", ["pending", "processing", "retrying"]);
-  if (error) throw new Error(error.message);
-  const remaining = (remainingRows ?? []).length;
-  if (remaining > 0) return false;
-  const status: RunStatus = failed && failed > 0 ? "success" : "success";
-  const { error: updateError } = await supabase.from("kpi_sync_runs").update({
-    status,
-    finished_at: nowIso(),
-    processed_codes: (completed ?? 0) + (failed ?? 0),
-    changed_codes: changed ?? 0,
-    failed_codes: failed ?? 0,
-    remaining_codes: 0,
-    current_code: null,
-    current_stage: null,
-    current_code_started_at: null,
-    current_attempt: null,
-    last_progress_at: nowIso(),
-  }).eq("id", syncRunId);
-  if (updateError) throw new Error(updateError.message);
-  return true;
 };
 
 const startDailySync = async (req: Request, body: KpiSyncRequestBody) => {
@@ -801,9 +742,8 @@ const continueDailySync = async (req: Request, body: KpiSyncRequestBody) => {
       await sleep(25);
     }
 
-    const finished = await finalizeRunIfDone(syncRunId);
-    if (!finished) {
-      await updateRunProgressFromItems(syncRunId);
+    const progress = await updateRunProgressFromItems(syncRunId, true);
+    if (!progress.finished) {
       await supabase.from("kpi_sync_runs").update({
         current_stage: "queued_next_chunk",
         current_code: null,
@@ -821,9 +761,9 @@ const continueDailySync = async (req: Request, body: KpiSyncRequestBody) => {
     }
 
     await safeReleaseDailyLock();
-    return jsonResponse(200, { sync_run_id: syncRunId, status: "success" });
+    return jsonResponse(200, { sync_run_id: syncRunId, status: progress.status });
   } catch (error) {
-    await supabase.from("kpi_sync_runs").update({
+    await Promise.resolve(supabase.from("kpi_sync_runs").update({
       status: "failed",
       finished_at: nowIso(),
       error_message: error instanceof Error ? error.message : "Falha no worker KPI.",
@@ -831,7 +771,7 @@ const continueDailySync = async (req: Request, body: KpiSyncRequestBody) => {
       current_stage: null,
       current_code_started_at: null,
       current_attempt: null,
-    }).eq("id", syncRunId).catch(() => undefined);
+    }).eq("id", syncRunId)).catch(() => undefined);
     return jsonResponse(400, { error: error instanceof Error ? error.message : "Falha no worker KPI.", sync_run_id: syncRunId });
   } finally {
     await safeReleaseDailyLock();

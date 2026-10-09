@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { dashboardAwareFetch } from "./dashboardCacheEvents";
 
 const dashboardUrl = (import.meta.env.VITE_DASHBOARD_URL as string | undefined)?.trim();
 const dashboardAnonKey = (import.meta.env.VITE_DASHBOARD_ANON_KEY as string | undefined)?.trim();
@@ -15,6 +16,7 @@ if (!resolvedDashboardUrl || !resolvedDashboardAnonKey) {
 }
 
 export const supabaseDash = createClient(resolvedDashboardUrl ?? "", resolvedDashboardAnonKey ?? "", {
+  global: { fetch: dashboardAwareFetch },
   auth: {
     persistSession: false,
     autoRefreshToken: false,
