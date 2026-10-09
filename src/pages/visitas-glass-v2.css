@@ -13,7 +13,6 @@
   --vv-input: rgba(255, 255, 253, .82);
   position: relative;
   min-width: 0;
-  isolation: isolate;
   border-radius: 28px;
   padding: clamp(12px, 2.1vw, 28px);
   border: 1px solid rgba(255, 255, 255, .68);
@@ -257,7 +256,7 @@
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .rotas-visitas-v2 {
+  .rotas-visitas-v2, .dark .rotas-visitas-v2 {
     --vv-glass: rgb(var(--theme-surface-strong) / .96);
     --vv-glass-strong: rgb(var(--theme-surface-strong) / .98);
     --vv-glass-inner: rgb(var(--theme-surface-strong) / .93);
@@ -266,7 +265,7 @@
   }
 }
 @media (prefers-reduced-transparency: reduce) {
-  .rotas-visitas-v2 {
+  .rotas-visitas-v2, .dark .rotas-visitas-v2 {
     --vv-glass: rgb(var(--theme-surface-strong) / .97);
     --vv-glass-strong: rgb(var(--theme-surface-strong) / .99);
     --vv-glass-inner: rgb(var(--theme-surface-strong) / .96);
@@ -276,9 +275,13 @@
   .rotas-visitas-v2 > .rotas-visitas-v2-hero,
   .rotas-visitas-v2 .rotas-visitas-v2-panel,
   .rotas-visitas-v2 .rotas-visitas-v2-seller,
-  .rotas-visitas-v2 .rotas-visitas-v2-modal > div.relative {
+  .rotas-visitas-v2 .rotas-visitas-v2-modal > div.relative,
+  .rotas-visitas-v2 .rotas-visitas-v2-modal > button.absolute {
     -webkit-backdrop-filter: none !important;
     backdrop-filter: none !important;
+  }
+  .rotas-visitas-v2 .rotas-visitas-v2-modal > div.relative {
+    background: rgb(var(--theme-surface-strong) / .98) !important;
   }
 }
 @media (prefers-reduced-motion: reduce) {
