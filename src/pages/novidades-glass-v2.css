@@ -1,0 +1,300 @@
+/* Odontoart Rotas / Novidades — Glass V2
+ * Isolado em Novidades.tsx: publicacao, leitura, filtros e acesso nao mudam.
+ * Vidro forte nos containers; conteudo, textos e campos com bom contraste. */
+.rotas-novidades-v2 {
+  --nv2-pane: rgba(245, 255, 251, .44);
+  --nv2-strong: rgba(252, 255, 253, .66);
+  --nv2-inset: rgba(247, 255, 250, .50);
+  --nv2-card: rgba(250, 255, 253, .68);
+  --nv2-control: rgba(253, 255, 253, .84);
+  --nv2-border: rgba(255, 255, 255, .84);
+  --nv2-glint: rgba(255, 255, 255, .96);
+  --nv2-shadow: rgba(7, 72, 63, .16);
+  --nv2-glow: rgba(25, 218, 153, .19);
+  position: relative;
+  min-width: 0;
+  padding: clamp(12px, 2.2vw, 28px);
+  border: 1px solid rgba(255, 255, 255, .67);
+  border-radius: 28px;
+  background:
+    radial-gradient(ellipse 50% 25% at 1% 1%, rgba(39, 225, 163, .55), transparent 85%),
+    radial-gradient(ellipse 44% 25% at 99% 12%, rgba(69, 171, 230, .43), transparent 84%),
+    radial-gradient(ellipse 60% 34% at 49% 74%, rgba(91, 224, 177, .27), transparent 85%),
+    linear-gradient(140deg, #c5eade, #dcebf1 52%, #d6f2e5);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .83), 0 25px 61px rgba(8, 61, 54, .11);
+}
+.dark .rotas-novidades-v2 {
+  --nv2-pane: rgba(8, 35, 44, .32);
+  --nv2-strong: rgba(10, 39, 49, .47);
+  --nv2-inset: rgba(11, 44, 52, .46);
+  --nv2-card: rgba(12, 37, 46, .78);
+  --nv2-control: rgba(9, 33, 43, .89);
+  --nv2-border: rgba(204, 255, 236, .30);
+  --nv2-glint: rgba(255, 255, 255, .31);
+  --nv2-shadow: rgba(0, 0, 0, .40);
+  --nv2-glow: rgba(26, 225, 162, .18);
+  border-color: rgba(200, 255, 236, .18);
+  background:
+    radial-gradient(ellipse 49% 28% at 0% 0%, rgba(15, 208, 151, .40), transparent 84%),
+    radial-gradient(ellipse 48% 26% at 100% 13%, rgba(24, 139, 201, .38), transparent 85%),
+    radial-gradient(ellipse 62% 34% at 49% 72%, rgba(15, 151, 110, .24), transparent 85%),
+    linear-gradient(136deg, #061721, #122f39 54%, #071b23);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .15), 0 27px 70px rgba(0, 0, 0, .28);
+}
+
+/* Hero e filtros elevados. */
+.rotas-novidades-v2 > .rotas-novidades-v2-hero,
+.rotas-novidades-v2 > .rotas-novidades-v2-filters,
+.rotas-novidades-v2 > .rotas-novidades-v2-pagination {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--nv2-border) !important;
+  background:
+    linear-gradient(132deg, rgba(255, 255, 255, .28), rgba(255, 255, 255, .018) 49%, rgba(255, 255, 255, .11)),
+    var(--nv2-pane) !important;
+  box-shadow: inset 0 1px 0 var(--nv2-glint), inset 0 -1px 0 rgba(255, 255, 255, .09),
+              0 16px 44px var(--nv2-shadow), 0 2px 6px rgba(0, 0, 0, .06);
+  -webkit-backdrop-filter: blur(37px) saturate(187%);
+  backdrop-filter: blur(37px) saturate(187%);
+}
+.rotas-novidades-v2 > .rotas-novidades-v2-hero {
+  padding: clamp(15px, 2vw, 24px);
+  border-radius: 23px;
+  background:
+    radial-gradient(ellipse at 0% -40%, rgba(55, 248, 184, .20), transparent 60%),
+    linear-gradient(130deg, rgba(255, 255, 255, .38), rgba(255, 255, 255, .024) 59%),
+    var(--nv2-strong) !important;
+  box-shadow: inset 0 1px 0 var(--nv2-glint), 0 20px 49px var(--nv2-shadow), 0 0 33px var(--nv2-glow);
+  -webkit-backdrop-filter: blur(43px) saturate(194%);
+  backdrop-filter: blur(43px) saturate(194%);
+}
+.rotas-novidades-v2-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+  padding: 6px 11px;
+  border: 1px solid rgba(36, 204, 145, .38);
+  border-radius: 999px;
+  background: rgba(20, 191, 138, .14);
+  color: #12684f;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .60);
+}
+.rotas-novidades-v2-eyebrow::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: #3be5aa;
+  box-shadow: 0 0 12px rgba(22, 224, 160, .80);
+}
+.dark .rotas-novidades-v2-eyebrow {
+  color: #b7ffe3;
+  border-color: rgba(167, 255, 221, .32);
+  background: rgba(24, 193, 142, .16);
+}
+.rotas-novidades-v2 > .rotas-novidades-v2-filters {
+  padding: clamp(13px, 1.9vw, 21px);
+  border-radius: 21px;
+  background: linear-gradient(130deg, rgba(255, 255, 255, .25), transparent 70%), var(--nv2-strong) !important;
+}
+.rotas-novidades-v2 > .rotas-novidades-v2-pagination {
+  padding: 12px clamp(12px, 1.7vw, 20px);
+  border-radius: 17px;
+}
+.rotas-novidades-v2 > .rotas-novidades-v2-hero button[class~="bg-ink"] {
+  border: 1px solid rgba(255, 255, 255, .32);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 6px 22px rgba(5, 96, 72, .23);
+}
+.rotas-novidades-v2 :is(.rotas-novidades-v2-filters, .rotas-novidades-v2-pagination) :is(input, select, button),
+.rotas-novidades-v2 .rotas-novidades-v2-article button[class~="border"] {
+  background: var(--nv2-control) !important;
+  color: rgb(var(--theme-text)) !important;
+  border-color: var(--nv2-border) !important;
+  box-shadow: inset 0 1px 0 var(--nv2-glint), 0 4px 13px var(--nv2-shadow);
+}
+.rotas-novidades-v2 :is(input, select, textarea, button):focus-visible,
+.rotas-novidades-v2 .rotas-novidades-v2-modal :is(input, select, textarea, button):focus-visible {
+  outline: 2px solid rgb(var(--theme-accent-action));
+  outline-offset: 3px;
+}
+.rotas-novidades-v2 select option {
+  background: rgb(var(--theme-surface-strong));
+  color: rgb(var(--theme-text));
+}
+
+/* Publicações: material cristalino + sinal visual de item não lido. */
+.rotas-novidades-v2 .rotas-novidades-v2-article,
+.rotas-novidades-v2 .rotas-novidades-v2-empty {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--nv2-border) !important;
+  background:
+    linear-gradient(132deg, rgba(255, 255, 255, .27), rgba(255, 255, 255, .018) 52%),
+    var(--nv2-card) !important;
+  box-shadow: inset 0 1px 0 var(--nv2-glint), 0 15px 39px var(--nv2-shadow);
+  -webkit-backdrop-filter: blur(31px) saturate(179%);
+  backdrop-filter: blur(31px) saturate(179%);
+  transition: box-shadow .18s ease, border-color .18s ease;
+}
+.rotas-novidades-v2 .rotas-novidades-v2-article:hover {
+  border-color: rgba(63, 231, 174, .70) !important;
+  box-shadow: inset 0 1px 0 var(--nv2-glint), 0 20px 48px var(--nv2-shadow), 0 0 23px var(--nv2-glow);
+}
+.rotas-novidades-v2 .rotas-novidades-v2-article[data-read="false"] {
+  border-left: 4px solid rgba(29, 213, 153, .88) !important;
+  background:
+    radial-gradient(ellipse at 0% 0%, rgba(66, 236, 176, .19), transparent 57%),
+    linear-gradient(133deg, rgba(255, 255, 255, .25), transparent 67%),
+    var(--nv2-card) !important;
+}
+.rotas-novidades-v2 .rotas-novidades-v2-article[data-active="false"] { opacity: .86; }
+.rotas-novidades-v2 .rotas-novidades-v2-tag {
+  border: 1px solid rgba(45, 210, 152, .26);
+  background: var(--nv2-inset) !important;
+  box-shadow: inset 0 1px 0 var(--nv2-glint);
+}
+.rotas-novidades-v2 .rotas-novidades-v2-article .prose {
+  line-height: 1.67;
+  overflow-wrap: anywhere;
+}
+.rotas-novidades-v2 .rotas-novidades-v2-article .prose :is(a, strong, em, li) {
+  color: inherit;
+}
+.rotas-novidades-v2 .rotas-novidades-v2-article .prose a {
+  color: rgb(var(--theme-accent-action));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.dark .rotas-novidades-v2 .rotas-novidades-v2-article .prose a { color: #92fdd4; }
+/* Badges semânticos mantêm distinção claro e escuro para Lida, Nova e Inativa. */
+.dark .rotas-novidades-v2 .rotas-novidades-v2-article .bg-emerald-100 {
+  background: rgba(25, 129, 90, .31) !important;
+  color: #bbffe4 !important;
+}
+.dark .rotas-novidades-v2 .rotas-novidades-v2-article .bg-amber-100 {
+  background: rgba(153, 98, 20, .37) !important;
+  color: #ffdfa6 !important;
+}
+.dark .rotas-novidades-v2 .rotas-novidades-v2-article .bg-red-100 {
+  background: rgba(157, 49, 53, .36) !important;
+  color: #ffd2d2 !important;
+}
+.rotas-novidades-v2 .rotas-novidades-v2-pagination button:disabled { box-shadow: none; }
+
+/* Os dois modais permanecem diretamente sob a pagina, sem criar stacking
+ * context no wrapper (fundos deslizantes e conteúdo com scroll preservados). */
+.rotas-novidades-v2 .rotas-novidades-v2-modal {
+  background: rgba(5, 27, 34, .45) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(137%);
+  backdrop-filter: blur(12px) saturate(137%);
+}
+.rotas-novidades-v2 .rotas-novidades-v2-modal > .rotas-novidades-v2-dialog {
+  min-width: 0;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  border: 1px solid rgba(219, 255, 239, .78) !important;
+  background:
+    linear-gradient(131deg, rgba(255, 255, 255, .32), rgba(255, 255, 255, .024) 58%),
+    rgba(240, 255, 249, .91) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .96),
+              0 29px 76px rgba(0, 34, 30, .31), 0 0 33px rgba(16, 217, 150, .13);
+  -webkit-backdrop-filter: blur(42px) saturate(188%);
+  backdrop-filter: blur(42px) saturate(188%);
+}
+.dark .rotas-novidades-v2 .rotas-novidades-v2-modal > .rotas-novidades-v2-dialog {
+  border-color: rgba(195, 255, 235, .35) !important;
+  background:
+    linear-gradient(134deg, rgba(255, 255, 255, .15), rgba(255, 255, 255, .015) 61%),
+    rgba(7, 31, 40, .96) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .27),
+              0 30px 80px rgba(0, 0, 0, .52), 0 0 35px rgba(18, 214, 148, .13);
+}
+.rotas-novidades-v2 .rotas-novidades-v2-dialog :is(input:not([type="checkbox"]), select, textarea),
+.rotas-novidades-v2 .rotas-novidades-v2-dialog button[class~="bg-white"],
+.rotas-novidades-v2 .rotas-novidades-v2-dialog label[class~="bg-white"] {
+  background: var(--nv2-control) !important;
+  color: rgb(var(--theme-text)) !important;
+  border-color: var(--nv2-border) !important;
+  box-shadow: inset 0 1px 0 var(--nv2-glint), 0 3px 12px var(--nv2-shadow);
+}
+.rotas-novidades-v2 .rotas-novidades-v2-dialog select option {
+  color: rgb(var(--theme-text));
+  background: rgb(var(--theme-surface-strong));
+}
+/* Campo de senha: input transparente dentro de um unico controle. */
+.rotas-novidades-v2 .rotas-novidades-v2-password {
+  border-color: var(--nv2-border) !important;
+  background: var(--nv2-control) !important;
+  box-shadow: inset 0 1px 0 var(--nv2-glint), 0 4px 15px var(--nv2-shadow);
+}
+.rotas-novidades-v2 .rotas-novidades-v2-password input {
+  background: transparent !important;
+  box-shadow: none !important;
+  color: rgb(var(--theme-text)) !important;
+}
+.rotas-novidades-v2 .rotas-novidades-v2-password button {
+  background: transparent !important;
+  box-shadow: none !important;
+  color: rgb(var(--theme-text-secondary)) !important;
+}
+.rotas-novidades-v2 .rotas-novidades-v2-dialog > h3 { color: rgb(var(--theme-text)); }
+
+/* Avisos de erro e estado não recebem fundo genérico de vidro. */
+.rotas-novidades-v2 > div[class~="bg-red-50"] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .rotas-novidades-v2, .dark .rotas-novidades-v2 {
+    --nv2-pane: rgb(var(--theme-surface-strong) / .96);
+    --nv2-strong: rgb(var(--theme-surface-strong) / .99);
+    --nv2-inset: rgb(var(--theme-surface-strong) / .96);
+    --nv2-card: rgb(var(--theme-surface-strong) / .96);
+    --nv2-control: rgb(var(--theme-surface-strong) / .99);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .rotas-novidades-v2, .dark .rotas-novidades-v2 {
+    --nv2-pane: rgb(var(--theme-surface-strong) / .97);
+    --nv2-strong: rgb(var(--theme-surface-strong) / .99);
+    --nv2-inset: rgb(var(--theme-surface-strong) / .97);
+    --nv2-card: rgb(var(--theme-surface-strong) / .99);
+    --nv2-control: rgb(var(--theme-surface-strong) / .99);
+  }
+  .rotas-novidades-v2 :is(.rotas-novidades-v2-hero, .rotas-novidades-v2-filters, .rotas-novidades-v2-pagination,
+                          .rotas-novidades-v2-article, .rotas-novidades-v2-dialog) {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rotas-novidades-v2 .rotas-novidades-v2-article { transition: none; }
+}
+@media (max-width: 640px) {
+  .rotas-novidades-v2 { padding: 11px; border-radius: 18px; }
+  .rotas-novidades-v2 > .rotas-novidades-v2-hero { padding: 14px; border-radius: 18px; }
+  .rotas-novidades-v2 > .rotas-novidades-v2-filters { padding: 12px; border-radius: 18px; }
+  .rotas-novidades-v2 > .rotas-novidades-v2-hero > div { flex-basis: 100%; }
+  .rotas-novidades-v2 .rotas-novidades-v2-filters > div:last-child { flex-wrap: wrap; }
+  .rotas-novidades-v2 .rotas-novidades-v2-filters > div:last-child input { flex: 1 1 180px; min-width: 0; }
+  .rotas-novidades-v2 .rotas-novidades-v2-modal { padding: 10px; }
+  .rotas-novidades-v2 .rotas-novidades-v2-modal > .rotas-novidades-v2-dialog { padding: 14px; max-height: calc(100dvh - 20px); }
+}
+@media print {
+  .rotas-novidades-v2, .dark .rotas-novidades-v2 {
+    background: #fff !important; border: 0 !important; box-shadow: none !important;
+  }
+  .rotas-novidades-v2 :is(.rotas-novidades-v2-hero, .rotas-novidades-v2-filters, .rotas-novidades-v2-pagination,
+                          .rotas-novidades-v2-article, .rotas-novidades-v2-empty) {
+    background: #fff !important; box-shadow: none !important;
+    -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+  }
+  .rotas-novidades-v2 .rotas-novidades-v2-modal { display: none !important; }
+}
