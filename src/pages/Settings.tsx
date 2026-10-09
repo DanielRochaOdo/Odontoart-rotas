@@ -1,5 +1,6 @@
 
 import { useEffect, useMemo, useState } from "react";
+import "./settings-glass-v2.css";
 import * as XLSX from "xlsx";
 import { LoaderCircle, LogOut, Moon, Pencil, Plus, Power, RotateCcw, Sun, UploadCloud } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
@@ -1473,9 +1474,10 @@ export default function Settings() {
   }
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
+    <div className="rotas-settings-v2 space-y-4 md:space-y-6">
+      <header className="rotas-settings-v2-hero flex flex-wrap items-start justify-between gap-3">
         <div>
+          <span className="rotas-settings-v2-eyebrow">ODONTOART · GESTÃO E PARAMETRIZAÇÃO</span>
           <h2 className="font-display text-2xl text-ink">Configuracoes</h2>
           <p className="mt-2 text-sm text-ink/60">
             Cadastre supervisores, vendedores e assistentes.
@@ -1501,7 +1503,7 @@ export default function Settings() {
         </div>
       </header>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="rotas-settings-v2-navigation flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
         {(canManageUsers
           ? [
@@ -1515,12 +1517,14 @@ export default function Settings() {
           <button
             key={tab.key}
             type="button"
+            aria-pressed={activeTab === tab.key}
+            data-tab-selected={activeTab === tab.key}
             onClick={() => {
               setActiveTab(tab.key);
               setError(null);
             }}
             className={[
-              "rounded-full px-4 py-2 text-xs font-semibold",
+              "rotas-settings-v2-tab rounded-full px-4 py-2 text-xs font-semibold",
               activeTab === tab.key
                 ? "bg-sea text-white"
                 : "border border-sea/30 bg-white text-ink/70 hover:border-sea",
@@ -1620,7 +1624,7 @@ export default function Settings() {
       ) : (
         <div className="space-y-4 md:space-y-6">
           {canManageUsers && activeTab === "SUPERVISORES" && (
-            <section className="rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
+            <section className="rotas-settings-v2-section rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
               <h3 className="font-display text-lg text-ink">Supervisores</h3>
               <form onSubmit={handleCreateSupervisor} className="mt-4 grid gap-3 md:grid-cols-4">
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
@@ -1676,7 +1680,7 @@ export default function Settings() {
                   filteredSupervisors.map((supervisor) => (
                     <div
                       key={supervisor.id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2"
+                      className="rotas-settings-v2-person flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2"
                     >
                       {editingSupervisorId === supervisor.id ? (
                         <form
@@ -1789,7 +1793,7 @@ export default function Settings() {
             </section>
           )}
           {canManageUsers && activeTab === "VENDEDORES" && (
-            <section className="rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
+            <section className="rotas-settings-v2-section rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
               <h3 className="font-display text-lg text-ink">Vendedores</h3>
               <form onSubmit={handleCreateVendor} className="mt-4 grid gap-3 md:grid-cols-5">
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
@@ -1856,7 +1860,7 @@ export default function Settings() {
                   filteredVendors.map((vendor) => (
                     <div
                       key={vendor.id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2"
+                      className="rotas-settings-v2-person flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2"
                     >
                       {editingVendorId === vendor.id ? (
                         <form
@@ -1976,7 +1980,7 @@ export default function Settings() {
           )}
 
           {canManageUsers && activeTab === "ASSISTENTES" && (
-            <section className="rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
+            <section className="rotas-settings-v2-section rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
               <h3 className="font-display text-lg text-ink">Assistentes</h3>
               <form onSubmit={handleCreateAssistant} className="mt-4 grid gap-3 md:grid-cols-4">
                 <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
@@ -2028,7 +2032,7 @@ export default function Settings() {
                   filteredAssistants.map((assistant) => (
                     <div
                       key={assistant.id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2"
+                      className="rotas-settings-v2-person flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2"
                     >
                       {editingAssistantId === assistant.id ? (
                         <form
@@ -2136,7 +2140,7 @@ export default function Settings() {
           )}
 
           {canManageUsers && activeTab === "SINCRONIZACAO_ERP" && (
-            <section className="space-y-4 rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
+            <section className="rotas-settings-v2-section space-y-4 rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
               <header>
                 <h3 className="font-display text-lg text-ink">Sincronizacao ERP</h3>
                 <p className="mt-1 text-xs text-ink/60">
@@ -2184,7 +2188,7 @@ export default function Settings() {
                   </div>
 
                   <div className="grid gap-4 lg:grid-cols-2">
-                    <div className="space-y-2 rounded-xl border border-sea/15 bg-white/90 p-3">
+                    <div className="rotas-settings-v2-erp-pane space-y-2 rounded-xl border border-sea/15 bg-white/90 p-3">
                       <p className="text-xs font-semibold text-ink/70">Lista de codigos</p>
                       <textarea
                         value={erpCodesInput}
@@ -2205,7 +2209,7 @@ export default function Settings() {
                       </p>
                     </div>
 
-                    <div className="space-y-4 rounded-xl border border-sea/15 bg-white/90 p-3">
+                    <div className="rotas-settings-v2-erp-pane space-y-4 rounded-xl border border-sea/15 bg-white/90 p-3">
                       <div className="space-y-2">
                         <p className="text-xs font-semibold text-ink/70">Arquivo de códigos</p>
                         <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-sea/25 bg-white px-3 py-2 text-xs font-semibold text-ink/80 hover:border-sea">
@@ -2223,7 +2227,7 @@ export default function Settings() {
                       </p>
                     </div>
 
-                      <div className="space-y-2 rounded-lg border border-sea/10 bg-sand/10 p-3">
+                      <div className="rotas-settings-v2-erp-progress space-y-2 rounded-lg border border-sea/10 bg-sand/10 p-3">
                         <div>
                           <div className="mb-1 flex items-center justify-between text-[11px] text-ink/60">
                             <span>Execucao total</span>
@@ -2307,7 +2311,7 @@ export default function Settings() {
                   )}
 
                   {erpPreview && (
-                    <div className="rounded-xl border border-sea/15 bg-white/90 p-3 text-xs text-ink/80">
+                    <div className="rotas-settings-v2-erp-pane rounded-xl border border-sea/15 bg-white/90 p-3 text-xs text-ink/80">
                       <p className="font-semibold text-ink">Preview</p>
                       <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                         <p>Total codigos: {erpPreview.total_codes}</p>
@@ -2365,7 +2369,7 @@ export default function Settings() {
                   )}
 
                   {erpExecutionSummary && (
-                    <div className="rounded-xl border border-sea/15 bg-white/90 p-3 text-xs text-ink/80">
+                    <div className="rotas-settings-v2-erp-pane rounded-xl border border-sea/15 bg-white/90 p-3 text-xs text-ink/80">
                       <p className="font-semibold text-ink">Resumo da ultima onda</p>
                       <p className="mt-1 text-[11px] text-ink/60">
                         Campo filtrado: {formatErpSyncFieldLabel(erpSelectedField)}
@@ -2382,11 +2386,11 @@ export default function Settings() {
                   )}
 
                   {erpLastWaveResults.length > 0 && (
-                    <div className="space-y-3 rounded-xl border border-sea/15 bg-white/95 p-3 dark:border-sea/30 dark:bg-slate-950/70">
+                    <div className="rotas-settings-v2-erp-pane space-y-3 rounded-xl border border-sea/15 bg-white/95 p-3 dark:border-sea/30 dark:bg-slate-950/70">
                       {erpLastWaveResults.map((result) => (
                         <div
                           key={`${result.code}-${result.status}-${result.updated_rows}`}
-                          className="rounded-xl border border-sea/15 bg-white p-3 dark:border-sea/30 dark:bg-slate-950/80"
+                          className="rotas-settings-v2-erp-result rounded-xl border border-sea/15 bg-white p-3 dark:border-sea/30 dark:bg-slate-950/80"
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div>
@@ -2440,14 +2444,14 @@ export default function Settings() {
           )}
 
           {canManageEvents && activeTab === "EVENTOS" && (
-            <section className="rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
+            <section className="rotas-settings-v2-section rounded-2xl border border-sea/20 bg-sand/20 p-3 md:p-4">
               <h3 className="font-display text-lg text-ink">Eventos</h3>
               <p className="mt-1 text-xs text-ink/60">
                 Cadastre eventos que devem gerar aviso ao criar rota na mesma data.
               </p>
 
               <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_1fr]">
-                <div className="rounded-2xl border border-sea/20 bg-white/90 p-3">
+                <div className="rotas-settings-v2-event-pane rounded-2xl border border-sea/20 bg-white/90 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <select
@@ -2500,8 +2504,11 @@ export default function Settings() {
                           key={dateKey}
                           type="button"
                           onClick={() => setSelectedEventDate(dateKey)}
+                          aria-pressed={isSelected}
+                          data-calendar-selected={isSelected}
+                          data-has-events={hasEvents}
                           className={[
-                            "h-14 rounded-xl border px-1 text-xs transition",
+                            "rotas-settings-v2-calendar-day h-14 rounded-xl border px-1 text-xs transition",
                             isSelected
                               ? "border-sea bg-sea/10 text-sea"
                               : hasEvents
@@ -2517,7 +2524,7 @@ export default function Settings() {
                   </div>
                 </div>
 
-                <div key={eventFormResetKey} className="rounded-2xl border border-sea/20 bg-white/90 p-3">
+                <div key={eventFormResetKey} className="rotas-settings-v2-event-pane rounded-2xl border border-sea/20 bg-white/90 p-3">
                   <h4 className="text-sm font-semibold text-ink">Novo evento</h4>
                   <p className="mt-1 text-xs text-ink/60">Data selecionada: {formatEventDate(selectedEventDate)}</p>
 
@@ -2577,7 +2584,7 @@ export default function Settings() {
                 </div>
               </div>
 
-              <div className="mt-4 rounded-2xl border border-sea/20 bg-white/90 p-3">
+              <div className="rotas-settings-v2-event-pane mt-4 rounded-2xl border border-sea/20 bg-white/90 p-3">
                 <h4 className="text-sm font-semibold text-ink">
                   Eventos de {formatEventDate(selectedEventDate)}
                 </h4>
@@ -2590,7 +2597,7 @@ export default function Settings() {
                     {selectedDateEvents.map((row) => (
                       <div
                         key={row.id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-sand/30 px-3 py-2"
+                        className="rotas-settings-v2-event-item flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-sand/30 px-3 py-2"
                       >
                         <div>
                           <p className="text-xs font-semibold text-ink">
@@ -2614,11 +2621,11 @@ export default function Settings() {
               </div>
 
               {selectedDateActions.length > 0 && (
-                <div className="mt-4 rounded-2xl border border-sea/20 bg-sand/20 p-3">
+                <div className="rotas-settings-v2-event-pane mt-4 rounded-2xl border border-sea/20 bg-sand/20 p-3">
                   <h4 className="text-sm font-semibold text-ink">Ações de {formatEventDate(selectedEventDate)}</h4>
                   <div className="mt-3 space-y-2">
                     {selectedDateActions.map((action) => (
-                      <div key={action.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2">
+                      <div key={action.id} className="rotas-settings-v2-event-item flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2">
                         <div>
                           <p className="text-xs font-semibold text-ink">AÇÃO · {formatEventDate(action.startDate)} a {formatEventDate(action.endDate)}</p>
                           <p className="text-xs text-ink/60">{action.notes}</p>
@@ -2654,7 +2661,7 @@ export default function Settings() {
                 </button>
                 <div className="mt-3 space-y-2">
                   {localActions.length === 0 ? <p className="text-xs text-ink/60">Nenhuma ação local cadastrada.</p> : localActions.map((action) => (
-                    <div key={action.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2">
+                    <div key={action.id} className="rotas-settings-v2-event-item flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-white/90 px-3 py-2">
                       <div className="text-xs text-ink">
                         <p className="font-semibold">{formatEventDate(action.startDate)} a {formatEventDate(action.endDate)}</p>
                         <p className="text-ink/60">{action.notes}</p>
@@ -2671,16 +2678,19 @@ export default function Settings() {
 
       {isResetModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 pt-6"
+          className="rotas-settings-v2-modal fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 pt-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settings-reset-dialog-title"
           onClick={() => setIsResetModalOpen(false)}
         >
           <div
-            className="w-full max-w-3xl rounded-2xl border border-sea/20 bg-white p-4 shadow-xl"
+            className="rotas-settings-v2-dialog w-full max-w-3xl rounded-2xl border border-sea/20 bg-white p-4 shadow-xl"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="font-display text-lg text-ink">Resetar sessao de usuario</h3>
+                <h3 id="settings-reset-dialog-title" className="font-display text-lg text-ink">Resetar sessao de usuario</h3>
                 <p className="mt-1 text-xs text-ink/60">
                   Selecione o usuario correto por perfil e limpe apenas a sessao dele.
                 </p>
@@ -2723,7 +2733,7 @@ export default function Settings() {
                 resetModalProfiles.map((profileItem) => (
                   <div
                     key={profileItem.id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-sand/20 px-3 py-2"
+                    className="rotas-settings-v2-person flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sea/15 bg-sand/20 px-3 py-2"
                   >
                     <div>
                       <p className="text-sm font-semibold text-ink">
