@@ -173,17 +173,17 @@
   border-color: rgba(70, 222, 168, .60) !important;
   box-shadow: inset 0 1px 0 var(--sv2-glint), 0 10px 24px var(--sv2-shadow);
 }
-.dark .rotas-settings-v2 .rotas-settings-v2-section .bg-emerald-50 {
+.dark .rotas-settings-v2 .rotas-settings-v2-section :is(button, span).bg-emerald-50 {
   background: rgba(18, 119, 82, .28) !important;
   color: #b9ffe1 !important;
   border-color: rgba(95, 231, 167, .33) !important;
 }
-.dark .rotas-settings-v2 .rotas-settings-v2-section .bg-amber-50 {
+.dark .rotas-settings-v2 .rotas-settings-v2-section :is(button, span).bg-amber-50 {
   background: rgba(151, 93, 21, .32) !important;
   color: #ffe2aa !important;
   border-color: rgba(244, 187, 106, .38) !important;
 }
-.dark .rotas-settings-v2 .rotas-settings-v2-section .bg-red-50 {
+.dark .rotas-settings-v2 .rotas-settings-v2-section :is(button, span).bg-red-50 {
   background: rgba(138, 40, 46, .35) !important;
   color: #ffd0d0 !important;
   border-color: rgba(238, 119, 119, .36) !important;
