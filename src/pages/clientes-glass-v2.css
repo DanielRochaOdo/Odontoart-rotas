@@ -1,0 +1,278 @@
+/* Rotas / Agenda+ — Empresas Glass V2
+ * CSS exclusivo do modulo Clientes.tsx. Sem modificar outros modulos,
+ * RLS, criacao/edicao, CNPJ, CEP, importacao XLSX ou fluxo de filiais. */
+.rotas-empresas-v2,
+.rotas-empresas-v2-portal {
+  --ev2-pane: rgba(242, 255, 250, .43);
+  --ev2-pane-strong: rgba(250, 255, 253, .65);
+  --ev2-pane-soft: rgba(248, 255, 252, .55);
+  --ev2-field: rgba(255, 255, 254, .83);
+  --ev2-row: rgba(251, 255, 253, .76);
+  --ev2-border: rgba(255, 255, 255, .84);
+  --ev2-glint: rgba(255, 255, 255, .97);
+  --ev2-shadow: rgba(6, 69, 63, .17);
+  --ev2-glow: rgba(18, 221, 155, .19);
+}
+.dark .rotas-empresas-v2,
+.dark .rotas-empresas-v2-portal {
+  --ev2-pane: rgba(7, 34, 42, .31);
+  --ev2-pane-strong: rgba(10, 39, 47, .44);
+  --ev2-pane-soft: rgba(12, 43, 50, .44);
+  --ev2-field: rgba(10, 34, 42, .89);
+  --ev2-row: rgba(12, 37, 44, .86);
+  --ev2-border: rgba(207, 255, 240, .31);
+  --ev2-glint: rgba(255, 255, 255, .30);
+  --ev2-shadow: rgba(0, 0, 0, .38);
+  --ev2-glow: rgba(22, 229, 165, .18);
+}
+
+/* Fundo esmeralda/ciano luminoso, visivel atraves dos paineis. */
+.rotas-empresas-v2 {
+  position: relative;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, .67);
+  border-radius: 28px;
+  padding: clamp(12px, 2.2vw, 28px);
+  background:
+    radial-gradient(ellipse 49% 24% at 1% 2%, rgba(42, 224, 166, .54), transparent 83%),
+    radial-gradient(ellipse 45% 29% at 97% 12%, rgba(58, 174, 232, .42), transparent 84%),
+    radial-gradient(ellipse 56% 30% at 44% 73%, rgba(62, 218, 170, .29), transparent 84%),
+    linear-gradient(140deg, #c6e9dd 0%, #d7eaf0 51%, #d8f3e5);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .82), 0 24px 62px rgba(8, 61, 55, .10);
+}
+.dark .rotas-empresas-v2 {
+  border-color: rgba(197, 255, 231, .18);
+  background:
+    radial-gradient(ellipse 49% 25% at 0% 0%, rgba(17, 206, 151, .40), transparent 83%),
+    radial-gradient(ellipse 47% 25% at 100% 14%, rgba(30, 140, 197, .38), transparent 85%),
+    radial-gradient(ellipse 60% 34% at 50% 76%, rgba(16, 148, 113, .23), transparent 86%),
+    linear-gradient(135deg, #061721, #122f39 54%, #071b23);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 26px 70px rgba(0, 0, 0, .27);
+}
+
+/* Header, formulario de cadastro, faixa de consulta e listagem. */
+.rotas-empresas-v2 > .rotas-empresas-v2-hero,
+.rotas-empresas-v2 .rotas-empresas-v2-form,
+.rotas-empresas-v2 .rotas-empresas-v2-toolbar,
+.rotas-empresas-v2 .rotas-empresas-v2-list {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--ev2-border) !important;
+  background:
+    linear-gradient(133deg, rgba(255, 255, 255, .27), rgba(255, 255, 255, .025) 46%, rgba(255, 255, 255, .11)),
+    var(--ev2-pane) !important;
+  box-shadow: inset 0 1px 0 var(--ev2-glint), inset 0 -1px 0 rgba(255, 255, 255, .08),
+              0 16px 44px var(--ev2-shadow), 0 2px 7px rgba(0, 0, 0, .06);
+  -webkit-backdrop-filter: blur(37px) saturate(185%);
+  backdrop-filter: blur(37px) saturate(185%);
+}
+.rotas-empresas-v2 > .rotas-empresas-v2-hero {
+  border-radius: 24px;
+  padding: clamp(14px, 2vw, 24px);
+  background:
+    radial-gradient(ellipse at 0% -40%, rgba(59, 242, 184, .21), transparent 56%),
+    linear-gradient(133deg, rgba(255, 255, 255, .35), rgba(255, 255, 255, .025) 64%),
+    var(--ev2-pane-strong) !important;
+  box-shadow: inset 0 1px 0 var(--ev2-glint), 0 19px 49px var(--ev2-shadow), 0 0 33px var(--ev2-glow);
+  -webkit-backdrop-filter: blur(43px) saturate(194%);
+  backdrop-filter: blur(43px) saturate(194%);
+}
+.rotas-empresas-v2-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+  padding: 6px 11px;
+  border: 1px solid rgba(49, 205, 147, .38);
+  border-radius: 999px;
+  background: rgba(24, 189, 139, .13);
+  color: #136950;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .13em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55);
+}
+.rotas-empresas-v2-eyebrow::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: #35e3a8;
+  box-shadow: 0 0 12px rgba(20, 222, 155, .79);
+}
+.dark .rotas-empresas-v2-eyebrow {
+  border-color: rgba(172, 255, 228, .29);
+  background: rgba(28, 188, 141, .15);
+  color: #acffdf;
+}
+.rotas-empresas-v2 .rotas-empresas-v2-form,
+.rotas-empresas-v2 .rotas-empresas-v2-list {
+  border-radius: 23px;
+}
+.rotas-empresas-v2 .rotas-empresas-v2-toolbar {
+  border-radius: 20px;
+  padding: clamp(12px, 1.7vw, 19px);
+  background:
+    linear-gradient(129deg, rgba(255, 255, 255, .23), transparent 68%),
+    var(--ev2-pane-strong) !important;
+}
+
+/* Campos de negocio: fundo claro/escuro estavel, sem blur em cada input. */
+.rotas-empresas-v2 :is(.rotas-empresas-v2-form, .rotas-empresas-v2-toolbar) :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea),
+.rotas-empresas-v2-drawer [data-empresas-drawer-content="true"] :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea),
+.rotas-empresas-v2-portal > div.relative :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea),
+.rotas-empresas-v2-modal > div.relative :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  background: var(--ev2-field) !important;
+  color: rgb(var(--theme-text)) !important;
+  border-color: var(--ev2-border) !important;
+  box-shadow: inset 0 1px 0 var(--ev2-glint), 0 3px 10px rgba(8, 47, 42, .08);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+.rotas-empresas-v2 :is(select option),
+.rotas-empresas-v2-drawer select option,
+.rotas-empresas-v2-modal select option,
+.rotas-empresas-v2-portal select option {
+  background: rgb(var(--theme-surface-strong));
+  color: rgb(var(--theme-text));
+}
+.rotas-empresas-v2 :is(button, input, select, textarea, [role="button"]):focus-visible,
+.rotas-empresas-v2-drawer :is(button, input, select, textarea):focus-visible,
+.rotas-empresas-v2-modal :is(button, input, select, textarea):focus-visible,
+.rotas-empresas-v2-portal :is(button, input, select, textarea):focus-visible {
+  outline: 2px solid rgb(var(--theme-accent-action));
+  outline-offset: 3px;
+}
+.rotas-empresas-v2 :is(.rotas-empresas-v2-form, .rotas-empresas-v2-toolbar) button[class*="bg-white"],
+.rotas-empresas-v2 .rotas-empresas-v2-list button[class*="bg-white"] {
+  background: var(--ev2-field) !important;
+  border-color: var(--ev2-border) !important;
+  box-shadow: inset 0 1px 0 var(--ev2-glint), 0 4px 14px var(--ev2-shadow);
+}
+
+/* Listagem sem blur por linha para manter scroll e paginacao eficientes. */
+.rotas-empresas-v2 .rotas-empresas-v2-list {
+  overflow: hidden;
+}
+.rotas-empresas-v2 .rotas-empresas-v2-list-row {
+  background: var(--ev2-row) !important;
+  border-color: rgba(57, 169, 130, .14);
+  transition: background-color .16s ease, box-shadow .16s ease;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+.rotas-empresas-v2 .rotas-empresas-v2-list-row:hover {
+  background: linear-gradient(130deg, rgba(31, 213, 153, .15), transparent 60%), var(--ev2-row) !important;
+  box-shadow: inset 3px 0 0 rgba(26, 202, 139, .75);
+}
+.rotas-empresas-v2 .rotas-empresas-v2-list-row + .rotas-empresas-v2-list-row {
+  border-top: 1px solid rgba(123, 194, 164, .20);
+}
+.rotas-empresas-v2 .rotas-empresas-v2-list > div > div {
+  border-color: rgba(104, 183, 147, .18);
+}
+
+/* Drawer e dialogs locais / portais React com superficie de vidro consistente. */
+.rotas-empresas-v2-drawer,
+.rotas-empresas-v2-modal,
+.rotas-empresas-v2-portal {
+  --ev2-border: var(--ev2-border, rgba(221, 255, 240, .35));
+}
+.rotas-empresas-v2-drawer > button.absolute,
+.rotas-empresas-v2-modal > button.absolute,
+.rotas-empresas-v2-modal > div.absolute,
+.rotas-empresas-v2-portal > button.absolute,
+.rotas-empresas-v2-portal > div.absolute {
+  background: rgba(4, 27, 33, .42) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(137%);
+  backdrop-filter: blur(12px) saturate(137%);
+}
+.rotas-empresas-v2-drawer [data-empresas-drawer-content="true"],
+.rotas-empresas-v2-modal > div.relative,
+.rotas-empresas-v2-portal > div.relative {
+  border: 1px solid var(--ev2-border) !important;
+  background:
+    linear-gradient(131deg, rgba(255, 255, 255, .34), rgba(255, 255, 255, .028) 57%),
+    rgba(238, 255, 249, .87) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95),
+              0 29px 76px rgba(0, 35, 29, .27), 0 0 31px rgba(24, 218, 154, .13);
+  -webkit-backdrop-filter: blur(42px) saturate(189%);
+  backdrop-filter: blur(42px) saturate(189%);
+}
+.dark .rotas-empresas-v2-drawer [data-empresas-drawer-content="true"],
+.dark .rotas-empresas-v2-modal > div.relative,
+.dark .rotas-empresas-v2-portal > div.relative {
+  background:
+    linear-gradient(130deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, .018) 57%),
+    rgba(7, 30, 39, .93) !important;
+  border-color: rgba(199, 255, 234, .33) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .27),
+              0 30px 79px rgba(0, 0, 0, .51), 0 0 35px rgba(14, 216, 147, .13);
+}
+.rotas-empresas-v2-drawer [data-empresas-drawer-content="true"] {
+  border-radius: 23px 0 0 23px;
+}
+.rotas-empresas-v2-drawer [data-empresas-drawer-content="true"].rounded-2xl {
+  border-radius: 23px;
+}
+.rotas-empresas-v2-drawer :is(.bg-sand\/30, .bg-sand\/20),
+.rotas-empresas-v2-modal :is(.bg-sand\/30, .bg-sand\/20),
+.rotas-empresas-v2-portal :is(.bg-sand\/30, .bg-sand\/20) {
+  background: var(--ev2-pane-soft) !important;
+  border-color: var(--ev2-border) !important;
+}
+/* Nao pintar avisos de erro, exclusao e duplicidades com tokens neutros. */
+.rotas-empresas-v2 :is(.bg-red-50, .bg-yellow-100),
+.rotas-empresas-v2-drawer .bg-red-50,
+.rotas-empresas-v2-portal :is(.bg-red-50, .bg-amber-50) {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .rotas-empresas-v2,
+  .rotas-empresas-v2-portal {
+    --ev2-pane: rgb(var(--theme-surface-strong) / .96);
+    --ev2-pane-strong: rgb(var(--theme-surface-strong) / .99);
+    --ev2-field: rgb(var(--theme-surface-strong) / .99);
+    --ev2-row: rgb(var(--theme-surface-strong) / .99);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .rotas-empresas-v2, .dark .rotas-empresas-v2,
+  .rotas-empresas-v2-portal, .dark .rotas-empresas-v2-portal {
+    --ev2-pane: rgb(var(--theme-surface-strong) / .97);
+    --ev2-pane-strong: rgb(var(--theme-surface-strong) / .99);
+    --ev2-pane-soft: rgb(var(--theme-surface-strong) / .96);
+    --ev2-field: rgb(var(--theme-surface-strong) / .99);
+    --ev2-row: rgb(var(--theme-surface-strong) / .99);
+  }
+  .rotas-empresas-v2 :is(.rotas-empresas-v2-hero, .rotas-empresas-v2-form, .rotas-empresas-v2-toolbar, .rotas-empresas-v2-list),
+  .rotas-empresas-v2-drawer [data-empresas-drawer-content="true"],
+  .rotas-empresas-v2-modal > div.relative,
+  .rotas-empresas-v2-portal > div.relative {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rotas-empresas-v2 .rotas-empresas-v2-list-row { transition: none; }
+}
+@media (max-width: 640px) {
+  .rotas-empresas-v2 { border-radius: 18px; padding: 11px; }
+  .rotas-empresas-v2 > .rotas-empresas-v2-hero { border-radius: 18px; padding: 13px; }
+  .rotas-empresas-v2 .rotas-empresas-v2-form,
+  .rotas-empresas-v2 .rotas-empresas-v2-list { border-radius: 18px; }
+  .rotas-empresas-v2 .rotas-empresas-v2-toolbar > div:last-child { width: 100%; }
+  .rotas-empresas-v2 .rotas-empresas-v2-toolbar input { width: 100%; min-width: 0; }
+}
+@media print {
+  .rotas-empresas-v2, .dark .rotas-empresas-v2 {
+    background: #fff !important; box-shadow: none !important; border: 0 !important;
+  }
+  .rotas-empresas-v2 :is(.rotas-empresas-v2-hero, .rotas-empresas-v2-form, .rotas-empresas-v2-toolbar, .rotas-empresas-v2-list, .rotas-empresas-v2-list-row) {
+    background: #fff !important; box-shadow: none !important;
+    -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+  }
+}
