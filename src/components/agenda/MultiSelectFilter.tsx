@@ -156,7 +156,7 @@ export default function MultiSelectFilter({
         ? createPortal(
             <div
               ref={popoverRef}
-              className="fixed z-[9999] w-64 rounded-2xl border border-sea/20 bg-white p-3 shadow-xl dark:border-sea/20 dark:bg-slate-950 dark:text-slate-100"
+              className="rotas-agenda-v2-popover fixed z-[9999] w-64 rounded-2xl border border-sea/20 bg-white p-3 shadow-xl dark:border-sea/20 dark:bg-slate-950 dark:text-slate-100"
               style={{ top: position.top, left: position.left }}
               onClick={(event) => event.stopPropagation()}
               onMouseDown={(event) => event.stopPropagation()}
