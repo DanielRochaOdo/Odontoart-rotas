@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import "./novidades-glass-v2.css";
 import { Eye, EyeOff, Plus, Trash2, PencilLine } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -218,9 +219,10 @@ export default function Novidades() {
   };
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
+    <div className="rotas-novidades-v2 space-y-4 md:space-y-6">
+      <header className="rotas-novidades-v2-hero flex flex-wrap items-start justify-between gap-3">
         <div>
+          <span className="rotas-novidades-v2-eyebrow">ODONTOART · ATUALIZAÇÕES DO SISTEMA</span>
           <h2 className="font-display text-2xl text-ink">Novidades</h2>
           <p className="mt-2 text-sm text-ink/60">Confira as últimas melhorias, atualizações e avisos do Sistema de Rotas.</p>
         </div>
@@ -235,7 +237,7 @@ export default function Novidades() {
           ) : null}
       </header>
 
-      <section className="rounded-2xl border border-sea/20 bg-white/90 p-4">
+      <section className="rotas-novidades-v2-filters rounded-2xl border border-sea/20 bg-white/90 p-4">
           <div className="grid gap-3 md:grid-cols-4">
             <input className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-xs text-ink outline-none focus:border-sea dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" type="date" value={filters.from} onChange={(e) => setFilters((p) => ({ ...p, from: e.target.value }))} />
             <input className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-xs text-ink outline-none focus:border-sea dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" type="date" value={filters.to} onChange={(e) => setFilters((p) => ({ ...p, to: e.target.value }))} />
@@ -254,19 +256,19 @@ export default function Novidades() {
 
       {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div> : null}
 
-      <div className="space-y-3">
+      <div className="rotas-novidades-v2-feed space-y-3">
         {loading ? (
-          <div className="rounded-2xl border border-sea/15 bg-white p-4 text-sm text-ink/60">Carregando...</div>
+          <div className="rotas-novidades-v2-empty rounded-2xl border border-sea/15 bg-white p-4 text-sm text-ink/60">Carregando...</div>
         ) : rows.length === 0 ? (
-          <div className="rounded-2xl border border-sea/15 bg-white p-4 text-sm text-ink/60">Nenhuma novidade publicada até o momento.</div>
+          <div className="rotas-novidades-v2-empty rounded-2xl border border-sea/15 bg-white p-4 text-sm text-ink/60">Nenhuma novidade publicada até o momento.</div>
         ) : (
           rows.map((row) => (
-            <article key={row.id} className="rounded-2xl border border-sea/15 bg-white p-4 shadow-sm">
+            <article key={row.id} data-read={row.isRead} data-active={row.ativo} className="rotas-novidades-v2-article rounded-2xl border border-sea/15 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="space-y-1">
                   <div className="flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.12em] text-ink/60">
-                    <span className="rounded-full bg-sea/10 px-2 py-1">{row.tipo}</span>
-                    <span className="rounded-full bg-sand/40 px-2 py-1">{row.modulo}</span>
+                    <span className="rotas-novidades-v2-tag rounded-full bg-sea/10 px-2 py-1">{row.tipo}</span>
+                    <span className="rotas-novidades-v2-tag rounded-full bg-sand/40 px-2 py-1">{row.modulo}</span>
                     {!row.ativo ? <span className="rounded-full bg-red-100 px-2 py-1 text-red-700">Inativa</span> : null}
                     {row.isRead ? (
                       <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">Lida</span>
@@ -275,7 +277,7 @@ export default function Novidades() {
                     )}
                   </div>
                   <h3 className="text-lg font-semibold text-ink">{row.titulo}</h3>
-                  <div className="prose prose-sm max-w-none text-ink/80" dangerouslySetInnerHTML={{ __html: sanitizeHtml(row.descricao) }} />
+                  <div className="rotas-novidades-v2-content prose prose-sm max-w-none text-ink/80" dangerouslySetInnerHTML={{ __html: sanitizeHtml(row.descricao) }} />
                   <p className="text-xs text-ink/50">{formatDate(row.data_publicacao)}</p>
                 </div>
                 {canManage ? (
@@ -306,7 +308,7 @@ export default function Novidades() {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink/70">
+      <div className="rotas-novidades-v2-pagination flex flex-wrap items-center justify-between gap-2 text-xs text-ink/70">
         <span>Exibindo {(page - 1) * SYSTEM_NEWS_PAGE_SIZE + 1}–{Math.min(page * SYSTEM_NEWS_PAGE_SIZE, count)} de {count}</span>
         <div className="flex gap-2">
           <button type="button" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="rounded-lg border px-3 py-2 disabled:opacity-50">Anterior</button>
@@ -315,10 +317,10 @@ export default function Novidades() {
       </div>
 
       {adminModalOpen ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-4">
-            <h3 className="font-semibold">Senha administrativa</h3>
-            <div className="mt-3 flex items-center gap-2 rounded-lg border px-3 py-2">
+        <div className="rotas-novidades-v2-modal fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="novidades-admin-dialog-title">
+          <div className="rotas-novidades-v2-dialog w-full max-w-md rounded-2xl bg-white p-4">
+            <h3 id="novidades-admin-dialog-title" className="font-semibold">Senha administrativa</h3>
+            <div className="rotas-novidades-v2-password mt-3 flex items-center gap-2 rounded-lg border px-3 py-2">
               <input
                 type={showAdminPassword ? "text" : "password"}
                 value={adminPassword}
@@ -349,9 +351,9 @@ export default function Novidades() {
       ) : null}
 
       {formOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-white p-5">
-            <h3 className="font-semibold">{editingRow ? "Editar publicação" : "Nova publicação"}</h3>
+        <div className="rotas-novidades-v2-modal fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="novidades-form-dialog-title">
+          <div className="rotas-novidades-v2-dialog w-full max-w-2xl rounded-2xl bg-white p-5">
+            <h3 id="novidades-form-dialog-title" className="font-semibold">{editingRow ? "Editar publicação" : "Nova publicação"}</h3>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <input value={form.titulo} onChange={(e) => setForm((p) => ({ ...p, titulo: e.target.value }))} className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea md:col-span-2 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" placeholder="Título" />
               <select value={form.tipo} onChange={(e) => setForm((p) => ({ ...p, tipo: e.target.value as SystemNewsType }))} className="rounded-lg border border-sea/20 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sea dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">
