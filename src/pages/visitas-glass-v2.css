@@ -1,0 +1,302 @@
+/* Odontoart Rotas — Agenda de visitas / Glass V2
+ * Escopo restrito a Visitas.tsx. Não alterar regras, flags, estados ou
+ * componentes compartilhados. Paleta e material alinhados ao Dashboard aprovado. */
+.rotas-visitas-v2 {
+  --vv-glass: rgba(242, 255, 249, .47);
+  --vv-glass-strong: rgba(251, 255, 253, .68);
+  --vv-glass-inner: rgba(248, 255, 251, .53);
+  --vv-card: rgba(250, 255, 252, .77);
+  --vv-border: rgba(255, 255, 255, .83);
+  --vv-glint: rgba(255, 255, 255, .96);
+  --vv-shadow: rgba(6, 73, 66, .15);
+  --vv-glow: rgba(29, 221, 157, .17);
+  --vv-input: rgba(255, 255, 253, .82);
+  position: relative;
+  min-width: 0;
+  isolation: isolate;
+  border-radius: 28px;
+  padding: clamp(12px, 2.1vw, 28px);
+  border: 1px solid rgba(255, 255, 255, .68);
+  background:
+    radial-gradient(ellipse 50% 28% at 2% 2%, rgba(37, 231, 166, .54), transparent 84%),
+    radial-gradient(ellipse 44% 27% at 97% 10%, rgba(66, 178, 229, .43), transparent 85%),
+    radial-gradient(ellipse 62% 30% at 48% 80%, rgba(67, 213, 176, .27), transparent 86%),
+    linear-gradient(145deg, #c6ebde, #d9eaf1 54%, #d7efe5);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85), 0 25px 58px rgba(8, 66, 60, .11);
+}
+.dark .rotas-visitas-v2 {
+  --vv-glass: rgba(7, 34, 42, .35);
+  --vv-glass-strong: rgba(10, 39, 48, .48);
+  --vv-glass-inner: rgba(11, 45, 52, .42);
+  --vv-card: rgba(10, 35, 43, .81);
+  --vv-border: rgba(207, 255, 237, .30);
+  --vv-glint: rgba(255, 255, 255, .30);
+  --vv-shadow: rgba(0, 0, 0, .39);
+  --vv-glow: rgba(28, 226, 165, .17);
+  --vv-input: rgba(7, 30, 39, .86);
+  border-color: rgba(199, 255, 235, .18);
+  background:
+    radial-gradient(ellipse 51% 28% at 1% 1%, rgba(15, 210, 157, .43), transparent 84%),
+    radial-gradient(ellipse 45% 28% at 98% 11%, rgba(20, 140, 202, .38), transparent 85%),
+    radial-gradient(ellipse 62% 34% at 50% 74%, rgba(11, 153, 115, .22), transparent 85%),
+    linear-gradient(136deg, #061721, #112e38 53%, #071a22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), 0 27px 67px rgba(0, 0, 0, .27);
+}
+
+.rotas-visitas-v2 > .rotas-visitas-v2-hero,
+.rotas-visitas-v2 .rotas-visitas-v2-panel {
+  position: relative;
+  border: 1px solid var(--vv-border) !important;
+  background:
+    linear-gradient(132deg, rgba(255, 255, 255, .27), rgba(255, 255, 255, .022) 42%, rgba(255, 255, 255, .10)),
+    var(--vv-glass) !important;
+  box-shadow: inset 0 1px 0 var(--vv-glint),
+              inset 0 -1px 0 rgba(255, 255, 255, .08),
+              0 17px 44px var(--vv-shadow),
+              0 2px 7px rgba(0, 0, 0, .08);
+  -webkit-backdrop-filter: blur(37px) saturate(187%);
+  backdrop-filter: blur(37px) saturate(187%);
+}
+.rotas-visitas-v2 > .rotas-visitas-v2-hero {
+  border-radius: 24px;
+  padding: clamp(15px, 2vw, 24px);
+  background:
+    radial-gradient(ellipse at 0% -40%, rgba(60, 245, 187, .18), transparent 58%),
+    linear-gradient(130deg, rgba(255, 255, 255, .35), rgba(255, 255, 255, .02) 60%),
+    var(--vv-glass-strong) !important;
+  box-shadow: inset 0 1px 0 var(--vv-glint), inset 0 -1px 0 rgba(255, 255, 255, .15),
+              0 21px 48px var(--vv-shadow), 0 0 31px var(--vv-glow);
+  -webkit-backdrop-filter: blur(44px) saturate(195%);
+  backdrop-filter: blur(44px) saturate(195%);
+}
+.rotas-visitas-v2-eyebrow {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid rgba(39, 209, 149, .39);
+  border-radius: 999px;
+  padding: 6px 11px;
+  margin-bottom: 9px;
+  background: rgba(16, 193, 134, .13);
+  color: #146a51;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .13em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .60);
+}
+.rotas-visitas-v2-eyebrow::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: #3fe4a8;
+  box-shadow: 0 0 13px rgba(22, 220, 152, .85);
+}
+.dark .rotas-visitas-v2-eyebrow {
+  color: #afffde;
+  border-color: rgba(177, 255, 228, .34);
+  background: rgba(19, 195, 144, .17);
+}
+
+.rotas-visitas-v2 .rotas-visitas-v2-panel {
+  border-radius: 23px;
+  padding: clamp(13px, 1.8vw, 20px);
+  min-width: 0;
+}
+.rotas-visitas-v2 .rotas-visitas-v2-panel:where(:focus-within) {
+  border-color: rgba(75, 234, 174, .60) !important;
+}
+
+/* Calendário — células pequenas são cristal sólido para leitura sem perda. */
+.rotas-visitas-v2 .rotas-visitas-v2-day {
+  background: var(--vv-card) !important;
+  color: rgb(var(--theme-text));
+  border-color: var(--vv-border) !important;
+  box-shadow: inset 0 1px 0 var(--vv-glint), 0 3px 9px rgba(7, 65, 60, .07);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  transition: border-color .16s ease, box-shadow .16s ease, background-color .16s ease, transform .16s ease;
+}
+.rotas-visitas-v2 .rotas-visitas-v2-day:not(:disabled):hover {
+  transform: translateY(-2px);
+  border-color: rgba(55, 216, 160, .72) !important;
+  box-shadow: inset 0 1px 0 var(--vv-glint), 0 7px 20px var(--vv-shadow), 0 0 14px var(--vv-glow);
+}
+.rotas-visitas-v2 .rotas-visitas-v2-day[data-has-visits="true"]:not([aria-pressed="true"]) {
+  border-color: rgba(34, 193, 140, .48) !important;
+  background:
+    linear-gradient(130deg, rgba(43, 214, 158, .15), transparent 68%),
+    var(--vv-card) !important;
+}
+.rotas-visitas-v2 .rotas-visitas-v2-day[aria-pressed="true"] {
+  background: linear-gradient(138deg, rgba(255, 240, 182, .95), rgba(255, 188, 105, .83)) !important;
+  border-color: rgba(225, 135, 40, .85) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .84),
+              0 0 0 2px rgba(250, 170, 73, .26), 0 8px 25px rgba(193, 120, 34, .24);
+}
+.rotas-visitas-v2 .rotas-visitas-v2-day[aria-pressed="true"] > span:not(.absolute) {
+  color: #683b12 !important;
+}
+.dark .rotas-visitas-v2 .rotas-visitas-v2-day[aria-pressed="true"] {
+  background: linear-gradient(137deg, rgba(145, 93, 30, .95), rgba(87, 65, 30, .95)) !important;
+  border-color: rgba(255, 197, 103, .83) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 237, 193, .25),
+              0 0 0 2px rgba(255, 188, 91, .20), 0 7px 25px rgba(0, 0, 0, .26);
+}
+.dark .rotas-visitas-v2 .rotas-visitas-v2-day[aria-pressed="true"] > span:not(.absolute) {
+  color: #fff0d3 !important;
+}
+.rotas-visitas-v2 .rotas-visitas-v2-day:disabled {
+  opacity: .37;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+.rotas-visitas-v2 :is(button, input, select, textarea, [role="button"]):focus-visible {
+  outline: 2px solid rgb(var(--theme-accent-action));
+  outline-offset: 3px;
+}
+.rotas-visitas-v2 > header select,
+.rotas-visitas-v2 .rotas-visitas-v2-panel > div:first-child > button {
+  background: var(--vv-input) !important;
+  color: rgb(var(--theme-text));
+  border-color: var(--vv-border) !important;
+  box-shadow: inset 0 1px 0 var(--vv-glint), 0 6px 15px var(--vv-shadow);
+  -webkit-backdrop-filter: blur(22px) saturate(175%);
+  backdrop-filter: blur(22px) saturate(175%);
+}
+.rotas-visitas-v2 select option,
+.rotas-visitas-v2-modal select option {
+  background: rgb(var(--theme-surface-strong));
+  color: rgb(var(--theme-text));
+}
+
+/* Hierarquia das visitas. Cor violeta identifica rota de supervisor. */
+.rotas-visitas-v2 .rotas-visitas-v2-seller {
+  border: 1px solid var(--vv-border) !important;
+  background:
+    linear-gradient(128deg, rgba(255, 255, 255, .19), rgba(255, 255, 255, .01) 62%),
+    var(--vv-glass-inner) !important;
+  box-shadow: inset 0 1px 0 var(--vv-glint), 0 11px 28px var(--vv-shadow);
+  -webkit-backdrop-filter: blur(23px) saturate(170%);
+  backdrop-filter: blur(23px) saturate(170%);
+}
+.rotas-visitas-v2 .rotas-visitas-v2-seller[data-supervisor="true"] {
+  border-color: rgba(167, 139, 250, .48) !important;
+  background: linear-gradient(127deg, rgba(151, 124, 250, .15), transparent 73%), var(--vv-glass-inner) !important;
+}
+.rotas-visitas-v2 .rotas-visitas-v2-visit {
+  border: 1px solid var(--vv-border) !important;
+  background:
+    linear-gradient(128deg, rgba(255, 255, 255, .08), transparent 70%),
+    var(--vv-card) !important;
+  box-shadow: inset 0 1px 0 var(--vv-glint), 0 3px 12px rgba(8, 51, 47, .09);
+  /* Drag-and-drop utiliza transform inline: não adicionar transform na regra. */
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+.rotas-visitas-v2 .rotas-visitas-v2-visit[data-supervisor="true"] {
+  border-color: rgba(168, 132, 245, .49) !important;
+  background: linear-gradient(128deg, rgba(161, 122, 244, .13), transparent 69%), var(--vv-card) !important;
+}
+.rotas-visitas-v2 .rotas-visitas-v2-visit[data-dragging="true"] {
+  border-color: rgba(40, 216, 153, .70) !important;
+  box-shadow: inset 0 1px 0 var(--vv-glint), 0 19px 40px var(--vv-shadow), 0 0 20px var(--vv-glow);
+}
+.rotas-visitas-v2 .rotas-visitas-v2-visit :is(input:not([type="checkbox"]), select, textarea),
+.rotas-visitas-v2-modal :is(input:not([type="checkbox"]), select, textarea) {
+  background: var(--vv-input) !important;
+  color: rgb(var(--theme-text)) !important;
+  border-color: var(--vv-border) !important;
+  box-shadow: inset 0 1px 0 var(--vv-glint);
+}
+.rotas-visitas-v2 .rotas-visitas-v2-visit :is(.bg-red-50, .bg-amber-100),
+.rotas-visitas-v2-modal :is(.bg-red-50, .bg-amber-50) {
+  /* Sem substituir cores de erro e advertência; conservá-las no próprio JSX. */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* Modais do módulo (não usam createPortal). Overlay e janela separados para
+ * não prejudicar scroll, foco e interação nos formulários. */
+.rotas-visitas-v2 .rotas-visitas-v2-modal > button.absolute {
+  background: rgba(5, 26, 34, .40) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(138%);
+  backdrop-filter: blur(12px) saturate(138%);
+}
+.rotas-visitas-v2 .rotas-visitas-v2-modal > div.relative {
+  --vv-input: rgba(255, 255, 255, .87);
+  background:
+    linear-gradient(133deg, rgba(255, 255, 255, .38), rgba(255, 255, 255, .035) 55%),
+    rgba(238, 255, 248, .86) !important;
+  border: 1px solid rgba(225, 255, 245, .89) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .96),
+              0 28px 74px rgba(2, 43, 38, .28), 0 0 30px rgba(23, 219, 150, .14);
+  -webkit-backdrop-filter: blur(43px) saturate(188%);
+  backdrop-filter: blur(43px) saturate(188%);
+}
+.dark .rotas-visitas-v2 .rotas-visitas-v2-modal > div.relative {
+  --vv-input: rgba(13, 35, 44, .94);
+  background:
+    linear-gradient(129deg, rgba(255, 255, 255, .18), rgba(255, 255, 255, .015) 61%),
+    rgba(6, 28, 37, .94) !important;
+  border-color: rgba(195, 255, 231, .36) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .32),
+              0 29px 78px rgba(0, 0, 0, .50), 0 0 33px rgba(15, 216, 144, .14);
+}
+.rotas-visitas-v2 .rotas-visitas-v2-modal .rounded-xl:is(.bg-sand\/30, .bg-sand\/20) {
+  background: var(--vv-glass-inner) !important;
+  border-color: var(--vv-border) !important;
+  box-shadow: inset 0 1px 0 var(--vv-glint);
+}
+.rotas-visitas-v2 .rotas-visitas-v2-modal > div.relative :is(button, input, textarea, select):focus-visible {
+  outline: 2px solid rgb(var(--theme-accent-action));
+  outline-offset: 2px;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .rotas-visitas-v2 {
+    --vv-glass: rgb(var(--theme-surface-strong) / .96);
+    --vv-glass-strong: rgb(var(--theme-surface-strong) / .98);
+    --vv-glass-inner: rgb(var(--theme-surface-strong) / .93);
+    --vv-card: rgb(var(--theme-surface-strong) / .97);
+    --vv-input: rgb(var(--theme-surface-strong) / .98);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .rotas-visitas-v2 {
+    --vv-glass: rgb(var(--theme-surface-strong) / .97);
+    --vv-glass-strong: rgb(var(--theme-surface-strong) / .99);
+    --vv-glass-inner: rgb(var(--theme-surface-strong) / .96);
+    --vv-card: rgb(var(--theme-surface-strong) / .99);
+    --vv-input: rgb(var(--theme-surface-strong) / .99);
+  }
+  .rotas-visitas-v2 > .rotas-visitas-v2-hero,
+  .rotas-visitas-v2 .rotas-visitas-v2-panel,
+  .rotas-visitas-v2 .rotas-visitas-v2-seller,
+  .rotas-visitas-v2 .rotas-visitas-v2-modal > div.relative {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rotas-visitas-v2 .rotas-visitas-v2-day { transition: none; }
+  .rotas-visitas-v2 .rotas-visitas-v2-day:hover { transform: none; }
+}
+@media (max-width: 640px) {
+  .rotas-visitas-v2 { border-radius: 18px; padding: 11px; }
+  .rotas-visitas-v2 > .rotas-visitas-v2-hero { border-radius: 18px; padding: 13px; }
+  .rotas-visitas-v2 .rotas-visitas-v2-panel { border-radius: 18px; padding: 12px; }
+  .rotas-visitas-v2 .rotas-visitas-v2-day:hover { transform: none; }
+}
+@media print {
+  .rotas-visitas-v2, .dark .rotas-visitas-v2 {
+    background: #fff !important; border: 0 !important; box-shadow: none !important;
+  }
+  .rotas-visitas-v2 :is(.rotas-visitas-v2-hero, .rotas-visitas-v2-panel, .rotas-visitas-v2-seller, .rotas-visitas-v2-visit, .rotas-visitas-v2-day) {
+    background: #fff !important; box-shadow: none !important;
+    -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+  }
+}
