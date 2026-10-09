@@ -174,11 +174,6 @@
 }
 
 /* Drawer e dialogs locais / portais React com superficie de vidro consistente. */
-.rotas-empresas-v2-drawer,
-.rotas-empresas-v2-modal,
-.rotas-empresas-v2-portal {
-  --ev2-border: var(--ev2-border, rgba(221, 255, 240, .35));
-}
 .rotas-empresas-v2-drawer > button.absolute,
 .rotas-empresas-v2-modal > button.absolute,
 .rotas-empresas-v2-modal > div.absolute,
