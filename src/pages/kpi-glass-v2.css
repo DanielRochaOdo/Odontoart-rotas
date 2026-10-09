@@ -122,6 +122,14 @@
     var(--kv2-pane) !important;
 }
 
+/* Legibilidade: mensagem de base consolidada no modo escuro.
+ * Restrito à tela (não altera impressão nem a exportação PDF). */
+@media screen {
+  .dark .rotas-kpi-v2 > .rotas-kpi-v2-status > p.text-emerald-700 {
+    color: #ffffff !important;
+  }
+}
+
 /* Seis cartões de métricas, botões interativos. */
 .rotas-kpi-v2 .rotas-kpi-v2-metric {
   position: relative;
