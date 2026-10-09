@@ -1,0 +1,310 @@
+/* Odontoart Rotas / Fila Glass V2
+ * Visual isolado do modulo Fila e de seus avisos globais.
+ * Nenhuma regra de prazo, filtro, liberacao ou acesso e modificada. */
+.rotas-fila-v2,
+.rotas-fila-v2-alerts {
+  --fv2-pane: rgba(243, 255, 250, .47);
+  --fv2-pane-strong: rgba(250, 255, 253, .66);
+  --fv2-pane-inset: rgba(247, 255, 250, .54);
+  --fv2-row: rgba(250, 255, 253, .81);
+  --fv2-field: rgba(254, 255, 253, .85);
+  --fv2-border: rgba(255, 255, 255, .84);
+  --fv2-glint: rgba(255, 255, 255, .96);
+  --fv2-shadow: rgba(8, 72, 65, .15);
+  --fv2-glow: rgba(29, 222, 158, .19);
+}
+.dark .rotas-fila-v2,
+.dark .rotas-fila-v2-alerts {
+  --fv2-pane: rgba(7, 34, 42, .34);
+  --fv2-pane-strong: rgba(9, 39, 47, .46);
+  --fv2-pane-inset: rgba(12, 47, 54, .41);
+  --fv2-row: rgba(11, 35, 43, .89);
+  --fv2-field: rgba(8, 32, 40, .91);
+  --fv2-border: rgba(205, 255, 236, .31);
+  --fv2-glint: rgba(255, 255, 255, .31);
+  --fv2-shadow: rgba(0, 0, 0, .39);
+  --fv2-glow: rgba(22, 224, 161, .18);
+}
+.rotas-fila-v2 {
+  position: relative;
+  min-width: 0;
+  padding: clamp(12px, 2.2vw, 28px);
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, .65);
+  background:
+    radial-gradient(ellipse 50% 27% at 1% 2%, rgba(42, 228, 163, .58), transparent 85%),
+    radial-gradient(ellipse 45% 27% at 100% 13%, rgba(69, 178, 230, .42), transparent 84%),
+    radial-gradient(ellipse 55% 36% at 50% 69%, rgba(76, 220, 166, .29), transparent 86%),
+    linear-gradient(139deg, #c7eadd, #dbe9f0 50%, #d5f3e5);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .82), 0 24px 60px rgba(8, 64, 57, .10);
+}
+.dark .rotas-fila-v2 {
+  border-color: rgba(200, 255, 235, .18);
+  background:
+    radial-gradient(ellipse 50% 29% at 0% 0%, rgba(16, 209, 156, .39), transparent 84%),
+    radial-gradient(ellipse 48% 30% at 100% 12%, rgba(27, 141, 199, .38), transparent 85%),
+    radial-gradient(ellipse 60% 32% at 49% 70%, rgba(16, 153, 111, .24), transparent 85%),
+    linear-gradient(138deg, #061720, #112e39 53%, #071b22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .13), 0 25px 66px rgba(0, 0, 0, .28);
+}
+
+/* Vidro elevado: cabecalho, configuracoes e area de pesquisa/resultados. */
+.rotas-fila-v2 > .rotas-fila-v2-hero,
+.rotas-fila-v2 .rotas-fila-v2-panel {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--fv2-border) !important;
+  background:
+    linear-gradient(130deg, rgba(255, 255, 255, .27), rgba(255, 255, 255, .02) 52%, rgba(255, 255, 255, .12)),
+    var(--fv2-pane) !important;
+  box-shadow: inset 0 1px 0 var(--fv2-glint), inset 0 -1px 0 rgba(255, 255, 255, .10),
+              0 16px 43px var(--fv2-shadow), 0 2px 7px rgba(0, 0, 0, .06);
+  -webkit-backdrop-filter: blur(37px) saturate(185%);
+  backdrop-filter: blur(37px) saturate(185%);
+}
+.rotas-fila-v2 > .rotas-fila-v2-hero {
+  padding: clamp(15px, 2vw, 24px);
+  border-radius: 23px;
+  background:
+    radial-gradient(ellipse at -5% -50%, rgba(46, 242, 180, .21), transparent 61%),
+    linear-gradient(132deg, rgba(255, 255, 255, .37), rgba(255, 255, 255, .025) 65%),
+    var(--fv2-pane-strong) !important;
+  box-shadow: inset 0 1px 0 var(--fv2-glint), 0 20px 48px var(--fv2-shadow), 0 0 34px var(--fv2-glow);
+  -webkit-backdrop-filter: blur(43px) saturate(192%);
+  backdrop-filter: blur(43px) saturate(192%);
+}
+.rotas-fila-v2-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 11px;
+  margin-bottom: 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(41, 206, 149, .37);
+  background: rgba(15, 191, 132, .12);
+  color: #11664c;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55);
+}
+.rotas-fila-v2-eyebrow::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: #34e4a6;
+  box-shadow: 0 0 12px rgba(29, 220, 155, .84);
+}
+.dark .rotas-fila-v2-eyebrow {
+  border-color: rgba(163, 255, 224, .30);
+  background: rgba(25, 195, 142, .17);
+  color: #afffde;
+}
+.rotas-fila-v2 .rotas-fila-v2-panel {
+  border-radius: 22px;
+  background:
+    linear-gradient(128deg, rgba(255, 255, 255, .23), transparent 69%),
+    var(--fv2-pane-strong) !important;
+}
+.rotas-fila-v2 .rotas-fila-v2-results {
+  background:
+    linear-gradient(131deg, rgba(255, 255, 255, .22), transparent 60%),
+    var(--fv2-pane) !important;
+}
+
+/* Tres indicadores acionaveis: separacao pelo tom do estado. */
+.rotas-fila-v2 .rotas-fila-v2-kpi {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--fv2-border) !important;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, .33), rgba(255, 255, 255, .02) 50%),
+    var(--fv2-pane-strong) !important;
+  box-shadow: inset 0 1px 0 var(--fv2-glint), 0 12px 32px var(--fv2-shadow);
+  -webkit-backdrop-filter: blur(35px) saturate(185%);
+  backdrop-filter: blur(35px) saturate(185%);
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.rotas-fila-v2 .rotas-fila-v2-kpi::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  inset: auto -22% -90% -22%;
+  height: 130%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, var(--fv2-tone, rgba(29, 218, 158, .20)), transparent 69%);
+}
+.rotas-fila-v2 .rotas-fila-v2-kpi[data-tone="pending"] { --fv2-tone: rgba(241, 177, 65, .26); }
+.rotas-fila-v2 .rotas-fila-v2-kpi[data-tone="release"] { --fv2-tone: rgba(43, 178, 234, .28); }
+.rotas-fila-v2 .rotas-fila-v2-kpi[data-tone="manual"] { --fv2-tone: rgba(34, 225, 171, .28); }
+.rotas-fila-v2 .rotas-fila-v2-kpi:hover {
+  transform: translateY(-3px);
+  border-color: rgba(78, 234, 183, .70) !important;
+  box-shadow: inset 0 1px 0 var(--fv2-glint), 0 19px 44px var(--fv2-shadow), 0 0 25px var(--fv2-glow);
+}
+.rotas-fila-v2 .rotas-fila-v2-kpi[data-selected="true"] {
+  border-color: rgba(27, 211, 144, .83) !important;
+  box-shadow: inset 0 1px 0 var(--fv2-glint), 0 0 0 2px rgba(54, 232, 176, .18),
+              0 18px 41px var(--fv2-shadow), 0 0 26px var(--fv2-glow);
+}
+.dark .rotas-fila-v2 .rotas-fila-v2-kpi .text-sky-700 { color: #7ed7fb !important; }
+.dark .rotas-fila-v2 .rotas-fila-v2-kpi .text-teal-700 { color: #77f7d0 !important; }
+
+/* Campos nativos com contraste e opacidade previsiveis. */
+.rotas-fila-v2 :is(.rotas-fila-v2-panel, .rotas-fila-v2-modal) :is(input:not([type="checkbox"]), select, textarea),
+.rotas-fila-v2 .rotas-fila-v2-panel button[class~="bg-white"],
+.rotas-fila-v2 .rotas-fila-v2-results button[class~="bg-white"],
+.rotas-fila-v2 .rotas-fila-v2-modal button[class~="bg-white"] {
+  background: var(--fv2-field) !important;
+  color: rgb(var(--theme-text)) !important;
+  border-color: var(--fv2-border) !important;
+  box-shadow: inset 0 1px 0 var(--fv2-glint), 0 4px 13px var(--fv2-shadow);
+}
+.rotas-fila-v2 :is(input, select, textarea, button):focus-visible,
+.rotas-fila-v2-alerts button:focus-visible {
+  outline: 2px solid rgb(var(--theme-accent-action));
+  outline-offset: 3px;
+}
+.rotas-fila-v2 select option { background: rgb(var(--theme-surface-strong)); color: rgb(var(--theme-text)); }
+.rotas-fila-v2 :is(button, input, select):disabled { cursor: not-allowed; }
+
+/* Dados de prazo, liberacoes e justificativas: linhas solidas, sem blur em
+ * cada linha, para preservar leitura e scroll nas tabelas largas. */
+.rotas-fila-v2 .rotas-fila-v2-table-wrap {
+  border: 1px solid rgba(148, 223, 195, .29);
+  border-radius: 18px;
+  background: var(--fv2-pane-inset);
+  box-shadow: inset 0 1px 0 var(--fv2-glint);
+}
+.rotas-fila-v2 .rotas-fila-v2-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.rotas-fila-v2 .rotas-fila-v2-table thead {
+  background: rgba(40, 181, 141, .12);
+}
+.dark .rotas-fila-v2 .rotas-fila-v2-table thead { background: rgba(24, 172, 135, .17); }
+.rotas-fila-v2 .rotas-fila-v2-table th {
+  color: rgb(var(--theme-text-secondary));
+  border-bottom: 1px solid rgba(80, 177, 143, .25);
+}
+.rotas-fila-v2 .rotas-fila-v2-table tbody tr {
+  background: var(--fv2-row) !important;
+  border-color: rgba(85, 180, 142, .22);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+.rotas-fila-v2 .rotas-fila-v2-table tbody tr:nth-child(even) {
+  background: linear-gradient(90deg, rgba(41, 204, 145, .045), transparent 48%), var(--fv2-row) !important;
+}
+.rotas-fila-v2 .rotas-fila-v2-table tbody tr:hover {
+  background: linear-gradient(105deg, rgba(32, 207, 147, .13), transparent 56%), var(--fv2-row) !important;
+}
+.rotas-fila-v2 .rotas-fila-v2-table td {
+  border-bottom: 1px solid rgba(87, 177, 141, .18);
+}
+
+/* Preserve o significado das cores de estado: aguardando, pendente,
+ * liberada (manual/automatica) e bloqueada. Nenhum seletor altera badges. */
+
+/* Modal da categoria, mantido dentro da pagina, sem isolamento de stacking. */
+.rotas-fila-v2 .rotas-fila-v2-modal,
+.rotas-fila-v2-alerts {
+  background: rgba(5, 28, 35, .48) !important;
+  -webkit-backdrop-filter: blur(11px) saturate(137%);
+  backdrop-filter: blur(11px) saturate(137%);
+}
+.rotas-fila-v2 .rotas-fila-v2-modal > .rotas-fila-v2-dialog,
+.rotas-fila-v2-alerts > .rotas-fila-v2-dialog {
+  border: 1px solid rgba(220, 255, 241, .79) !important;
+  background:
+    linear-gradient(129deg, rgba(255, 255, 255, .34), rgba(255, 255, 255, .026) 57%),
+    rgba(237, 255, 248, .87) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .96),
+              0 29px 76px rgba(0, 36, 31, .32), 0 0 30px rgba(17, 214, 152, .14);
+  -webkit-backdrop-filter: blur(42px) saturate(190%);
+  backdrop-filter: blur(42px) saturate(190%);
+}
+.dark .rotas-fila-v2 .rotas-fila-v2-modal > .rotas-fila-v2-dialog,
+.dark .rotas-fila-v2-alerts > .rotas-fila-v2-dialog {
+  border-color: rgba(198, 255, 232, .34) !important;
+  background:
+    linear-gradient(130deg, rgba(255, 255, 255, .17), rgba(255, 255, 255, .015) 61%),
+    rgba(8, 30, 39, .94) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .29),
+              0 31px 80px rgba(0, 0, 0, .51), 0 0 35px rgba(15, 212, 147, .13);
+}
+.rotas-fila-v2-alerts .rotas-fila-v2-alert-item {
+  background: var(--fv2-row) !important;
+  border: 1px solid var(--fv2-border) !important;
+  box-shadow: inset 0 1px 0 var(--fv2-glint), 0 5px 16px var(--fv2-shadow);
+}
+.rotas-fila-v2-alerts > .rotas-fila-v2-dialog > div > .rounded-full {
+  border: 1px solid rgba(165, 255, 213, .35);
+  box-shadow: 0 0 18px var(--fv2-glow);
+}
+.rotas-fila-v2 .rotas-fila-v2-modal .rotas-fila-v2-table-wrap {
+  max-height: calc(100vh - 12rem);
+}
+.rotas-fila-v2 .rotas-fila-v2-modal button[class~="bg-white"] {
+  background: var(--fv2-field) !important;
+}
+.rotas-fila-v2-alerts button[class~="bg-sea"],
+.rotas-fila-v2 .rotas-fila-v2-panel button[class~="bg-sea"] {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .30), 0 5px 20px rgba(20, 187, 128, .28);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .rotas-fila-v2, .dark .rotas-fila-v2,
+  .rotas-fila-v2-alerts, .dark .rotas-fila-v2-alerts {
+    --fv2-pane: rgb(var(--theme-surface-strong) / .96);
+    --fv2-pane-strong: rgb(var(--theme-surface-strong) / .98);
+    --fv2-pane-inset: rgb(var(--theme-surface-strong) / .96);
+    --fv2-row: rgb(var(--theme-surface-strong) / .99);
+    --fv2-field: rgb(var(--theme-surface-strong) / .99);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .rotas-fila-v2, .dark .rotas-fila-v2,
+  .rotas-fila-v2-alerts, .dark .rotas-fila-v2-alerts {
+    --fv2-pane: rgb(var(--theme-surface-strong) / .96);
+    --fv2-pane-strong: rgb(var(--theme-surface-strong) / .99);
+    --fv2-pane-inset: rgb(var(--theme-surface-strong) / .96);
+    --fv2-row: rgb(var(--theme-surface-strong) / .99);
+    --fv2-field: rgb(var(--theme-surface-strong) / .99);
+  }
+  .rotas-fila-v2 :is(.rotas-fila-v2-hero, .rotas-fila-v2-panel, .rotas-fila-v2-kpi, .rotas-fila-v2-dialog),
+  .rotas-fila-v2-alerts > .rotas-fila-v2-dialog {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background: rgb(var(--theme-surface-strong) / .99) !important;
+  }
+  .rotas-fila-v2 .rotas-fila-v2-modal,
+  .rotas-fila-v2-alerts {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rotas-fila-v2 .rotas-fila-v2-kpi { transition: none; }
+  .rotas-fila-v2 .rotas-fila-v2-kpi:hover { transform: none; }
+}
+@media (max-width: 640px) {
+  .rotas-fila-v2 { padding: 11px; border-radius: 18px; }
+  .rotas-fila-v2 > .rotas-fila-v2-hero { padding: 13px; border-radius: 18px; }
+  .rotas-fila-v2 .rotas-fila-v2-panel { border-radius: 18px; }
+  .rotas-fila-v2 .rotas-fila-v2-kpi:hover { transform: none; }
+  .rotas-fila-v2-alerts { padding: 12px; }
+  .rotas-fila-v2-alerts > .rotas-fila-v2-dialog { padding: 14px; max-height: calc(100dvh - 24px); overflow-y: auto; }
+}
+@media print {
+  .rotas-fila-v2, .dark .rotas-fila-v2 {
+    background: #fff !important; border: 0 !important; box-shadow: none !important;
+  }
+  .rotas-fila-v2 :is(.rotas-fila-v2-hero, .rotas-fila-v2-panel, .rotas-fila-v2-kpi, .rotas-fila-v2-table tbody tr) {
+    background: #fff !important; box-shadow: none !important;
+    -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+  }
+}
