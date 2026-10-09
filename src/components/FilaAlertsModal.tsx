@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import "../pages/fila-glass-v2.css";
 import { BellRing } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -183,20 +184,20 @@ function FilaAlertsForUser() {
   if (!canView || notifications.length === 0) return null;
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-start justify-center bg-ink/55 px-4 pt-6">
-      <div className="w-full max-w-4xl rounded-2xl border border-sea/25 bg-white p-5 shadow-2xl">
+    <div className="rotas-fila-v2-alerts fixed inset-0 z-[120] flex items-start justify-center bg-ink/55 px-4 pt-6" role="dialog" aria-modal="true" aria-labelledby="fila-alerts-dialog-title">
+      <div className="rotas-fila-v2-dialog w-full max-w-4xl rounded-2xl border border-sea/25 bg-white p-5 shadow-2xl">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 rounded-full bg-sea/15 p-2 text-sea">
             <BellRing size={18} />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 className="text-base font-semibold text-ink">Modulo Fila - avisos</h3>
+            <h3 id="fila-alerts-dialog-title" className="text-base font-semibold text-ink">Modulo Fila - avisos</h3>
             <p className="mt-1 text-sm text-ink/80">
               {notifications.length} aviso(s) pendente(s). Confirme para remover da sua tela.
             </p>
             <div className="mt-3 max-h-[60vh] space-y-2 overflow-y-auto pr-1">
               {notifications.map((item) => (
-                <article key={item.eventId} className="rounded-xl border border-sea/20 bg-white/90 p-3">
+                <article key={item.eventId} className="rotas-fila-v2-alert-item rounded-xl border border-sea/20 bg-white/90 p-3">
                   <p className="text-sm text-ink/80">{item.message}</p>
                   <div className="mt-1 text-xs text-ink/60">
                     <p>
