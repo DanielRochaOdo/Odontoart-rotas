@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
+import "./sidebar-glass-v2.css";
 import { NavLink, Outlet } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -111,9 +112,9 @@ export default function AppLayout() {
   return (
     <div className="min-h-screen bg-hero-gradient overflow-x-hidden text-ink">
       <div className="md:hidden">
-        <div className="flex items-center justify-between border-b border-sea/15 bg-white/90 px-4 py-3 shadow-sm">
+        <div className="rotas-sidebar-v2-mobile-bar flex items-center justify-between border-b border-sea/15 bg-white/90 px-4 py-3 shadow-sm">
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-sea/15 text-sea">
+            <div className="rotas-sidebar-v2-brand flex h-8 w-8 items-center justify-center rounded-full bg-sea/15 text-sea">
               <MapPin size={16} />
             </div>
             <div>
@@ -124,7 +125,8 @@ export default function AppLayout() {
           <button
             type="button"
             onClick={() => setMobileMenuOpen(true)}
-            className="rounded-full border border-sea/20 bg-white/80 p-2 text-sea hover:border-sea"
+            className="rotas-sidebar-v2-toggle rounded-full border border-sea/20 bg-white/80 p-2 text-sea hover:border-sea"
+            aria-expanded={mobileMenuOpen}
             aria-label="Abrir menu"
           >
             <Menu size={18} />
@@ -139,27 +141,27 @@ export default function AppLayout() {
       <div className="flex min-h-screen w-full flex-col gap-4 px-4 py-4 md:flex-row md:items-start md:gap-6 md:px-0 md:py-6">
         <aside
           className={[
-            "normal-case mb-6 hidden shrink-0 border-r md:fixed md:bottom-0 md:left-0 md:top-0 md:z-30 md:mb-0 md:flex md:flex-col md:overflow-y-auto md:overflow-x-hidden no-scrollbar",
+            "rotas-sidebar-v2-desktop normal-case mb-6 hidden shrink-0 border-r md:fixed md:bottom-0 md:left-0 md:top-0 md:z-30 md:mb-0 md:flex md:flex-col md:overflow-y-auto md:overflow-x-hidden no-scrollbar",
             isDarkTheme
               ? "border-mist/50 bg-paper/95 text-ink shadow-card backdrop-blur-xl"
               : "border-sea/20 bg-gradient-to-b from-white via-white to-sand/60 text-ink shadow-card",
             collapsed ? "md:w-[84px]" : "md:w-[272px]",
           ].join(" ")}
         >
-          <div className="flex h-full flex-col">
+          <div className="rotas-sidebar-v2-stack flex h-full flex-col">
             {collapsed ? (
               <>
-                <div className={["flex h-16 items-center justify-center border-b", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
-                  <div className={["flex h-9 w-9 items-center justify-center rounded-xl", isDarkTheme ? "border border-sea/30 bg-sea/10 text-seaLight" : "bg-sea/15 text-sea"].join(" ")}>
+                <div className={["rotas-sidebar-v2-head flex h-16 items-center justify-center border-b", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
+                  <div className={["rotas-sidebar-v2-brand flex h-9 w-9 items-center justify-center rounded-xl", isDarkTheme ? "border border-sea/30 bg-sea/10 text-seaLight" : "bg-sea/15 text-sea"].join(" ")}>
                     <MapPin size={16} />
                   </div>
                 </div>
-                <div className={["flex h-14 items-center justify-center border-b", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
+                <div className={["rotas-sidebar-v2-head flex h-14 items-center justify-center border-b", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
                   <button
                     type="button"
                     onClick={() => setCollapsed((prev) => !prev)}
                     className={[
-                      "p-2 transition",
+                      "rotas-sidebar-v2-toggle p-2 transition",
                       isDarkTheme
                         ? "rounded-lg border border-mist/60 bg-white/5 text-ink/70 hover:border-sea/35 hover:text-seaLight"
                         : "rounded-full border border-sea/20 bg-white/80 text-sea hover:border-sea",
@@ -171,12 +173,12 @@ export default function AppLayout() {
                 </div>
               </>
             ) : (
-              <div className={["flex h-16 items-center justify-between border-b px-4", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
+              <div className={["rotas-sidebar-v2-head flex h-16 items-center justify-between border-b px-4", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
                 <div className="flex items-center gap-3">
-                  <div className={["flex h-9 w-9 items-center justify-center rounded-xl", isDarkTheme ? "border border-sea/30 bg-sea/10 text-seaLight" : "bg-sea/15 text-sea"].join(" ")}>
+                  <div className={["rotas-sidebar-v2-brand flex h-9 w-9 items-center justify-center rounded-xl", isDarkTheme ? "border border-sea/30 bg-sea/10 text-seaLight" : "bg-sea/15 text-sea"].join(" ")}>
                     <MapPin size={16} />
                   </div>
-                  <p className="truncate font-display text-[1.02rem] font-semibold tracking-tight text-ink">
+                  <p className="rotas-sidebar-v2-logo-text truncate font-display text-[1.02rem] font-semibold tracking-tight text-ink">
                     Odontoart Rotas
                   </p>
                 </div>
@@ -184,7 +186,7 @@ export default function AppLayout() {
                   type="button"
                   onClick={() => setCollapsed((prev) => !prev)}
                   className={[
-                    "p-2 transition",
+                    "rotas-sidebar-v2-toggle p-2 transition",
                     isDarkTheme
                       ? "rounded-lg border border-mist/60 bg-white/5 text-ink/70 hover:border-sea/35 hover:text-seaLight"
                       : "rounded-full border border-sea/20 bg-white/80 text-sea hover:border-sea",
@@ -196,7 +198,7 @@ export default function AppLayout() {
               </div>
             )}
 
-            <nav className={["flex-1 py-4", collapsed ? "px-2" : "px-3"].join(" ")}>
+            <nav aria-label="Navegação principal" className={["rotas-sidebar-v2-nav flex-1 py-4", collapsed ? "px-2" : "px-3"].join(" ")}>
               <div className={["flex flex-col", collapsed ? "items-center gap-2" : "gap-1.5"].join(" ")}>
                 {visibleNavItems.map((item) => {
                     const Icon = item.icon;
@@ -209,7 +211,7 @@ export default function AppLayout() {
                         title={collapsed ? item.label : undefined}
                         className={({ isActive }) =>
                           [
-                            "group relative flex items-center transition",
+                            "rotas-sidebar-v2-link group relative flex items-center transition",
                             collapsed
                               ? "h-11 w-11 justify-center rounded-2xl"
                               : "w-full gap-3 rounded-xl px-3 py-2.5 text-[1.05rem] font-semibold",
@@ -249,7 +251,7 @@ export default function AppLayout() {
                     onClick={() => setVendorSettingsOpen((prev) => !prev)}
                     title={collapsed ? "Configuracoes" : undefined}
                     className={[
-                      "group relative flex items-center transition",
+                      "rotas-sidebar-v2-vendor-settings group relative flex items-center transition",
                       collapsed
                         ? "h-11 w-11 justify-center rounded-2xl"
                         : "w-full gap-3 rounded-xl px-3 py-2.5 text-[1.05rem] font-semibold",
@@ -270,6 +272,7 @@ export default function AppLayout() {
                             : "text-ink/70 hover:bg-sea/10 hover:text-sea",
                     ].join(" ")}
                     aria-label="Configuracoes"
+                    aria-pressed={effectiveVendorSettingsOpen}
                   >
                     {collapsed && effectiveVendorSettingsOpen ? (
                       <span className={["absolute -left-2 h-7 w-1 rounded-full", isDarkTheme ? "bg-seaLight" : "bg-sea"].join(" ")} />
@@ -281,7 +284,7 @@ export default function AppLayout() {
               </div>
             </nav>
 
-            <div className={["mt-auto border-t p-3", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
+            <div className={["rotas-sidebar-v2-footer mt-auto border-t p-3", isDarkTheme ? "border-mist/60" : "border-sea/20"].join(" ")}>
               <div className="mb-3 flex justify-end">
                 <NotificationsBell />
               </div>
@@ -292,7 +295,7 @@ export default function AppLayout() {
                       type="button"
                       onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
                       className={[
-                        "inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
+                        "rotas-sidebar-v2-action inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
                         isDarkTheme
                           ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
                           : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
@@ -306,7 +309,7 @@ export default function AppLayout() {
                       type="button"
                       onClick={() => signOut()}
                       className={[
-                        "inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
+                        "rotas-sidebar-v2-action inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
                         isDarkTheme
                           ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
                           : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
@@ -324,7 +327,7 @@ export default function AppLayout() {
                     type="button"
                     onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
                     className={[
-                      "inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
+                      "rotas-sidebar-v2-action inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
                       isDarkTheme
                         ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
                         : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
@@ -337,7 +340,7 @@ export default function AppLayout() {
                     type="button"
                     onClick={() => signOut()}
                     className={[
-                      "inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
+                      "rotas-sidebar-v2-action inline-flex h-10 w-full items-center justify-center rounded-xl border transition",
                       isDarkTheme
                         ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
                         : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
@@ -349,8 +352,8 @@ export default function AppLayout() {
                 </div>
               ) : (
                 <>
-                  <div className={["mb-3 flex items-center gap-3 rounded-xl border px-3 py-2.5", isDarkTheme ? "border-mist/60 bg-white/5" : "border-sea/20 bg-sand/60"].join(" ")}>
-                    <div className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold", isDarkTheme ? "bg-sea/20 text-seaLight" : "bg-white text-sea"].join(" ")}>
+                  <div className={["rotas-sidebar-v2-profile mb-3 flex items-center gap-3 rounded-xl border px-3 py-2.5", isDarkTheme ? "border-mist/60 bg-white/5" : "border-sea/20 bg-sand/60"].join(" ")}>
+                    <div className={["rotas-sidebar-v2-avatar flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold", isDarkTheme ? "bg-sea/20 text-seaLight" : "bg-white text-sea"].join(" ")}>
                       {initials.slice(0, 1) || "O"}
                     </div>
                     <div className="min-w-0">
@@ -359,7 +362,7 @@ export default function AppLayout() {
                       </p>
                       <span
                         className={[
-                          "mt-1 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide",
+                          "rotas-sidebar-v2-role mt-1 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide",
                           isDarkTheme
                             ? "border-mist/70 bg-sand/30 text-ink/80"
                             : "border-sea/25 bg-white text-ink/70",
@@ -386,7 +389,7 @@ export default function AppLayout() {
                       type="button"
                       onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
                       className={[
-                        "inline-flex h-10 items-center justify-center rounded-xl border transition",
+                        "rotas-sidebar-v2-action inline-flex h-10 items-center justify-center rounded-xl border transition",
                         isDarkTheme
                           ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
                           : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
@@ -399,7 +402,7 @@ export default function AppLayout() {
                       type="button"
                       onClick={() => signOut()}
                       className={[
-                        "inline-flex h-10 items-center justify-center rounded-xl border transition",
+                        "rotas-sidebar-v2-action inline-flex h-10 items-center justify-center rounded-xl border transition",
                         isDarkTheme
                           ? "border-mist/60 bg-white/5 text-ink/80 hover:border-sea/35 hover:text-seaLight"
                           : "border-sea/30 bg-white/90 text-ink hover:border-sea hover:text-sea",
@@ -430,13 +433,14 @@ export default function AppLayout() {
         <div className="fixed inset-0 z-50 md:hidden">
           <button
             type="button"
-            className="absolute inset-0 bg-ink/30"
+            className="rotas-sidebar-v2-scrim absolute inset-0 bg-ink/30"
+            aria-label="Fechar menu"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <div className="relative flex h-full w-72 max-w-full flex-col overflow-y-auto bg-white p-5 shadow-2xl">
-            <div className="flex items-center justify-between">
+          <div className="rotas-sidebar-v2-drawer relative flex h-full w-72 max-w-full flex-col overflow-y-auto bg-white p-5 shadow-2xl">
+            <div className="rotas-sidebar-v2-mobile-head flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-sea/15 text-sea">
+                <div className="rotas-sidebar-v2-brand flex h-9 w-9 items-center justify-center rounded-full bg-sea/15 text-sea">
                   <MapPin size={18} />
                 </div>
                 <div>
@@ -447,7 +451,7 @@ export default function AppLayout() {
               <button
                 type="button"
                 onClick={() => setMobileMenuOpen(false)}
-                className="rounded-full border border-sea/20 bg-white/80 p-1 text-sea hover:border-sea"
+                className="rotas-sidebar-v2-toggle rounded-full border border-sea/20 bg-white/80 p-1 text-sea hover:border-sea"
                 aria-label="Fechar menu"
               >
                 <X size={16} />
@@ -457,7 +461,7 @@ export default function AppLayout() {
               <NotificationsBell />
             </div>
 
-            <div className="mt-5 rounded-2xl border border-sea/20 bg-sand/60 px-4 py-3">
+            <div className="rotas-sidebar-v2-profile rotas-sidebar-v2-mobile-profile mt-5 rounded-2xl border border-sea/20 bg-sand/60 px-4 py-3">
               <p className="text-xs text-ink/70">Colaborador</p>
               <p className="font-semibold text-ink">{resolvedDisplayName}</p>
               <p className="text-xs text-ink/60">{role ? ROLE_LABELS[role] : "Sem função"}</p>
@@ -468,7 +472,7 @@ export default function AppLayout() {
               </p>
             ) : null}
 
-            <nav className="mt-6 flex flex-col gap-2">
+            <nav aria-label="Navegação móvel" className="mt-6 flex flex-col gap-2">
               {visibleNavItems.map((item) => {
                   const Icon = item.icon;
                   return (
@@ -482,7 +486,7 @@ export default function AppLayout() {
                       }}
                       className={({ isActive }) =>
                         [
-                          "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold transition",
+                          "rotas-sidebar-v2-link flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold transition",
                           isActive
                             ? "bg-sea text-white shadow-lg shadow-sea/25"
                             : "bg-white/70 text-ink/70 hover:bg-sea/10 hover:text-sea",
@@ -499,12 +503,13 @@ export default function AppLayout() {
                   type="button"
                   onClick={() => setVendorSettingsOpen((prev) => !prev)}
                   className={[
-                    "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold transition",
+                    "rotas-sidebar-v2-vendor-settings flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold transition",
                     effectiveVendorSettingsOpen
                       ? "bg-sea text-white shadow-lg shadow-sea/25"
                       : "bg-white/70 text-ink/70 hover:bg-sea/10 hover:text-sea",
                   ].join(" ")}
                   aria-label="Configuracoes"
+                  aria-pressed={effectiveVendorSettingsOpen}
                 >
                   <Settings size={18} />
                   Configuracoes
@@ -512,14 +517,14 @@ export default function AppLayout() {
               ) : null}
             </nav>
 
-            <div className="mt-auto pt-6">
+            <div className="rotas-sidebar-v2-mobile-actions mt-auto pt-6">
               {enableVendorSettingsInSidebar ? (
                 effectiveVendorSettingsOpen ? (
                   <>
                     <button
                       type="button"
                       onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+                      className="rotas-sidebar-v2-action flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
                     >
                       {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
                       {theme === "dark" ? "Modo claro" : "Modo escuro"}
@@ -532,7 +537,7 @@ export default function AppLayout() {
                         setVendorSettingsOpen(false);
                         await signOut();
                       }}
-                      className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+                      className="rotas-sidebar-v2-action mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
                     >
                       <LogOut size={16} />
                       Sair
@@ -544,7 +549,7 @@ export default function AppLayout() {
                   <button
                     type="button"
                     onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+                    className="rotas-sidebar-v2-action flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
                   >
                     {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
                     {theme === "dark" ? "Modo claro" : "Modo escuro"}
@@ -556,7 +561,7 @@ export default function AppLayout() {
                       setMobileMenuOpen(false);
                       await signOut();
                     }}
-                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
+                    className="rotas-sidebar-v2-action mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-sea/30 bg-white/90 px-3 py-2 text-sm font-semibold text-ink transition hover:border-sea hover:text-sea"
                   >
                     <LogOut size={16} />
                     Sair
