@@ -9,6 +9,8 @@ import {
   type FilaPendingNotificationRow,
 } from "../lib/filaApi";
 import { formatDateTimeBr } from "../lib/dateFormat";
+import { startActivePolling } from "../lib/activePolling";
+import { createFilaNotificationPoller } from "../lib/filaNotificationPolling";
 
 const buildAlertText = (row: FilaPendingNotificationRow) => {
   const payload = row.payload ?? {};
@@ -101,6 +103,12 @@ const getDisplayEmpresa = (row: FilaPendingNotificationRow) => {
 
 export default function FilaAlertsModal() {
   const { role, session } = useAuth();
+  if (!session || (role !== "SUPERVISOR" && role !== "ASSISTENTE")) return null;
+  return <FilaAlertsForUser key={`${session.user.id}:${role}`} />;
+}
+
+function FilaAlertsForUser() {
+  const { role, session } = useAuth();
   const canView = role === "SUPERVISOR" || role === "ASSISTENTE";
   const currentUserId = session?.user.id ?? null;
   const [rows, setRows] = useState<FilaPendingNotificationRow[]>([]);
@@ -109,8 +117,6 @@ export default function FilaAlertsModal() {
   const [unavailable, setUnavailable] = useState(false);
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => readDismissedIds(currentUserId));
   const dismissedIdsRef = useRef<Set<string>>(dismissedIds);
-  const loadInFlightRef = useRef(false);
-  const lastGenerateAtRef = useRef(0);
 
   const setDismissedIdsSync = useCallback(
     (next: Set<string>) => {
@@ -127,56 +133,40 @@ export default function FilaAlertsModal() {
     setDismissedIds(next);
   }, [currentUserId]);
 
-  const loadNotifications = useCallback(async () => {
-    if (!canView || unavailable) return;
-    if (loadInFlightRef.current) return;
-    loadInFlightRef.current = true;
-    setLoading(true);
-    try {
-      const now = Date.now();
-      // Avoid hammering countdown generation endpoint during outages/timeouts.
-      if (now - lastGenerateAtRef.current > 10 * 60_000) {
-        try {
-          await generateFilaCountdownEvents();
-          lastGenerateAtRef.current = now;
-        } catch (error) {
-        }
-      }
-      const data = await fetchFilaPendingNotifications(50);
-      const dismissed = dismissedIdsRef.current;
-      setRows(data.filter((item) => !dismissed.has(item.event_id)));
-    } catch (error) {
-      const maybeError = error as { code?: string; message?: string };
-      if (isMissingFilaBackendError(maybeError)) {
+  useEffect(() => {
+    if (!canView || unavailable || !currentUserId) return;
+    let active = true;
+    const poller = createFilaNotificationPoller({
+      scope: `${currentUserId}:${role}`,
+      fetchRows: () => fetchFilaPendingNotifications(50),
+      generate: generateFilaCountdownEvents,
+      receive: (data) => setRows(data.filter((item) => !dismissedIdsRef.current.has(item.event_id))),
+      isActive: () => active,
+    });
+    const stop = startActivePolling(async () => {
+      setLoading(true);
+      try { await poller.poll(); } finally { if (active) setLoading(false); }
+    }, 30_000, (error) => {
+      if (isMissingFilaBackendError(error as { code?: string; message?: string })) {
         setUnavailable(true);
         setRows([]);
-        return;
       }
-    } finally {
-      setLoading(false);
-      loadInFlightRef.current = false;
-    }
-  }, [canView, unavailable]);
-
-  useEffect(() => {
-    if (!canView || unavailable) {
-      setRows([]);
-      return;
-    }
-    void loadNotifications();
-
-    const handleFocus = () => {
-      void loadNotifications();
+    });
+    const onDismissed = (event: StorageEvent) => {
+      if (event.key !== buildDismissedStorageKey(currentUserId)) return;
+      const next = readDismissedIds(currentUserId);
+      dismissedIdsRef.current = next;
+      setDismissedIds(next);
+      setRows((previous) => previous.filter((item) => !next.has(item.event_id)));
     };
-    const intervalId = window.setInterval(() => {
-      void loadNotifications();
-    }, 180_000);
-    window.addEventListener("focus", handleFocus);
+    window.addEventListener("storage", onDismissed);
     return () => {
-      window.removeEventListener("focus", handleFocus);
-      window.clearInterval(intervalId);
+      active = false;
+      stop();
+      poller.close();
+      window.removeEventListener("storage", onDismissed);
     };
-  }, [canView, loadNotifications, unavailable]);
+  }, [canView, currentUserId, role, unavailable]);
 
   const notifications = useMemo(
     () =>
@@ -235,7 +225,6 @@ export default function FilaAlertsModal() {
 
               try {
                 await Promise.allSettled(eventIds.map((eventId) => acknowledgeFilaNotification(eventId)));
-              } catch (error) {
               } finally {
                 setAcknowledging(false);
               }

@@ -7,7 +7,12 @@ import { formatDateBr } from "../lib/dateFormat";
 import { normalizeText } from "../lib/textNormalize";
 import { SUPERVISOR_VISIT_REASON_OPTIONS, VISIT_TYPE } from "../lib/supervisorVisits";
 import DashboardModal from "../components/DashboardModal";
+import { createDashboardLoader } from "../lib/dashboardData";
+import { startActivePolling } from "../lib/activePolling";
+import { DASHBOARD_DATA_CHANGED } from "../lib/dashboardCacheEvents";
 import { getLocalActionCompletions, getLocalActions, refreshLocalActionCompletions, refreshLocalActions, subscribeLocalActions, type LocalAction, type LocalActionCompletion } from "../lib/localActions";
+
+const dashboardLoader = createDashboardLoader(supabaseDash);
 
 const formatNumber = (value: number) => new Intl.NumberFormat("pt-BR").format(value);
 const startOfWeek = (date: Date) => {
@@ -852,46 +857,39 @@ export default function Dashboard() {
   }, [activeSupervisorId, canSelectSupervisor]);
 
   useEffect(() => {
+    if (!session?.user.id || !role) return;
+    let active = true;
+    let version = 0;
+    const scope = { userId: session.user.id, role };
     const load = async () => {
+      const requestVersion = ++version;
       setLoading(true);
       setError(null);
-      let query = supabaseDash
-        .from("v_dash_clientes_active")
-        .select("data_da_ultima_visita, situacao, bairro, cidade, uf, vendedor")
-        .limit(5000);
-
-      if (isVendor) {
-        const vendorDisplayName = profile?.display_name ? normalizeKey(profile.display_name) : null;
-        if (!vendorDisplayName) {
-          setRows([]);
-          setError("Perfil de vendedor sem nome de exibicao. Faca login novamente.");
-          setLoading(false);
-          return;
-        }
-        query = query.eq("vendedor", vendorDisplayName);
-      }
-
-      const { data, error: supabaseError } = await query;
-
-      if (supabaseError) {
-        const errorMessage = supabaseError.message ?? "";
-        if (isSessionExpiredError(errorMessage)) {
-          await signOut();
-          setError(SESSION_EXPIRED_FRIENDLY_MESSAGE);
-          setRows([]);
-          setLoading(false);
-          return;
-        }
-        setError(errorMessage);
+      try {
+        const data = await dashboardLoader.coverageClients(scope, isVendor && profile?.display_name ? normalizeKey(profile.display_name) : null);
+        if (active && requestVersion === version) setRows(data);
+      } catch (loadError) {
+        if (!active || requestVersion !== version) return;
+        const message = (loadError as { message?: string }).message ?? "Erro ao carregar empresas.";
+        if (isSessionExpiredError(message)) await signOut();
+        if (!active || requestVersion !== version) return;
+        setError(isSessionExpiredError(message) ? SESSION_EXPIRED_FRIENDLY_MESSAGE : message);
         setRows([]);
-      } else {
-        setRows(data ?? []);
+      } finally {
+        if (active && requestVersion === version) setLoading(false);
       }
-      setLoading(false);
     };
-
-    void load();
-  }, [isVendor, profile?.display_name, signOut]);
+    const stop = startActivePolling(load, 30_000, () => undefined, false);
+    const onChanged = () => {
+      if (document.visibilityState === "visible" && navigator.onLine) void load();
+    };
+    window.addEventListener(DASHBOARD_DATA_CHANGED, onChanged);
+    return () => {
+      active = false;
+      stop();
+      window.removeEventListener(DASHBOARD_DATA_CHANGED, onChanged);
+    };
+  }, [isVendor, profile?.display_name, role, session?.user.id, signOut]);
 
   useEffect(() => {
     let active = true;
