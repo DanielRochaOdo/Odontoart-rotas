@@ -624,7 +624,7 @@ export const syncFilaAutoRegistration = async (options?: {
 
       for (const candidate of candidates) {
         const codigo = (candidate.codigo ?? "").trim();
-        const baseLog = `[fila:auto-register] empresa_id=${candidate.id} codigo=${codigo || "-"}`;
+        const baseLog = `[fila:${"auto-register"}] empresa_id=${candidate.id} codigo=${codigo || "-"}`;
         const alreadyInQueue = controlledIds.has(candidate.id);
         if (registered >= maxRegistrations) break;
         lastProcessedCursor = candidate.created_at
