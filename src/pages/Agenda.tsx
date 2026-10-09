@@ -1,4 +1,5 @@
 import { createPortal } from "react-dom";
+import "./agenda-glass-v2.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
@@ -3762,13 +3763,17 @@ export default function Agenda() {
   }
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-display text-2xl text-ink">Rotas</h2>
+    <div className="rotas-agenda-v2 space-y-4 md:space-y-6">
+      <header className="rotas-agenda-v2-hero flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <span className="rotas-agenda-v2-eyebrow">ODONTOART · PLANEJAMENTO COMERCIAL</span>
+          <h2 className="font-display text-2xl text-ink">Rotas</h2>
+          <p className="mt-1 text-xs text-ink/65">Pesquisa, seleção de empresas e geração de visitas.</p>
+        </div>
       </header>
 
       <section className="p-0">
-        <div className="rounded-3xl border border-sea/15 bg-white/88 p-3 shadow-[0_16px_40px_rgba(2,6,23,0.12)] backdrop-blur md:p-4 dark:border-emerald-400/20 dark:bg-slate-950/95 dark:shadow-[0_16px_40px_rgba(2,6,23,0.28)]">
+        <div className="rotas-agenda-v2-shell rounded-3xl border border-sea/15 bg-white/88 p-3 shadow-[0_16px_40px_rgba(2,6,23,0.12)] backdrop-blur md:p-4 dark:border-emerald-400/20 dark:bg-slate-950/95 dark:shadow-[0_16px_40px_rgba(2,6,23,0.28)]">
           <div className="mb-2 border-b border-emerald-400/10 pb-2">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
@@ -3780,7 +3785,7 @@ export default function Agenda() {
           </div>
 
           <div className="space-y-3">
-            <div className="rounded-2xl border border-sea/15 bg-white/80 p-3 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
+            <div className="rotas-agenda-v2-filter-card rounded-2xl border border-sea/15 bg-white/80 p-3 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
               <div className="mb-2">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sea dark:text-emerald-300/90">
                   Busca rapida
@@ -3829,7 +3834,7 @@ export default function Agenda() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-sea/15 bg-white/80 p-3 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
+            <div className="rotas-agenda-v2-filter-card rounded-2xl border border-sea/15 bg-white/80 p-3 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
               <div className="mb-2">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sea dark:text-emerald-300/90">
                   Filtros de coluna
@@ -4009,7 +4014,7 @@ export default function Agenda() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-sea/15 bg-white/80 p-3 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
+            <div className="rotas-agenda-v2-filter-card rounded-2xl border border-sea/15 bg-white/80 p-3 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
               <div className="mb-2">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sea dark:text-emerald-300/90">
                   Classificacao e status
@@ -4080,7 +4085,7 @@ export default function Agenda() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-sea/15 bg-white/80 p-4 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
+            <div className="rotas-agenda-v2-filter-card rounded-2xl border border-sea/15 bg-white/80 p-4 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
               <div className="mb-4">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sea dark:text-emerald-300/90">
                   Vidas ultima visita
@@ -4144,7 +4149,7 @@ export default function Agenda() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-sea/15 bg-white/80 p-4 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
+            <div className="rotas-agenda-v2-filter-card rounded-2xl border border-sea/15 bg-white/80 p-4 text-ink dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
               <div className="mb-4">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sea dark:text-emerald-300/90">
                   Ultima visita
@@ -4296,7 +4301,7 @@ export default function Agenda() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 rounded-2xl border border-sea/15 bg-white/80 p-4 text-ink lg:flex-row lg:items-center lg:justify-between dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
+            <div className="rotas-agenda-v2-toolbar flex flex-col gap-3 rounded-2xl border border-sea/15 bg-white/80 p-4 text-ink lg:flex-row lg:items-center lg:justify-between dark:border-slate-700/70 dark:bg-slate-900/45 dark:text-slate-100">
               <div className="flex flex-wrap items-center gap-2">
                 {canGenerate && (
                   <button
@@ -4367,7 +4372,7 @@ export default function Agenda() {
       {columnChipRemovalModal &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="rotas-agenda-v2-portal fixed inset-0 z-50 flex items-center justify-center px-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4521,7 +4526,7 @@ export default function Agenda() {
       {selectedCompaniesModalOpen &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+          <div className="rotas-agenda-v2-portal fixed inset-0 z-[60] flex items-center justify-center px-4">
             <button
               type="button"
               className="absolute inset-0 bg-ink/40"
@@ -4579,7 +4584,7 @@ export default function Agenda() {
       {showGenerateModal &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="rotas-agenda-v2-portal fixed inset-0 z-50 flex items-center justify-center px-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4967,7 +4972,7 @@ export default function Agenda() {
       {eventWarning &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-0 z-[3300] flex items-center justify-center px-4">
+          <div className="rotas-agenda-v2-portal fixed inset-0 z-[3300] flex items-center justify-center px-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -5016,7 +5021,7 @@ export default function Agenda() {
       {inactiveCompaniesWarning && inactiveCompaniesWarning.length > 0 &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="rotas-agenda-v2-portal fixed inset-0 z-50 flex items-center justify-center px-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -5060,7 +5065,7 @@ export default function Agenda() {
       {visitRuleCompaniesWarning && visitRuleCompaniesWarning.length > 0 &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="rotas-agenda-v2-portal fixed inset-0 z-50 flex items-center justify-center px-4">
             <button
               type="button"
               className="absolute inset-0 bg-ink/30"
@@ -5104,7 +5109,7 @@ export default function Agenda() {
       {actionWarningDetails && actionWarningDetails.length > 0 &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="rotas-agenda-v2-portal fixed inset-0 z-50 flex items-center justify-center px-4">
             <button type="button" className="absolute inset-0 bg-ink/30" onClick={() => setActionWarningDetails(null)} aria-label="Fechar aviso de ação" />
             <div className="relative w-full max-w-xl rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
               <h3 className="font-display text-lg text-ink">Aviso de ação</h3>
@@ -5128,7 +5133,7 @@ export default function Agenda() {
       {scheduleModalRow &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="rotas-agenda-v2-portal fixed inset-0 z-50 flex items-center justify-center px-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -5380,7 +5385,7 @@ export default function Agenda() {
       {detailsModalRow &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 py-4">
+          <div className="rotas-agenda-v2-portal fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 py-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -5517,7 +5522,7 @@ export default function Agenda() {
       {planoValoresModal &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-y-0 left-0 right-0 z-[60] flex items-center justify-center px-4 md:left-[var(--sidebar-width)]">
+          <div className="rotas-agenda-v2-portal fixed inset-y-0 left-0 right-0 z-[60] flex items-center justify-center px-4 md:left-[var(--sidebar-width)]">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -5574,7 +5579,7 @@ export default function Agenda() {
       {vendorHistoryModal &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-y-0 left-0 right-0 z-[60] flex items-center justify-center px-4 md:left-[var(--sidebar-width)]">
+          <div className="rotas-agenda-v2-portal fixed inset-y-0 left-0 right-0 z-[60] flex items-center justify-center px-4 md:left-[var(--sidebar-width)]">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -5628,7 +5633,7 @@ export default function Agenda() {
       {kpiImportValuesModal &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-y-0 left-0 right-0 z-[60] flex items-center justify-center px-4 md:left-[var(--sidebar-width)]">
+          <div className="rotas-agenda-v2-portal fixed inset-y-0 left-0 right-0 z-[60] flex items-center justify-center px-4 md:left-[var(--sidebar-width)]">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -5712,7 +5717,7 @@ export default function Agenda() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-sea/15 bg-white/90">
+      <div className="rotas-agenda-v2-results rounded-2xl border border-sea/15 bg-white/90">
         <div className="md:hidden">
           {!hasSearched ? (
             <div className="px-4 py-6 text-center text-sm text-ink/60">
@@ -5747,7 +5752,7 @@ export default function Agenda() {
                         setSelectedRow(row);
                       }
                     }}
-                    className="w-full rounded-2xl border border-sea/15 bg-white/95 p-5 text-left shadow-sm transition hover:shadow-card focus:outline-none focus:ring-2 focus:ring-sea/50"
+                    className="rotas-agenda-v2-list-item w-full rounded-2xl border border-sea/15 bg-white/95 p-5 text-left shadow-sm transition hover:shadow-card focus:outline-none focus:ring-2 focus:ring-sea/50"
                   >
                     <div className="space-y-3">
                       <div className="flex items-start justify-between gap-2">
@@ -6020,7 +6025,7 @@ export default function Agenda() {
                         setSelectedRowId(original.id);
                       }
                     }}
-                    className={`group rounded-2xl border bg-white/95 px-4 py-3 text-left shadow-sm transition hover:shadow-card focus:outline-none focus:ring-2 focus:ring-sea/40 ${
+                    className={`rotas-agenda-v2-list-item group rounded-2xl border bg-white/95 px-4 py-3 text-left shadow-sm transition hover:shadow-card focus:outline-none focus:ring-2 focus:ring-sea/40 ${
                       isSelected ? "border-sea/40 ring-1 ring-sea/20" : "border-sea/15"
                     }`}
                   >
