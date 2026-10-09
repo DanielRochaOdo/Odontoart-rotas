@@ -1,0 +1,359 @@
+/* Odontoart Rotas — Configurações Glass V2.
+ * Escopo fechado em Settings.tsx. Regras de acesso, cadastro, ERP,
+ * eventos e reset de sessões não são modificadas. */
+.rotas-settings-v2 {
+  --sv2-pane: rgba(243, 255, 250, .47);
+  --sv2-strong: rgba(252, 255, 253, .68);
+  --sv2-soft: rgba(247, 255, 251, .57);
+  --sv2-row: rgba(252, 255, 253, .81);
+  --sv2-field: rgba(254, 255, 253, .86);
+  --sv2-border: rgba(255, 255, 255, .84);
+  --sv2-glint: rgba(255, 255, 255, .96);
+  --sv2-shadow: rgba(7, 73, 65, .16);
+  --sv2-glow: rgba(27, 219, 157, .19);
+  position: relative;
+  min-width: 0;
+  padding: clamp(12px, 2.1vw, 28px);
+  border: 1px solid rgba(255, 255, 255, .66);
+  border-radius: 28px;
+  background:
+    radial-gradient(ellipse 50% 25% at 1% 2%, rgba(37, 225, 165, .56), transparent 84%),
+    radial-gradient(ellipse 47% 28% at 99% 12%, rgba(65, 173, 232, .46), transparent 85%),
+    radial-gradient(ellipse 59% 35% at 50% 74%, rgba(91, 223, 179, .28), transparent 84%),
+    linear-gradient(139deg, #c7ebde, #d8eaf1 51%, #d7f1e5);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85), 0 25px 64px rgba(9, 63, 57, .11);
+}
+.dark .rotas-settings-v2 {
+  --sv2-pane: rgba(8, 35, 44, .34);
+  --sv2-strong: rgba(10, 41, 49, .51);
+  --sv2-soft: rgba(11, 44, 53, .46);
+  --sv2-row: rgba(11, 35, 44, .87);
+  --sv2-field: rgba(9, 32, 42, .91);
+  --sv2-border: rgba(210, 255, 237, .31);
+  --sv2-glint: rgba(255, 255, 255, .31);
+  --sv2-shadow: rgba(0, 0, 0, .39);
+  --sv2-glow: rgba(26, 226, 163, .18);
+  border-color: rgba(201, 255, 237, .18);
+  background:
+    radial-gradient(ellipse 51% 29% at 0% 0%, rgba(14, 209, 152, .40), transparent 84%),
+    radial-gradient(ellipse 47% 28% at 100% 12%, rgba(27, 141, 204, .41), transparent 84%),
+    radial-gradient(ellipse 63% 35% at 49% 75%, rgba(15, 149, 111, .24), transparent 85%),
+    linear-gradient(138deg, #061721, #112f39 53%, #071b23);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .15), 0 27px 69px rgba(0, 0, 0, .29);
+}
+
+/* Cabeçalho, barra de abas e painéis das cinco áreas. */
+.rotas-settings-v2 > .rotas-settings-v2-hero,
+.rotas-settings-v2 > .rotas-settings-v2-navigation,
+.rotas-settings-v2 .rotas-settings-v2-section {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--sv2-border) !important;
+  background:
+    linear-gradient(130deg, rgba(255, 255, 255, .27), rgba(255, 255, 255, .022) 49%, rgba(255, 255, 255, .09)),
+    var(--sv2-pane) !important;
+  box-shadow: inset 0 1px 0 var(--sv2-glint), inset 0 -1px 0 rgba(255, 255, 255, .10),
+              0 17px 45px var(--sv2-shadow), 0 2px 6px rgba(0, 0, 0, .07);
+  -webkit-backdrop-filter: blur(37px) saturate(186%);
+  backdrop-filter: blur(37px) saturate(186%);
+}
+.rotas-settings-v2 > .rotas-settings-v2-hero {
+  padding: clamp(15px, 2vw, 24px);
+  border-radius: 23px;
+  background:
+    radial-gradient(ellipse at 0% -40%, rgba(62, 241, 181, .22), transparent 58%),
+    linear-gradient(132deg, rgba(255, 255, 255, .38), rgba(255, 255, 255, .020) 62%),
+    var(--sv2-strong) !important;
+  box-shadow: inset 0 1px 0 var(--sv2-glint), 0 21px 48px var(--sv2-shadow), 0 0 33px var(--sv2-glow);
+  -webkit-backdrop-filter: blur(43px) saturate(195%);
+  backdrop-filter: blur(43px) saturate(195%);
+}
+.rotas-settings-v2-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 11px;
+  margin-bottom: 9px;
+  border: 1px solid rgba(35, 203, 148, .37);
+  border-radius: 999px;
+  background: rgba(23, 192, 141, .14);
+  color: #12694f;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .59);
+}
+.rotas-settings-v2-eyebrow::before {
+  content: "";
+  width: 7px; height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: #36e5aa;
+  box-shadow: 0 0 13px rgba(30, 218, 157, .83);
+}
+.dark .rotas-settings-v2-eyebrow {
+  color: #b3ffe2;
+  background: rgba(29, 197, 143, .15);
+  border-color: rgba(164, 255, 225, .32);
+}
+.rotas-settings-v2 > .rotas-settings-v2-navigation {
+  padding: clamp(11px, 1.7vw, 18px);
+  border-radius: 21px;
+  background:
+    linear-gradient(130deg, rgba(255, 255, 255, .24), transparent 72%),
+    var(--sv2-strong) !important;
+}
+.rotas-settings-v2 .rotas-settings-v2-section {
+  padding: clamp(13px, 1.9vw, 21px);
+  border-radius: 23px;
+  background:
+    radial-gradient(ellipse 35% 20% at 0% 0%, rgba(44, 220, 161, .12), transparent 85%),
+    linear-gradient(128deg, rgba(255, 255, 255, .22), transparent 67%),
+    var(--sv2-pane) !important;
+}
+.rotas-settings-v2 .rotas-settings-v2-section > h3,
+.rotas-settings-v2 .rotas-settings-v2-section > header > h3 {
+  letter-spacing: -.025em;
+}
+
+/* Abas ativas guardam destaque esmeralda; ações com alerta permanecem âmbar. */
+.rotas-settings-v2 .rotas-settings-v2-tab {
+  border: 1px solid var(--sv2-border) !important;
+  background: var(--sv2-field) !important;
+  color: rgb(var(--theme-text)) !important;
+  box-shadow: inset 0 1px 0 var(--sv2-glint), 0 5px 15px var(--sv2-shadow);
+  -webkit-backdrop-filter: blur(20px) saturate(165%);
+  backdrop-filter: blur(20px) saturate(165%);
+  transition: border-color 170ms ease, box-shadow 170ms ease;
+}
+.rotas-settings-v2 .rotas-settings-v2-tab[data-tab-selected="true"] {
+  background: linear-gradient(135deg, #13b987, #0d9579) !important;
+  border-color: rgba(214, 255, 241, .83) !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .33),
+              0 0 22px var(--sv2-glow), 0 6px 17px rgba(8, 133, 96, .19);
+}
+.rotas-settings-v2 .rotas-settings-v2-tab:hover {
+  border-color: rgba(81, 237, 188, .73) !important;
+}
+.rotas-settings-v2 .rotas-settings-v2-navigation :is(input:not([type="checkbox"]), select),
+.rotas-settings-v2 .rotas-settings-v2-navigation button[class~="bg-white"],
+.rotas-settings-v2 .rotas-settings-v2-section :is(input:not([type="checkbox"]):not([type="file"]), select, textarea),
+.rotas-settings-v2 .rotas-settings-v2-section button[class~="bg-white"],
+.rotas-settings-v2 .rotas-settings-v2-modal button[class~="bg-white"] {
+  background: var(--sv2-field) !important;
+  color: rgb(var(--theme-text)) !important;
+  border-color: var(--sv2-border) !important;
+  box-shadow: inset 0 1px 0 var(--sv2-glint), 0 4px 13px var(--sv2-shadow);
+}
+.rotas-settings-v2 :is(input, select, textarea, button):focus-visible {
+  outline: 2px solid rgb(var(--theme-accent-action));
+  outline-offset: 3px;
+}
+.rotas-settings-v2 select option {
+  color: rgb(var(--theme-text));
+  background: rgb(var(--theme-surface-strong));
+}
+.rotas-settings-v2 .rotas-settings-v2-section button:disabled,
+.rotas-settings-v2 .rotas-settings-v2-navigation button:disabled {
+  box-shadow: none;
+}
+
+/* Usuários: linhas sólidas, destaque suave sem desfoque individual. */
+.rotas-settings-v2 .rotas-settings-v2-person {
+  background:
+    linear-gradient(125deg, rgba(255, 255, 255, .07), transparent 70%),
+    var(--sv2-row) !important;
+  border: 1px solid var(--sv2-border) !important;
+  box-shadow: inset 0 1px 0 var(--sv2-glint), 0 5px 16px rgba(6, 60, 53, .08);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+.rotas-settings-v2 .rotas-settings-v2-person:hover {
+  border-color: rgba(70, 222, 168, .60) !important;
+  box-shadow: inset 0 1px 0 var(--sv2-glint), 0 10px 24px var(--sv2-shadow);
+}
+.dark .rotas-settings-v2 .rotas-settings-v2-section .bg-emerald-50 {
+  background: rgba(18, 119, 82, .28) !important;
+  color: #b9ffe1 !important;
+  border-color: rgba(95, 231, 167, .33) !important;
+}
+.dark .rotas-settings-v2 .rotas-settings-v2-section .bg-amber-50 {
+  background: rgba(151, 93, 21, .32) !important;
+  color: #ffe2aa !important;
+  border-color: rgba(244, 187, 106, .38) !important;
+}
+.dark .rotas-settings-v2 .rotas-settings-v2-section .bg-red-50 {
+  background: rgba(138, 40, 46, .35) !important;
+  color: #ffd0d0 !important;
+  border-color: rgba(238, 119, 119, .36) !important;
+}
+
+/* ERP: limites e progresso ficam claros; campos alterados mantêm verde. */
+.rotas-settings-v2 .rotas-settings-v2-erp-pane,
+.rotas-settings-v2 .rotas-settings-v2-event-pane {
+  border: 1px solid var(--sv2-border) !important;
+  background:
+    linear-gradient(133deg, rgba(255, 255, 255, .18), transparent 67%),
+    var(--sv2-soft) !important;
+  box-shadow: inset 0 1px 0 var(--sv2-glint), 0 11px 29px var(--sv2-shadow);
+  -webkit-backdrop-filter: blur(27px) saturate(174%);
+  backdrop-filter: blur(27px) saturate(174%);
+}
+.rotas-settings-v2 .rotas-settings-v2-erp-result {
+  border: 1px solid var(--sv2-border) !important;
+  background: var(--sv2-row) !important;
+  box-shadow: inset 0 1px 0 var(--sv2-glint), 0 5px 16px rgba(9, 62, 56, .09);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+.rotas-settings-v2 .rotas-settings-v2-erp-progress {
+  border-color: rgba(114, 203, 168, .33) !important;
+  background: var(--sv2-soft) !important;
+  box-shadow: inset 0 1px 0 var(--sv2-glint);
+}
+
+/* Eventos: células legíveis; verde para dia selecionado, âmbar quando
+ * possui evento. Não tocar nas ações de calendário. */
+.rotas-settings-v2 .rotas-settings-v2-calendar-day {
+  border-color: var(--sv2-border);
+  box-shadow: inset 0 1px 0 var(--sv2-glint), 0 3px 9px rgba(5, 58, 49, .08);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  transition: border-color 170ms ease, box-shadow 170ms ease;
+}
+.rotas-settings-v2 .rotas-settings-v2-calendar-day[data-calendar-selected="false"][data-has-events="false"] {
+  background: var(--sv2-row) !important;
+  color: rgb(var(--theme-text)) !important;
+  border-color: var(--sv2-border) !important;
+}
+.rotas-settings-v2 .rotas-settings-v2-calendar-day[data-calendar-selected="true"] {
+  background: linear-gradient(133deg, rgba(40, 225, 169, .24), rgba(28, 164, 131, .17)) !important;
+  color: rgb(var(--theme-text)) !important;
+  border-color: rgba(34, 213, 152, .78) !important;
+  box-shadow: inset 0 1px 0 var(--sv2-glint), 0 0 0 2px rgba(45, 229, 173, .16), 0 8px 23px var(--sv2-glow);
+}
+.dark .rotas-settings-v2 .rotas-settings-v2-calendar-day[data-calendar-selected="true"] {
+  color: #baffea !important;
+}
+.rotas-settings-v2 .rotas-settings-v2-calendar-day[data-calendar-selected="false"][data-has-events="true"] {
+  background: rgba(255, 229, 158, .78) !important;
+  color: #70460c !important;
+  border-color: rgba(217, 157, 46, .71) !important;
+}
+.dark .rotas-settings-v2 .rotas-settings-v2-calendar-day[data-calendar-selected="false"][data-has-events="true"] {
+  background: rgba(116, 75, 22, .83) !important;
+  color: #ffebc6 !important;
+  border-color: rgba(248, 181, 84, .58) !important;
+}
+.rotas-settings-v2 .rotas-settings-v2-calendar-day:hover {
+  border-color: rgba(50, 228, 171, .74) !important;
+  box-shadow: inset 0 1px 0 var(--sv2-glint), 0 9px 24px var(--sv2-shadow);
+}
+
+/* Evento e acao local: sem blur por linha ou substituição da cor de excluir. */
+.rotas-settings-v2 .rotas-settings-v2-event-item {
+  background: var(--sv2-row) !important;
+  border: 1px solid var(--sv2-border) !important;
+  box-shadow: inset 0 1px 0 var(--sv2-glint);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Janela de reset fica sob Settings (sem transform/isolation no pai). */
+.rotas-settings-v2 .rotas-settings-v2-modal {
+  background: rgba(5, 28, 36, .48) !important;
+  -webkit-backdrop-filter: blur(11px) saturate(139%);
+  backdrop-filter: blur(11px) saturate(139%);
+}
+.rotas-settings-v2 .rotas-settings-v2-modal > .rotas-settings-v2-dialog {
+  max-height: calc(100dvh - 28px);
+  overflow-y: auto;
+  border: 1px solid rgba(225, 255, 243, .81) !important;
+  background:
+    linear-gradient(131deg, rgba(255, 255, 255, .31), rgba(255, 255, 255, .019) 59%),
+    rgba(240, 255, 250, .91) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .97), 0 30px 77px rgba(0, 32, 28, .30),
+              0 0 32px rgba(19, 215, 150, .12);
+  -webkit-backdrop-filter: blur(41px) saturate(188%);
+  backdrop-filter: blur(41px) saturate(188%);
+}
+.dark .rotas-settings-v2 .rotas-settings-v2-modal > .rotas-settings-v2-dialog {
+  border-color: rgba(196, 255, 234, .34) !important;
+  background:
+    linear-gradient(133deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, .011) 59%),
+    rgba(7, 30, 40, .94) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .29), 0 31px 81px rgba(0, 0, 0, .53),
+              0 0 32px rgba(18, 215, 147, .14);
+}
+.rotas-settings-v2 .rotas-settings-v2-modal > .rotas-settings-v2-dialog > div > button[class~="bg-white"] {
+  background: var(--sv2-field) !important;
+  color: rgb(var(--theme-text)) !important;
+  border-color: var(--sv2-border) !important;
+}
+.rotas-settings-v2 .rotas-settings-v2-modal .rotas-settings-v2-person {
+  background: var(--sv2-row) !important;
+}
+.rotas-settings-v2 .rotas-settings-v2-modal .bg-amber-50 { color: #925a0e; }
+.dark .rotas-settings-v2 .rotas-settings-v2-modal .bg-amber-50 {
+  background: rgba(145, 87, 23, .34) !important;
+  color: #ffe1ac !important;
+  border-color: rgba(237, 173, 81, .46) !important;
+}
+
+/* Solidez quando efeitos não são suportados ou transparência é reduzida. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .rotas-settings-v2, .dark .rotas-settings-v2 {
+    --sv2-pane: rgb(var(--theme-surface-strong) / .96);
+    --sv2-strong: rgb(var(--theme-surface-strong) / .99);
+    --sv2-soft: rgb(var(--theme-surface-strong) / .97);
+    --sv2-row: rgb(var(--theme-surface-strong) / .99);
+    --sv2-field: rgb(var(--theme-surface-strong) / .99);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .rotas-settings-v2, .dark .rotas-settings-v2 {
+    --sv2-pane: rgb(var(--theme-surface-strong) / .97);
+    --sv2-strong: rgb(var(--theme-surface-strong) / .99);
+    --sv2-soft: rgb(var(--theme-surface-strong) / .98);
+    --sv2-row: rgb(var(--theme-surface-strong) / .99);
+    --sv2-field: rgb(var(--theme-surface-strong) / .99);
+  }
+  .rotas-settings-v2 :is(.rotas-settings-v2-hero, .rotas-settings-v2-navigation, .rotas-settings-v2-section,
+                         .rotas-settings-v2-erp-pane, .rotas-settings-v2-event-pane, .rotas-settings-v2-dialog) {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rotas-settings-v2 .rotas-settings-v2-tab,
+  .rotas-settings-v2 .rotas-settings-v2-calendar-day { transition: none; }
+}
+@media (max-width: 640px) {
+  .rotas-settings-v2 { padding: 11px; border-radius: 18px; }
+  .rotas-settings-v2 > .rotas-settings-v2-hero { border-radius: 18px; padding: 14px; }
+  .rotas-settings-v2 > .rotas-settings-v2-navigation { border-radius: 18px; padding: 11px; }
+  .rotas-settings-v2 .rotas-settings-v2-section { border-radius: 18px; padding: 12px; }
+  .rotas-settings-v2 .rotas-settings-v2-navigation > div { min-width: 0; }
+  .rotas-settings-v2 .rotas-settings-v2-navigation input[type="search"] { width: 100%; }
+  .rotas-settings-v2 .rotas-settings-v2-modal { padding: 9px; }
+  .rotas-settings-v2 .rotas-settings-v2-modal > .rotas-settings-v2-dialog {
+    padding: 13px; max-height: calc(100dvh - 18px);
+  }
+}
+@media print {
+  .rotas-settings-v2, .dark .rotas-settings-v2 {
+    background: #fff !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+  .rotas-settings-v2 :is(.rotas-settings-v2-hero, .rotas-settings-v2-navigation, .rotas-settings-v2-section,
+                         .rotas-settings-v2-person, .rotas-settings-v2-erp-pane, .rotas-settings-v2-erp-result,
+                         .rotas-settings-v2-event-pane, .rotas-settings-v2-calendar-day, .rotas-settings-v2-event-item) {
+    background: #fff !important;
+    box-shadow: none !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  .rotas-settings-v2 .rotas-settings-v2-modal { display: none !important; }
+}
