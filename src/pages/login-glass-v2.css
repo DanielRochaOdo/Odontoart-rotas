@@ -1,0 +1,291 @@
+/* Odontoart Rotas · Login Glass V2
+ * Aparência isolada da autenticação. signIn, bloqueios e redirecionamento intactos.
+ * Tema determinado pela classe já existente rotas-login-v2--dark. */
+.rotas-login-v2 {
+  --login-v2-pane: rgba(247, 255, 251, .46);
+  --login-v2-strong: rgba(251, 255, 254, .69);
+  --login-v2-inner: rgba(247, 255, 251, .48);
+  --login-v2-field: rgba(253, 255, 254, .85);
+  --login-v2-border: rgba(255, 255, 255, .82);
+  --login-v2-highlight: rgba(255, 255, 255, .96);
+  --login-v2-shadow: rgba(6, 77, 67, .18);
+  --login-v2-glow: rgba(17, 214, 151, .20);
+  --login-v2-heading: #103f34;
+  --login-v2-text: #1d4d43;
+  --login-v2-muted: #466e62;
+  min-height: 100vh;
+  min-height: 100dvh;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  color: var(--login-v2-text);
+  background:
+    radial-gradient(ellipse 40% 42% at -4% 3%, rgba(25, 221, 159, .72), transparent 79%),
+    radial-gradient(ellipse 41% 43% at 105% 11%, rgba(77, 184, 239, .50), transparent 80%),
+    radial-gradient(ellipse 51% 45% at 52% 97%, rgba(89, 236, 174, .33), transparent 83%),
+    linear-gradient(135deg, #bbe7d6 0%, #d9edf0 52%, #d4f4e4 100%) !important;
+}
+.rotas-login-v2.rotas-login-v2--dark {
+  --login-v2-pane: rgba(8, 34, 42, .43);
+  --login-v2-strong: rgba(10, 39, 47, .63);
+  --login-v2-inner: rgba(12, 46, 51, .50);
+  --login-v2-field: rgba(6, 29, 38, .84);
+  --login-v2-border: rgba(191, 255, 231, .30);
+  --login-v2-highlight: rgba(255, 255, 255, .27);
+  --login-v2-shadow: rgba(0, 0, 0, .39);
+  --login-v2-glow: rgba(17, 228, 158, .20);
+  --login-v2-heading: #f0fff9;
+  --login-v2-text: #d5f4e7;
+  --login-v2-muted: #b1d8cc;
+  color-scheme: dark;
+  background:
+    radial-gradient(ellipse 47% 46% at -6% 1%, rgba(9, 191, 137, .43), transparent 81%),
+    radial-gradient(ellipse 47% 47% at 105% 13%, rgba(20, 135, 194, .40), transparent 84%),
+    radial-gradient(ellipse 55% 47% at 49% 100%, rgba(12, 129, 99, .31), transparent 83%),
+    linear-gradient(135deg, #041721 0%, #102d36 54%, #051a21 100%) !important;
+}
+/* Halos e trama decorativos ao fundo, sem capturar cliques ou foco. */
+.rotas-login-v2::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  inset: -15% -9%;
+  background:
+    radial-gradient(circle 23rem at 13% 21%, rgba(35, 239, 171, .28), transparent 79%),
+    radial-gradient(circle 26rem at 88% 69%, rgba(62, 184, 234, .27), transparent 81%);
+  filter: blur(15px);
+}
+.rotas-login-v2::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  inset: 0;
+  background-image: linear-gradient(rgba(255, 255, 255, .15) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(255, 255, 255, .15) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(ellipse at 49% 42%, #000, transparent 74%);
+  mask-image: radial-gradient(ellipse at 49% 42%, #000, transparent 74%);
+  opacity: .24;
+}
+.rotas-login-v2 .rotas-login-v2-layout {
+  position: relative;
+  z-index: 1;
+  gap: clamp(24px, 5vw, 76px);
+  padding: max(30px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right))
+           max(30px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+}
+.rotas-login-v2 .rotas-login-v2-intro {
+  width: 100%;
+  padding: clamp(18px, 3vw, 39px);
+  border: 1px solid var(--login-v2-border);
+  border-radius: 29px;
+  background:
+    linear-gradient(139deg, rgba(255, 255, 255, .26), transparent 57%),
+    var(--login-v2-pane);
+  box-shadow: inset 0 1px 0 var(--login-v2-highlight), 0 19px 48px var(--login-v2-shadow);
+  -webkit-backdrop-filter: blur(35px) saturate(187%);
+  backdrop-filter: blur(35px) saturate(187%);
+}
+.rotas-login-v2 .rotas-login-v2-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  border: 1px solid rgba(28, 211, 153, .38);
+  border-radius: 999px;
+  background: rgba(25, 187, 134, .13);
+  color: var(--login-v2-heading) !important;
+  font-weight: 800;
+  letter-spacing: .19em;
+  box-shadow: inset 0 1px 0 var(--login-v2-highlight), 0 0 22px rgba(39, 226, 159, .10);
+}
+.rotas-login-v2 .rotas-login-v2-eyebrow::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: #29e4a2;
+  box-shadow: 0 0 13px rgba(15, 223, 148, .92);
+}
+.rotas-login-v2 .rotas-login-v2-title {
+  color: var(--login-v2-heading) !important;
+  font-size: clamp(2.35rem, 5vw, 4.45rem);
+  line-height: 1.04;
+  letter-spacing: -.065em;
+  font-weight: 800;
+  text-wrap: balance;
+  text-shadow: 0 8px 28px rgba(9, 118, 82, .09);
+}
+.rotas-login-v2 .rotas-login-v2-copy {
+  color: var(--login-v2-text) !important;
+  line-height: 1.65;
+  max-width: 40ch;
+}
+.rotas-login-v2 .rotas-login-v2-note {
+  position: relative;
+  border-color: var(--login-v2-border) !important;
+  background:
+    linear-gradient(133deg, rgba(255, 255, 255, .20), transparent 72%),
+    var(--login-v2-inner) !important;
+  box-shadow: inset 0 1px 0 var(--login-v2-highlight), 0 12px 28px var(--login-v2-shadow);
+  -webkit-backdrop-filter: blur(25px) saturate(174%);
+  backdrop-filter: blur(25px) saturate(174%);
+}
+.rotas-login-v2 .rotas-login-v2-note-title { color: var(--login-v2-heading) !important; }
+.rotas-login-v2 .rotas-login-v2-note-text { color: var(--login-v2-muted) !important; }
+
+/* Formulário suspenso: maior densidade para manter leitura do e-mail e senha. */
+.rotas-login-v2 .rotas-login-v2-panel {
+  position: relative;
+  min-width: 0;
+  border-radius: 29px;
+  border: 1px solid var(--login-v2-border) !important;
+  background:
+    radial-gradient(ellipse 80% 28% at 10% -12%, rgba(70, 242, 184, .23), transparent 75%),
+    linear-gradient(136deg, rgba(255, 255, 255, .32), rgba(255, 255, 255, .025) 53%, rgba(255, 255, 255, .10)),
+    var(--login-v2-strong) !important;
+  box-shadow: inset 0 2px 0 var(--login-v2-highlight), inset 0 -1px 0 rgba(255, 255, 255, .08),
+              0 27px 74px var(--login-v2-shadow), 0 0 38px var(--login-v2-glow) !important;
+  -webkit-backdrop-filter: blur(46px) saturate(196%);
+  backdrop-filter: blur(46px) saturate(196%);
+}
+.rotas-login-v2 .rotas-login-v2-panel::before {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  inset: 0 17% auto 17%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .86), transparent);
+}
+.rotas-login-v2 .rotas-login-v2-panel-title {
+  color: var(--login-v2-heading) !important;
+  letter-spacing: -.035em;
+}
+.rotas-login-v2 .rotas-login-v2-panel-copy {
+  color: var(--login-v2-muted) !important;
+  line-height: 1.5;
+}
+.rotas-login-v2 .rotas-login-v2-label { color: var(--login-v2-heading) !important; }
+.rotas-login-v2 .rotas-login-v2-input {
+  min-height: 46px;
+  color: var(--login-v2-heading) !important;
+  caret-color: #13d59d;
+  background: var(--login-v2-field) !important;
+  border: 1px solid var(--login-v2-border) !important;
+  box-shadow: inset 0 1px 0 var(--login-v2-highlight), 0 5px 16px rgba(8, 60, 51, .10);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  transition: box-shadow 150ms ease, border-color 150ms ease;
+}
+.rotas-login-v2 .rotas-login-v2-input::placeholder { color: var(--login-v2-muted) !important; opacity: .74; }
+.rotas-login-v2 .rotas-login-v2-input:focus-visible {
+  outline: 2px solid rgba(13, 194, 136, .72) !important;
+  outline-offset: 2px;
+  border-color: #17d497 !important;
+  box-shadow: inset 0 1px 0 var(--login-v2-highlight), 0 0 0 5px rgba(23, 215, 151, .15),
+              0 6px 20px var(--login-v2-shadow);
+}
+.rotas-login-v2 .rotas-login-v2-password-toggle {
+  color: var(--login-v2-muted) !important;
+  background: transparent;
+  border-left: 1px solid var(--login-v2-border);
+  transition: color 150ms ease, background-color 150ms ease;
+}
+.rotas-login-v2 .rotas-login-v2-password-toggle:hover,
+.rotas-login-v2 .rotas-login-v2-password-toggle:focus-visible {
+  color: #18bf8e !important;
+  background: rgba(23, 205, 146, .10) !important;
+  outline: 2px solid rgba(31, 213, 151, .53);
+  outline-offset: 1px;
+}
+.rotas-login-v2 .rotas-login-v2-error {
+  border: 1px solid rgba(226, 90, 91, .45);
+  border-radius: 12px;
+  padding: 11px 12px;
+  background: rgba(255, 221, 221, .79);
+  color: #902b37 !important;
+}
+.rotas-login-v2.rotas-login-v2--dark .rotas-login-v2-error {
+  color: #ffd6d8 !important;
+  background: rgba(122, 36, 49, .40);
+  border-color: rgba(255, 156, 165, .40);
+}
+.rotas-login-v2 .rotas-login-v2-submit {
+  min-height: 46px;
+  border: 1px solid rgba(214, 255, 240, .83) !important;
+  color: #063c2f !important;
+  background: linear-gradient(135deg, #b3ffdf, #3de4aa 48%, #16bc89) !important;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .61), 0 12px 28px rgba(9, 168, 117, .28),
+              0 0 23px rgba(32, 232, 164, .15) !important;
+  transition: transform 170ms ease, box-shadow 170ms ease, filter 170ms ease;
+}
+.rotas-login-v2 .rotas-login-v2-submit:not(:disabled):hover {
+  transform: translateY(-2px);
+  filter: brightness(1.035);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .73), 0 17px 34px rgba(9, 168, 117, .33),
+              0 0 30px rgba(29, 223, 156, .23) !important;
+}
+.rotas-login-v2 .rotas-login-v2-submit:focus-visible {
+  outline: 2px solid #13d797;
+  outline-offset: 3px;
+}
+.rotas-login-v2 .rotas-login-v2-submit:disabled { transform: none; filter: none; box-shadow: none !important; }
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .rotas-login-v2 .rotas-login-v2-panel,
+  .rotas-login-v2 .rotas-login-v2-intro,
+  .rotas-login-v2 .rotas-login-v2-note {
+    background: rgb(var(--theme-surface-strong) / .96) !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .rotas-login-v2 .rotas-login-v2-panel,
+  .rotas-login-v2 .rotas-login-v2-intro,
+  .rotas-login-v2 .rotas-login-v2-note {
+    background: rgb(var(--theme-surface-strong) / .98) !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .rotas-login-v2::before, .rotas-login-v2::after { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rotas-login-v2 .rotas-login-v2-input,
+  .rotas-login-v2 .rotas-login-v2-password-toggle,
+  .rotas-login-v2 .rotas-login-v2-submit { transition: none; }
+  .rotas-login-v2 .rotas-login-v2-submit:hover { transform: none; }
+}
+@media (max-width: 1023px) {
+  .rotas-login-v2 .rotas-login-v2-layout { gap: 21px; padding-top: 27px; padding-bottom: 27px; }
+  .rotas-login-v2 .rotas-login-v2-intro { max-width: 520px; }
+  .rotas-login-v2 .rotas-login-v2-title { font-size: clamp(2.15rem, 7vw, 3.3rem); }
+  .rotas-login-v2 .rotas-login-v2-panel { max-width: 520px; margin-top: 0; }
+}
+@media (max-width: 640px) {
+  .rotas-login-v2 .rotas-login-v2-layout {
+    padding: max(16px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+             max(22px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    gap: 15px;
+  }
+  .rotas-login-v2 .rotas-login-v2-intro { border-radius: 19px; padding: 18px; }
+  .rotas-login-v2 .rotas-login-v2-panel { border-radius: 20px; padding: 22px 19px; }
+  .rotas-login-v2 .rotas-login-v2-title { margin-top: 12px; font-size: 2.3rem; }
+  .rotas-login-v2 .rotas-login-v2-note { margin-top: 15px; padding: 13px; }
+}
+@media print {
+  .rotas-login-v2, .rotas-login-v2.rotas-login-v2--dark {
+    background: #fff !important; color: #111 !important;
+  }
+  .rotas-login-v2::before, .rotas-login-v2::after { display: none; }
+  .rotas-login-v2 .rotas-login-v2-intro,
+  .rotas-login-v2 .rotas-login-v2-panel,
+  .rotas-login-v2 .rotas-login-v2-note {
+    background: #fff !important; border-color: #ddd !important; box-shadow: none !important;
+    -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+  }
+}
