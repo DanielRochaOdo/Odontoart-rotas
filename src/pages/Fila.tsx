@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import "./fila-glass-v2.css";
 import { Check, Download, LoaderCircle, RefreshCw, Unlock } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
@@ -286,8 +287,9 @@ export default function Fila() {
   }
 
   return (
-    <div className="space-y-4 md:space-y-5">
-      <header className="rounded-3xl border border-sea/15 bg-white/95 p-3 shadow-card sm:p-4 md:p-5">
+    <div className="rotas-fila-v2 space-y-4 md:space-y-5">
+      <header className="rotas-fila-v2-hero rounded-3xl border border-sea/15 bg-white/95 p-3 shadow-card sm:p-4 md:p-5">
+        <span className="rotas-fila-v2-eyebrow">ODONTOART · CONTROLE DE LIBERACOES</span>
         <h2 className="mt-1 font-display text-2xl text-ink">Fila</h2>
         <p className="mt-2 max-w-3xl text-sm text-ink/70">
           Controle de carencia e liberacao de novas empresas para o modulo de rotas.
@@ -297,11 +299,14 @@ export default function Fila() {
       <section className="grid gap-3 md:grid-cols-3 md:gap-4">
         <button
           type="button"
+          aria-haspopup="dialog"
+          data-tone="pending"
+          data-selected={modalState === "PENDING_WAIT"}
           onClick={() => {
             setModalState("PENDING_WAIT");
             setModalPage(1);
           }}
-          className={`rounded-2xl border bg-white/90 p-3 text-left transition hover:border-sea md:p-4 ${
+          className={`rotas-fila-v2-kpi rounded-2xl border bg-white/90 p-3 text-left transition hover:border-sea md:p-4 ${
             modalState === "PENDING_WAIT" ? "border-sea shadow-card" : "border-sea/20"
           }`}
         >
@@ -311,11 +316,14 @@ export default function Fila() {
         </button>
         <button
           type="button"
+          aria-haspopup="dialog"
+          data-tone="release"
+          data-selected={modalState === "RELEASE_PENDING"}
           onClick={() => {
             setModalState("RELEASE_PENDING");
             setModalPage(1);
           }}
-          className={`rounded-2xl border bg-white/90 p-3 text-left transition hover:border-sea md:p-4 ${
+          className={`rotas-fila-v2-kpi rounded-2xl border bg-white/90 p-3 text-left transition hover:border-sea md:p-4 ${
             modalState === "RELEASE_PENDING" ? "border-sea shadow-card" : "border-sea/20"
           }`}
         >
@@ -325,11 +333,14 @@ export default function Fila() {
         </button>
         <button
           type="button"
+          aria-haspopup="dialog"
+          data-tone="manual"
+          data-selected={modalState === "RELEASED_MANUAL"}
           onClick={() => {
             setModalState("RELEASED_MANUAL");
             setModalPage(1);
           }}
-          className={`rounded-2xl border bg-white/90 p-3 text-left transition hover:border-sea md:p-4 ${
+          className={`rotas-fila-v2-kpi rounded-2xl border bg-white/90 p-3 text-left transition hover:border-sea md:p-4 ${
             modalState === "RELEASED_MANUAL" ? "border-sea shadow-card" : "border-sea/20"
           }`}
         >
@@ -339,7 +350,7 @@ export default function Fila() {
         </button>
       </section>
 
-      <section className="rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
+      <section className="rotas-fila-v2-panel rounded-2xl border border-sea/20 bg-white/90 p-3 md:p-4">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-ink/70">Configuracao padrao</h3>
           <button
@@ -418,7 +429,7 @@ export default function Fila() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-sea/20 bg-white/95 p-3 shadow-card md:p-4">
+      <section className="rotas-fila-v2-panel rotas-fila-v2-results rounded-2xl border border-sea/20 bg-white/95 p-3 shadow-card md:p-4">
         <div className="grid gap-3 md:grid-cols-6">
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-semibold text-ink/70">Buscar por</span>
@@ -496,8 +507,8 @@ export default function Fila() {
             Carregando fila...
           </div>
         ) : (
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-[1280px] w-full border-collapse text-sm">
+          <div className="rotas-fila-v2-table-wrap mt-4 overflow-x-auto">
+            <table className="rotas-fila-v2-table min-w-[1280px] w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-sea/20 text-left text-[11px] uppercase tracking-wide text-ink/60">
                   <th className="px-2 py-2">Codigo</th>
@@ -518,7 +529,7 @@ export default function Fila() {
                   const canReleaseNow = row.effective_state !== "RELEASED_MANUAL" && !isLegacyAutoReleased(row);
 
                   return (
-                    <tr key={row.empresa_id} className="border-b border-sea/15 text-ink/80">
+                    <tr key={row.empresa_id} className="rotas-fila-v2-row border-b border-sea/15 text-ink/80">
                       <td className="px-2 py-2 font-semibold">{row.codigo ?? "-"}</td>
                       <td className="px-2 py-2">{row.empresa ?? "-"}</td>
                       <td className="px-2 py-2">{formatMonthYear(row.data_contrato)}</td>
@@ -667,11 +678,11 @@ export default function Fila() {
       </section>
 
       {modalState ? (
-        <div className="fixed inset-0 z-[120] flex items-start justify-center bg-ink/55 px-4 pt-6">
-          <div className="max-h-[calc(100vh-2rem)] w-full max-w-5xl overflow-hidden rounded-2xl border border-sea/25 bg-white p-4 shadow-2xl md:p-5">
+        <div className="rotas-fila-v2-modal fixed inset-0 z-[120] flex items-start justify-center bg-ink/55 px-4 pt-6" role="dialog" aria-modal="true" aria-labelledby="fila-state-dialog-title">
+          <div className="rotas-fila-v2-dialog max-h-[calc(100vh-2rem)] w-full max-w-5xl overflow-hidden rounded-2xl border border-sea/25 bg-white p-4 shadow-2xl md:p-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h3 className="text-base font-semibold text-ink">{stateLabel[modalState]}</h3>
+                <h3 id="fila-state-dialog-title" className="text-base font-semibold text-ink">{stateLabel[modalState]}</h3>
                 <p className="mt-1 text-sm text-ink/70">
                   {modalRows.length} empresa(s). Esta lista nao altera os filtros da tela principal.
                 </p>
@@ -685,8 +696,8 @@ export default function Fila() {
               </button>
             </div>
 
-            <div className="mt-4 max-h-[calc(100vh-12rem)] overflow-auto">
-              <table className="min-w-[920px] w-full border-collapse text-sm">
+            <div className="rotas-fila-v2-table-wrap mt-4 max-h-[calc(100vh-12rem)] overflow-auto">
+              <table className="rotas-fila-v2-table min-w-[920px] w-full border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-sea/20 text-left text-[11px] uppercase tracking-wide text-ink/60">
                     <th className="px-2 py-2">Codigo</th>
@@ -703,7 +714,7 @@ export default function Fila() {
                     const canReleaseNow = row.effective_state !== "RELEASED_MANUAL" && !isLegacyAutoReleased(row);
 
                     return (
-                      <tr key={row.empresa_id} className="border-b border-sea/15 text-ink/80">
+                      <tr key={row.empresa_id} className="rotas-fila-v2-row border-b border-sea/15 text-ink/80">
                         <td className="px-2 py-2 font-semibold">{row.codigo ?? "-"}</td>
                         <td className="px-2 py-2">{row.empresa ?? "-"}</td>
                         <td className="px-2 py-2">{formatDateTimeBr(row.eligible_at)}</td>
