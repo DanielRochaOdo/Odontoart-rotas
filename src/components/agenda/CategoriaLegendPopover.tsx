@@ -78,7 +78,7 @@ export default function CategoriaLegendPopover() {
         ? createPortal(
             <div
               ref={popoverRef}
-              className="fixed z-[9999] w-[min(540px,calc(100vw-24px))] overflow-x-auto rounded-2xl border border-sea/20 bg-white/95 p-3 shadow-card"
+              className="rotas-agenda-v2-popover fixed z-[9999] w-[min(540px,calc(100vw-24px))] overflow-x-auto rounded-2xl border border-sea/20 bg-white/95 p-3 shadow-card"
               style={{ top: position.top, left: position.left }}
               onPointerEnter={openPopover}
               onPointerLeave={closePopoverSoon}

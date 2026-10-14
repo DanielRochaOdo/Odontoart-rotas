@@ -1,0 +1,313 @@
+/* Rotas · Sidebar Glass V2 — web, PWA e WebView.
+ * CSS exclusivo do AppLayout. Largura 84/272px, permissões, navegação
+ * e handlers de tema/logout permanecem no componente original. */
+:is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-mobile-bar, .rotas-sidebar-v2-drawer) {
+  --sb-v2-border: rgba(255, 255, 255, .77);
+  --sb-v2-glint: rgba(255, 255, 255, .93);
+  --sb-v2-shadow: rgba(8, 71, 63, .20);
+  --sb-v2-subtle: rgba(248, 255, 251, .51);
+  --sb-v2-control: rgba(249, 255, 251, .69);
+  --sb-v2-ink: #174d47;
+  --sb-v2-ink-strong: #063e34;
+  --sb-v2-active: #064f3c;
+  --sb-v2-accent-border: rgba(14, 193, 138, .47);
+  --sb-v2-glow: rgba(20, 226, 157, .23);
+}
+.dark :is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-mobile-bar, .rotas-sidebar-v2-drawer) {
+  --sb-v2-border: rgba(194, 255, 229, .26);
+  --sb-v2-glint: rgba(255, 255, 255, .23);
+  --sb-v2-shadow: rgba(0, 0, 0, .45);
+  --sb-v2-subtle: rgba(8, 35, 42, .56);
+  --sb-v2-control: rgba(12, 42, 50, .67);
+  --sb-v2-ink: #d3f5e8;
+  --sb-v2-ink-strong: #effff9;
+  --sb-v2-active: #e2fff3;
+  --sb-v2-accent-border: rgba(92, 250, 185, .45);
+  --sb-v2-glow: rgba(25, 236, 170, .21);
+}
+
+/* Cristal esmeralda/ciano no menu desktop, fixo e rolável. */
+.rotas-sidebar-v2-desktop {
+  background:
+    radial-gradient(ellipse 130% 28% at -10% 0%, rgba(37, 227, 159, .47), transparent 79%),
+    radial-gradient(ellipse 170% 37% at 110% 48%, rgba(78, 182, 234, .30), transparent 84%),
+    radial-gradient(ellipse 130% 26% at 0% 105%, rgba(27, 213, 149, .30), transparent 81%),
+    linear-gradient(158deg, rgba(217, 255, 241, .94), rgba(228, 245, 250, .87) 51%, rgba(218, 252, 237, .91)) !important;
+  border-right: 1px solid rgba(255, 255, 255, .79) !important;
+  color: var(--sb-v2-ink-strong);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, .46), 16px 0 54px rgba(9, 74, 64, .16),
+              3px 0 18px rgba(9, 74, 64, .08) !important;
+  -webkit-backdrop-filter: blur(40px) saturate(183%);
+  backdrop-filter: blur(40px) saturate(183%);
+}
+.dark .rotas-sidebar-v2-desktop {
+  background:
+    radial-gradient(ellipse 150% 30% at -17% 0%, rgba(10, 197, 140, .28), transparent 82%),
+    radial-gradient(ellipse 140% 36% at 115% 48%, rgba(32, 133, 190, .25), transparent 87%),
+    radial-gradient(ellipse 140% 34% at 0% 110%, rgba(9, 125, 101, .24), transparent 83%),
+    linear-gradient(160deg, rgba(4, 28, 36, .96), rgba(9, 39, 48, .94) 57%, rgba(4, 27, 36, .97)) !important;
+  border-right-color: rgba(177, 255, 224, .23) !important;
+  box-shadow: inset -1px 0 0 rgba(231, 255, 248, .08), 16px 0 55px rgba(0, 0, 0, .32),
+              0 0 32px rgba(15, 202, 143, .07) !important;
+}
+/* Reflexo não interativo; conteúdo sempre fica acima. */
+.rotas-sidebar-v2-desktop::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(114deg, rgba(255, 255, 255, .17), transparent 48%),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, .055) 0 1px, transparent 1px 42px);
+  opacity: .60;
+  z-index: 0;
+}
+.rotas-sidebar-v2-desktop > .rotas-sidebar-v2-stack {
+  position: relative;
+  z-index: 1;
+  min-height: 100%;
+}
+
+/* Faixa de marca e dobra do menu: materiais semitransparentes. */
+.rotas-sidebar-v2-desktop .rotas-sidebar-v2-head {
+  border-bottom-color: var(--sb-v2-border) !important;
+  box-shadow: inset 0 -1px 0 rgba(18, 176, 129, .10);
+}
+.rotas-sidebar-v2-desktop .rotas-sidebar-v2-head .text-ink,
+.rotas-sidebar-v2-mobile-bar .text-ink,
+.rotas-sidebar-v2-drawer .text-ink {
+  color: var(--sb-v2-ink-strong) !important;
+}
+.rotas-sidebar-v2-brand {
+  background:
+    linear-gradient(138deg, rgba(255, 255, 255, .56), rgba(55, 233, 172, .18)),
+    var(--sb-v2-control) !important;
+  color: #067755 !important;
+  border: 1px solid var(--sb-v2-border) !important;
+  box-shadow: inset 0 1px 0 var(--sb-v2-glint),
+              0 5px 16px var(--sb-v2-shadow), 0 0 14px var(--sb-v2-glow);
+}
+.dark .rotas-sidebar-v2-brand { color: #b4ffe2 !important; }
+.rotas-sidebar-v2-desktop .rotas-sidebar-v2-logo-text {
+  color: var(--sb-v2-ink-strong) !important;
+  letter-spacing: -.025em;
+}
+
+/* Itens usam aria-current do NavLink: sem estado React adicional. */
+.rotas-sidebar-v2-desktop .rotas-sidebar-v2-link,
+.rotas-sidebar-v2-drawer .rotas-sidebar-v2-link,
+.rotas-sidebar-v2-desktop .rotas-sidebar-v2-vendor-settings,
+.rotas-sidebar-v2-drawer .rotas-sidebar-v2-vendor-settings {
+  position: relative;
+  border: 1px solid transparent;
+  color: var(--sb-v2-ink) !important;
+  background: rgba(255, 255, 255, .11) !important;
+  transition: background-color 170ms ease, border-color 170ms ease, box-shadow 170ms ease, color 170ms ease;
+}
+.dark :is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-drawer) :is(.rotas-sidebar-v2-link, .rotas-sidebar-v2-vendor-settings) {
+  background: rgba(3, 24, 32, .18) !important;
+}
+:is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-drawer)
+:is(.rotas-sidebar-v2-link, .rotas-sidebar-v2-vendor-settings):hover {
+  color: var(--sb-v2-ink-strong) !important;
+  border-color: var(--sb-v2-accent-border) !important;
+  background:
+    linear-gradient(120deg, rgba(76, 240, 178, .18), transparent 67%),
+    var(--sb-v2-control) !important;
+  box-shadow: inset 0 1px 0 var(--sb-v2-glint), 0 6px 15px var(--sb-v2-shadow);
+}
+:is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-drawer)
+.rotas-sidebar-v2-link[aria-current="page"],
+:is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-drawer)
+.rotas-sidebar-v2-vendor-settings[aria-pressed="true"] {
+  background:
+    radial-gradient(ellipse 100% 140% at 5% -40%, rgba(184, 255, 226, .67), transparent 80%),
+    linear-gradient(129deg, rgba(54, 224, 170, .29), rgba(35, 177, 173, .17)),
+    var(--sb-v2-control) !important;
+  color: var(--sb-v2-active) !important;
+  border-color: var(--sb-v2-accent-border) !important;
+  box-shadow: inset 0 1px 0 var(--sb-v2-glint),
+              inset 3px 0 0 rgba(10, 177, 124, .65),
+              0 7px 19px var(--sb-v2-shadow), 0 0 22px var(--sb-v2-glow) !important;
+}
+.dark :is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-drawer)
+.rotas-sidebar-v2-link[aria-current="page"],
+.dark :is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-drawer)
+.rotas-sidebar-v2-vendor-settings[aria-pressed="true"] {
+  background:
+    radial-gradient(ellipse 100% 130% at 5% -40%, rgba(34, 241, 160, .24), transparent 85%),
+    linear-gradient(127deg, rgba(24, 175, 127, .20), rgba(25, 138, 185, .13)),
+    rgba(8, 45, 52, .76) !important;
+  border-color: rgba(90, 255, 190, .49) !important;
+  box-shadow: inset 0 1px 0 rgba(236, 255, 248, .22),
+              inset 3px 0 0 rgba(56, 239, 168, .80),
+              0 9px 20px rgba(0, 0, 0, .27),
+              0 0 23px rgba(22, 217, 152, .16) !important;
+}
+:is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-drawer)
+.rotas-sidebar-v2-link[aria-current="page"] svg,
+:is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-drawer)
+.rotas-sidebar-v2-vendor-settings[aria-pressed="true"] svg {
+  color: var(--sb-v2-active) !important;
+  filter: drop-shadow(0 0 7px rgba(32, 220, 155, .25));
+}
+.rotas-sidebar-v2-desktop .rotas-sidebar-v2-link > span.absolute,
+.rotas-sidebar-v2-desktop .rotas-sidebar-v2-vendor-settings > span.absolute {
+  background: #19dba3 !important;
+  box-shadow: 0 0 12px rgba(26, 224, 164, .74);
+}
+:is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-drawer)
+:is(.rotas-sidebar-v2-link, .rotas-sidebar-v2-action, .rotas-sidebar-v2-toggle, .rotas-sidebar-v2-vendor-settings):focus-visible {
+  outline: 2px solid #16cb93;
+  outline-offset: 3px;
+}
+
+/* Base do menu e ações: botão de tema, logout e cartão do colaborador. */
+.rotas-sidebar-v2-desktop .rotas-sidebar-v2-footer {
+  border-top: 1px solid var(--sb-v2-border) !important;
+  background: linear-gradient(to top, rgba(255, 255, 255, .15), transparent);
+}
+.rotas-sidebar-v2-profile,
+.rotas-sidebar-v2-drawer .rotas-sidebar-v2-profile {
+  border: 1px solid var(--sb-v2-border) !important;
+  background: linear-gradient(132deg, rgba(255, 255, 255, .21), transparent 71%), var(--sb-v2-subtle) !important;
+  color: var(--sb-v2-ink-strong);
+  box-shadow: inset 0 1px 0 var(--sb-v2-glint), 0 10px 25px var(--sb-v2-shadow);
+  -webkit-backdrop-filter: blur(23px) saturate(170%);
+  backdrop-filter: blur(23px) saturate(170%);
+}
+.rotas-sidebar-v2-profile :is(.text-ink, .text-ink\/70, .text-ink\/60) {
+  color: var(--sb-v2-ink-strong) !important;
+}
+.rotas-sidebar-v2-profile .rotas-sidebar-v2-avatar {
+  color: #097a5d !important;
+  background: rgba(255, 255, 255, .55) !important;
+  border: 1px solid var(--sb-v2-border);
+  box-shadow: 0 0 18px var(--sb-v2-glow);
+}
+.dark .rotas-sidebar-v2-profile .rotas-sidebar-v2-avatar {
+  color: #bbffe5 !important;
+  background: rgba(40, 179, 133, .21) !important;
+}
+.rotas-sidebar-v2-profile .rotas-sidebar-v2-role {
+  color: var(--sb-v2-ink) !important;
+  background: var(--sb-v2-control) !important;
+  border-color: var(--sb-v2-border) !important;
+}
+:is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-mobile-bar, .rotas-sidebar-v2-drawer)
+:is(.rotas-sidebar-v2-toggle, .rotas-sidebar-v2-action) {
+  border: 1px solid var(--sb-v2-border) !important;
+  background: var(--sb-v2-control) !important;
+  color: var(--sb-v2-ink-strong) !important;
+  box-shadow: inset 0 1px 0 var(--sb-v2-glint),
+              0 5px 13px var(--sb-v2-shadow);
+  -webkit-backdrop-filter: blur(21px) saturate(174%);
+  backdrop-filter: blur(21px) saturate(174%);
+}
+:is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-mobile-bar, .rotas-sidebar-v2-drawer)
+:is(.rotas-sidebar-v2-toggle, .rotas-sidebar-v2-action):hover {
+  border-color: var(--sb-v2-accent-border) !important;
+  box-shadow: inset 0 1px 0 var(--sb-v2-glint),
+              0 8px 22px var(--sb-v2-shadow), 0 0 17px var(--sb-v2-glow);
+}
+
+/* Topbar PWA/mobile: logo e botão de menu no mesmo vidro do desktop. */
+.rotas-sidebar-v2-mobile-bar {
+  position: relative;
+  border-bottom: 1px solid rgba(255, 255, 255, .74) !important;
+  background:
+    radial-gradient(ellipse 64% 145% at 2% -70%, rgba(42, 219, 157, .35), transparent 80%),
+    linear-gradient(125deg, rgba(225, 255, 243, .92), rgba(230, 244, 251, .92)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .93), 0 9px 27px rgba(5, 71, 58, .11);
+  -webkit-backdrop-filter: blur(35px) saturate(185%);
+  backdrop-filter: blur(35px) saturate(185%);
+}
+.dark .rotas-sidebar-v2-mobile-bar {
+  border-bottom-color: rgba(179, 255, 223, .21) !important;
+  background:
+    radial-gradient(ellipse 60% 150% at 1% -65%, rgba(16, 202, 143, .27), transparent 84%),
+    linear-gradient(130deg, rgba(6, 33, 40, .96), rgba(12, 43, 52, .94)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .17), 0 10px 28px rgba(0, 0, 0, .27);
+}
+.rotas-sidebar-v2-mobile-bar .text-muted,
+.rotas-sidebar-v2-drawer .text-muted { color: var(--sb-v2-ink) !important; }
+
+/* Drawer PWA/mobile: camada de fundo sem afetar o clique de fechamento. */
+.rotas-sidebar-v2-scrim {
+  background: rgba(5, 27, 35, .52) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(125%);
+  backdrop-filter: blur(10px) saturate(125%);
+}
+.rotas-sidebar-v2-drawer {
+  background:
+    radial-gradient(ellipse 145% 30% at 0% 0%, rgba(39, 231, 163, .44), transparent 85%),
+    radial-gradient(ellipse 135% 37% at 100% 57%, rgba(84, 184, 235, .31), transparent 84%),
+    linear-gradient(157deg, rgba(220, 254, 241, .97), rgba(225, 244, 250, .95) 54%, rgba(221, 252, 239, .97)) !important;
+  border-right: 1px solid rgba(255, 255, 255, .78) !important;
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, .52), 19px 0 67px rgba(0, 32, 30, .29) !important;
+  -webkit-backdrop-filter: blur(38px) saturate(187%);
+  backdrop-filter: blur(38px) saturate(187%);
+}
+.dark .rotas-sidebar-v2-drawer {
+  background:
+    radial-gradient(ellipse 130% 34% at 0% 0%, rgba(18, 210, 150, .27), transparent 85%),
+    radial-gradient(ellipse 138% 38% at 100% 57%, rgba(23, 138, 196, .26), transparent 85%),
+    linear-gradient(155deg, rgba(5, 29, 38, .98), rgba(12, 44, 52, .97) 59%, rgba(5, 28, 38, .98)) !important;
+  border-right-color: rgba(188, 255, 227, .23) !important;
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, .12), 19px 0 70px rgba(0, 0, 0, .48) !important;
+}
+.rotas-sidebar-v2-drawer .rotas-sidebar-v2-mobile-head {
+  padding-bottom: 13px;
+  border-bottom: 1px solid var(--sb-v2-border);
+}
+.rotas-sidebar-v2-drawer .rotas-sidebar-v2-mobile-profile {
+  border-radius: 19px;
+}
+.rotas-sidebar-v2-drawer .rotas-sidebar-v2-link { min-height: 45px; }
+.rotas-sidebar-v2-drawer .rotas-sidebar-v2-mobile-actions {
+  padding-top: 18px;
+  border-top: 1px solid var(--sb-v2-border);
+}
+.rotas-sidebar-v2-desktop .rotas-sidebar-v2-link svg,
+.rotas-sidebar-v2-drawer .rotas-sidebar-v2-link svg { flex: none; }
+
+/* Sem suporte a blur, contraste sólido. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-mobile-bar, .rotas-sidebar-v2-drawer) {
+    --sb-v2-subtle: rgb(var(--theme-surface-strong) / .96);
+    --sb-v2-control: rgb(var(--theme-surface-strong) / .98);
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  .rotas-sidebar-v2-desktop, .rotas-sidebar-v2-mobile-bar, .rotas-sidebar-v2-drawer {
+    background: rgb(var(--theme-surface-strong) / .97) !important;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-mobile-bar, .rotas-sidebar-v2-drawer),
+  .dark :is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-mobile-bar, .rotas-sidebar-v2-drawer) {
+    --sb-v2-subtle: rgb(var(--theme-surface-strong) / .97);
+    --sb-v2-control: rgb(var(--theme-surface-strong) / .99);
+    background: rgb(var(--theme-surface-strong) / .98) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  .rotas-sidebar-v2-profile,
+  :is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-mobile-bar, .rotas-sidebar-v2-drawer)
+  :is(.rotas-sidebar-v2-toggle, .rotas-sidebar-v2-action) {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-drawer)
+  :is(.rotas-sidebar-v2-link, .rotas-sidebar-v2-vendor-settings, .rotas-sidebar-v2-action) { transition: none !important; }
+}
+@media (max-width: 767px) {
+  .rotas-sidebar-v2-drawer { padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+  .rotas-sidebar-v2-drawer .rotas-sidebar-v2-link { flex-shrink: 0; }
+}
+@media print {
+  .rotas-sidebar-v2-desktop, .rotas-sidebar-v2-mobile-bar,
+  .rotas-sidebar-v2-drawer, .rotas-sidebar-v2-scrim { display: none !important; }
+}

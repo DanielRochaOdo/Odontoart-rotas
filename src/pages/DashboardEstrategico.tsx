@@ -4,6 +4,7 @@ import { supabaseDash } from "../lib/supabaseDashboard";
 import { useAuth } from "../context/AuthContext";
 import { formatDateBr } from "../lib/dateFormat";
 import DashboardLegacy from "./Dashboard";
+import "./dashboard-glass-v2.css";
 import DashboardModal from "../components/DashboardModal";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import { createDashboardLoader, type VisitLite, type AceiteLite, type ClienteLite, type HistoricalLives } from "../lib/dashboardData";
@@ -1452,10 +1453,11 @@ function DashboardEstrategicoForUser() {
   const showBlockingLoader = loading && !hasLoadedOnce && tab !== "visao";
 
   return (
-    <div className="space-y-5 md:space-y-6">
-      <header className="rounded-2xl border border-sea/15 bg-white/90 p-4 md:p-5">
+    <div className="rotas-dashboard-v2 space-y-5 md:space-y-6">
+      <header className="rotas-dashboard-v2-hero rounded-2xl border border-sea/15 bg-white/90 p-4 md:p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
+            <span className="rotas-dashboard-v2-eyebrow"><BarChart3 size={13} aria-hidden="true" /> ODONTOART · AGENDA+ ROTAS</span>
             <h2 className="font-display text-2xl text-ink">Dashboard</h2>
             <p className="mt-2 text-sm text-ink/65">
               Analise robusta com cruzamento de visitas, vidas registradas, aceite digital e cobertura comercial.

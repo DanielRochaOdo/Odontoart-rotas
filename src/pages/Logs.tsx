@@ -2,6 +2,7 @@
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { formatDateTimeBr } from "../lib/dateFormat";
+import "./logs-glass-v2.css";
 
 const ACTION_LABELS: Record<string, string> = {
   INSERT: "Cadastro",
@@ -291,15 +292,16 @@ export default function Logs() {
   }
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      <header>
+    <div className="rotas-logs-v2 space-y-4 md:space-y-6">
+      <header className="rotas-logs-v2-hero">
+        <span className="rotas-logs-v2-eyebrow">ODONTOART · AUDITORIA DE ATIVIDADES</span>
         <h2 className="font-display text-2xl text-ink">Logs</h2>
         <p className="mt-2 text-sm text-ink/60">
           Registros de cadastro, alteracao e exclusao realizados no sistema.
         </p>
       </header>
 
-      <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-3 md:p-4">
+      <div className="rotas-logs-v2-filters flex flex-wrap items-end gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-3 md:p-4">
         <label className="flex flex-col gap-1 text-xs font-semibold text-ink/70">
           Acao
           <select
@@ -343,7 +345,7 @@ export default function Logs() {
           Nenhum registro encontrado.
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="rotas-logs-v2-feed space-y-3">
           {groupedLogs.map((group) => {
             const label = ACTION_LABELS[group.action] ?? group.action;
             const actionStyle = ACTION_STYLES[group.action] ?? "bg-slate-100 text-slate-600 border-slate-200";
@@ -360,7 +362,7 @@ export default function Logs() {
             const singleRecordId = group.logs.length === 1 ? group.logs[0].record_id : null;
 
             return (
-              <div key={group.id} className="rounded-2xl border border-sea/15 bg-white/95 p-3 md:p-4">
+              <div key={group.id} data-action={group.action} className="rotas-logs-v2-event rounded-2xl border border-sea/15 bg-white/95 p-3 md:p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -371,7 +373,7 @@ export default function Logs() {
                         {moduleLabels.map((module) => (
                           <span
                             key={`${group.id}-${module}`}
-                            className="rounded-full border border-sea/20 bg-sand/40 px-2 py-0.5 text-[10px] font-semibold text-ink/70"
+                            className="rotas-logs-v2-module rounded-full border border-sea/20 bg-sand/40 px-2 py-0.5 text-[10px] font-semibold text-ink/70"
                           >
                             {module}
                           </span>
@@ -390,6 +392,7 @@ export default function Logs() {
                   <button
                     type="button"
                     onClick={() => setExpandedId((prev) => (prev === group.id ? null : group.id))}
+                    aria-expanded={isExpanded}
                     className="rounded-lg border border-sea/30 bg-white px-3 py-1 text-[11px] font-semibold text-ink/70 hover:border-sea hover:text-sea"
                   >
                     {isExpanded ? "Ocultar detalhes" : "Ver detalhes"}
@@ -403,7 +406,7 @@ export default function Logs() {
                       const diffRows = buildDiffRows(log);
 
                       return (
-                        <div key={log.id} className="rounded-xl border border-sea/15 bg-sand/10 p-3">
+                        <div key={log.id} className="rotas-logs-v2-entry rounded-xl border border-sea/15 bg-sand/10 p-3">
                           <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-ink">
                             <span>{moduleLabel}</span>
                             {log.record_id && (
@@ -413,7 +416,7 @@ export default function Logs() {
                           {diffRows.length === 0 ? (
                             <p className="mt-2 text-xs text-ink/60">Sem alteracoes relevantes.</p>
                           ) : (
-                            <div className="mt-2 rounded-lg border border-sea/10 bg-white p-3">
+                            <div className="rotas-logs-v2-diff mt-2 rounded-lg border border-sea/10 bg-white p-3">
                               <p className="mb-2 text-[11px] font-semibold text-ink/60">
                                 {log.action === "INSERT"
                                   ? "Campos cadastrados"
@@ -422,7 +425,7 @@ export default function Logs() {
                                     : "Campos alterados"}
                                 : {diffRows.length}
                               </p>
-                              <div className="grid grid-cols-[1.2fr_1fr_1fr] gap-2 text-[11px] font-semibold text-ink/60">
+                              <div className="rotas-logs-v2-diff-heading rotas-logs-v2-diff-row grid grid-cols-[1.2fr_1fr_1fr] gap-2 text-[11px] font-semibold text-ink/60">
                                 <span>Campo</span>
                                 <span>Antes</span>
                                 <span>Depois</span>
@@ -431,7 +434,7 @@ export default function Logs() {
                                 {diffRows.map((row) => (
                                   <div
                                     key={`${log.id}-${row.field}`}
-                                    className="grid grid-cols-[1.2fr_1fr_1fr] gap-2 text-[11px]"
+                                    className="rotas-logs-v2-diff-row grid grid-cols-[1.2fr_1fr_1fr] gap-2 text-[11px]"
                                   >
                                     <span className="font-semibold text-ink">{row.label}</span>
                                     <span className="text-ink/60">{row.before}</span>

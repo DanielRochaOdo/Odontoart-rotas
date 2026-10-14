@@ -1,0 +1,266 @@
+/* Rotas · Logs Glass V2
+ * Escopo exclusivo da tela de auditoria. Eventos e operacoes mantidos intactos.
+ * O vidro profundo fica nos painéis; as diferencas permanecem opacas. */
+.rotas-logs-v2 {
+  --lv2-pane: rgba(246, 255, 250, .46);
+  --lv2-strong: rgba(252, 255, 253, .67);
+  --lv2-inset: rgba(248, 255, 252, .56);
+  --lv2-record: rgba(252, 255, 253, .82);
+  --lv2-detail: rgba(253, 255, 253, .91);
+  --lv2-control: rgba(252, 255, 254, .87);
+  --lv2-border: rgba(255, 255, 255, .84);
+  --lv2-glint: rgba(255, 255, 255, .95);
+  --lv2-shadow: rgba(9, 76, 66, .16);
+  --lv2-glow: rgba(22, 217, 154, .20);
+  position: relative;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, .68);
+  border-radius: 28px;
+  padding: clamp(12px, 2.2vw, 28px);
+  background:
+    radial-gradient(ellipse 50% 28% at 1% 2%, rgba(44, 230, 166, .54), transparent 84%),
+    radial-gradient(ellipse 46% 24% at 99% 11%, rgba(77, 175, 232, .45), transparent 84%),
+    radial-gradient(ellipse 58% 32% at 48% 69%, rgba(71, 220, 177, .28), transparent 85%),
+    linear-gradient(138deg, #c6ebdd, #dbeaf1 52%, #d6f2e4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .86), 0 24px 65px rgba(6, 62, 53, .11);
+}
+.dark .rotas-logs-v2 {
+  --lv2-pane: rgba(8, 35, 44, .34);
+  --lv2-strong: rgba(11, 40, 49, .49);
+  --lv2-inset: rgba(13, 45, 52, .44);
+  --lv2-record: rgba(10, 36, 45, .84);
+  --lv2-detail: rgba(9, 30, 39, .95);
+  --lv2-control: rgba(11, 34, 44, .92);
+  --lv2-border: rgba(211, 255, 238, .30);
+  --lv2-glint: rgba(255, 255, 255, .31);
+  --lv2-shadow: rgba(0, 0, 0, .39);
+  --lv2-glow: rgba(25, 225, 162, .18);
+  border-color: rgba(203, 255, 237, .18);
+  background:
+    radial-gradient(ellipse 50% 28% at 0% 0%, rgba(16, 212, 155, .41), transparent 84%),
+    radial-gradient(ellipse 47% 26% at 100% 13%, rgba(26, 139, 198, .40), transparent 84%),
+    radial-gradient(ellipse 59% 35% at 49% 73%, rgba(14, 152, 113, .23), transparent 85%),
+    linear-gradient(136deg, #061720, #112e39 53%, #071b22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 27px 72px rgba(0, 0, 0, .28);
+}
+
+/* Cabecalho da auditoria e busca com material em vidro. */
+.rotas-logs-v2 > .rotas-logs-v2-hero,
+.rotas-logs-v2 > .rotas-logs-v2-filters {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--lv2-border) !important;
+  background:
+    linear-gradient(131deg, rgba(255, 255, 255, .30), rgba(255, 255, 255, .021) 54%, rgba(255, 255, 255, .12)),
+    var(--lv2-pane) !important;
+  box-shadow: inset 0 1px 0 var(--lv2-glint), inset 0 -1px 0 rgba(255, 255, 255, .10),
+              0 17px 44px var(--lv2-shadow), 0 2px 6px rgba(0, 0, 0, .06);
+  -webkit-backdrop-filter: blur(37px) saturate(187%);
+  backdrop-filter: blur(37px) saturate(187%);
+}
+.rotas-logs-v2 > .rotas-logs-v2-hero {
+  border-radius: 23px;
+  padding: clamp(15px, 2vw, 24px);
+  background:
+    radial-gradient(ellipse at 1% -40%, rgba(57, 245, 187, .20), transparent 60%),
+    linear-gradient(130deg, rgba(255, 255, 255, .38), rgba(255, 255, 255, .022) 62%),
+    var(--lv2-strong) !important;
+  box-shadow: inset 0 1px 0 var(--lv2-glint), 0 20px 48px var(--lv2-shadow), 0 0 34px var(--lv2-glow);
+  -webkit-backdrop-filter: blur(43px) saturate(194%);
+  backdrop-filter: blur(43px) saturate(194%);
+}
+.rotas-logs-v2-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+  padding: 6px 11px;
+  border: 1px solid rgba(40, 207, 154, .37);
+  border-radius: 999px;
+  background: rgba(22, 187, 139, .14);
+  color: #12684f;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .59);
+}
+.rotas-logs-v2-eyebrow::before {
+  content: "";
+  width: 7px; height: 7px; flex: none;
+  border-radius: 50%;
+  background: #37e2a5;
+  box-shadow: 0 0 12px rgba(27, 216, 153, .83);
+}
+.dark .rotas-logs-v2-eyebrow {
+  color: #b4ffe2;
+  border-color: rgba(167, 255, 225, .31);
+  background: rgba(26, 199, 147, .17);
+}
+.rotas-logs-v2 > .rotas-logs-v2-filters {
+  padding: clamp(13px, 1.75vw, 19px);
+  border-radius: 21px;
+  background: linear-gradient(133deg, rgba(255, 255, 255, .26), transparent 69%), var(--lv2-strong) !important;
+}
+.rotas-logs-v2 .rotas-logs-v2-filters select {
+  min-width: min(220px, 100%);
+  background: var(--lv2-control) !important;
+  color: rgb(var(--theme-text)) !important;
+  border: 1px solid var(--lv2-border) !important;
+  box-shadow: inset 0 1px 0 var(--lv2-glint), 0 4px 13px var(--lv2-shadow);
+  -webkit-backdrop-filter: blur(19px) saturate(165%);
+  backdrop-filter: blur(19px) saturate(165%);
+}
+.rotas-logs-v2 select option {
+  background: rgb(var(--theme-surface-strong));
+  color: rgb(var(--theme-text));
+}
+.rotas-logs-v2 :is(select, button):focus-visible {
+  outline: 2px solid rgb(var(--theme-accent-action));
+  outline-offset: 3px;
+}
+
+/* Eventos: vidro espesso no card principal, realce sem alterar os badges
+ * semanticos (INSERT, UPDATE, DELETE). */
+.rotas-logs-v2 .rotas-logs-v2-event {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--lv2-border) !important;
+  background:
+    linear-gradient(128deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, .015) 60%),
+    var(--lv2-pane) !important;
+  box-shadow: inset 0 1px 0 var(--lv2-glint), 0 14px 39px var(--lv2-shadow);
+  -webkit-backdrop-filter: blur(32px) saturate(181%);
+  backdrop-filter: blur(32px) saturate(181%);
+  transition: box-shadow 180ms ease, border-color 180ms ease;
+}
+.rotas-logs-v2 .rotas-logs-v2-event::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  pointer-events: none;
+  background: var(--lv2-action, #2dd9a7);
+  box-shadow: 0 0 22px var(--lv2-action, #2dd9a7);
+  border-radius: 2px;
+}
+.rotas-logs-v2 .rotas-logs-v2-event[data-action="INSERT"] {
+  --lv2-action: #13bd86;
+}
+.rotas-logs-v2 .rotas-logs-v2-event[data-action="UPDATE"] {
+  --lv2-action: #e8a34f;
+}
+.rotas-logs-v2 .rotas-logs-v2-event[data-action="DELETE"] {
+  --lv2-action: #ef6464;
+}
+.rotas-logs-v2 .rotas-logs-v2-event:hover,
+.rotas-logs-v2 .rotas-logs-v2-event:focus-within {
+  border-color: rgba(67, 229, 170, .60) !important;
+  box-shadow: inset 0 1px 0 var(--lv2-glint), 0 19px 49px var(--lv2-shadow), 0 0 21px var(--lv2-glow);
+}
+.rotas-logs-v2 .rotas-logs-v2-event button[class~="bg-white"] {
+  background: var(--lv2-control) !important;
+  border-color: var(--lv2-border) !important;
+  color: rgb(var(--theme-text)) !important;
+  box-shadow: inset 0 1px 0 var(--lv2-glint), 0 4px 13px var(--lv2-shadow);
+}
+.rotas-logs-v2 .rotas-logs-v2-event .rotas-logs-v2-module {
+  background: var(--lv2-inset) !important;
+  border-color: rgba(121, 208, 171, .33) !important;
+}
+/* Badges de auditoria: preservar as 3 cores tambem no modo escuro. */
+.dark .rotas-logs-v2 .rotas-logs-v2-event .bg-emerald-50 {
+  background: rgba(15, 113, 84, .31) !important;
+  color: #a8ffe0 !important;
+  border-color: rgba(88, 238, 179, .42) !important;
+}
+.dark .rotas-logs-v2 .rotas-logs-v2-event .bg-amber-50 {
+  background: rgba(150, 94, 19, .32) !important;
+  color: #ffdcaa !important;
+  border-color: rgba(247, 192, 107, .42) !important;
+}
+.dark .rotas-logs-v2 .rotas-logs-v2-event .bg-red-50 {
+  background: rgba(152, 48, 50, .33) !important;
+  color: #ffd1d0 !important;
+  border-color: rgba(251, 120, 120, .45) !important;
+}
+
+/* Dados de auditoria sempre em paineis densos para visualizar Antes/Depois. */
+.rotas-logs-v2 .rotas-logs-v2-entry {
+  border: 1px solid var(--lv2-border) !important;
+  background:
+    linear-gradient(130deg, rgba(255, 255, 255, .08), transparent 71%),
+    var(--lv2-record) !important;
+  box-shadow: inset 0 1px 0 var(--lv2-glint), 0 5px 17px rgba(9, 65, 57, .07);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+.rotas-logs-v2 .rotas-logs-v2-diff {
+  border: 1px solid var(--lv2-border) !important;
+  background: var(--lv2-detail) !important;
+  box-shadow: inset 0 1px 0 var(--lv2-glint);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+.rotas-logs-v2 .rotas-logs-v2-diff-heading {
+  border-bottom: 1px solid rgba(102, 192, 155, .24);
+  padding-bottom: 7px;
+}
+/* Palavras longas, IDs e payloads nunca devem estourar as colunas. */
+.rotas-logs-v2 .rotas-logs-v2-diff-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.rotas-logs-v2 .rotas-logs-v2-diff-row:nth-child(even) {
+  background: rgba(29, 180, 130, .045);
+}
+.dark .rotas-logs-v2 .rotas-logs-v2-diff-row:nth-child(even) {
+  background: rgba(45, 221, 166, .065);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .rotas-logs-v2, .dark .rotas-logs-v2 {
+    --lv2-pane: rgb(var(--theme-surface-strong) / .95);
+    --lv2-strong: rgb(var(--theme-surface-strong) / .98);
+    --lv2-inset: rgb(var(--theme-surface-strong) / .94);
+    --lv2-record: rgb(var(--theme-surface-strong) / .97);
+    --lv2-detail: rgb(var(--theme-surface-strong) / .99);
+    --lv2-control: rgb(var(--theme-surface-strong) / .99);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .rotas-logs-v2, .dark .rotas-logs-v2 {
+    --lv2-pane: rgb(var(--theme-surface-strong) / .96);
+    --lv2-strong: rgb(var(--theme-surface-strong) / .99);
+    --lv2-inset: rgb(var(--theme-surface-strong) / .97);
+    --lv2-record: rgb(var(--theme-surface-strong) / .99);
+    --lv2-detail: rgb(var(--theme-surface-strong) / .99);
+    --lv2-control: rgb(var(--theme-surface-strong) / .99);
+  }
+  .rotas-logs-v2 :is(.rotas-logs-v2-hero, .rotas-logs-v2-filters, .rotas-logs-v2-event) {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rotas-logs-v2 .rotas-logs-v2-event { transition: none; }
+}
+@media (max-width: 640px) {
+  .rotas-logs-v2 { padding: 11px; border-radius: 18px; }
+  .rotas-logs-v2 > .rotas-logs-v2-hero { border-radius: 18px; padding: 13px; }
+  .rotas-logs-v2 > .rotas-logs-v2-filters { border-radius: 18px; padding: 12px; }
+  .rotas-logs-v2 .rotas-logs-v2-filters label { flex: 1 1 170px; min-width: 0; }
+  .rotas-logs-v2 .rotas-logs-v2-filters select { width: 100%; min-width: 0; }
+  .rotas-logs-v2 .rotas-logs-v2-diff { padding: 10px; }
+  .rotas-logs-v2 .rotas-logs-v2-diff-row { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr) minmax(0, 1fr); gap: 5px; }
+}
+@media print {
+  .rotas-logs-v2, .dark .rotas-logs-v2 {
+    background: #fff !important; border: 0 !important; box-shadow: none !important;
+  }
+  .rotas-logs-v2 :is(.rotas-logs-v2-hero, .rotas-logs-v2-filters, .rotas-logs-v2-event, .rotas-logs-v2-entry, .rotas-logs-v2-diff) {
+    background: #fff !important; box-shadow: none !important;
+    -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+  }
+}

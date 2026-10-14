@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import "./clientes-glass-v2.css";
 import type { Dispatch, SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { BrushCleaning, Building2, ChevronLeft, ChevronRight, DollarSign, LoaderCircle, Plus, Search } from "lucide-react";
@@ -3239,9 +3240,10 @@ export default function Clientes() {
   }
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
+    <div className="rotas-empresas-v2 space-y-4 md:space-y-6">
+      <header className="rotas-empresas-v2-hero flex flex-wrap items-start justify-between gap-3">
         <div>
+          <span className="rotas-empresas-v2-eyebrow">ODONTOART · CARTEIRA DE EMPRESAS</span>
           <h2 className="font-display text-2xl text-ink">Empresas</h2>
           <p className="mt-2 text-sm text-ink/60">
             Gestao de empresas cadastradas e historico de visitas.
@@ -3275,7 +3277,7 @@ export default function Clientes() {
       {canCreate && (
         <form
           onSubmit={handleCreate}
-          className="grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-3 md:grid-cols-6 md:p-4"
+          className="rotas-empresas-v2-form grid gap-3 rounded-2xl border border-sea/20 bg-sand/30 p-3 md:grid-cols-6 md:p-4"
         >
           <label className="min-w-0 flex w-full flex-col gap-1 text-xs font-semibold text-ink/70 md:col-span-1">
             Codigo
@@ -3770,7 +3772,7 @@ export default function Clientes() {
         </form>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="rotas-empresas-v2-toolbar flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="font-display text-lg text-ink">Empresas cadastradas</h3>
           <p className="text-xs text-ink/60">
@@ -3826,7 +3828,7 @@ export default function Clientes() {
           Carregando empresas...
         </div>
       ) : (
-        <div className="rounded-2xl border border-sea/15 bg-white/95">
+        <div className="rotas-empresas-v2-list rounded-2xl border border-sea/15 bg-white/95">
           <div className="divide-y divide-sea/10">
             {displayClientes.length === 0 ? (
               <div className="px-4 py-6 text-sm text-ink/60">
@@ -3841,7 +3843,7 @@ export default function Clientes() {
                     setSelected(null);
                     setSelectedId(cliente.id);
                   }}
-                  className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left text-sm hover:bg-sand/40"
+                  className="rotas-empresas-v2-list-row flex w-full items-center justify-between gap-4 px-4 py-3 text-left text-sm hover:bg-sand/40"
                 >
                   <div>
                     <p className="font-semibold text-ink">
@@ -3923,7 +3925,7 @@ export default function Clientes() {
 
       {selected && (
         <div
-          className={`fixed inset-0 z-50 flex ${isEditing ? "items-start justify-center px-4 pt-6" : "justify-end"}`}
+          className={`rotas-empresas-v2-drawer fixed inset-0 z-50 flex ${isEditing ? "items-start justify-center px-4 pt-6" : "justify-end"}`}
         >
           <button
             type="button"
@@ -3935,6 +3937,7 @@ export default function Clientes() {
             }}
           />
           <div
+            data-empresas-drawer-content="true"
             className={`relative w-full overflow-y-auto bg-white shadow-2xl ${
               isEditing
                 ? "max-h-[92vh] max-w-6xl rounded-2xl p-6"
@@ -4680,7 +4683,7 @@ export default function Clientes() {
       )}
 
       {planosModalState && (
-        <div className="fixed inset-0 z-[70] flex items-start justify-center px-4 pt-6">
+        <div className="rotas-empresas-v2-modal fixed inset-0 z-[70] flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4738,7 +4741,7 @@ export default function Clientes() {
 
       {filialConfirmModal &&
         createPortal(
-          <div className="fixed inset-0 z-[9999] flex items-start justify-center px-4 pt-6">
+          <div className="rotas-empresas-v2-portal fixed inset-0 z-[9999] flex items-start justify-center px-4 pt-6">
             <button
               type="button"
               className="absolute inset-0 bg-ink/30"
@@ -4794,7 +4797,7 @@ export default function Clientes() {
 
       {filialCadastroModal &&
         createPortal(
-          <div className="fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto px-4 pt-6">
+          <div className="rotas-empresas-v2-portal fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto px-4 pt-6">
             <button
               type="button"
               className="absolute inset-0 bg-ink/30"
@@ -5430,7 +5433,7 @@ export default function Clientes() {
 
       {duplicateModal &&
         createPortal(
-          <div className="fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto px-4 pt-6">
+          <div className="rotas-empresas-v2-portal fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto px-4 pt-6">
             <div className="absolute inset-0 bg-ink/30" />
             <div
               className="relative z-10 my-0 w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-6 shadow-card"
@@ -5545,7 +5548,7 @@ export default function Clientes() {
 
       {regraVisitaModal &&
         createPortal(
-          <div className="fixed inset-0 z-[10050] flex items-start justify-center overflow-y-auto px-4 pt-6">
+          <div className="rotas-empresas-v2-portal fixed inset-0 z-[10050] flex items-start justify-center overflow-y-auto px-4 pt-6">
             <button
               type="button"
               className="absolute inset-0 bg-ink/30"
@@ -5693,7 +5696,7 @@ export default function Clientes() {
         )}
 
       {showImportModal && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
+        <div className="rotas-empresas-v2-modal fixed inset-0 z-50 flex items-start justify-center px-4 pt-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"

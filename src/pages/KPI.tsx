@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import "./kpi-glass-v2.css";
 import { createPortal } from "react-dom";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
@@ -473,7 +474,7 @@ const DonutChartCard = ({
   let progress = 0;
 
   return (
-    <div className="rounded-xl border border-sea/15 bg-white/90 p-4">
+    <div className="rotas-kpi-v2-chart rounded-xl border border-sea/15 bg-white/90 p-4">
       <h4 className="text-sm font-semibold text-ink">{title}</h4>
       <p className="mt-1 text-[11px] text-ink/60">{subtitle}</p>
       <div className="mt-3 flex flex-wrap items-center gap-4">
@@ -584,7 +585,7 @@ const DoubleBarChartCard = ({
   };
 
   return (
-    <div className="rounded-xl border border-sea/15 bg-white/90 p-4">
+    <div className="rotas-kpi-v2-chart rounded-xl border border-sea/15 bg-white/90 p-4">
       <h4 className="text-sm font-semibold text-ink">{title}</h4>
       <p className="mt-1 text-[11px] text-ink/60">{subtitle}</p>
 
@@ -692,7 +693,7 @@ const TopCodesChartCard = ({
   const maxAbs = Math.max(1, ...rows.map((row) => Math.abs(row.saldo)));
 
   return (
-    <div className="rounded-xl border border-sea/15 bg-white/90 p-4">
+    <div className="rotas-kpi-v2-chart rounded-xl border border-sea/15 bg-white/90 p-4">
       <h4 className="text-sm font-semibold text-ink">{title}</h4>
       <p className="mt-1 text-[11px] text-ink/60">{subtitle}</p>
       {!hasData ? (
@@ -1160,6 +1161,8 @@ export default function KPI() {
       ]);
 
       const clone = root.cloneNode(true) as HTMLElement;
+      // A exportacao usa o mesmo relatorio solido de antes do tema Glass V2.
+      clone.classList.remove("rotas-kpi-v2");
       clone.querySelectorAll('[data-pdf-exclude="true"]').forEach((element) => element.remove());
       clone.style.background = "#ffffff";
 
@@ -1550,9 +1553,10 @@ export default function KPI() {
   }
 
   return (
-    <div id="kpi-export-root" className="space-y-4 md:space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
+    <div id="kpi-export-root" className="rotas-kpi-v2 space-y-4 md:space-y-6">
+      <header className="rotas-kpi-v2-hero flex flex-wrap items-start justify-between gap-3">
         <div>
+          <span className="rotas-kpi-v2-eyebrow">ODONTOART · INTELIGENCIA COMERCIAL</span>
           <h2 className="font-display text-2xl text-ink">KPI</h2>
           <p className="mt-2 text-sm text-ink/60">
             Indicadores baseados no AssociadoTitular por codigo, com historico de snapshots e comparacao por periodo.
@@ -1596,7 +1600,7 @@ export default function KPI() {
         </div>
       </header>
 
-      <div className="rounded-2xl border border-sea/20 bg-white/90 p-3 text-xs text-ink/70">
+      <div className="rotas-kpi-v2-status rounded-2xl border border-sea/20 bg-white/90 p-3 text-xs text-ink/70">
         {syncRunBanner?.status === "running" ? (
           <div className="space-y-2">
             <p className="font-semibold text-amber-700">Sincronizacao automatica em andamento</p>
@@ -1636,14 +1640,14 @@ export default function KPI() {
         {syncError && <p className="mt-1 text-red-600">{syncError}</p>}
       </div>
 
-      <section className="rounded-2xl border border-sea/20 bg-sand/30 p-3 md:p-4">
+      <section className="rotas-kpi-v2-main rounded-2xl border border-sea/20 bg-sand/30 p-3 md:p-4">
         <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           {summaryCards.map((card) => (
             <button
               key={card.label}
               type="button"
               onClick={() => openKpiCardDetailModal(card.key, card.label)}
-              className="rounded-xl border border-sea/15 bg-white p-3 text-left transition hover:border-sea/40 hover:shadow-sm"
+              className="rotas-kpi-v2-metric rounded-xl border border-sea/15 bg-white p-3 text-left transition hover:border-sea/40 hover:shadow-sm"
             >
               <p className="text-[11px] uppercase tracking-[0.16em] text-ink/50">{card.label}</p>
               <p className="mt-2 text-2xl font-semibold text-ink">{card.value}</p>
@@ -1653,16 +1657,16 @@ export default function KPI() {
 
         {kpiCardDetailModal && typeof document !== "undefined"
           ? createPortal(
-              <div className="fixed inset-0 z-[70] flex items-center justify-center px-4">
+              <div className="rotas-kpi-v2-portal fixed inset-0 z-[70] flex items-center justify-center px-4" role="dialog" aria-modal="true" aria-labelledby="kpi-detail-dialog-title">
                 <button
                   type="button"
                   className="absolute inset-0 bg-ink/40"
                   onClick={() => setKpiCardDetailModal(null)}
                 />
-                <div className="relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-5 shadow-card">
+                <div className="rotas-kpi-v2-dialog relative w-full max-w-lg rounded-3xl border border-sea/20 bg-white p-5 shadow-card">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-display text-lg text-ink">{kpiCardDetailModal.title}</h3>
+                      <h3 id="kpi-detail-dialog-title" className="font-display text-lg text-ink">{kpiCardDetailModal.title}</h3>
                       <p className="mt-1 text-xs text-ink/60">{kpiCardDetailModal.metricLabel}</p>
                     </div>
                     <button
@@ -1697,7 +1701,7 @@ export default function KPI() {
                       pagedKpiCardDetailRows.map((row) => (
                         <div
                           key={`${row.codigo}-${row.empresa}`}
-                          className="rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-sm text-ink/80"
+                          className="rotas-kpi-v2-detail rounded-xl border border-sea/15 bg-sand/30 px-3 py-2 text-sm text-ink/80"
                         >
                           <p className="font-semibold text-ink">{row.empresa}</p>
                           <p className="text-xs text-ink/60">Codigo: {row.codigo}</p>
@@ -1771,7 +1775,7 @@ export default function KPI() {
         </div>
 
         <div className="mt-3 grid gap-3 lg:grid-cols-3">
-          <div className="rounded-xl border border-sea/15 bg-white/90 p-4">
+          <div className="rotas-kpi-v2-chart rounded-xl border border-sea/15 bg-white/90 p-4">
             <h4 className="text-sm font-semibold text-ink">Comparativo por empresa</h4>
             <p className="mt-1 text-[11px] text-ink/60">Soma de vidas por empresa na base completa.</p>
             <div className="mt-3 space-y-2">
@@ -1821,13 +1825,13 @@ export default function KPI() {
           />
         </div>
 
-        <div className="mt-3 rounded-xl border border-sea/20 bg-white px-3 py-2 text-[11px] text-ink dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
+        <div className="rotas-kpi-v2-chart-note mt-3 rounded-xl border border-sea/20 bg-white px-3 py-2 text-[11px] text-ink dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
           <span className="font-semibold text-ink dark:text-slate-100">Base dos graficos comparativos:</span>{" "}
           base completa.
           {historicalChartLoading ? " Atualizando dados..." : ""}
           {historicalChartError ? ` Erro ao carregar historico: ${historicalChartError}` : ""}
         </div>
-        <div className="mt-3 rounded-xl border border-sea/20 bg-white p-3">
+        <div className="rotas-kpi-v2-table-panel mt-3 rounded-xl border border-sea/20 bg-white p-3">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <p className="text-xs font-semibold text-ink">Codigos e valores</p>
@@ -1843,8 +1847,8 @@ export default function KPI() {
             />
           </div>
 
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-left text-xs text-ink/70">
+          <div className="rotas-kpi-v2-table-scroll mt-3 overflow-x-auto">
+            <table className="rotas-kpi-v2-table w-full text-left text-xs text-ink/70">
               <thead>
                 <tr className="border-b border-sea/20">
                   {[

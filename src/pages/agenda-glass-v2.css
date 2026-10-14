@@ -1,0 +1,289 @@
+/* Rotas / Agenda+ — Glass V2
+ * Tela /agenda somente. Painéis com blur profundo; linhas mantidas legíveis
+ * e sem filtros de backdrop individuais para não degradar listas extensas. */
+.rotas-agenda-v2 {
+  --ra-glass: rgba(246, 255, 251, .44);
+  --ra-strong: rgba(252, 255, 254, .63);
+  --ra-inset: rgba(247, 255, 252, .49);
+  --ra-row: rgba(250, 255, 253, .74);
+  --ra-field: rgba(252, 255, 253, .68);
+  --ra-border: rgba(255, 255, 255, .84);
+  --ra-glint: rgba(255, 255, 255, .95);
+  --ra-shadow: rgba(10, 77, 74, .16);
+  --ra-glow: rgba(30, 215, 159, .20);
+  position: relative;
+  min-width: 0;
+  padding: clamp(12px, 2vw, 26px);
+  border: 1px solid rgba(255, 255, 255, .61);
+  border-radius: 28px;
+  background:
+    radial-gradient(ellipse 52% 28% at 2% 2%, rgba(29, 224, 162, .55), transparent 80%),
+    radial-gradient(ellipse 45% 26% at 98% 12%, rgba(64, 169, 225, .46), transparent 83%),
+    radial-gradient(ellipse 58% 30% at 50% 68%, rgba(112, 226, 188, .33), transparent 83%),
+    linear-gradient(138deg, #c6ebdd 0%, #d6ebee 52%, #d5f4e3 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .84), 0 23px 60px rgba(18, 70, 70, .10);
+}
+.dark .rotas-agenda-v2 {
+  --ra-glass: rgba(7, 34, 41, .34);
+  --ra-strong: rgba(10, 39, 47, .46);
+  --ra-inset: rgba(11, 48, 54, .43);
+  --ra-row: rgba(10, 32, 40, .82);
+  --ra-field: rgba(9, 32, 40, .66);
+  --ra-border: rgba(207, 255, 241, .31);
+  --ra-glint: rgba(255, 255, 255, .32);
+  --ra-shadow: rgba(0, 0, 0, .36);
+  --ra-glow: rgba(33, 233, 171, .18);
+  background:
+    radial-gradient(ellipse 48% 25% at 0% 0%, rgba(16, 212, 156, .38), transparent 81%),
+    radial-gradient(ellipse 47% 22% at 100% 18%, rgba(34, 145, 200, .36), transparent 85%),
+    radial-gradient(ellipse 64% 33% at 48% 69%, rgba(21, 147, 112, .24), transparent 83%),
+    linear-gradient(133deg, #061620, #12303a 54%, #071a21);
+  border-color: rgba(214, 255, 242, .18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .13), 0 25px 66px rgba(0, 0, 0, .27);
+}
+
+/* Cabeçalho com o mesmo material cristalino aprovado no Dashboard. */
+.rotas-agenda-v2 > .rotas-agenda-v2-hero {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(15px, 2vw, 23px);
+  border: 1px solid var(--ra-border);
+  border-radius: 23px;
+  background:
+    radial-gradient(ellipse at 0% -40%, rgba(40, 239, 174, .21), transparent 58%),
+    linear-gradient(126deg, rgba(255, 255, 255, .35), rgba(255, 255, 255, .03) 61%),
+    var(--ra-strong) !important;
+  box-shadow: inset 0 1px 0 var(--ra-glint), inset 0 -1px 0 rgba(255, 255, 255, .1),
+              0 18px 48px var(--ra-shadow), 0 0 30px var(--ra-glow);
+  -webkit-backdrop-filter: blur(42px) saturate(190%);
+  backdrop-filter: blur(42px) saturate(190%);
+}
+.rotas-agenda-v2-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+  padding: 6px 11px;
+  border: 1px solid rgba(42, 205, 153, .34);
+  border-radius: 999px;
+  background: rgba(18, 192, 135, .12);
+  color: #12684e;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .13em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .54);
+}
+.rotas-agenda-v2-eyebrow::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #32dca0;
+  box-shadow: 0 0 12px rgba(28, 214, 151, .83);
+}
+.dark .rotas-agenda-v2-eyebrow {
+  border-color: rgba(153, 255, 220, .30);
+  color: #b5ffe2;
+  background: rgba(29, 190, 141, .14);
+}
+
+/* Painéis suspensos: filtro geral, grupos e barra de ações. */
+.rotas-agenda-v2 :is(.rotas-agenda-v2-shell, .rotas-agenda-v2-filter-card, .rotas-agenda-v2-toolbar, .rotas-agenda-v2-results) {
+  position: relative;
+  border: 1px solid var(--ra-border) !important;
+  background:
+    linear-gradient(132deg, rgba(255, 255, 255, .25), rgba(255, 255, 255, .025) 48%, rgba(255, 255, 255, .10)),
+    var(--ra-glass) !important;
+  box-shadow: inset 0 1px 0 var(--ra-glint), inset 0 -1px 0 rgba(255, 255, 255, .07),
+              0 16px 44px var(--ra-shadow), 0 2px 6px rgba(0, 0, 0, .07);
+  -webkit-backdrop-filter: blur(36px) saturate(182%);
+  backdrop-filter: blur(36px) saturate(182%);
+}
+.rotas-agenda-v2 .rotas-agenda-v2-shell {
+  border-radius: 24px;
+  padding: clamp(12px, 1.7vw, 20px);
+  background:
+    radial-gradient(ellipse at 0% 0%, rgba(31, 210, 151, .15), transparent 51%),
+    linear-gradient(133deg, rgba(255, 255, 255, .32), rgba(255, 255, 255, .025) 65%),
+    var(--ra-strong) !important;
+}
+.rotas-agenda-v2 .rotas-agenda-v2-filter-card {
+  border-radius: 20px;
+  background: linear-gradient(125deg, rgba(255, 255, 255, .19), transparent 58%), var(--ra-inset) !important;
+  -webkit-backdrop-filter: blur(29px) saturate(170%);
+  backdrop-filter: blur(29px) saturate(170%);
+}
+.rotas-agenda-v2 .rotas-agenda-v2-toolbar {
+  border-radius: 20px;
+  background: linear-gradient(124deg, rgba(255, 255, 255, .22), transparent 73%), var(--ra-strong) !important;
+}
+.rotas-agenda-v2 .rotas-agenda-v2-results {
+  border-radius: 23px;
+  overflow: visible;
+  background: linear-gradient(145deg, rgba(255, 255, 255, .18), transparent 65%), var(--ra-glass) !important;
+}
+.rotas-agenda-v2 .rotas-agenda-v2-shell > div:first-child {
+  border-color: rgba(110, 231, 184, .27);
+}
+.rotas-agenda-v2 .rotas-agenda-v2-shell > div:first-child p {
+  color: rgb(var(--theme-text-secondary));
+}
+.dark .rotas-agenda-v2 .rotas-agenda-v2-shell > div:first-child p {
+  color: #a9f5d9;
+}
+
+/* Entradas continuam legíveis; selects nativos permanecem com opções opacas. */
+.rotas-agenda-v2 .rotas-agenda-v2-shell :is(input:not([type="checkbox"]):not([type="radio"]), select),
+.rotas-agenda-v2 .rotas-agenda-v2-filter-card > div :is(.rounded-xl.bg-white, .rounded-xl.bg-white\/90) {
+  background: var(--ra-field) !important;
+  color: rgb(var(--theme-text)) !important;
+  border-color: var(--ra-border) !important;
+  box-shadow: inset 0 1px 0 var(--ra-glint), 0 4px 13px var(--ra-shadow);
+  -webkit-backdrop-filter: blur(21px) saturate(175%);
+  backdrop-filter: blur(21px) saturate(175%);
+}
+.rotas-agenda-v2 :is(input, select, textarea, button, [role="button"]):focus-visible {
+  outline: 2px solid rgb(var(--theme-accent-action));
+  outline-offset: 3px;
+}
+.rotas-agenda-v2 select option {
+  background: rgb(var(--theme-surface-strong));
+  color: rgb(var(--theme-text));
+}
+.rotas-agenda-v2 :is(.rotas-agenda-v2-toolbar, .rotas-agenda-v2-results) button[class*="bg-white"],
+.rotas-agenda-v2 > div > button[class*="bg-white"] {
+  background: var(--ra-field) !important;
+  border-color: var(--ra-border) !important;
+  box-shadow: inset 0 1px 0 var(--ra-glint), 0 4px 13px var(--ra-shadow);
+}
+.rotas-agenda-v2 .rotas-agenda-v2-toolbar button[class*="bg-emerald-500"] {
+  background: linear-gradient(140deg, rgba(169, 255, 222, .97), rgba(37, 205, 153, .93)) !important;
+  border: 1px solid rgba(242, 255, 251, .85);
+  color: #064735;
+  box-shadow: inset 0 2px 1px rgba(255, 255, 255, .64), 0 6px 22px rgba(24, 212, 148, .27);
+}
+.rotas-agenda-v2 .rotas-agenda-v2-toolbar button:disabled,
+.rotas-agenda-v2 .rotas-agenda-v2-shell button:disabled { box-shadow: none; }
+
+/* Listas de centenas de empresas: vidro está no recipiente e não em cada
+ * célula; aplicação de blur por linha causaria custo elevado ao rolar. */
+.rotas-agenda-v2 .rotas-agenda-v2-list-item {
+  background: linear-gradient(130deg, rgba(255, 255, 255, .08), transparent 70%), var(--ra-row) !important;
+  border: 1px solid var(--ra-border) !important;
+  box-shadow: inset 0 1px 0 var(--ra-glint), 0 4px 14px rgba(8, 53, 49, .07);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  transition: transform 165ms ease, border-color 165ms ease, box-shadow 165ms ease;
+}
+.rotas-agenda-v2 .rotas-agenda-v2-list-item:hover {
+  transform: translateY(-2px);
+  border-color: rgba(35, 207, 149, .63) !important;
+  box-shadow: inset 0 1px 0 var(--ra-glint), 0 13px 27px var(--ra-shadow), 0 0 18px var(--ra-glow);
+}
+.rotas-agenda-v2 .rotas-agenda-v2-list-item:focus-visible {
+  outline: 2px solid rgb(var(--theme-accent-action));
+  outline-offset: 2px;
+}
+.rotas-agenda-v2 .rotas-agenda-v2-list-item[class*="ring-sea"] {
+  border-color: rgba(28, 190, 133, .74) !important;
+}
+.rotas-agenda-v2 .rotas-agenda-v2-results > :is(.md\:hidden, .hidden) {
+  min-width: 0;
+}
+
+/* Popovers fora da árvore da página (React createPortal). */
+.rotas-agenda-v2-popover,
+.rotas-agenda-v2-portal > div[class*="rounded"],
+.rotas-agenda-v2-drawer [data-agenda-drawer-content="true"] {
+  border: 1px solid rgba(213, 255, 239, .62) !important;
+  background:
+    linear-gradient(133deg, rgba(255, 255, 255, .30), rgba(255, 255, 255, .035) 58%),
+    rgba(239, 255, 249, .83) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 22px 61px rgba(12, 66, 60, .26),
+              0 0 25px rgba(39, 224, 160, .12);
+  -webkit-backdrop-filter: blur(39px) saturate(189%);
+  backdrop-filter: blur(39px) saturate(189%);
+}
+.dark .rotas-agenda-v2-popover,
+.dark .rotas-agenda-v2-portal > div[class*="rounded"],
+.dark .rotas-agenda-v2-drawer [data-agenda-drawer-content="true"] {
+  border-color: rgba(181, 255, 232, .36) !important;
+  background:
+    linear-gradient(136deg, rgba(255, 255, 255, .17), rgba(255, 255, 255, .015) 60%),
+    rgba(6, 29, 38, .89) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .29), 0 26px 71px rgba(0, 0, 0, .46),
+              0 0 32px rgba(22, 213, 148, .14);
+}
+.rotas-agenda-v2-portal > button.absolute,
+.rotas-agenda-v2-drawer > button.absolute {
+  background: rgba(5, 28, 32, .37) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(134%);
+  backdrop-filter: blur(12px) saturate(134%);
+}
+.rotas-agenda-v2-portal :is(input, textarea, select),
+.rotas-agenda-v2-popover input,
+.rotas-agenda-v2-drawer [data-agenda-drawer-content="true"] :is(input, textarea, select) {
+  color: rgb(var(--theme-text)) !important;
+  background-color: rgb(var(--theme-surface-strong) / .88) !important;
+}
+.rotas-agenda-v2-portal select option,
+.rotas-agenda-v2-popover select option,
+.rotas-agenda-v2-drawer select option {
+  color: rgb(var(--theme-text));
+  background: rgb(var(--theme-surface-strong));
+}
+/* Alertas semânticos preservam âmbar/vermelho para indicar bloqueios. */
+.rotas-agenda-v2-portal > div[class*="border-amber-300"] {
+  border-color: rgba(245, 158, 11, .72) !important;
+}
+.rotas-agenda-v2-drawer [data-agenda-drawer-content="true"] {
+  border-radius: 20px 0 0 20px;
+}
+.rotas-agenda-v2-drawer [data-agenda-drawer-content="true"].rounded-2xl {
+  border-radius: 22px;
+}
+
+/* Sem blur real, sem transparência e sem movimentos se o ambiente exigir. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .rotas-agenda-v2 {
+    --ra-glass: rgb(var(--theme-surface-strong) / .96);
+    --ra-strong: rgb(var(--theme-surface-strong) / .98);
+    --ra-inset: rgb(var(--theme-surface-strong) / .95);
+    --ra-field: rgb(var(--theme-surface-strong) / .98);
+    --ra-row: rgb(var(--theme-surface-strong) / .98);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .rotas-agenda-v2 {
+    --ra-glass: rgb(var(--theme-surface-strong) / .96);
+    --ra-strong: rgb(var(--theme-surface-strong) / .98);
+    --ra-inset: rgb(var(--theme-surface-strong) / .95);
+    --ra-field: rgb(var(--theme-surface-strong) / .98);
+    --ra-row: rgb(var(--theme-surface-strong) / .98);
+  }
+  .rotas-agenda-v2 :is(.rotas-agenda-v2-hero, .rotas-agenda-v2-shell, .rotas-agenda-v2-filter-card, .rotas-agenda-v2-toolbar, .rotas-agenda-v2-results),
+  .rotas-agenda-v2-popover, .rotas-agenda-v2-portal > div[class*="rounded"],
+  .rotas-agenda-v2-drawer [data-agenda-drawer-content="true"] {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rotas-agenda-v2 .rotas-agenda-v2-list-item { transition: none; }
+  .rotas-agenda-v2 .rotas-agenda-v2-list-item:hover { transform: none; }
+}
+@media (max-width: 640px) {
+  .rotas-agenda-v2 { padding: 11px; border-radius: 18px; }
+  .rotas-agenda-v2 > .rotas-agenda-v2-hero { border-radius: 18px; }
+  .rotas-agenda-v2 .rotas-agenda-v2-shell { padding: 11px; border-radius: 18px; }
+  .rotas-agenda-v2 .rotas-agenda-v2-list-item:hover { transform: none; }
+}
+@media print {
+  .rotas-agenda-v2, .dark .rotas-agenda-v2 {
+    background: #fff !important; border: 0 !important; box-shadow: none !important;
+  }
+  .rotas-agenda-v2 :is(.rotas-agenda-v2-hero, .rotas-agenda-v2-shell, .rotas-agenda-v2-filter-card, .rotas-agenda-v2-toolbar, .rotas-agenda-v2-results, .rotas-agenda-v2-list-item) {
+    background: #fff !important; box-shadow: none !important;
+    -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+  }
+}

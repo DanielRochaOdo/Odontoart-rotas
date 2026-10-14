@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import "./visitas-glass-v2.css";
 import { addDays, endOfMonth, format, isAfter, isSameDay, startOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -3688,10 +3689,11 @@ export default function Visitas() {
   }, [shouldLockSupervisorRegisterMode]);
 
   return (
-    <div className="overflow-x-hidden space-y-4 md:space-y-6">
-      <header className="space-y-3">
+    <div className="rotas-visitas-v2 overflow-x-hidden space-y-4 md:space-y-6">
+      <header className="rotas-visitas-v2-hero space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
+            <span className="rotas-visitas-v2-eyebrow">ODONTOART · AGENDA DE VISITAS</span>
             <h2 className="font-display text-2xl text-ink">Agenda</h2>
             <p className="mt-2 text-sm text-ink/60">
               Calendario de visitas de vendedores e supervisores. Clique em um dia para ver os detalhes.
@@ -3788,7 +3790,7 @@ export default function Visitas() {
         </div>
       ) : (
         <div className="grid min-w-0 gap-4 lg:grid-cols-[1.1fr_1fr] lg:gap-6">
-          <section className="min-w-0 rounded-2xl border border-sea/15 bg-white/95 p-3 shadow-card md:p-4">
+          <section className="rotas-visitas-v2-panel min-w-0 rounded-2xl border border-sea/15 bg-white/95 p-3 shadow-card md:p-4">
             <div className="flex items-center justify-between gap-2">
               <button
                 type="button"
@@ -3836,13 +3838,15 @@ export default function Visitas() {
                     type="button"
                     onClick={() => (isDisabled ? null : setSelectedDate(day))}
                     disabled={isDisabled}
+                    aria-pressed={isSelected}
+                    data-has-visits={hasVisits}
                     title={
                       hasVisits
                         ? `${count} visita(s) em ${format(day, "dd/MM/yyyy")}${hasSupervisorVisitForLoggedUser ? " • inclui visita de supervisor" : ""}`
                         : undefined
                     }
                     className={[
-                      "relative flex h-14 flex-col items-center justify-center rounded-xl border px-1 text-center text-[10px] transition sm:h-16 sm:text-xs",
+                      "rotas-visitas-v2-day relative flex h-14 flex-col items-center justify-center rounded-xl border px-1 text-center text-[10px] transition sm:h-16 sm:text-xs",
                       isSelected ? "border-orange-300" : "border-sea/20 bg-white",
                       isSelected
                         ? "bg-orange-200 shadow-lg shadow-orange-200/70 ring-2 ring-orange-200"
@@ -3886,7 +3890,7 @@ export default function Visitas() {
             )}
           </section>
 
-          <section className="min-w-0 rounded-2xl border border-sea/15 bg-white/95 p-3 shadow-card md:p-4">
+          <section className="rotas-visitas-v2-panel min-w-0 rounded-2xl border border-sea/15 bg-white/95 p-3 shadow-card md:p-4">
             <div className="flex items-center justify-between gap-2">
               <h3 className="min-w-0 font-display text-lg text-ink">Visitas do dia</h3>
               <span className="shrink-0 text-xs text-ink/60">
@@ -3921,8 +3925,9 @@ export default function Visitas() {
                   return (
                     <div
                       key={seller}
+                      data-supervisor={hasSupervisorGroup}
                       className={[
-                        "min-w-0 overflow-hidden rounded-2xl border p-3",
+                        "rotas-visitas-v2-seller min-w-0 overflow-hidden rounded-2xl border p-3",
                         hasSupervisorGroup
                           ? "border-violet-300 bg-violet-50/50 dark:border-violet-500/45 dark:bg-violet-950/35"
                           : "border-sea/20 bg-sand/20",
@@ -4114,8 +4119,10 @@ export default function Visitas() {
                                               zIndex: dragSnapshot.isDragging ? 9999 : undefined,
                                               opacity: 1,
                                             }}
+                                            data-supervisor={isSupervisorVisit}
+                                            data-dragging={dragSnapshot.isDragging}
                                             className={[
-                                              "min-w-0 overflow-hidden rounded-xl border p-3 transition-transform",
+                                              "rotas-visitas-v2-visit min-w-0 overflow-hidden rounded-xl border p-3 transition-transform",
                                               isSupervisorVisit
                                                 ? "border-violet-300 bg-violet-50/70 dark:border-violet-500/45 dark:bg-violet-950/45"
                                                 : "border-sea/10 bg-white/90",
@@ -4488,7 +4495,7 @@ export default function Visitas() {
       )}
 
       {addVendorsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
+        <div className="rotas-visitas-v2-modal fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4637,7 +4644,7 @@ export default function Visitas() {
       )}
 
       {detailsVisit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
+        <div className="rotas-visitas-v2-modal fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
           <button type="button" className="absolute inset-0 bg-ink/30" onClick={closeDetailsModal} />
           <div className="relative flex w-full max-w-lg max-h-[calc(100dvh-3rem)] flex-col overflow-hidden rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <div className="flex items-start justify-between gap-3">
@@ -4821,7 +4828,7 @@ export default function Visitas() {
       )}
 
       {noVisitObservationModal && (
-        <div className="fixed inset-0 z-[55] flex items-center justify-center overflow-y-auto px-4 py-6">
+        <div className="rotas-visitas-v2-modal fixed inset-0 z-[55] flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4849,7 +4856,7 @@ export default function Visitas() {
       )}
 
       {planoValoresModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto px-4 py-6">
+        <div className="rotas-visitas-v2-modal fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4903,7 +4910,7 @@ export default function Visitas() {
       )}
 
       {canManageVendorRouteAccess && vendorDashboardAccessModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto px-4 py-6">
+        <div className="rotas-visitas-v2-modal fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -4949,7 +4956,7 @@ export default function Visitas() {
       )}
 
       {localActionModal && (
-        <div className="fixed inset-0 z-[65] flex items-center justify-center overflow-y-auto px-4 py-6">
+        <div className="rotas-visitas-v2-modal fixed inset-0 z-[65] flex items-center justify-center overflow-y-auto px-4 py-6">
           <button type="button" className="absolute inset-0 bg-ink/30" onClick={() => setLocalActionModal(null)} />
           <div className="relative w-full max-w-md rounded-3xl border border-sea/20 bg-white p-6 shadow-card">
             <h3 className="font-display text-lg text-ink">Concluir ação</h3>
@@ -4976,7 +4983,7 @@ export default function Visitas() {
       )}
 
       {completeVisit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
+        <div className="rotas-visitas-v2-modal fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -5408,7 +5415,7 @@ export default function Visitas() {
       )}
 
       {confirmVisit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
+        <div className="rotas-visitas-v2-modal fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"
@@ -5449,7 +5456,7 @@ export default function Visitas() {
       )}
 
       {noVisit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
+        <div className="rotas-visitas-v2-modal fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30"

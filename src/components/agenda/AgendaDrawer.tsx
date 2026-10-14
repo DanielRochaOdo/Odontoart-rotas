@@ -709,7 +709,7 @@ export default function AgendaDrawer({
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex ${
+      className={`rotas-agenda-v2-drawer fixed inset-0 z-50 flex ${
         isEditing ? "items-start justify-center px-4 pt-6" : "justify-end"
       }`}
     >
