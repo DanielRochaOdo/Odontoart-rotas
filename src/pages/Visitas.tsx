@@ -433,6 +433,7 @@ export default function Visitas() {
   const [routeOrderSavingVendor, setRouteOrderSavingVendor] = useState<string | null>(null);
   const [editingVisits, setEditingVisits] = useState<Record<string, boolean>>({});
   const [refreshKey, setRefreshKey] = useState(0);
+  const [localActionsVersion, setLocalActionsVersion] = useState(0);
   const [hasUpdatesAvailable, setHasUpdatesAvailable] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -902,7 +903,6 @@ export default function Visitas() {
   const [vendorDashboardAccessSaving, setVendorDashboardAccessSaving] = useState(false);
   const [vendorDashboardAccessError, setVendorDashboardAccessError] = useState<string | null>(null);
   const [releasedVendorIdsForDate, setReleasedVendorIdsForDate] = useState<string[]>([]);
-  const [localActionsVersion, setLocalActionsVersion] = useState(0);
   const [localActionModal, setLocalActionModal] = useState<LocalActionModalState | null>(null);
   const [localActionAnswer, setLocalActionAnswer] = useState<boolean | null>(null);
   const [localActionReason, setLocalActionReason] = useState("");
