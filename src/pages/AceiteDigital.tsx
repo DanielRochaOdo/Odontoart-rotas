@@ -60,8 +60,7 @@ export default function AceiteDigital() {
         let visitsQuery = supabase
           .from("visits")
           .select("visit_date")
-          .not("completed_at", "is", null)
-          .is("no_visit_reason", null)
+          .or("visit_type.eq.VENDEDOR,visit_type.is.null")
           .lte("visit_date", todayKey);
 
         if (session?.user.id && profile?.display_name) {

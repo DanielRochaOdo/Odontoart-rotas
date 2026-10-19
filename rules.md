@@ -59,6 +59,16 @@ Nao existe role `ADMIN` neste sistema.
 - Filtro por supervisor existe para `ASSISTENTE` e `SUPERVISOR`.
 - Controle por cadeado para liberar proxima rota existe no codigo, mas hoje esta desativado (`SHOW_VENDOR_LOCK_ICON = false`).
 
+#### Dogmas de liberacao da visualizacao da Agenda
+
+Estas regras sao requisitos permanentes de negocio. Nenhuma alteracao de frontend, backend, banco de dados ou interface pode reduzir, contornar ou remover estes controles.
+
+1. A rota do dia `D` fica disponivel para o vendedor a partir das 19:00 do dia calendario anterior (`D-1`). Exemplo: a rota de terca-feira fica disponivel a partir das 19:00 de segunda-feira.
+2. Antes de visualizar uma rota futura, todas as visitas das rotas anteriores devem estar registradas.
+3. O Aceite Digital de cada data de rota anterior tambem deve estar registrado para o mesmo vendedor e a mesma data.
+4. Visitas e Aceite Digital sao registros independentes. Nao se comparam as quantidades de vidas informadas nos dois modulos.
+5. Qualquer pendencia anterior, de visita ou de Aceite Digital, bloqueia as rotas seguintes, inclusive quando a pendencia pertence a um mes anterior. A virada do mes nao elimina pendencias. A liberacao ocorre somente quando todas as pendencias anteriores estiverem resolvidas e o horario de liberacao do item 1 tiver sido atingido.
+
 ### Aceite digital (`/aceite-digital`)
 
 - `VENDEDOR` registra o proprio aceite.

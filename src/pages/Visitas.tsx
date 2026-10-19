@@ -443,6 +443,8 @@ export default function Visitas() {
   const [addVendorsQuery, setAddVendorsQuery] = useState("");
   const [maxVisibleDate, setMaxVisibleDate] = useState<string | null>(null);
   const [blockMessage, setBlockMessage] = useState<string | null>(null);
+  const [routeGateStatus, setRouteGateStatus] = useState<"checking" | "ready" | "error">("checking");
+  const [routeGateResolvedKey, setRouteGateResolvedKey] = useState<string | null>(null);
   const [supervisores, setSupervisores] = useState<
     { id: string; user_id: string | null; display_name: string | null }[]
   >([]);
@@ -461,7 +463,6 @@ export default function Visitas() {
   const restoredViewRef = useRef(false);
   const vendorInitialViewRef = useRef(false);
   const lastDayLoadKeyRef = useRef<string | null>(null);
-  const lastRouteGateKeyRef = useRef<string | null>(null);
   const clientesLiteCacheRef = useRef(new Map<string, ClienteListRow>());
   const clientesDetailsCacheRef = useRef(new Map<string, ClienteDetailsRow>());
   const pendingModalRestoreRef = useRef<{
@@ -509,11 +510,15 @@ export default function Visitas() {
         refreshKey,
         selectedVendorId,
         selectedSupervisorId,
+        routeGateStatus,
+        routeGateResolvedKey ?? "",
       ].join("|"),
     [
       currentMonthKey,
       profile?.display_name,
       refreshKey,
+      routeGateResolvedKey,
+      routeGateStatus,
       role,
       selectedDateKey,
       selectedSupervisorId,
@@ -530,10 +535,15 @@ export default function Visitas() {
         profile?.display_name ?? "",
         session?.user.email ?? "",
         currentMonthKey,
+        selectedDateKey,
         refreshKey,
+        localActionsVersion,
       ].join("|"),
-    [currentMonthKey, profile?.display_name, refreshKey, role, session?.user.email, session?.user.id],
+    [currentMonthKey, localActionsVersion, profile?.display_name, refreshKey, role, selectedDateKey, session?.user.email, session?.user.id],
   );
+  const vendorGateResolved =
+    !isVendor ||
+    (routeGateStatus === "ready" && routeGateResolvedKey === routeGateKey && Boolean(maxVisibleDate));
 
   const clearClientesCache = useCallback(() => {
     clientesLiteCacheRef.current.clear();
@@ -1038,10 +1048,17 @@ export default function Visitas() {
 
     const load = async () => {
       if (!active) return;
+      if (
+        isVendor &&
+        (routeGateStatus !== "ready" || routeGateResolvedKey !== routeGateKey || !maxVisibleDate)
+      ) {
+        setVisits([]);
+        setLoading(routeGateStatus === "checking");
+        return;
+      }
+
       setLoading(true);
       setError(null);
-      setMaxVisibleDate(null);
-      setBlockMessage(null);
 
       const year = currentMonth.getFullYear();
       const monthIndex = currentMonth.getMonth();
@@ -1171,7 +1188,7 @@ export default function Visitas() {
     return () => {
       active = false;
     };
-  }, [dayLoadKey, hydrateVisitsWithClientes, isVendor]);
+  }, [dayLoadKey, hydrateVisitsWithClientes, isVendor, maxVisibleDate, routeGateKey, routeGateResolvedKey, routeGateStatus]);
 
   useEffect(() => {
     clearClientesCache();
@@ -1181,162 +1198,97 @@ export default function Visitas() {
     if (!isVendor) {
       setMaxVisibleDate(null);
       setBlockMessage(null);
+      setRouteGateStatus("ready");
+      setRouteGateResolvedKey(routeGateKey);
       return;
     }
 
     let active = true;
-    if (lastRouteGateKeyRef.current === routeGateKey) return;
-    lastRouteGateKeyRef.current = routeGateKey;
+    setRouteGateStatus("checking");
+    setRouteGateResolvedKey(null);
+    setMaxVisibleDate(null);
+    setBlockMessage("Validando a liberacao da rota...");
+
     const validateRouteGate = async () => {
       const startedAt = performance.now();
       try {
-        const now = new Date();
-        const todayKey = getDateKey(now);
-        const canUnlockNextRouteByTime = now.getHours() >= 19;
-        const endInclusive = format(
-          addDays(new Date(`${toYmd(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1)}T12:00:00`), -1),
-          "yyyy-MM-dd",
-        );
-        const formatRouteDate = (dateKey: string) =>
-          format(new Date(`${dateKey}T12:00:00`), "dd/MM/yyyy");
+        const { data, error: gateError } = await supabase.rpc("vendor_agenda_visibility_state");
+        if (gateError) throw gateError;
+        const gateState = Array.isArray(data) ? data[0] : data;
+        const serverMaxDate = gateState?.max_visible_date
+          ? formatDateKey(String(gateState.max_visible_date))
+          : null;
+        if (!serverMaxDate) throw new Error("A validacao nao retornou um limite de acesso.");
+
+        let maxDate = serverMaxDate;
+        let blockReason = gateState?.block_message ? String(gateState.block_message) : null;
 
         const assigneeClauses = [
-          session?.user.id ? `assigned_to_user_id.eq.${session.user.id}` : null,
-          profile?.display_name ? `assigned_to_name.eq.${profile.display_name}` : null,
-          session?.user.email ? `assigned_to_name.eq.${session.user.email}` : null,
+          session?.user.id ? "assigned_to_user_id.eq." + session.user.id : null,
+          profile?.display_name ? "assigned_to_name.eq." + profile.display_name : null,
+          session?.user.email ? "assigned_to_name.eq." + session.user.email : null,
         ].filter((value): value is string => Boolean(value));
+        const routeDates: string[] = [];
+        const todayKey = getDateKey(new Date());
 
-        const applyVendorVisitFilter = <TQuery,>(query: TQuery) => {
-          if (assigneeClauses.length > 1) {
-            return (query as TQuery & { or: (filters: string) => TQuery }).or(assigneeClauses.join(","));
-          }
-          if (assigneeClauses.length === 1 && assigneeClauses[0].startsWith("assigned_to_user_id.eq.")) {
-            return (query as TQuery & { eq: (column: string, value: string) => TQuery }).eq(
-              "assigned_to_user_id",
-              assigneeClauses[0].replace("assigned_to_user_id.eq.", ""),
-            );
-          }
-          if (assigneeClauses.length === 1 && assigneeClauses[0].startsWith("assigned_to_name.eq.")) {
-            return (query as TQuery & { eq: (column: string, value: string) => TQuery }).eq(
-              "assigned_to_name",
-              assigneeClauses[0].replace("assigned_to_name.eq.", ""),
-            );
-          }
-          return query;
-        };
-
-        const { data: routeDatesData, error: routeDatesError } = await applyVendorVisitFilter(
-          supabase
+        for (let from = 0; ; from += 1000) {
+          let query = supabase
             .from("visits")
-            .select("visit_date")
-            .gte("visit_date", startOfMonth(currentMonth).toISOString().slice(0, 10))
-            .not("visit_date", "is", null)
-            .order("visit_date", { ascending: true }),
-        );
-        if (routeDatesError) throw new Error(routeDatesError.message);
-        const routeDates = Array.from(
-          new Set(
-            (routeDatesData ?? [])
-              .map((row: { visit_date?: string | null }) => row.visit_date)
-              .filter((value): value is string => Boolean(value))
-              .map((value) => formatDateKey(value)),
-          ),
-        ).sort();
-
-        await Promise.all([refreshLocalActions(), refreshLocalActionCompletions()]);
-
-        let maxDate = endInclusive;
-        let blockReason: string | null = null;
-
-        if (routeDates.length > 0) {
-          const pastOrTodayDates = routeDates.filter((dateKey) => dateKey <= todayKey);
-          const futureDates = routeDates.filter((dateKey) => dateKey > todayKey);
-
-          for (const checkedRouteDate of pastOrTodayDates) {
-            const [pendingCount, completedCount, aceiteCount] = await Promise.all([
-              applyVendorVisitFilter(
-                supabase
-                  .from("visits")
-                  .select("id", { count: "exact", head: true })
-                  .eq("visit_date", checkedRouteDate)
-                  .is("completed_at", null),
-              ).then(({ count, error }) => {
-                if (error) throw error;
-                return count ?? 0;
-              }),
-              applyVendorVisitFilter(
-                supabase
-                  .from("visits")
-                  .select("id", { count: "exact", head: true })
-                  .eq("visit_date", checkedRouteDate)
-                  .not("completed_at", "is", null)
-                  .is("no_visit_reason", null),
-              ).then(({ count, error }) => {
-                if (error) throw error;
-                return count ?? 0;
-              }),
-              session?.user.id
-                ? supabase
-                    .from("aceite_digital")
-                    .select("id", { count: "exact", head: true })
-                    .eq("vendor_user_id", session.user.id)
-                    .eq("entry_date", checkedRouteDate)
-                    .then(({ count, error }) => {
-                      if (error) throw error;
-                      return count ?? 0;
-                    })
-                : Promise.resolve(0),
-            ]);
-
-            if (pendingCount > 0) {
-              maxDate = checkedRouteDate;
-              blockReason = `Conclua todas as visitas da rota (${formatRouteDate(checkedRouteDate)}) para liberar as proximas rotas.`;
-              break;
-            }
-
-            if (completedCount > 0 && aceiteCount === 0) {
-              maxDate = checkedRouteDate;
-              blockReason = `Registre o aceite digital da rota (${formatRouteDate(checkedRouteDate)}) para liberar as proximas rotas.`;
-              break;
-            }
-
-            if (session?.user.id) {
-              const pendingActions = getActiveLocalActionsForDate(checkedRouteDate).filter(
-                (action) => !getLocalActionCompletion(action.id, checkedRouteDate, session.user.id),
-              );
-              if (pendingActions.length > 0) {
-                maxDate = checkedRouteDate;
-                blockReason = `Conclua as ações da rota (${formatRouteDate(checkedRouteDate)}) para liberar as proximas rotas.`;
-                break;
-              }
-            }
-
-            maxDate = checkedRouteDate;
+            .select("id, visit_date")
+            .lte("visit_date", todayKey)
+            .order("visit_date", { ascending: true })
+            .order("id", { ascending: true });
+          query = applyVendorVisitTypeScope(query);
+          if (assigneeClauses.length > 1) {
+            query = query.or(assigneeClauses.join(","));
+          } else if (session?.user.id) {
+            query = query.eq("assigned_to_user_id", session.user.id);
+          } else if (profile?.display_name) {
+            query = query.eq("assigned_to_name", profile.display_name);
           }
 
-          if (!blockReason && futureDates.length > 0) {
-            const nextRouteDate = futureDates[0];
-            if (nextRouteDate) {
-              if (!canUnlockNextRouteByTime) {
-                blockReason = `A proxima rota (${formatRouteDate(nextRouteDate)}) sera liberada a partir das 19:00.`;
-                maxDate = todayKey;
-              } else {
-                maxDate = nextRouteDate;
-              }
-            }
+          const { data: routeRows, error: routeError } = await query.range(from, from + 999);
+          if (routeError) throw routeError;
+          routeDates.push(...(routeRows ?? []).map((row) => formatDateKey(row.visit_date)));
+          if (!routeRows || routeRows.length < 1000) break;
+        }
+
+        const uniqueRouteDates = [...new Set(routeDates)].sort();
+        if (session?.user.id) {
+          const localBlockDate = uniqueRouteDates.find((dateKey) =>
+            getActiveLocalActionsForDate(dateKey).some(
+              (action) => !getLocalActionCompletion(action.id, dateKey, session.user.id),
+            ),
+          );
+          if (localBlockDate && localBlockDate < maxDate) {
+            maxDate = localBlockDate;
+            blockReason = "Conclua as acoes da rota (" +
+              format(new Date(maxDate + "T12:00:00"), "dd/MM/yyyy") +
+              ") para liberar as proximas rotas.";
           }
         }
 
         if (!active) return;
         setMaxVisibleDate(maxDate);
         setBlockMessage(blockReason);
-        if (isAfter(selectedDate ?? new Date(0), new Date(`${maxDate}T12:00:00`))) {
-          setSelectedDate(new Date(`${maxDate}T12:00:00`));
+        setRouteGateStatus("ready");
+
+        if (selectedDateKey > maxDate) {
+          const clampedDate = new Date(maxDate + "T12:00:00");
+          setSelectedDate(clampedDate);
+          setCurrentMonth(startOfMonth(clampedDate));
+          setRouteGateResolvedKey(null);
+        } else {
+          setRouteGateResolvedKey(routeGateKey);
         }
       } catch {
         if (!active) return;
-        setMaxVisibleDate(startOfMonth(currentMonth).toISOString().slice(0, 10));
-        setBlockMessage("Nao foi possivel validar as pendencias do vendedor. O acesso a proximas rotas foi bloqueado.");
+        setMaxVisibleDate(null);
+        setBlockMessage("Nao foi possivel validar as pendencias do vendedor. O acesso a rotas foi bloqueado.");
+        setRouteGateResolvedKey(null);
+        setRouteGateStatus("error");
+        setVisits([]);
+        setLoading(false);
       } finally {
         logPerfDuration("VISITAS_ROUTE_GATE", startedAt);
       }
@@ -1346,7 +1298,19 @@ export default function Visitas() {
     return () => {
       active = false;
     };
-  }, [isVendor, localActionsVersion, routeGateKey, session?.user.id]);
+  }, [isVendor, localActionsVersion, profile?.display_name, routeGateKey, selectedDateKey, session?.user.email, session?.user.id]);
+
+  useEffect(() => {
+    if (!isVendor) return;
+    const revalidateWhenVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      setRouteGateStatus("checking");
+      setRouteGateResolvedKey(null);
+      setRefreshKey((value) => value + 1);
+    };
+    document.addEventListener("visibilitychange", revalidateWhenVisible);
+    return () => document.removeEventListener("visibilitychange", revalidateWhenVisible);
+  }, [isVendor]);
 
   useEffect(() => {
     const monthStart = toYmd(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
@@ -1450,6 +1414,7 @@ export default function Visitas() {
   );
 
   const filteredVisits = useMemo(() => {
+    if (isVendor && !vendorGateResolved) return [] as VisitRow[];
     let scopedVisits = visits;
     const debugFilter = {
       totalBefore: visits.length,
@@ -1504,6 +1469,8 @@ export default function Visitas() {
   }, [
     canManage,
     canFilterBySupervisor,
+    isVendor,
+    vendorGateResolved,
     selectedSupervisorId,
     selectedVendorId,
     selectableVendors,
@@ -1576,6 +1543,7 @@ export default function Visitas() {
   }, [isVendor, maxVisibleDate, selectedDate]);
 
   const selectedVisits = useMemo(() => {
+    if (isVendor && !vendorGateResolved) return [] as VisitRow[];
     if (!selectedDate) return [] as VisitRow[];
     const selectedDayStart = toYmd(
       selectedDate.getFullYear(),
@@ -1618,7 +1586,7 @@ export default function Visitas() {
       const bName = b.assigned_to_name ?? b.agenda?.empresa ?? "";
       return aName.localeCompare(bName, "pt-BR");
     });
-  }, [dayDetailsByDate, dayDetailsErrorByDate, dayDetailsLoadingDateKey, filteredVisits, monthSummaryCounts, selectedDate]);
+  }, [dayDetailsByDate, dayDetailsErrorByDate, dayDetailsLoadingDateKey, filteredVisits, isVendor, monthSummaryCounts, selectedDate, vendorGateResolved]);
 
   const selectedVisitsDayScoped = useMemo(() => {
     if (!canManage || !canFilterBySupervisor) return selectedVisits;
@@ -1683,6 +1651,10 @@ export default function Visitas() {
   ]);
 
   useEffect(() => {
+    if (isVendor && !vendorGateResolved) {
+      setDayDetailsLoadingDateKey(null);
+      return;
+    }
     if (!selectedDate) return;
 
     const selectedDayStart = toYmd(
@@ -1780,6 +1752,8 @@ export default function Visitas() {
     canFilterBySupervisor,
     canManage,
     dayDetailsByDate,
+    isVendor,
+    vendorGateResolved,
     filteredVisits,
     hydrateVisitsWithClientes,
     isSupervisorVisitForSelectedSupervisor,
@@ -3826,12 +3800,14 @@ export default function Visitas() {
                 }
 
                 const key = format(day, "yyyy-MM-dd");
-                const count = visitsByDate.get(key)?.length ?? monthSummaryCounts.get(key) ?? 0;
+                const count = isVendor && !vendorGateResolved
+                  ? 0
+                  : visitsByDate.get(key)?.length ?? monthSummaryCounts.get(key) ?? 0;
                 const hasVisits = count > 0;
                 const hasSupervisorVisitForLoggedUser = supervisorPinDates.has(key);
                 const isSelected = selectedDate ? isSameDay(day, selectedDate) : false;
                 const maxDate = isVendor && maxVisibleDate ? new Date(`${maxVisibleDate}T12:00:00`) : null;
-                const isDisabled = maxDate ? isAfter(day, maxDate) : false;
+                const isDisabled = isVendor && (!vendorGateResolved || !maxDate || isAfter(day, maxDate));
                 return (
                   <button
                     key={key}
@@ -4485,10 +4461,23 @@ export default function Visitas() {
               </div>
             )}
 
-            {isVendor && blockMessage && (
-              <p className="mt-4 rounded-xl border border-amber-300 bg-amber-100 px-3 py-2 text-xs font-bold text-red-600">
-                {blockMessage}
-              </p>
+            {isVendor && (blockMessage || routeGateStatus !== "ready") && (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-100 px-3 py-2 text-xs font-bold text-red-600">
+                <p>{blockMessage ?? "Validando a liberacao da rota..."}</p>
+                {routeGateStatus === "error" && (
+                  <button
+                    type="button"
+                    className="rounded-lg border border-amber-500 bg-white px-3 py-1.5 font-semibold text-ink hover:bg-amber-50"
+                    onClick={() => {
+                      setRouteGateStatus("checking");
+                      setRouteGateResolvedKey(null);
+                      setRefreshKey((value) => value + 1);
+                    }}
+                  >
+                    Tentar novamente
+                  </button>
+                )}
+              </div>
             )}
           </section>
         </div>
