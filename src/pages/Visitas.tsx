@@ -1222,6 +1222,13 @@ export default function Visitas() {
 
         let maxDate = serverMaxDate;
         let blockReason = gateState?.block_message ? String(gateState.block_message) : null;
+        const pendingRouteDate = gateState?.pending_route_date
+          ? formatDateKey(String(gateState.pending_route_date))
+          : null;
+        const pendingAcceptanceDate = gateState?.pending_acceptance_date
+          ? formatDateKey(String(gateState.pending_acceptance_date))
+          : null;
+        let pendingLocalActionDate: string | null = null;
 
         const assigneeClauses = [
           session?.user.id ? "assigned_to_user_id.eq." + session.user.id : null,
@@ -1260,11 +1267,23 @@ export default function Visitas() {
               (action) => !getLocalActionCompletion(action.id, dateKey, session.user.id),
             ),
           );
+          pendingLocalActionDate = localBlockDate ?? null;
           if (localBlockDate && localBlockDate < maxDate) {
             maxDate = localBlockDate;
             blockReason = "Conclua as acoes da rota (" +
               format(new Date(maxDate + "T12:00:00"), "dd/MM/yyyy") +
               ") para liberar as proximas rotas.";
+          }
+        }
+
+        if (blockReason && selectedDateKey === maxDate) {
+          const visibleRouteDate = format(new Date(`${maxDate}T12:00:00`), "dd/MM/yyyy");
+          if (pendingLocalActionDate === maxDate) {
+            blockReason = `A rota de ${visibleRouteDate} está liberada. Conclua as ações desse dia para liberar as próximas rotas.`;
+          } else if (pendingRouteDate === maxDate) {
+            blockReason = `A rota de ${visibleRouteDate} está liberada. Registre as visitas pendentes desse dia para liberar as próximas rotas.`;
+          } else if (pendingAcceptanceDate === maxDate) {
+            blockReason = `A rota de ${visibleRouteDate} está liberada. Registre o Aceite Digital desse dia para liberar as próximas rotas.`;
           }
         }
 
