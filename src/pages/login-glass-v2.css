@@ -56,19 +56,6 @@
     radial-gradient(circle 26rem at 88% 69%, rgba(62, 184, 234, .27), transparent 81%);
   filter: blur(15px);
 }
-.rotas-login-v2::after {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  pointer-events: none;
-  inset: 0;
-  background-image: linear-gradient(rgba(255, 255, 255, .15) 1px, transparent 1px),
-                    linear-gradient(90deg, rgba(255, 255, 255, .15) 1px, transparent 1px);
-  background-size: 46px 46px;
-  -webkit-mask-image: radial-gradient(ellipse at 49% 42%, #000, transparent 74%);
-  mask-image: radial-gradient(ellipse at 49% 42%, #000, transparent 74%);
-  opacity: .24;
-}
 .rotas-login-v2 .rotas-login-v2-layout {
   position: relative;
   z-index: 1;

@@ -1,0 +1,230 @@
+/* Material glass compartilhado para as telas que ainda usavam superfícies
+   muito saturadas. Agenda e Visitas mantêm os estilos que servem de referência. */
+:is(
+  html body .rotas-login-v2,
+  html body .rotas-dashboard-v2,
+  html body .rotas-empresas-v2,
+  html body .rotas-fila-v2,
+  html body .rotas-kpi-v2,
+  html body .rotas-settings-v2,
+  html body .rotas-novidades-v2,
+  html body .rotas-logs-v2
+) {
+  --glass-system-pane: rgba(255, 255, 255, .27);
+  --glass-system-pane-raised: rgba(255, 255, 255, .36);
+  --glass-system-pane-soft: rgba(255, 255, 255, .19);
+  --glass-system-field: rgba(255, 255, 255, .54);
+  --glass-system-border: rgba(255, 255, 255, .55);
+  --glass-system-highlight: rgba(255, 255, 255, .68);
+  --glass-system-shadow: rgba(28, 40, 47, .09);
+  background:
+    radial-gradient(ellipse at 8% 4%, rgba(190, 226, 220, .18), transparent 48%),
+    radial-gradient(ellipse at 92% 18%, rgba(196, 214, 227, .17), transparent 46%),
+    linear-gradient(145deg, rgba(247, 249, 248, .30), rgba(230, 237, 238, .22)) !important;
+}
+
+html.dark body :is(
+  .rotas-login-v2,
+  .rotas-dashboard-v2,
+  .rotas-empresas-v2,
+  .rotas-fila-v2,
+  .rotas-kpi-v2,
+  .rotas-settings-v2,
+  .rotas-novidades-v2,
+  .rotas-logs-v2
+) {
+  --glass-system-pane: rgba(11, 19, 25, .36);
+  --glass-system-pane-raised: rgba(14, 23, 29, .46);
+  --glass-system-pane-soft: rgba(10, 18, 24, .28);
+  --glass-system-field: rgba(8, 16, 22, .43);
+  --glass-system-border: rgba(255, 255, 255, .19);
+  --glass-system-highlight: rgba(255, 255, 255, .20);
+  --glass-system-shadow: rgba(0, 0, 0, .20);
+  background:
+    radial-gradient(ellipse at 8% 4%, rgba(69, 113, 113, .14), transparent 48%),
+    radial-gradient(ellipse at 92% 18%, rgba(66, 91, 112, .13), transparent 46%),
+    linear-gradient(145deg, rgba(15, 23, 29, .28), rgba(9, 16, 22, .34)) !important;
+}
+
+/* Cartões principais: o fundo por trás continua perceptível como no exemplo. */
+:is(
+  html body .rotas-login-v2 :is(.rotas-login-v2-intro, .rotas-login-v2-panel, .rotas-login-v2-note),
+  html body .rotas-dashboard-v2 :is(.rotas-dashboard-v2-hero, .dashboard-card, .dashboard-card-soft, .glass-pane, .glass-pane-soft),
+  html body .rotas-empresas-v2 :is(.rotas-empresas-v2-hero, .rotas-empresas-v2-form, .rotas-empresas-v2-toolbar, .rotas-empresas-v2-list),
+  html body .rotas-fila-v2 :is(.rotas-fila-v2-hero, .rotas-fila-v2-panel, .rotas-fila-v2-kpi, .rotas-fila-v2-results),
+  html body .rotas-kpi-v2 :is(.rotas-kpi-v2-hero, .rotas-kpi-v2-status, .rotas-kpi-v2-main, .rotas-kpi-v2-metric, .rotas-kpi-v2-chart),
+  html body .rotas-settings-v2 :is(.rotas-settings-v2-hero, .rotas-settings-v2-navigation, .rotas-settings-v2-section),
+  html body .rotas-novidades-v2 :is(.rotas-novidades-v2-hero, .rotas-novidades-v2-filters, .rotas-novidades-v2-pagination, .rotas-novidades-v2-article, .rotas-novidades-v2-empty),
+  html body .rotas-logs-v2 :is(.rotas-logs-v2-hero, .rotas-logs-v2-filters, .rotas-logs-v2-event)
+) {
+  border-color: var(--glass-system-border) !important;
+  background: linear-gradient(135deg, rgba(255, 255, 255, .17), rgba(255, 255, 255, .025) 58%), var(--glass-system-pane) !important;
+  box-shadow: inset 0 1px 0 var(--glass-system-highlight), 0 4px 30px var(--glass-system-shadow) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(125%) !important;
+  backdrop-filter: blur(24px) saturate(125%) !important;
+}
+
+html.dark body.dark :is(
+  .rotas-login-v2 :is(.rotas-login-v2-intro, .rotas-login-v2-panel, .rotas-login-v2-note),
+  .rotas-dashboard-v2 :is(.rotas-dashboard-v2-hero, .dashboard-card, .dashboard-card-soft, .glass-pane, .glass-pane-soft),
+  .rotas-empresas-v2 :is(.rotas-empresas-v2-hero, .rotas-empresas-v2-form, .rotas-empresas-v2-toolbar, .rotas-empresas-v2-list),
+  .rotas-fila-v2 :is(.rotas-fila-v2-hero, .rotas-fila-v2-panel, .rotas-fila-v2-kpi, .rotas-fila-v2-results),
+  .rotas-kpi-v2 :is(.rotas-kpi-v2-hero, .rotas-kpi-v2-status, .rotas-kpi-v2-main, .rotas-kpi-v2-metric, .rotas-kpi-v2-chart),
+  .rotas-settings-v2 :is(.rotas-settings-v2-hero, .rotas-settings-v2-navigation, .rotas-settings-v2-section),
+  .rotas-novidades-v2 :is(.rotas-novidades-v2-hero, .rotas-novidades-v2-filters, .rotas-novidades-v2-pagination, .rotas-novidades-v2-article, .rotas-novidades-v2-empty),
+  .rotas-logs-v2 :is(.rotas-logs-v2-hero, .rotas-logs-v2-filters, .rotas-logs-v2-event)
+) {
+  border-color: var(--glass-system-border) !important;
+  background: linear-gradient(135deg, rgba(255, 255, 255, .17), rgba(255, 255, 255, .025) 58%), var(--glass-system-pane) !important;
+  box-shadow: inset 0 1px 0 var(--glass-system-highlight), 0 4px 30px var(--glass-system-shadow) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(125%) !important;
+  backdrop-filter: blur(24px) saturate(125%) !important;
+}
+
+/* Diálogos que ficam montados dentro da tela e portais no body. */
+:is(
+  html body .rotas-empresas-v2-drawer [data-empresas-drawer-content="true"],
+  html body .rotas-empresas-v2-modal > div.relative,
+  html body .rotas-empresas-v2-portal > div.relative,
+  html body .rotas-kpi-v2-portal > .rotas-kpi-v2-dialog,
+  html body .rotas-fila-v2 :is(.rotas-fila-v2-modal > .rotas-fila-v2-dialog, .rotas-fila-v2-alerts > .rotas-fila-v2-dialog),
+  html body .rotas-novidades-v2 .rotas-novidades-v2-modal > .rotas-novidades-v2-dialog
+) {
+  background: linear-gradient(135deg, rgba(255, 255, 255, .18), rgba(255, 255, 255, .025) 58%), rgba(255, 255, 255, .38) !important;
+  border-color: rgba(255, 255, 255, .60) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .68), 0 4px 30px rgba(28, 40, 47, .13) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(125%) !important;
+  backdrop-filter: blur(24px) saturate(125%) !important;
+}
+html.dark body.dark :is(
+  .rotas-empresas-v2-drawer [data-empresas-drawer-content="true"],
+  .rotas-empresas-v2-modal > div.relative,
+  .rotas-empresas-v2-portal > div.relative,
+  .rotas-kpi-v2-portal > .rotas-kpi-v2-dialog,
+  .rotas-fila-v2 :is(.rotas-fila-v2-modal > .rotas-fila-v2-dialog, .rotas-fila-v2-alerts > .rotas-fila-v2-dialog),
+  .rotas-novidades-v2 .rotas-novidades-v2-modal > .rotas-novidades-v2-dialog
+) {
+  background: linear-gradient(135deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .015) 58%), rgba(11, 19, 25, .78) !important;
+  border-color: rgba(255, 255, 255, .19) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .20), 0 4px 30px rgba(0, 0, 0, .25) !important;
+}
+
+:is(
+  html body .rotas-login-v2 .rotas-login-v2-panel,
+  html body .rotas-dashboard-v2 > .rotas-dashboard-v2-hero,
+  html body .rotas-empresas-v2 > .rotas-empresas-v2-hero,
+  html body .rotas-fila-v2 > .rotas-fila-v2-hero,
+  html body .rotas-kpi-v2 > .rotas-kpi-v2-hero,
+  html body .rotas-settings-v2 > .rotas-settings-v2-hero,
+  html body .rotas-novidades-v2 > .rotas-novidades-v2-hero,
+  html body .rotas-logs-v2 > .rotas-logs-v2-hero
+) {
+  background: linear-gradient(135deg, rgba(255, 255, 255, .21), rgba(255, 255, 255, .035) 60%), var(--glass-system-pane-raised) !important;
+  border-radius: 20px;
+}
+
+/* Filas e cartões internos recebem uma camada mais discreta. */
+:is(
+  html body .rotas-dashboard-v2 :is(.dashboard-card-soft, .glass-pane-soft),
+  html body .rotas-fila-v2 .rotas-fila-v2-kpi,
+  html body .rotas-kpi-v2 :is(.rotas-kpi-v2-metric, .rotas-kpi-v2-chart),
+  html body .rotas-novidades-v2 :is(.rotas-novidades-v2-article, .rotas-novidades-v2-empty),
+  html body .rotas-logs-v2 .rotas-logs-v2-event
+) {
+  background: var(--glass-system-pane-soft) !important;
+  box-shadow: inset 0 1px 0 var(--glass-system-highlight), 0 3px 18px var(--glass-system-shadow) !important;
+}
+
+/* Controles mantêm contraste suficiente para formulário, filtro e navegação. */
+:is(
+  html body .rotas-login-v2 .rotas-login-v2-input,
+  html body .rotas-dashboard-v2 :is(input, select),
+  html body .rotas-empresas-v2 :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea),
+  html body .rotas-fila-v2 :is(input:not([type="checkbox"]), select, textarea),
+  html body .rotas-kpi-v2 :is(input, select, textarea),
+  html body .rotas-settings-v2 :is(input:not([type="checkbox"]):not([type="file"]), select, textarea),
+  html body .rotas-novidades-v2 :is(input, select, textarea),
+  html body .rotas-logs-v2 select
+) {
+  background: var(--glass-system-field) !important;
+  border-color: var(--glass-system-border) !important;
+  box-shadow: inset 0 1px 0 var(--glass-system-highlight), 0 3px 14px var(--glass-system-shadow) !important;
+}
+
+html.dark body.dark :is(
+  .rotas-login-v2 .rotas-login-v2-input,
+  .rotas-dashboard-v2 :is(input, select),
+  .rotas-empresas-v2 :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea),
+  .rotas-fila-v2 :is(input:not([type="checkbox"]), select, textarea),
+  .rotas-kpi-v2 :is(input, select, textarea),
+  .rotas-settings-v2 :is(input:not([type="checkbox"]):not([type="file"]), select, textarea),
+  .rotas-novidades-v2 :is(input, select, textarea),
+  .rotas-logs-v2 select
+) {
+  background: var(--glass-system-field) !important;
+  border-color: var(--glass-system-border) !important;
+  box-shadow: inset 0 1px 0 var(--glass-system-highlight), 0 3px 14px var(--glass-system-shadow) !important;
+}
+
+/* Menu lateral acompanha o tema sem virar uma placa opaca. */
+:is(html body .rotas-sidebar-v2-desktop, html body .rotas-sidebar-v2-mobile-bar, html body .rotas-sidebar-v2-drawer) {
+  background: rgba(255, 255, 255, .34) !important;
+  border-color: rgba(255, 255, 255, .48) !important;
+  box-shadow: 0 4px 30px rgba(24, 37, 44, .10) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(125%) !important;
+  backdrop-filter: blur(24px) saturate(125%) !important;
+}
+html.dark body.dark :is(.rotas-sidebar-v2-desktop, .rotas-sidebar-v2-mobile-bar, .rotas-sidebar-v2-drawer) {
+  background: rgba(10, 17, 23, .48) !important;
+  border-color: rgba(255, 255, 255, .17) !important;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, .22) !important;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :is(html body .rotas-login-v2, html body .rotas-dashboard-v2, html body .rotas-empresas-v2, html body .rotas-fila-v2,
+      html body .rotas-kpi-v2, html body .rotas-settings-v2, html body .rotas-novidades-v2, html body .rotas-logs-v2) {
+    --glass-system-pane: rgba(255, 255, 255, .92);
+    --glass-system-pane-raised: rgba(255, 255, 255, .96);
+    --glass-system-pane-soft: rgba(255, 255, 255, .86);
+    --glass-system-field: rgba(255, 255, 255, .98);
+  }
+  html.dark body :is(.rotas-login-v2, .rotas-dashboard-v2, .rotas-empresas-v2, .rotas-fila-v2,
+                     .rotas-kpi-v2, .rotas-settings-v2, .rotas-novidades-v2, .rotas-logs-v2) {
+    --glass-system-pane: rgba(15, 23, 29, .96);
+    --glass-system-pane-raised: rgba(15, 23, 29, .98);
+    --glass-system-pane-soft: rgba(15, 23, 29, .92);
+    --glass-system-field: rgba(8, 16, 22, .98);
+  }
+  :is(html body .rotas-login-v2, html body .rotas-dashboard-v2, html body .rotas-empresas-v2, html body .rotas-fila-v2,
+      html body .rotas-kpi-v2, html body .rotas-settings-v2, html body .rotas-novidades-v2, html body .rotas-logs-v2,
+      html body .rotas-sidebar-v2-desktop, html body .rotas-sidebar-v2-mobile-bar, html body .rotas-sidebar-v2-drawer) :is(
+        .rotas-login-v2-intro, .rotas-login-v2-panel, .rotas-login-v2-note,
+        .rotas-dashboard-v2-hero, .dashboard-card, .dashboard-card-soft, .glass-pane, .glass-pane-soft,
+        .rotas-empresas-v2-hero, .rotas-empresas-v2-form, .rotas-empresas-v2-toolbar, .rotas-empresas-v2-list,
+        .rotas-fila-v2-hero, .rotas-fila-v2-panel, .rotas-fila-v2-kpi, .rotas-fila-v2-results,
+        .rotas-kpi-v2-hero, .rotas-kpi-v2-status, .rotas-kpi-v2-main, .rotas-kpi-v2-metric, .rotas-kpi-v2-chart,
+        .rotas-settings-v2-hero, .rotas-settings-v2-navigation, .rotas-settings-v2-section,
+        .rotas-novidades-v2-hero, .rotas-novidades-v2-filters, .rotas-novidades-v2-pagination, .rotas-novidades-v2-article, .rotas-novidades-v2-empty,
+        .rotas-logs-v2-hero, .rotas-logs-v2-filters, .rotas-logs-v2-event
+      ) {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :is(html body .rotas-login-v2, html body .rotas-dashboard-v2, html body .rotas-empresas-v2, html body .rotas-fila-v2,
+      html body .rotas-kpi-v2, html body .rotas-settings-v2, html body .rotas-novidades-v2, html body .rotas-logs-v2) {
+    --glass-system-pane: rgba(255, 255, 255, .90);
+    --glass-system-pane-raised: rgba(255, 255, 255, .95);
+    --glass-system-pane-soft: rgba(255, 255, 255, .84);
+    --glass-system-field: rgba(255, 255, 255, .97);
+  }
+  html.dark body :is(.rotas-login-v2, .rotas-dashboard-v2, .rotas-empresas-v2, .rotas-fila-v2,
+                     .rotas-kpi-v2, .rotas-settings-v2, .rotas-novidades-v2, .rotas-logs-v2) {
+    --glass-system-pane: rgba(15, 23, 29, .94);
+    --glass-system-pane-raised: rgba(15, 23, 29, .97);
+    --glass-system-pane-soft: rgba(15, 23, 29, .90);
+    --glass-system-field: rgba(8, 16, 22, .98);
+  }
+}

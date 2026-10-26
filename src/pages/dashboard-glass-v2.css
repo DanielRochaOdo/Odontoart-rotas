@@ -43,8 +43,7 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .15), 0 25px 68px rgba(0, 0, 0, .26);
 }
 
-/* A malha e os halos ficam atras dos cards; pointer-events impede bloqueio
-   de cliques, rolagem, seletores, graficos e detalhes dos indicadores. */
+/* Halos ficam atras dos cards; pointer-events impede bloqueio de interacoes. */
 .rotas-dashboard-v2::before {
   content: "";
   position: absolute;
@@ -55,22 +54,6 @@
   background:
     radial-gradient(circle 215px at 9% 10%, rgba(30, 229, 164, .25), transparent 79%),
     radial-gradient(circle 275px at 91% 32%, rgba(47, 176, 246, .21), transparent 80%);
-}
-
-.rotas-dashboard-v2::after {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  pointer-events: none;
-  inset: 0;
-  border-radius: inherit;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, .095) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, .095) 1px, transparent 1px);
-  background-size: 38px 38px;
-  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 14%, #000 43%, transparent 75%);
-  mask-image: linear-gradient(to bottom, transparent, #000 14%, #000 43%, transparent 75%);
-  opacity: .47;
 }
 
 .rotas-dashboard-v2 .rotas-dashboard-v2-eyebrow {

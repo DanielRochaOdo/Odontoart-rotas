@@ -384,7 +384,7 @@ export const fetchEmpresasLookupByIds = async (empresaIds: string[]) => {
   if (!uniqueIds.length) return [] as EmpresaLookupRow[];
 
   const rowsById = new Map<string, EmpresaLookupRow>();
-  const chunkSize = 500;
+  const chunkSize = 100;
 
   for (let index = 0; index < uniqueIds.length; index += chunkSize) {
     const chunk = uniqueIds.slice(index, index + chunkSize);
