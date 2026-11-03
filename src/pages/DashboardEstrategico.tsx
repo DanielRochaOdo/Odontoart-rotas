@@ -891,14 +891,14 @@ function DashboardEstrategicoForUser() {
       current.vidasAceite += Number(entry.vidas ?? 0);
       bySellerMap.set(key, current);
     });
-    const bySeller = Array.from(bySellerMap.entries())
+    const allBySeller = Array.from(bySellerMap.entries())
       .map(([seller, item]) => ({
         seller,
         ...item,
         vidasTotal: item.vidasVisita + item.vidasAceite,
       }))
-      .sort((a, b) => b.visitas - a.visitas)
-      .slice(0, 12);
+      .sort((a, b) => b.visitas - a.visitas);
+    const bySeller = allBySeller.slice(0, 12);
 
     const byCityMap = new Map<string, number>();
     filteredVisits.forEach((visit) => {
@@ -942,18 +942,19 @@ function DashboardEstrategicoForUser() {
         count,
       }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "pt-BR"));
-    const mostVisitedCompanies = companiesWithVisits.slice(0, 10);
-    const leastVisitedNonZeroCompanies = [...companiesWithVisits]
+    const allMostVisitedCompanies = companiesWithVisits;
+    const allLeastVisitedNonZeroCompanies = [...companiesWithVisits]
       .sort((a, b) => a.count - b.count || a.name.localeCompare(b.name, "pt-BR"))
-      .slice(0, 10);
-    const neverVisitedCompanies = universeInScope
+    const allNeverVisitedCompanies = universeInScope
       .filter((cliente) => !empresasVisitadasSet.has(cliente.id))
       .map((cliente) => ({
         id: cliente.id,
         name: `${cliente.codigo ? `${cliente.codigo} - ` : ""}${cliente.empresa ?? "Sem nome"}`,
       }))
-      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
-      .slice(0, 10);
+      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+    const mostVisitedCompanies = allMostVisitedCompanies.slice(0, 10);
+    const leastVisitedNonZeroCompanies = allLeastVisitedNonZeroCompanies.slice(0, 10);
+    const neverVisitedCompanies = allNeverVisitedCompanies.slice(0, 10);
 
     const semCliente = filteredVisits.filter((v) => !v.cliente_id).length;
     const semResponsavel = filteredVisits.filter((v) => !v.assigned_to_name && !v.assigned_to_user_id).length;
@@ -973,12 +974,16 @@ function DashboardEstrategicoForUser() {
       cobertura,
       coberturaInScope,
       byDaySeries,
+      allBySeller,
       bySeller,
       byCity,
       byReason,
       mostVisitedCompanies,
       leastVisitedNonZeroCompanies,
       neverVisitedCompanies,
+      allMostVisitedCompanies,
+      allLeastVisitedNonZeroCompanies,
+      allNeverVisitedCompanies,
       totalClientesInScope,
       semCliente,
       semResponsavel,
@@ -1468,7 +1473,7 @@ function DashboardEstrategicoForUser() {
     }
   };
 
-  const performanceRankingRows = model.bySeller.map((item) => ({
+  const performanceRankingRows = model.allBySeller.map((item) => ({
     Vendedor: item.seller,
     Visitas: item.visitas,
     Concluidas: item.concluidas,
@@ -1483,9 +1488,9 @@ function DashboardEstrategicoForUser() {
   }));
   const commercialMonthlyRows = commercialModel.monthlyRows.map((row) => ({ Mes: row.month, "Vidas em visitas": row.total }));
   const commercialSellerRows = commercialModel.visibleSellersTotals.map((row) => ({ Vendedor: row.seller, "Vidas em visitas": row.total }));
-  const coverageMostRows = model.mostVisitedCompanies.map((row) => ({ Empresa: row.name, Visitas: row.count }));
-  const coverageLeastRows = model.leastVisitedNonZeroCompanies.map((row) => ({ Empresa: row.name, Visitas: row.count }));
-  const coverageNeverRows = model.neverVisitedCompanies.map((row) => ({ Empresa: row.name, Visitas: 0 }));
+  const coverageMostRows = model.allMostVisitedCompanies.map((row) => ({ Empresa: row.name, Visitas: row.count }));
+  const coverageLeastRows = model.allLeastVisitedNonZeroCompanies.map((row) => ({ Empresa: row.name, Visitas: row.count }));
+  const coverageNeverRows = model.allNeverVisitedCompanies.map((row) => ({ Empresa: row.name, Visitas: 0 }));
   const qualityIntegrityRows = [
     { Indicador: "Sem cliente", Quantidade: model.semCliente },
     { Indicador: "Sem responsavel", Quantidade: model.semResponsavel },
