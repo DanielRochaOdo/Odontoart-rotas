@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, BarChart3, Building2, CalendarDays, Check, CheckCircle2, Filter, MapPinned, TrendingUp, Users } from "lucide-react";
+import { AlertTriangle, BarChart3, Building2, CalendarDays, Check, CheckCircle2, Download, Filter, MapPinned, TrendingUp, Users } from "lucide-react";
 import { supabaseDash } from "../lib/supabaseDashboard";
 import { useAuth } from "../context/AuthContext";
 import { formatDateBr } from "../lib/dateFormat";
@@ -113,6 +113,23 @@ const COMMERCIAL_COLORS = [
   "#c86b45",
   "#2563eb",
 ];
+
+type ExportSheet = { name: string; rows: Array<Record<string, unknown>> };
+
+const exportXlsx = async (filename: string, sheets: ExportSheet[]) => {
+  const xlsxModule = await import("xlsx");
+  const XLSX = xlsxModule.default ?? xlsxModule;
+  const workbook = XLSX.utils.book_new();
+  sheets.forEach(({ name, rows }) => {
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    if (worksheet["!ref"]) worksheet["!autofilter"] = { ref: worksheet["!ref"] };
+    if (rows.length > 0) {
+      worksheet["!cols"] = Object.keys(rows[0]).map((key) => ({ wch: Math.min(36, Math.max(14, key.length + 2)) }));
+    }
+    XLSX.utils.book_append_sheet(workbook, worksheet, name.slice(0, 31));
+  });
+  XLSX.writeFile(workbook, filename);
+};
 
 const endExclusive = (value: string) => {
   const d = new Date(`${value}T12:00:00`);
@@ -525,6 +542,8 @@ function DashboardEstrategicoForUser() {
   const [error, setError] = useState<string | null>(null);
   const [exportingReason, setExportingReason] = useState<string | null>(null);
   const [exportReasonError, setExportReasonError] = useState<string | null>(null);
+  const [exportingXlsx, setExportingXlsx] = useState<string | null>(null);
+  const [exportXlsxError, setExportXlsxError] = useState<string | null>(null);
   const [visits, setVisits] = useState<VisitLite[]>([]);
   const [historicalVisits, setHistoricalVisits] = useState<HistoricalLives[]>([]);
   const [aceites, setAceites] = useState<AceiteLite[]>([]);
@@ -1437,6 +1456,97 @@ function DashboardEstrategicoForUser() {
     vendorSupervisorMap,
   ]);
 
+  const runXlsxExport = async (key: string, filename: string, sheets: ExportSheet[]) => {
+    setExportingXlsx(key);
+    setExportXlsxError(null);
+    try {
+      await exportXlsx(filename, sheets);
+    } catch (exportError) {
+      setExportXlsxError(exportError instanceof Error ? exportError.message : "Nao foi possivel gerar o arquivo XLSX.");
+    } finally {
+      setExportingXlsx(null);
+    }
+  };
+
+  const performanceRankingRows = model.bySeller.map((item) => ({
+    Vendedor: item.seller,
+    Visitas: item.visitas,
+    Concluidas: item.concluidas,
+    "Taxa de conclusao (%)": item.visitas > 0 ? Number(((item.concluidas / item.visitas) * 100).toFixed(1)) : 0,
+    "Vidas visita": item.vidasVisita,
+    "Vidas aceite": item.vidasAceite,
+    "Vidas total": item.vidasTotal,
+  }));
+  const performanceTrendRows = model.byDaySeries.map(([day, values]) => ({
+    Data: formatDateBr(day),
+    [metricLabel]: metric === "concluidas" ? values.concluidas : metric === "vidas" ? values.vidas : values.visitas,
+  }));
+  const commercialMonthlyRows = commercialModel.monthlyRows.map((row) => ({ Mes: row.month, "Vidas em visitas": row.total }));
+  const commercialSellerRows = commercialModel.visibleSellersTotals.map((row) => ({ Vendedor: row.seller, "Vidas em visitas": row.total }));
+  const coverageMostRows = model.mostVisitedCompanies.map((row) => ({ Empresa: row.name, Visitas: row.count }));
+  const coverageLeastRows = model.leastVisitedNonZeroCompanies.map((row) => ({ Empresa: row.name, Visitas: row.count }));
+  const coverageNeverRows = model.neverVisitedCompanies.map((row) => ({ Empresa: row.name, Visitas: 0 }));
+  const qualityIntegrityRows = [
+    { Indicador: "Sem cliente", Quantidade: model.semCliente },
+    { Indicador: "Sem responsavel", Quantidade: model.semResponsavel },
+    { Indicador: "Sem data", Quantidade: model.semData },
+  ];
+  const qualityReasonRows = model.byReason.map((row) => ({ Motivo: row.reason, Quantidade: row.count }));
+
+  const tabExportSheets: Record<Exclude<TabKey, "visao">, ExportSheet[]> = {
+    performance: [
+      { name: "Resumo", rows: [
+        { Indicador: "Total atual", Valor: trendSummary.currentTotal },
+        { Indicador: "Periodo anterior", Valor: trendSummary.previousTotal },
+        { Indicador: "Media diaria atual", Valor: Number(trendSummary.dailyAverage.toFixed(1)) },
+        { Indicador: "Media diaria periodo anterior", Valor: Number(trendSummary.previousDailyAverage.toFixed(1)) },
+        { Indicador: "Variacao (%)", Valor: trendSummary.variationPct === null ? "-" : Number(trendSummary.variationPct.toFixed(1)) },
+      ] },
+      { name: "Serie diaria", rows: performanceTrendRows },
+      { name: "Ranking supervisor", rows: performanceRankingRows },
+    ],
+    comercial: [
+      { name: "Vidas mes a mes", rows: commercialMonthlyRows },
+      { name: "Vidas por vendedor", rows: commercialSellerRows },
+      { name: "Indicadores", rows: [
+        { Indicador: "Total no periodo", Valor: commercialModel.total },
+        { Indicador: "Total periodo anterior", Valor: commercialModel.previousTotal },
+        { Indicador: "Rendimento medio mensal", Valor: Number(commercialModel.average.toFixed(1)) },
+        { Indicador: "Variacao recente (%)", Valor: commercialModel.variationPct === null ? "-" : Number(commercialModel.variationPct.toFixed(1)) },
+        { Indicador: "Previsao proximo mes", Valor: Number(commercialModel.forecastNextMonth.toFixed(1)) },
+        { Indicador: "Melhor equipe", Valor: commercialModel.bestTeam?.supervisorName ?? "-" },
+        { Indicador: "Vidas melhor equipe", Valor: commercialModel.bestTeam?.total ?? 0 },
+        { Indicador: "Melhor vendedor", Valor: commercialModel.bestSeller?.seller ?? "-" },
+        { Indicador: "Vidas melhor vendedor", Valor: commercialModel.bestSeller?.total ?? 0 },
+        { Indicador: "Melhor mes", Valor: commercialModel.best.month || "-" },
+        { Indicador: "Vidas melhor mes", Valor: commercialModel.best.total },
+        { Indicador: "Menor mes com movimento", Valor: commercialModel.worst.month || "-" },
+        { Indicador: "Vidas menor mes", Valor: commercialModel.worst.total },
+      ] },
+    ],
+    cobertura: [
+      { name: "Resumo", rows: [
+        { Indicador: "Empresas visitadas", Valor: model.empresasVisitadas },
+        { Indicador: "Empresas na carteira", Valor: model.totalClientesInScope },
+        { Indicador: "Cobertura (%)", Valor: Number(model.coberturaInScope.toFixed(1)) },
+      ] },
+      { name: "Mais visitadas", rows: coverageMostRows },
+      { name: "Menos visitadas", rows: coverageLeastRows },
+      { name: "Nunca visitadas", rows: coverageNeverRows },
+    ],
+    qualidade: [
+      { name: "Integridade de dados", rows: qualityIntegrityRows },
+      { name: "Motivos nao visita", rows: qualityReasonRows },
+    ],
+  };
+
+  const exportBlock = (key: string, title: string, rows: Array<Record<string, unknown>>) =>
+    runXlsxExport(key, `${key}_${from}_${to}.xlsx`, [{ name: title, rows }]);
+  const exportCurrentTab = () => {
+    if (tab === "visao") return;
+    return runXlsxExport(`aba-${tab}`, `dashboard_${tab}_${from}_${to}.xlsx`, tabExportSheets[tab]);
+  };
+
   useEffect(() => {
     if (
       commercialHighlight?.type === "seller" &&
@@ -1560,7 +1670,21 @@ function DashboardEstrategicoForUser() {
             <Filter size={12} />
             Dados combinados
           </span>
+          {tab !== "visao" ? (
+            <button
+              type="button"
+              onClick={() => void exportCurrentTab()}
+              disabled={exportingXlsx !== null || loading}
+              className="inline-flex items-center gap-1.5 rounded-full border border-sea/25 bg-white px-3 py-1.5 text-xs font-semibold text-sea transition hover:bg-sea/5 disabled:cursor-wait disabled:opacity-50"
+              title={`Exportar todos os numeros da aba ${TABS.find((item) => item.key === tab)?.label ?? tab}`}
+              aria-label="Exportar a aba completa em XLSX"
+            >
+              <Download size={14} />
+              {exportingXlsx === `aba-${tab}` ? "Gerando..." : "Exportar aba XLSX"}
+            </button>
+          ) : null}
         </div>
+        {exportXlsxError ? <p className="mt-2 text-xs text-red-600">{exportXlsxError}</p> : null}
       </header>
 
       {tab === "visao" ? (
@@ -1754,7 +1878,16 @@ function DashboardEstrategicoForUser() {
               <article className={["dashboard-card rounded-2xl p-4", isSoftRefreshing ? "animate-pulse" : ""].join(" ")}>
                 <div className="flex items-center justify-between">
                   <h3 className="font-display text-lg text-ink">Ranking por supervisor</h3>
-                  <BarChart3 size={16} className="text-sea" />
+                  <button
+                    type="button"
+                    onClick={() => void exportBlock("ranking_supervisor", "Ranking supervisor", performanceRankingRows)}
+                    disabled={exportingXlsx !== null}
+                    className="rounded-lg p-2 text-sea transition hover:bg-sea/10 disabled:cursor-wait disabled:opacity-50"
+                    title="Baixar ranking por supervisor em XLSX"
+                    aria-label="Baixar ranking por supervisor em XLSX"
+                  >
+                    {exportingXlsx === "ranking_supervisor" ? <span className="text-xs">...</span> : <Download size={16} />}
+                  </button>
                 </div>
                 <p className="mt-1 text-[11px] text-ink/65">Compara volume e eficiencia dos vendedores do supervisor selecionado.</p>
                 <div className="mt-4 overflow-x-auto">
@@ -1893,9 +2026,21 @@ function DashboardEstrategicoForUser() {
                         : "Historico mensal de vidas em visitas de todos os vendedores."}
                     </p>
                   </div>
-                  <span className="rounded-full border border-sea/20 bg-white px-3 py-1.5 text-[11px] font-semibold text-ink/65">
-                    Total: {formatNumber(commercialModel.total)}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full border border-sea/20 bg-white px-3 py-1.5 text-[11px] font-semibold text-ink/65">
+                      Total: {formatNumber(commercialModel.total)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void exportBlock("vidas_mes_a_mes", "Vidas mes a mes", commercialMonthlyRows)}
+                      disabled={exportingXlsx !== null}
+                      className="rounded-lg p-2 text-sea transition hover:bg-sea/10 disabled:cursor-wait disabled:opacity-50"
+                      title="Baixar vidas em visitas mes a mes em XLSX"
+                      aria-label="Baixar vidas em visitas mes a mes em XLSX"
+                    >
+                      {exportingXlsx === "vidas_mes_a_mes" ? <span className="text-xs">...</span> : <Download size={16} />}
+                    </button>
+                  </div>
                 </div>
                 <MonthlyCommercialBarChart
                   rows={commercialModel.monthlyRows}
@@ -2004,7 +2149,12 @@ function DashboardEstrategicoForUser() {
                 </ul>
               </article>
               <article className="dashboard-card rounded-2xl p-4">
-                <h3 className="font-display text-lg text-ink">Mais visitadas</h3>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-display text-lg text-ink">Mais visitadas</h3>
+                  <button type="button" onClick={() => void exportBlock("mais_visitadas", "Mais visitadas", coverageMostRows)} disabled={exportingXlsx !== null} className="rounded-lg p-2 text-sea transition hover:bg-sea/10 disabled:opacity-50" title="Baixar empresas mais visitadas em XLSX" aria-label="Baixar empresas mais visitadas em XLSX">
+                    {exportingXlsx === "mais_visitadas" ? <span className="text-xs">...</span> : <Download size={16} />}
+                  </button>
+                </div>
                 <div className="mt-3 space-y-2 text-sm">
                   {model.mostVisitedCompanies.length === 0 ? (
                     <p className="text-ink/60">Sem dados.</p>
@@ -2019,7 +2169,12 @@ function DashboardEstrategicoForUser() {
                 </div>
               </article>
               <article className="dashboard-card rounded-2xl p-4">
-                <h3 className="font-display text-lg text-ink">Menos visitadas (&gt;0)</h3>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-display text-lg text-ink">Menos visitadas (&gt;0)</h3>
+                  <button type="button" onClick={() => void exportBlock("menos_visitadas", "Menos visitadas", coverageLeastRows)} disabled={exportingXlsx !== null} className="rounded-lg p-2 text-sea transition hover:bg-sea/10 disabled:opacity-50" title="Baixar empresas menos visitadas em XLSX" aria-label="Baixar empresas menos visitadas em XLSX">
+                    {exportingXlsx === "menos_visitadas" ? <span className="text-xs">...</span> : <Download size={16} />}
+                  </button>
+                </div>
                 <div className="mt-3 space-y-2 text-sm">
                   {model.leastVisitedNonZeroCompanies.length === 0 ? (
                     <p className="text-ink/60">Sem dados.</p>
@@ -2034,7 +2189,12 @@ function DashboardEstrategicoForUser() {
                 </div>
               </article>
               <article className="dashboard-card rounded-2xl p-4">
-                <h3 className="font-display text-lg text-ink">Nunca visitadas</h3>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-display text-lg text-ink">Nunca visitadas</h3>
+                  <button type="button" onClick={() => void exportBlock("nunca_visitadas", "Nunca visitadas", coverageNeverRows)} disabled={exportingXlsx !== null} className="rounded-lg p-2 text-sea transition hover:bg-sea/10 disabled:opacity-50" title="Baixar empresas nunca visitadas em XLSX" aria-label="Baixar empresas nunca visitadas em XLSX">
+                    {exportingXlsx === "nunca_visitadas" ? <span className="text-xs">...</span> : <Download size={16} />}
+                  </button>
+                </div>
                 <div className="mt-3 space-y-2 text-sm">
                   {model.neverVisitedCompanies.length === 0 ? (
                     <p className="text-ink/60">Sem dados.</p>
@@ -2054,7 +2214,12 @@ function DashboardEstrategicoForUser() {
           {tab === "qualidade" && (
             <section className="grid gap-4 xl:grid-cols-3">
               <article className="dashboard-card rounded-2xl p-4">
-                <h3 className="font-display text-lg text-ink">Integridade de dados</h3>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-display text-lg text-ink">Integridade de dados</h3>
+                  <button type="button" onClick={() => void exportBlock("integridade_dados", "Integridade de dados", qualityIntegrityRows)} disabled={exportingXlsx !== null} className="rounded-lg p-2 text-sea transition hover:bg-sea/10 disabled:opacity-50" title="Baixar integridade de dados em XLSX" aria-label="Baixar integridade de dados em XLSX">
+                    {exportingXlsx === "integridade_dados" ? <span className="text-xs">...</span> : <Download size={16} />}
+                  </button>
+                </div>
                 <div className="mt-3 space-y-2 text-sm">
                   <div className="flex justify-between"><span className="text-ink/70">Sem cliente</span><span className="font-semibold text-amber-700">{formatNumber(model.semCliente)}</span></div>
                   <div className="flex justify-between"><span className="text-ink/70">Sem responsavel</span><span className="font-semibold text-amber-700">{formatNumber(model.semResponsavel)}</span></div>
@@ -2062,7 +2227,12 @@ function DashboardEstrategicoForUser() {
                 </div>
               </article>
               <article className="dashboard-card rounded-2xl p-4 xl:col-span-2">
-                <h3 className="font-display text-lg text-ink">Motivos de nao visita</h3>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-display text-lg text-ink">Motivos de nao visita</h3>
+                  <button type="button" onClick={() => void exportBlock("motivos_nao_visita", "Motivos nao visita", qualityReasonRows)} disabled={exportingXlsx !== null} className="rounded-lg p-2 text-sea transition hover:bg-sea/10 disabled:opacity-50" title="Baixar motivos de nao visita em XLSX" aria-label="Baixar motivos de nao visita em XLSX">
+                    {exportingXlsx === "motivos_nao_visita" ? <span className="text-xs">...</span> : <Download size={16} />}
+                  </button>
+                </div>
                 {exportReasonError ? (
                   <p className="mt-2 text-xs text-red-600">{exportReasonError}</p>
                 ) : null}
