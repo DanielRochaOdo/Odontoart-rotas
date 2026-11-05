@@ -3963,6 +3963,33 @@ export default function Agenda() {
                 </label>
                 <label className="flex flex-col gap-0.5">
                   <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
+                    Supervisor
+                  </span>
+                  <div className="flex h-9 items-center justify-between rounded-xl border border-sea/20 bg-white px-3 dark:border-emerald-400/20 dark:bg-slate-950/80">
+                    <span className="text-xs text-ink/55 dark:text-slate-400">
+                      {(filters.columns.supervisor ?? []).length
+                        ? `${filters.columns.supervisor.length} selecionado(s)`
+                        : "Todos"}
+                    </span>
+                    <MultiSelectFilter
+                      label={
+                        filters.columns.supervisor?.length
+                          ? `Supervisor (${filters.columns.supervisor.length})`
+                          : "Supervisor"
+                      }
+                      options={filterOptions.supervisor ?? []}
+                      value={filters.columns.supervisor ?? []}
+                      onApply={(next) =>
+                        setFilters((prev) => ({
+                          ...prev,
+                          columns: { ...prev.columns, supervisor: next },
+                        }))
+                      }
+                    />
+                  </div>
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/60 dark:text-slate-300">
                     Grupo
                   </span>
                   <div className="flex h-9 items-center justify-between rounded-xl border border-sea/20 bg-white px-3 dark:border-emerald-400/20 dark:bg-slate-950/80">

@@ -3,43 +3,6 @@ import "./kpi-glass-v2.css";
 import { createPortal } from "react-dom";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
-import { normalizeText } from "../lib/textNormalize";
-import {
-  CATEGORIA_DESCRIPTIONS,
-  CATEGORIA_OPTIONS,
-  type CategoriaValue,
-} from "../lib/categorias";
-
-type ParsedKpiRow = {
-  codigo: string;
-  associadoTotal: number;
-  sourceRow: number;
-  vidasIn?: number;
-  vidasOut?: number;
-  monthKey?: string;
-  categoria?: CategoriaValue;
-};
-
-type ParseSummary = {
-  rowsInFile: number;
-  validRows: number;
-  ignoredRows: number;
-  uniqueCodes: number;
-  unvalidatedCodes: number;
-  columns: {
-    codigo: string;
-    associadoTotal: string;
-    month: string | null;
-  };
-};
-
-type ApplySummary = {
-  uniqueCodes: number;
-  foundCodes: number;
-  missingCodes: number;
-  estimatedCompaniesUpdated: number;
-  updatedRows: number;
-};
 
 type KpiPeriodDays = 1 | 7 | 15 | 30;
 
@@ -50,7 +13,7 @@ type KpiSnapshotRow = {
   period_days: number;
   codigo: string;
   empresa: string | null;
-  categoria: CategoriaValue;
+  categoria: string;
   vidas_qtde: number | null;
   status: string;
   snapshot_at: string;
@@ -62,32 +25,14 @@ type KpiSnapshotRow = {
   created_at: string;
 };
 
-type KpiStatus = "inativo" | "so_perda" | "queda" | "crescimento" | "so_venda" | "neutro";
-
-type PersistedColumns = {
-  codigo: string;
-  associadoTotal: string;
-  month?: string | null;
-  vidasIn?: string;
-  vidasOut?: string;
-};
-
-type KpiImportHistoryRow = {
-  id: string;
-  source_filename: string;
-  rows_in_file: number;
-  valid_rows: number;
-  ignored_rows: number;
-  unique_codes: number;
-  unvalidated_codes: number;
-  status: "VALIDADO" | "APLICADO";
-  detected_columns: PersistedColumns | null;
-  found_codes: number | null;
-  missing_codes: number | null;
-  estimated_companies_updated: number | null;
-  updated_rows: number | null;
-  created_at: string;
-  applied_at: string | null;
+type KpiStatus = "inativo" | "so_perda" | "queda" | "crescimento" | "so_ganho" | "neutro";
+const KPI_STATUS_LABELS: Record<KpiStatus, string> = {
+  inativo: "Inativo",
+  so_perda: "Só perda",
+  queda: "Queda",
+  crescimento: "Crescimento",
+  so_ganho: "Só ganho",
+  neutro: "Neutro",
 };
 
 type SyncRunBanner = {
@@ -104,6 +49,8 @@ type SyncRunBanner = {
   current_code_started_at: string | null;
   current_attempt: number | null;
   last_progress_at: string | null;
+  period_start_date: string | null;
+  period_end_date: string | null;
 } | null;
 
 type DonutSlice = {
@@ -127,68 +74,33 @@ type KpiCardDetailModalViewState = {
   search: string;
 };
 
-const LOOKUP_CHUNK_SIZE = 400;
-const UPDATE_CHUNK_SIZE = 300;
-const CLIENTS_READ_CHUNK_SIZE = 1000;
 const KPI_SNAPSHOT_READ_CHUNK_SIZE = 1000;
-const KPI_PERIOD_OPTIONS: KpiPeriodDays[] = [1, 7, 15, 30];
 const KPI_ACTIVE_RUN_STORAGE_KEY = "kpi_active_sync_run_id";
 const DONUT_SIZE = 160;
 const DONUT_STROKE = 22;
 const DONUT_RADIUS = (DONUT_SIZE - DONUT_STROKE) / 2;
 const DONUT_CIRCUMFERENCE = 2 * Math.PI * DONUT_RADIUS;
 
-const normalizeHeader = (value: string) =>
-  value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
+const toLocalIsoDate = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+const isIsoDate = (value: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+};
+
+const getDefaultKpiDateRange = () => {
+  const now = new Date();
+  const end = new Date(now.getFullYear(), now.getMonth(), 0);
+  const start = new Date(end.getFullYear(), end.getMonth(), 1);
+  return { start: toLocalIsoDate(start), end: toLocalIsoDate(end) };
+};
 
 const normalizeCode = (value: unknown) =>
   String(value ?? "")
     .replace(/\.0+$/, "")
     .trim();
-
-const parseNonNegativeNumber = (value: unknown): number | null => {
-  if (typeof value === "number") {
-    if (!Number.isFinite(value) || value < 0) return null;
-    return value;
-  }
-
-  if (value === null || value === undefined) return 0;
-  const text = String(value).trim();
-  if (!text) return 0;
-
-  const normalized = text
-    .replace(/\s+/g, "")
-    .replace(/\.(?=\d{3}(?:\D|$))/g, "")
-    .replace(",", ".");
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-  return parsed;
-};
-
-const findColumnKey = (keys: string[], aliases: string[]) => {
-  const normalizedKeys = keys.map((key) => ({
-    raw: key,
-    normalized: normalizeHeader(key),
-  }));
-  for (const alias of aliases) {
-    const found = normalizedKeys.find((item) => item.normalized === alias);
-    if (found) return found.raw;
-  }
-  return null;
-};
-
-const chunk = <T,>(items: T[], size: number) => {
-  const result: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    result.push(items.slice(index, index + size));
-  }
-  return result;
-};
 
 const dedupeRowsByCodigo = (rows: KpiSnapshotRow[]) => {
   const byCode = new Map<string, KpiSnapshotRow>();
@@ -200,63 +112,23 @@ const dedupeRowsByCodigo = (rows: KpiSnapshotRow[]) => {
   return Array.from(byCode.values()).sort((a, b) => a.codigo.localeCompare(b.codigo));
 };
 
-const buildStatusFromDelta = (vendas: number, cancelamentos: number): string =>
-  resolveKpiStatus(vendas, cancelamentos);
-
-const getSnapshotDeltaPayload = (current: number | null, previous: number | null) => {
-  const currentValue = Number(current ?? 0);
-  const previousValue = Number(previous ?? 0);
-  const delta = currentValue - previousValue;
-  return {
-    previous_vidas_qtde: previous,
-    delta,
-    vendas_qtde: delta > 0 ? delta : 0,
-    cancelamentos_qtde: delta < 0 ? Math.abs(delta) : 0,
-  };
-};
-
 const resolveKpiStatus = (vendas: number, cancelamentos: number): KpiStatus => {
   if (vendas === 0 && cancelamentos === 0) return "inativo";
   if (vendas === 0 && cancelamentos > 0) return "so_perda";
-  if (vendas > 0 && cancelamentos === 0) return "so_venda";
+  if (vendas > 0 && cancelamentos === 0) return "so_ganho";
   if (vendas > cancelamentos) return "crescimento";
   if (cancelamentos > vendas) return "queda";
   return "neutro";
 };
 
-const CLIENTS_SELECT_COLUMNS = "id, codigo, empresa, vidas_qtde";
 const KPI_SYNC_RUN_SELECT_COLUMNS =
-  "id, status, total_codes, processed_codes, failed_codes, started_at, finished_at, source, current_code, current_stage, current_code_started_at, current_attempt, last_progress_at";
-
-const fetchAllClientesRows = async () => {
-  const allRows: Array<{
-    id: string;
-    codigo: string | null;
-    empresa: string | null;
-    vidas_qtde: number | null;
-  }> = [];
-
-  for (let offset = 0; ; offset += CLIENTS_READ_CHUNK_SIZE) {
-    const { data, error } = await supabase
-      .from("clientes")
-      .select(CLIENTS_SELECT_COLUMNS)
-      .order("id", { ascending: true })
-      .range(offset, offset + CLIENTS_READ_CHUNK_SIZE - 1);
-    if (error) throw new Error(error.message);
-
-    const rows = (data ?? []) as typeof allRows;
-    allRows.push(...rows);
-    if (rows.length < CLIENTS_READ_CHUNK_SIZE) break;
-  }
-
-  return allRows;
-};
+  "id, status, total_codes, processed_codes, failed_codes, started_at, finished_at, source, current_code, current_stage, current_code_started_at, current_attempt, last_progress_at, period_start_date, period_end_date";
 
 const fetchAllKpiSnapshotRows = async (periodDays: KpiPeriodDays) => {
   const allRows: KpiSnapshotRow[] = [];
 
   for (let offset = 0; ; offset += KPI_SNAPSHOT_READ_CHUNK_SIZE) {
-    const { data, error } = await supabase
+      const { data, error } = await supabase
       .from("kpi_sync_snapshots")
       .select(
         "id, sync_run_id, source, period_days, codigo, empresa, categoria, vidas_qtde, status, snapshot_at, snapshot_date, previous_vidas_qtde, delta, vendas_qtde, cancelamentos_qtde, created_at",
@@ -332,7 +204,7 @@ const fetchLatestFinishedSyncRunId = async () => {
   const { data, error } = await supabase
     .from("kpi_sync_runs")
     .select("id, status")
-    .in("status", ["success", "failed"])
+    .eq("status", "success")
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -370,59 +242,6 @@ const writeActiveSyncRunId = (syncRunId: string | null) => {
   }
 };
 
-const getCurrentMonthKey = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-};
-
-const parseMonthKey = (value: unknown): string | null => {
-  if (value === null || value === undefined) return null;
-  const raw = String(value).trim();
-  if (!raw) return null;
-
-  const directIso = raw.match(/^(\d{4})-(\d{1,2})$/);
-  if (directIso) {
-    const year = Number(directIso[1]);
-    const month = Number(directIso[2]);
-    if (month >= 1 && month <= 12) return `${year}-${String(month).padStart(2, "0")}`;
-  }
-
-  const slashYmd = raw.match(/^(\d{4})\/(\d{1,2})$/);
-  if (slashYmd) {
-    const year = Number(slashYmd[1]);
-    const month = Number(slashYmd[2]);
-    if (month >= 1 && month <= 12) return `${year}-${String(month).padStart(2, "0")}`;
-  }
-
-  const slashMdy = raw.match(/^(\d{1,2})\/(\d{4})$/);
-  if (slashMdy) {
-    const month = Number(slashMdy[1]);
-    const year = Number(slashMdy[2]);
-    if (month >= 1 && month <= 12) return `${year}-${String(month).padStart(2, "0")}`;
-  }
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    const month = Math.floor(value % 12) || 1;
-    const year = Math.floor(value);
-    if (Number.isFinite(year) && year > 1900) return `${year}-${String(month).padStart(2, "0")}`;
-  }
-
-  const fallbackDate = new Date(raw);
-  if (!Number.isNaN(fallbackDate.getTime())) {
-    return `${fallbackDate.getFullYear()}-${String(fallbackDate.getMonth() + 1).padStart(2, "0")}`;
-  }
-
-  return null;
-};
-
-const formatMonthLabel = (monthKey: string) => {
-  const [year, month] = monthKey.split("-").map(Number);
-  if (!year || !month) return monthKey;
-  return new Intl.DateTimeFormat("pt-BR", { month: "short", year: "2-digit" }).format(
-    new Date(year, month - 1, 1),
-  );
-};
-
 const formatDateTime = (value: string | null | undefined) => {
   if (!value) return "-";
   const date = new Date(value);
@@ -453,11 +272,6 @@ const formatLastSync = (value: string | null | undefined) => {
 
 const formatChartNumber = (value: number) =>
   new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(value);
-
-const isSituacaoAtiva = (situacao: string | null | undefined) => {
-  const normalized = normalizeText(situacao, { letterCase: "upper" });
-  return normalized.startsWith("ATIV");
-};
 
 const DonutChartCard = ({
   title,
@@ -731,7 +545,7 @@ const TopCodesChartCard = ({
 };
 
 export default function KPI() {
-  const { role, profile, session } = useAuth();
+  const { role } = useAuth();
   const canAccess = role === "SUPERVISOR" || role === "ASSISTENTE";
 
   const [pdfError, setPdfError] = useState<string | null>(null);
@@ -740,20 +554,19 @@ export default function KPI() {
     page: 1,
     search: "",
   });
-  const [historicalChartRows, setHistoricalChartRows] = useState<ParsedKpiRow[]>([]);
-  const [historicalChartLoading, setHistoricalChartLoading] = useState(false);
-  const [historicalChartError, setHistoricalChartError] = useState<string | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
-  const [selectedPeriodDays, setSelectedPeriodDays] = useState<KpiPeriodDays>(30);
+  const defaultPeriod = getDefaultKpiDateRange();
+  const [periodStartDate, setPeriodStartDate] = useState(defaultPeriod.start);
+  const [periodEndDate, setPeriodEndDate] = useState(defaultPeriod.end);
+  const [periodError, setPeriodError] = useState<string | null>(null);
   const [syncingKpi, setSyncingKpi] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncRunBanner, setSyncRunBanner] = useState<SyncRunBanner>(null);
   const [syncPersistedCounts, setSyncPersistedCounts] = useState<{ snapshots: number; errors: number } | null>(null);
   const [currentSnapshotRows, setCurrentSnapshotRows] = useState<KpiSnapshotRow[]>([]);
-  const [previousSnapshotRows, setPreviousSnapshotRows] = useState<KpiSnapshotRow[]>([]);
   const [codesSearch, setCodesSearch] = useState("");
-  const [codesSortKey, setCodesSortKey] = useState<"codigo" | "empresa" | "vidas_qtde" | "categoria">("codigo");
+  const [codesSortKey, setCodesSortKey] = useState<"codigo" | "empresa" | "entradas" | "saidas" | "saldo" | "categoria">("codigo");
   const [codesSortDirection, setCodesSortDirection] = useState<"asc" | "desc">("asc");
   const [codesPage, setCodesPage] = useState(1);
   const snapshotLoadSequenceRef = useRef(0);
@@ -774,95 +587,57 @@ export default function KPI() {
     if (ageMs < 15 * 60 * 1000) return "Sincronização sem progresso recente.";
     return "Sincronização sem atualização há muito tempo.";
   }, [syncRunBanner]);
-  const fallbackMonthKey = useMemo(() => getCurrentMonthKey(), []);
-
   const uniqueSnapshotRows = useMemo(
     () => dedupeRowsByCodigo(currentSnapshotRows),
     [currentSnapshotRows],
   );
 
   const kpiPeriodAnalysis = useMemo(() => {
-    const grouped = new Map<string, KpiSnapshotRow[]>();
-    [...currentSnapshotRows, ...previousSnapshotRows].forEach((row) => {
-      const key = normalizeCode(row.codigo);
-      if (!key) return;
-      const list = grouped.get(key) ?? [];
-      list.push(row);
-      grouped.set(key, list);
-    });
-
-    return Array.from(grouped.entries())
-      .map(([codigo, rows]) => {
-        const ordered = [...rows].sort((a, b) => a.snapshot_at.localeCompare(b.snapshot_at));
-        const vendas = ordered.reduce((sum, row) => sum + Math.max(0, Number(row.vendas_qtde ?? 0)), 0);
-        const cancelamentos = ordered.reduce((sum, row) => sum + Math.max(0, Number(row.cancelamentos_qtde ?? 0)), 0);
-        const saldo = vendas - cancelamentos;
-        const previous = ordered[0] ?? null;
-        const current = ordered[ordered.length - 1] ?? null;
+    return uniqueSnapshotRows
+      .map((row) => {
+        const entradas = Math.max(0, Number(row.vendas_qtde ?? 0));
+        const saidas = Math.max(0, Number(row.cancelamentos_qtde ?? 0));
         return {
-          codigo,
-          empresa: current?.empresa ?? null,
-          associadoTotalAtual: Number(current?.vidas_qtde ?? 0),
-          associadoTotalAnterior: Number(previous?.vidas_qtde ?? 0),
-          vendas,
-          cancelamentos,
-          saldo,
-          status: resolveKpiStatus(vendas, cancelamentos),
+          codigo: normalizeCode(row.codigo),
+          empresa: row.empresa,
+          vendas: entradas,
+          cancelamentos: saidas,
+          saldo: entradas - saidas,
+          status: resolveKpiStatus(entradas, saidas),
         };
       })
+      .filter((row) => row.codigo)
       .sort((a, b) => a.codigo.localeCompare(b.codigo));
-  }, [currentSnapshotRows, previousSnapshotRows]);
+  }, [uniqueSnapshotRows]);
 
   const categoryBreakdown = useMemo(() => {
-    const totals = new Map<CategoriaValue, number>();
-    CATEGORIA_OPTIONS.forEach((categoria) => totals.set(categoria, 0));
-    kpiPeriodAnalysis.forEach((row) => {
-      const categoria = row.status === "inativo"
-        ? "Inativo"
-        : row.status === "so_perda"
-          ? "So perda"
-          : row.status === "queda"
-            ? "Queda"
-            : row.status === "crescimento"
-              ? "Crescimento"
-              : row.status === "so_venda"
-                ? "So venda"
-                : "Neutro";
-      totals.set(categoria as CategoriaValue, (totals.get(categoria as CategoriaValue) ?? 0) + 1);
-    });
-    return CATEGORIA_OPTIONS.map((categoria) => ({
-      categoria,
-      total: totals.get(categoria) ?? 0,
+    const labels: Record<KpiStatus, string> = {
+      inativo: "Inativo",
+      so_perda: "Só perda",
+      queda: "Queda",
+      crescimento: "Crescimento",
+      so_ganho: "Só ganho",
+      neutro: "Neutro",
+    };
+    const statuses: KpiStatus[] = ["so_perda", "so_ganho", "crescimento", "queda", "neutro", "inativo"];
+    return statuses.map((status) => ({
+      status,
+      categoria: labels[status],
+      total: kpiPeriodAnalysis.filter((row) => row.status === status).length,
     }));
   }, [kpiPeriodAnalysis]);
 
   const categoryDonutData = useMemo<DonutSlice[]>(
     () => [
-      { label: "Inativo", value: categoryBreakdown.find((item) => item.categoria === "Inativo")?.total ?? 0, color: "#64748b" },
-      { label: "So perda", value: categoryBreakdown.find((item) => item.categoria === "So perda")?.total ?? 0, color: "#dc2626" },
-      { label: "Queda", value: categoryBreakdown.find((item) => item.categoria === "Queda")?.total ?? 0, color: "#d97706" },
-      { label: "Crescimento", value: categoryBreakdown.find((item) => item.categoria === "Crescimento")?.total ?? 0, color: "#16a34a" },
-      { label: "So venda", value: categoryBreakdown.find((item) => item.categoria === "So venda")?.total ?? 0, color: "#0f766e" },
-      { label: "Neutro", value: categoryBreakdown.find((item) => item.categoria === "Neutro")?.total ?? 0, color: "#0284c7" },
+      { label: "Só perda", value: categoryBreakdown.find((item) => item.status === "so_perda")?.total ?? 0, color: "#dc2626" },
+      { label: "Só ganho", value: categoryBreakdown.find((item) => item.status === "so_ganho")?.total ?? 0, color: "#0f766e" },
+      { label: "Crescimento", value: categoryBreakdown.find((item) => item.status === "crescimento")?.total ?? 0, color: "#16a34a" },
+      { label: "Queda", value: categoryBreakdown.find((item) => item.status === "queda")?.total ?? 0, color: "#d97706" },
+      { label: "Neutro", value: categoryBreakdown.find((item) => item.status === "neutro")?.total ?? 0, color: "#0284c7" },
+      { label: "Inativo", value: categoryBreakdown.find((item) => item.status === "inativo")?.total ?? 0, color: "#64748b" },
     ],
     [categoryBreakdown],
   );
-
-  const isVidasInStatus = (status: KpiStatus) => status === "crescimento" || status === "so_venda";
-  const isVidasOutStatus = (status: KpiStatus) => status === "so_perda" || status === "queda";
-
-  const monthSeries = useMemo(() => {
-    const currentTotal = kpiPeriodAnalysis.reduce((sum, row) => sum + row.associadoTotalAtual, 0);
-    const previousTotal = kpiPeriodAnalysis.reduce(
-      (sum, row) => sum + (isVidasOutStatus(row.status) ? row.associadoTotalAtual : 0),
-      0,
-    );
-    return {
-      labels: [`${selectedPeriodDays} dia(s)`],
-      vidasInValues: [currentTotal],
-      vidasOutValues: [previousTotal],
-    };
-  }, [kpiPeriodAnalysis, selectedPeriodDays]);
 
   const topGrowthRows = useMemo(
     () =>
@@ -882,11 +657,16 @@ export default function KPI() {
     [kpiPeriodAnalysis],
   );
 
+  const topMovementRows = useMemo(
+    () => [...kpiPeriodAnalysis].sort((a, b) => (b.vendas + b.cancelamentos) - (a.vendas + a.cancelamentos)).slice(0, 10),
+    [kpiPeriodAnalysis],
+  );
+
   const companySeries = useMemo(() => {
     const grouped = new Map<string, number>();
     kpiPeriodAnalysis.forEach((row) => {
       const empresa = row.empresa ?? "Sem empresa";
-      grouped.set(empresa, (grouped.get(empresa) ?? 0) + row.associadoTotalAtual);
+      grouped.set(empresa, (grouped.get(empresa) ?? 0) + row.vendas + row.cancelamentos);
     });
     const rows = Array.from(grouped.entries())
       .map(([empresa, total]) => ({ empresa, total }))
@@ -898,47 +678,6 @@ export default function KPI() {
     };
   }, [kpiPeriodAnalysis]);
 
-  const monthlyHistorySeries = useMemo(() => {
-    const grouped = new Map<string, { in: number; out: number }>();
-    historicalChartRows.forEach((row) => {
-      const key = row.monthKey ?? "Sem mes";
-      const bucket = grouped.get(key) ?? { in: 0, out: 0 };
-      bucket.in += Math.max(0, row.vidasIn ?? 0);
-      bucket.out += Math.max(0, row.vidasOut ?? 0);
-      grouped.set(key, bucket);
-    });
-    const rows = Array.from(grouped.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .slice(-6);
-    return {
-      labels: rows.map(([month]) => month),
-      vidasInValues: rows.map(([, value]) => value.in),
-      vidasOutValues: rows.map(([, value]) => value.out),
-    };
-  }, [historicalChartRows]);
-
-  const vidasGrowthSeries = useMemo(() => {
-    if (monthSeries.labels.length <= 1) {
-      return {
-        labels: [] as string[],
-        vidasInGrowth: [] as number[],
-        vidasOutGrowth: [] as number[],
-      };
-    }
-
-    const labels = monthSeries.labels.slice(1);
-    const vidasInGrowth = monthSeries.vidasInValues.slice(1).map((value, index) => {
-      const previous = monthSeries.vidasInValues[index] ?? 0;
-      return value - previous;
-    });
-    const vidasOutGrowth = monthSeries.vidasOutValues.slice(1).map((value, index) => {
-      const previous = monthSeries.vidasOutValues[index] ?? 0;
-      return value - previous;
-    });
-
-    return { labels, vidasInGrowth, vidasOutGrowth };
-  }, [monthSeries]);
-
   const filteredRows = useMemo(() => {
     const query = codesSearch.trim().toLowerCase();
     return kpiPeriodAnalysis.filter((row) => {
@@ -947,7 +686,10 @@ export default function KPI() {
         row.codigo,
         row.empresa ?? "",
         row.status,
-        String(row.associadoTotalAtual ?? ""),
+        KPI_STATUS_LABELS[row.status],
+        String(row.vendas ?? ""),
+        String(row.cancelamentos ?? ""),
+        String(row.saldo ?? ""),
       ]
         .join(" ")
         .toLowerCase()
@@ -969,17 +711,17 @@ export default function KPI() {
           ? left.codigo
           : codesSortKey === "empresa"
             ? left.empresa ?? ""
-            : codesSortKey === "categoria"
-              ? left.status
-              : Number(left.associadoTotalAtual ?? 0);
+          : codesSortKey === "categoria"
+            ? KPI_STATUS_LABELS[left.status]
+            : Number(codesSortKey === "entradas" ? left.vendas : codesSortKey === "saidas" ? left.cancelamentos : left.saldo);
       const rightValue =
         codesSortKey === "codigo"
           ? right.codigo
           : codesSortKey === "empresa"
             ? right.empresa ?? ""
-            : codesSortKey === "categoria"
-              ? right.status
-              : Number(right.associadoTotalAtual ?? 0);
+          : codesSortKey === "categoria"
+            ? KPI_STATUS_LABELS[right.status]
+            : Number(codesSortKey === "entradas" ? right.vendas : codesSortKey === "saidas" ? right.cancelamentos : right.saldo);
 
       if (typeof leftValue === "number" && typeof rightValue === "number") {
         return (leftValue - rightValue) * direction;
@@ -999,12 +741,13 @@ export default function KPI() {
   const summaryCards = useMemo(
     () => [
       { key: "total_codigos", label: "Total de codigos", value: kpiPeriodAnalysis.length },
-      { key: "vidas_atuais", label: "Total de vidas atual", value: kpiPeriodAnalysis.reduce((sum, row) => sum + row.associadoTotalAtual, 0) },
+      { key: "total_entradas", label: "Total de entradas", value: kpiPeriodAnalysis.reduce((sum, row) => sum + row.vendas, 0) },
+      { key: "total_saidas", label: "Total de saidas", value: kpiPeriodAnalysis.reduce((sum, row) => sum + row.cancelamentos, 0) },
       { key: "inativos", label: "Inativo", value: kpiPeriodAnalysis.filter((row) => row.status === "inativo").length },
-      { key: "so_perda", label: "So perda", value: kpiPeriodAnalysis.filter((row) => row.status === "so_perda").length },
+      { key: "so_perda", label: "Só perda", value: kpiPeriodAnalysis.filter((row) => row.status === "so_perda").length },
       { key: "queda", label: "Queda", value: kpiPeriodAnalysis.filter((row) => row.status === "queda").length },
       { key: "crescimento", label: "Crescimento", value: kpiPeriodAnalysis.filter((row) => row.status === "crescimento").length },
-      { key: "so_venda", label: "So venda", value: kpiPeriodAnalysis.filter((row) => row.status === "so_venda").length },
+      { key: "so_ganho", label: "Só ganho", value: kpiPeriodAnalysis.filter((row) => row.status === "so_ganho").length },
       { key: "neutros", label: "Neutro", value: kpiPeriodAnalysis.filter((row) => row.status === "neutro").length },
     ],
     [kpiPeriodAnalysis],
@@ -1028,13 +771,22 @@ export default function KPI() {
           value: 1,
         })),
       },
-      vidas_atuais: {
-        title: "Total de vidas atual",
-        metricLabel: "Quantidade de vidas",
+      total_entradas: {
+        title: "Total de entradas",
+        metricLabel: "Entradas",
         rows: kpiPeriodAnalysis.map((row) => ({
           empresa: row.empresa ?? "-",
           codigo: row.codigo,
-          value: row.associadoTotalAtual,
+          value: row.vendas,
+        })),
+      },
+      total_saidas: {
+        title: "Total de saidas",
+        metricLabel: "Saidas",
+        rows: kpiPeriodAnalysis.map((row) => ({
+          empresa: row.empresa ?? "-",
+          codigo: row.codigo,
+          value: row.cancelamentos,
         })),
       },
       inativos: {
@@ -1081,11 +833,11 @@ export default function KPI() {
             value: row.saldo,
           })),
       },
-      so_venda: {
-        title: "So venda",
+      so_ganho: {
+        title: "So ganho",
         metricLabel: "Entradas",
         rows: kpiPeriodAnalysis
-          .filter((row) => row.status === "so_venda")
+          .filter((row) => row.status === "so_ganho")
           .map((row) => ({
             empresa: row.empresa ?? "-",
             codigo: row.codigo,
@@ -1094,13 +846,13 @@ export default function KPI() {
       },
       neutros: {
         title: "Neutro",
-        metricLabel: "Quantidade de vidas",
+        metricLabel: "Entradas e saidas",
         rows: kpiPeriodAnalysis
           .filter((row) => row.status === "neutro")
           .map((row) => ({
             empresa: row.empresa ?? "-",
             codigo: row.codigo,
-            value: 0,
+            value: row.vendas,
           })),
       },
     };
@@ -1132,10 +884,9 @@ export default function KPI() {
     const rows = filteredCodeRows.map((row) => ({
       codigo: row.codigo,
       empresa: row.empresa ?? "",
-      status: row.status,
-      associadoTotal: row.associadoTotalAtual,
-      vendas: row.vendas,
-      cancelamentos: row.cancelamentos,
+      status: KPI_STATUS_LABELS[row.status],
+      entradas: row.vendas,
+      saidas: row.cancelamentos,
       saldo: row.saldo,
     }));
     const sheet = XLSX.utils.json_to_sheet(rows);
@@ -1267,16 +1018,11 @@ export default function KPI() {
     const rows = await fetchAllKpiSnapshotRows(periodDays);
     if (rows.length === 0) {
       setCurrentSnapshotRows([]);
-      setPreviousSnapshotRows([]);
       return;
     }
 
     const latestSnapshotAt = rows[0]?.snapshot_at ?? null;
-    const current = dedupeRowsByCodigo(rows.filter((row) => row.snapshot_at === latestSnapshotAt));
-      const previousStamp = rows.find((row) => row.snapshot_at !== latestSnapshotAt)?.snapshot_at ?? null;
-    const previous = previousStamp ? dedupeRowsByCodigo(rows.filter((row) => row.snapshot_at === previousStamp)) : [];
-    setCurrentSnapshotRows(current);
-    setPreviousSnapshotRows(previous);
+    setCurrentSnapshotRows(dedupeRowsByCodigo(rows.filter((row) => row.snapshot_at === latestSnapshotAt)));
   };
 
   const loadKpiSnapshotsForRun = async (syncRunId: string, loadSequence: number) => {
@@ -1296,12 +1042,10 @@ export default function KPI() {
     if (loadSequence !== snapshotLoadSequenceRef.current) return;
     if (rows.length === 0) {
       setCurrentSnapshotRows([]);
-      setPreviousSnapshotRows([]);
       return;
     }
 
     setCurrentSnapshotRows(dedupeRowsByCodigo(rows));
-    setPreviousSnapshotRows([]);
   };
 
   const runKpiSync = async () => {
@@ -1315,11 +1059,28 @@ export default function KPI() {
     setSyncError(null);
     setSyncMessage(null);
 
+    const startTime = Date.parse(`${periodStartDate}T00:00:00Z`);
+    const endTime = Date.parse(`${periodEndDate}T00:00:00Z`);
+    const spanDays = (endTime - startTime) / 86400000 + 1;
+    if (!isIsoDate(periodStartDate) || !isIsoDate(periodEndDate) || !Number.isFinite(spanDays)) {
+      setPeriodError("Informe datas validas para consultar o periodo.");
+      setSyncingKpi(false);
+      return;
+    }
+    if (spanDays < 1 || spanDays > 366) {
+      setPeriodError("A data inicial deve ser anterior ou igual a data final, e o periodo deve ter no maximo 366 dias.");
+      setSyncingKpi(false);
+      return;
+    }
+    setPeriodError(null);
+
     try {
       const { data, error } = await supabase.functions.invoke("kpi-sync-daily", {
         body: {
           source: "api_daily",
           triggered_by: "manual_ui_full_sync",
+          data_inicio: periodStartDate,
+          data_fim: periodEndDate,
         },
       });
       if (error) throw new Error(error.message);
@@ -1329,16 +1090,20 @@ export default function KPI() {
       if (data && typeof data === "object") {
         const payload = data as {
           sync_run_id?: string;
+          run_id?: string;
           status?: string;
           total_codes?: number;
           processed_codes?: number;
           remaining_codes?: number;
           current_stage?: string | null;
+          data_inicio?: string;
+          data_fim?: string;
         };
-        if (payload.sync_run_id) {
-          writeActiveSyncRunId(payload.sync_run_id);
+        const runId = payload.sync_run_id ?? payload.run_id;
+        if (runId) {
+          writeActiveSyncRunId(runId);
           setSyncRunBanner((current) => ({
-            id: payload.sync_run_id ?? current?.id ?? "",
+            id: runId,
             status: payload.status ?? "running",
             total_codes: payload.total_codes ?? current?.total_codes ?? 0,
             processed_codes: payload.processed_codes ?? current?.processed_codes ?? 0,
@@ -1351,6 +1116,8 @@ export default function KPI() {
             current_code_started_at: current?.current_code_started_at ?? null,
             current_attempt: current?.current_attempt ?? null,
             last_progress_at: current?.last_progress_at ?? new Date().toISOString(),
+            period_start_date: payload.data_inicio ?? periodStartDate,
+            period_end_date: payload.data_fim ?? periodEndDate,
           }));
         }
       }
@@ -1402,47 +1169,6 @@ export default function KPI() {
     }
   };
 
-  const loadHistoricalChartRows = async () => {
-    if (!canAccess) return;
-    setHistoricalChartLoading(true);
-    setHistoricalChartError(null);
-    try {
-      const { data: snapshotsData, error: snapshotsError } = await supabase
-        .from("kpi_sync_snapshots")
-        .select("codigo, vidas_qtde, snapshot_at, previous_vidas_qtde, delta, vendas_qtde, cancelamentos_qtde, source, period_days, empresa, categoria, status")
-        .eq("period_days", selectedPeriodDays)
-        .order("snapshot_at", { ascending: false });
-      if (snapshotsError) throw new Error(snapshotsError.message);
-
-      const snapshots = (snapshotsData ?? []) as KpiSnapshotRow[];
-      if (snapshots.length === 0) {
-        setHistoricalChartRows([]);
-        return;
-      }
-      const ordered = [...snapshots].sort((a, b) => a.snapshot_at.localeCompare(b.snapshot_at));
-      setHistoricalChartRows(ordered.map((row) => ({
-        codigo: row.codigo,
-        associadoTotal: Number(row.vidas_qtde ?? 0),
-        sourceRow: 0,
-        monthKey: row.snapshot_date,
-        categoria: row.categoria,
-        vidasIn: Number(row.delta > 0 ? row.delta : 0),
-        vidasOut: Number(row.delta < 0 ? Math.abs(row.delta) : 0),
-      })));
-    } catch (error) {
-      setHistoricalChartRows([]);
-      setHistoricalChartError(
-        error instanceof Error ? error.message : "Erro ao carregar dados historicos para os graficos.",
-      );
-    } finally {
-      setHistoricalChartLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadHistoricalChartRows();
-  }, [canAccess, selectedPeriodDays]);
-
   useEffect(() => {
     if (!canAccess) return;
     let cancelled = false;
@@ -1454,6 +1180,10 @@ export default function KPI() {
         const banner = await fetchLatestSyncRunBanner();
         if (cancelled) return;
         if (banner?.status === "running") return;
+        if (banner?.period_start_date && banner?.period_end_date) {
+          setPeriodStartDate(banner.period_start_date);
+          setPeriodEndDate(banner.period_end_date);
+        }
         const finishedRunId = await fetchLatestFinishedSyncRunId();
         if (cancelled) return;
         if (finishedRunId) {
@@ -1462,7 +1192,7 @@ export default function KPI() {
           await loadKpiSnapshotsForRun(finishedRunId, loadSequence);
           return;
         }
-        await loadKpiSnapshots(selectedPeriodDays);
+        await loadKpiSnapshots(30);
       } catch (error) {
         if (!cancelled) {
           setSyncError(error instanceof Error ? error.message : "Erro ao carregar snapshots persistidos.");
@@ -1475,7 +1205,7 @@ export default function KPI() {
     return () => {
       cancelled = true;
     };
-  }, [canAccess, selectedPeriodDays]);
+  }, [canAccess]);
 
   useEffect(() => {
     if (!canAccess) return;
@@ -1507,6 +1237,23 @@ export default function KPI() {
             if (loadSequence !== snapshotLoadSequenceRef.current) return;
             setSyncError(error instanceof Error ? error.message : "Erro ao carregar snapshots do KPI.");
           });
+        }
+        if (!cancelled && banner?.status === "failed") {
+          const lastSuccessRunId = await fetchLatestFinishedSyncRunId();
+          if (lastSuccessRunId) {
+            const loadKey = `success:${lastSuccessRunId}`;
+            if (snapshotLoadKeyRef.current !== loadKey) {
+              snapshotLoadKeyRef.current = loadKey;
+              const loadSequence = snapshotLoadSequenceRef.current + 1;
+              snapshotLoadSequenceRef.current = loadSequence;
+              void loadKpiSnapshotsForRun(lastSuccessRunId, loadSequence).catch((error) => {
+                if (loadSequence !== snapshotLoadSequenceRef.current) return;
+                setSyncError(error instanceof Error ? error.message : "Erro ao carregar ultimo KPI concluido.");
+              });
+            }
+          } else {
+            setCurrentSnapshotRows([]);
+          }
         }
         if (!cancelled && banner?.id) {
           void loadSyncPersistedCounts(banner.id).catch((error) => {
@@ -1559,10 +1306,18 @@ export default function KPI() {
           <span className="rotas-kpi-v2-eyebrow">ODONTOART · INTELIGENCIA COMERCIAL</span>
           <h2 className="font-display text-2xl text-ink">KPI</h2>
           <p className="mt-2 text-sm text-ink/60">
-            Indicadores baseados no AssociadoTitular por codigo, com historico de snapshots e comparacao por periodo.
+            Entradas, saidas e status calculados pela movimentacao real de cada empresa no periodo selecionado.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <label className="flex flex-col gap-1 text-[10px] font-semibold text-ink/60">
+            Data inicial
+            <input type="date" value={periodStartDate} max={periodEndDate} onChange={(event) => setPeriodStartDate(event.target.value)} className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink" />
+          </label>
+          <label className="flex flex-col gap-1 text-[10px] font-semibold text-ink/60">
+            Data final
+            <input type="date" value={periodEndDate} min={periodStartDate} onChange={(event) => setPeriodEndDate(event.target.value)} className="rounded-lg border border-sea/20 bg-white px-2 py-2 text-xs text-ink" />
+          </label>
           <button
             type="button"
             onClick={() => void runKpiSync()}
@@ -1599,11 +1354,13 @@ export default function KPI() {
           </button>
         </div>
       </header>
+      <p className="-mt-2 text-[11px] text-ink/55">Padrao: mes fechado anterior. O intervalo pode ter ate 366 dias.</p>
+      {periodError ? <p className="text-xs text-red-600">{periodError}</p> : null}
 
       <div className="rotas-kpi-v2-status rounded-2xl border border-sea/20 bg-white/90 p-3 text-xs text-ink/70">
         {syncRunBanner?.status === "running" ? (
           <div className="space-y-2">
-            <p className="font-semibold text-amber-700">Sincronizacao automatica em andamento</p>
+            <p className="font-semibold text-amber-700">Consulta de movimentacoes em andamento</p>
             <div className="space-y-1">
               <div className="flex items-center justify-between gap-3">
                 <p>
@@ -1633,7 +1390,10 @@ export default function KPI() {
           </div>
         ) : (
           <p className="text-emerald-700">
-            Base consolidada: ultimo fechamento concluido.
+            Base consolidada: ultimo periodo consultado.
+            {syncRunBanner?.period_start_date && syncRunBanner?.period_end_date
+              ? ` | Periodo ${syncRunBanner.period_start_date} a ${syncRunBanner.period_end_date}`
+              : ""}
             {formatLastSync(syncRunBanner?.finished_at) ? ` | Ultima sincronização em ${formatLastSync(syncRunBanner?.finished_at)}` : ""}
           </p>
         )}
@@ -1776,8 +1536,8 @@ export default function KPI() {
 
         <div className="mt-3 grid gap-3 lg:grid-cols-3">
           <div className="rotas-kpi-v2-chart rounded-xl border border-sea/15 bg-white/90 p-4">
-            <h4 className="text-sm font-semibold text-ink">Comparativo por empresa</h4>
-            <p className="mt-1 text-[11px] text-ink/60">Soma de vidas por empresa na base completa.</p>
+            <h4 className="text-sm font-semibold text-ink">Movimentacoes por empresa</h4>
+            <p className="mt-1 text-[11px] text-ink/60">Entradas e saidas somadas no periodo consultado.</p>
             <div className="mt-3 space-y-2">
               {companySeries.labels.length === 0 ? (
                 <p className="text-xs text-ink/60">Nenhuma empresa encontrada para o filtro atual.</p>
@@ -1807,34 +1567,23 @@ export default function KPI() {
             </div>
           </div>
           <DoubleBarChartCard
-            title="Historico por mes"
-            subtitle="Consolidado mensal de entradas e saidas importadas."
-            labels={monthlyHistorySeries.labels}
-            firstSeries={{ label: "Vidas In", color: "#16a34a", values: monthlyHistorySeries.vidasInValues }}
-            secondSeries={{ label: "Vidas Out", color: "#dc2626", values: monthlyHistorySeries.vidasOutValues }}
-            emptyLabel="Ainda nao ha historico mensal suficiente."
-          />
-          <DoubleBarChartCard
-            title="Tendencia de variacao"
-            subtitle="Variacao entre saldos positivos e negativos na base completa."
-            labels={vidasGrowthSeries.labels}
-            firstSeries={{ label: "Entrada", color: "#16a34a", values: vidasGrowthSeries.vidasInGrowth }}
-            secondSeries={{ label: "Saida", color: "#dc2626", values: vidasGrowthSeries.vidasOutGrowth }}
-            signedValues
-            emptyLabel="Sao necessarios pelo menos dois meses para calcular tendencia."
+            title="Entradas x saidas por codigo"
+            subtitle="Totais reais do intervalo selecionado."
+            labels={topMovementRows.map((row) => row.codigo)}
+            firstSeries={{ label: "Entradas", color: "#16a34a", values: topMovementRows.map((row) => row.vendas) }}
+            secondSeries={{ label: "Saidas", color: "#dc2626", values: topMovementRows.map((row) => row.cancelamentos) }}
+            emptyLabel="Ainda nao ha movimentacoes para este periodo."
           />
         </div>
 
         <div className="rotas-kpi-v2-chart-note mt-3 rounded-xl border border-sea/20 bg-white px-3 py-2 text-[11px] text-ink dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
-          <span className="font-semibold text-ink dark:text-slate-100">Base dos graficos comparativos:</span>{" "}
-          base completa.
-          {historicalChartLoading ? " Atualizando dados..." : ""}
-          {historicalChartError ? ` Erro ao carregar historico: ${historicalChartError}` : ""}
+          <span className="font-semibold text-ink dark:text-slate-100">Periodo selecionado para consulta:</span>{" "}
+          {periodStartDate} a {periodEndDate}. Os indicadores exibidos correspondem ao periodo da ultima consulta concluida.
         </div>
         <div className="rotas-kpi-v2-table-panel mt-3 rounded-xl border border-sea/20 bg-white p-3">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold text-ink">Codigos e valores</p>
+            <p className="text-xs font-semibold text-ink">Movimentacao por codigo</p>
               <p className="mt-1 text-[11px] text-ink/60">
                 Pesquise por expressao e clique nos titulos para ordenar.
               </p>
@@ -1842,7 +1591,7 @@ export default function KPI() {
             <input
               value={codesSearch}
               onChange={(event) => setCodesSearch(event.target.value)}
-              placeholder="Pesquisar codigo, empresa, categoria ou valor"
+              placeholder="Pesquisar codigo, empresa, status ou quantidade"
               className="w-full max-w-sm rounded-lg border border-sea/20 bg-sand/10 px-3 py-2 text-xs text-ink outline-none focus:border-sea md:w-auto"
             />
           </div>
@@ -1855,7 +1604,9 @@ export default function KPI() {
                     ["codigo", "Codigo"],
                     ["empresa", "Empresa"],
                     ["categoria", "Status"],
-                    ["vidas_qtde", "Total de titulares"],
+                    ["entradas", "Entradas"],
+                    ["saidas", "Saidas"],
+                    ["saldo", "Saldo"],
                   ].map(([key, label]) => (
                     <th key={key} className="px-2 py-2">
                       <button
@@ -1882,7 +1633,7 @@ export default function KPI() {
               <tbody>
                 {filteredCodeRows.length === 0 ? (
                   <tr>
-                    <td className="px-2 py-4 text-center text-xs text-ink/50" colSpan={4}>
+                    <td className="px-2 py-4 text-center text-xs text-ink/50" colSpan={6}>
                       Nenhum codigo encontrado.
                     </td>
                   </tr>
@@ -1891,8 +1642,10 @@ export default function KPI() {
                     <tr key={row.codigo} className="border-b border-sea/10">
                       <td className="px-2 py-2 font-semibold text-ink">{row.codigo}</td>
                       <td className="px-2 py-2">{row.empresa ?? "-"}</td>
-                      <td className="px-2 py-2">{row.status}</td>
-                      <td className="px-2 py-2">{row.associadoTotalAtual}</td>
+                      <td className="px-2 py-2">{KPI_STATUS_LABELS[row.status]}</td>
+                      <td className="px-2 py-2">{formatChartNumber(row.vendas)}</td>
+                      <td className="px-2 py-2">{formatChartNumber(row.cancelamentos)}</td>
+                      <td className={`px-2 py-2 font-semibold ${row.saldo >= 0 ? "text-emerald-700" : "text-red-600"}`}>{formatChartNumber(row.saldo)}</td>
                     </tr>
                   ))
                 )}

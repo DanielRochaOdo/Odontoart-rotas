@@ -7,7 +7,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const ODONTOART_EMPRESA_URL = "https://odontoart.s4e.com.br/api/empresa/BuscaEmpresas";
+const ODONTOART_MOVIMENTACAO_URL = "https://odontoart.s4e.com.br/v2/api/contratos/movimentacao-vidas";
 const ODONTOART_TIMEOUT_MS = 15000;
 const KPI_WORKER_COUNT = 10;
 const KPI_CLAIM_SIZE = 30;
@@ -29,7 +29,7 @@ if (!supabaseUrl || !serviceRoleKey) throw new Error("Missing SUPABASE_URL or SU
 
 const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
-type KpiStatus = "inativo" | "so_perda" | "queda" | "crescimento" | "so_venda" | "neutro";
+type KpiStatus = "inativo" | "so_perda" | "queda" | "crescimento" | "so_ganho" | "neutro";
 type RunStatus = "running" | "success" | "failed";
 type ItemStatus = "pending" | "processing" | "retrying" | "completed" | "failed" | "stopped";
 
@@ -39,6 +39,8 @@ type KpiSyncRequestBody = {
   mode?: "continue" | "stop";
   sync_run_id?: string;
   worker_id?: string;
+  data_inicio?: string;
+  data_fim?: string;
 };
 
 type SyncRunRow = {
@@ -55,6 +57,8 @@ type SyncRunRow = {
   current_code_started_at: string | null;
   current_attempt: number | null;
   source: string;
+  period_start_date: string | null;
+  period_end_date: string | null;
 };
 
 type RunItemRow = {
@@ -85,9 +89,69 @@ type ErpRecord = Record<string, unknown>;
 const jsonResponse = (status: number, body: Record<string, unknown>) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
+const authorizeKpiManager = async (req: Request) => {
+  const authorization = req.headers.get("authorization")?.trim() ?? "";
+  const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";
+  if (!token) return jsonResponse(401, { error: "Sessao autenticada obrigatoria." });
+  const { data: userData, error: userError } = await supabase.auth.getUser(token);
+  if (userError || !userData.user) return jsonResponse(401, { error: "Sessao invalida." });
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("role, is_inactive, force_reauth_after")
+    .eq("user_id", userData.user.id)
+    .maybeSingle();
+  if (profileError) return jsonResponse(500, { error: "Nao foi possivel validar o perfil." });
+  if (!profile) return jsonResponse(403, { error: "Perfil nao encontrado." });
+  const managerProfile = profile as { role: string; is_inactive: boolean | null; force_reauth_after: string | null };
+  if (managerProfile.is_inactive) return jsonResponse(403, { error: "Usuario inativo." });
+  if (!["SUPERVISOR", "ASSISTENTE"].includes(String(managerProfile.role))) {
+    return jsonResponse(403, { error: "Acesso restrito a supervisao e assistencia." });
+  }
+  if (managerProfile.force_reauth_after) {
+    try {
+      const encodedPayloadRaw = token.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/") ?? "";
+      const encodedPayload = encodedPayloadRaw + "=".repeat((4 - encodedPayloadRaw.length % 4) % 4);
+      const claims = JSON.parse(atob(encodedPayload)) as { iat?: number };
+      const issuedAt = typeof claims.iat === "number" ? claims.iat * 1000 : null;
+      const forcedAt = new Date(managerProfile.force_reauth_after).getTime();
+      if (issuedAt === null || (Number.isFinite(forcedAt) && issuedAt < forcedAt)) {
+        return jsonResponse(401, { error: "Sessao antiga. Faca login novamente." });
+      }
+    } catch {
+      return jsonResponse(401, { error: "Nao foi possivel validar a sessao." });
+    }
+  }
+  return null;
+};
+
 const nowIso = () => new Date().toISOString();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const normalizeCode = (value: unknown) => String(value ?? "").replace(/\.0+$/, "").trim();
+
+const isIsoDate = (value: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+};
+
+const getDefaultDateRange = () => {
+  const now = new Date();
+  const firstOfThisMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const end = new Date(firstOfThisMonth.getTime() - 24 * 60 * 60 * 1000);
+  const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1));
+  return { dataInicio: start.toISOString().slice(0, 10), dataFim: end.toISOString().slice(0, 10) };
+};
+
+const resolveDateRange = (body: KpiSyncRequestBody) => {
+  const defaults = getDefaultDateRange();
+  const dataInicio = body.data_inicio?.trim() || defaults.dataInicio;
+  const dataFim = body.data_fim?.trim() || defaults.dataFim;
+  if (!isIsoDate(dataInicio) || !isIsoDate(dataFim)) throw new Error("Informe datas validas no formato AAAA-MM-DD.");
+  if (dataInicio > dataFim) throw new Error("A data inicial deve ser anterior ou igual a data final.");
+  const days = (Date.parse(`${dataFim}T00:00:00Z`) - Date.parse(`${dataInicio}T00:00:00Z`)) / 86400000 + 1;
+  if (days > 366) throw new Error("O periodo consultado nao pode ultrapassar 366 dias.");
+  return { dataInicio, dataFim };
+};
 
 const parseBody = async (req: Request): Promise<KpiSyncRequestBody> => {
   try {
@@ -98,22 +162,12 @@ const parseBody = async (req: Request): Promise<KpiSyncRequestBody> => {
       mode: body.mode === "continue" || body.mode === "stop" ? body.mode : undefined,
       sync_run_id: typeof body.sync_run_id === "string" ? body.sync_run_id : undefined,
       worker_id: typeof body.worker_id === "string" ? body.worker_id : undefined,
+      data_inicio: typeof body.data_inicio === "string" ? body.data_inicio : undefined,
+      data_fim: typeof body.data_fim === "string" ? body.data_fim : undefined,
     };
   } catch {
     return {};
   }
-};
-
-const readRecordValueByKeyInsensitive = (record: ErpRecord, key: string) => {
-  if (key in record) return record[key];
-  const foundKey = Object.keys(record).find((candidate) => candidate.toLowerCase() === key.toLowerCase());
-  return foundKey ? record[foundKey] : undefined;
-};
-
-const buildCodigoCandidates = (rawCodigo: string) => {
-  const trimmed = rawCodigo.trim();
-  const numeric = /^\d+$/.test(trimmed);
-  return Array.from(new Set([trimmed, numeric ? trimmed.replace(/^0+/, "") : "", numeric ? String(Number(trimmed)) : ""].filter(Boolean)));
 };
 
 const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string) => {
@@ -138,85 +192,67 @@ const previewPayload = (payload: unknown) => {
   }
 };
 
-const parseAssociadoTitular = (empresa: ErpRecord) => {
-  const direct = readRecordValueByKeyInsensitive(empresa, "AssociadoTitular");
-  const parsed = typeof direct === "number"
-    ? direct
-    : typeof direct === "string"
-      ? Number(direct.trim().replace(/\./g, "").replace(",", "."))
-      : Number(direct);
+const parseMovementCount = (value: unknown) => {
+  const parsed = typeof value === "number" ? value : Number(String(value ?? "").trim());
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 
-const parseEmpresaName = (empresa: ErpRecord) => {
-  const direct =
-    readRecordValueByKeyInsensitive(empresa, "NomeFantasia") ??
-    readRecordValueByKeyInsensitive(empresa, "NomeFantazia") ??
-    readRecordValueByKeyInsensitive(empresa, "RazaoSocial");
-  return typeof direct === "string" && direct.trim() ? direct.trim() : null;
+const extractMovementTotals = (payload: unknown) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const total = (payload as ErpRecord).total;
+  if (!total || typeof total !== "object" || Array.isArray(total)) return null;
+  const entries = parseMovementCount((total as ErpRecord).entradas);
+  const exits = parseMovementCount((total as ErpRecord).saidas);
+  if (entries === null || exits === null) return null;
+  return { entries, exits };
 };
 
-const extractEmpresaFromPayload = (payload: unknown): ErpRecord | null => {
-  if (Array.isArray(payload)) {
-    const first = payload[0];
-    return first && typeof first === "object" ? (first as ErpRecord) : null;
-  }
-  if (!payload || typeof payload !== "object") return null;
-  const record = payload as Record<string, unknown>;
-  const dados = record.dados;
-  if (Array.isArray(dados)) {
-    const first = dados[0];
-    return first && typeof first === "object" ? (first as ErpRecord) : null;
-  }
-  if (dados && typeof dados === "object") return dados as ErpRecord;
-  return null;
-};
-
-const fetchOdontoartPayload = async (codigo: string): Promise<FetchErpResult> => {
-  const candidates = buildCodigoCandidates(codigo);
+const fetchOdontoartPayload = async (codigo: string, dataInicio: string, dataFim: string): Promise<FetchErpResult> => {
+  const search = new URLSearchParams({
+    data_inicio: dataInicio,
+    data_fim: dataFim,
+    codigo_empresa: codigo,
+    token: odontoartToken,
+  });
   let lastError: Error | null = null;
-
-  for (const candidate of candidates) {
-    for (let attempt = 1; attempt <= KPI_MAX_ATTEMPTS; attempt += 1) {
-      const controller = new AbortController();
-      const search = new URLSearchParams({ token: odontoartToken, empresaId: candidate });
-      try {
-        const response = await withTimeout(
-          fetch(`${ODONTOART_EMPRESA_URL}?${search.toString()}`, {
-            method: "GET",
-            headers: { Accept: "application/json", "Cache-Control": "no-store" },
-            signal: controller.signal,
-          }),
-          ODONTOART_TIMEOUT_MS,
-          `Timeout ao consultar ERP (${ODONTOART_TIMEOUT_MS}ms).`,
-        );
-        const text = await withTimeout(response.text(), ODONTOART_TIMEOUT_MS, `Timeout ao ler resposta do ERP (${ODONTOART_TIMEOUT_MS}ms).`);
-        let payload: unknown = null;
-        if (text.trim().length > 0) {
-          try {
-            payload = JSON.parse(text);
-          } catch {
-            payload = text;
-          }
+  for (let attempt = 1; attempt <= KPI_MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    try {
+      const response = await withTimeout(
+        fetch(`${ODONTOART_MOVIMENTACAO_URL}?${search.toString()}`, {
+          method: "GET",
+          headers: { Accept: "application/json", "Cache-Control": "no-store" },
+          signal: controller.signal,
+        }),
+        ODONTOART_TIMEOUT_MS,
+        `Timeout ao consultar ERP (${ODONTOART_TIMEOUT_MS}ms).`,
+      );
+      const text = await withTimeout(response.text(), ODONTOART_TIMEOUT_MS, `Timeout ao ler resposta do ERP (${ODONTOART_TIMEOUT_MS}ms).`);
+      let payload: unknown = null;
+      if (text.trim().length > 0) {
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = text;
         }
-        if (!response.ok) throw new Error(`Falha ao consultar ERP (${response.status}).`);
-        return { httpStatus: response.status, payload };
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error("Erro de comunicacao com ERP.");
-        controller.abort();
-        break;
       }
+      if (!response.ok) throw new Error(`Falha ao consultar ERP (${response.status}).`);
+      return { httpStatus: response.status, payload };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("Erro de comunicacao com ERP.");
+      controller.abort();
+      if (attempt < KPI_MAX_ATTEMPTS) await sleep(250 * attempt);
     }
   }
   throw lastError ?? new Error("Erro de comunicacao com ERP.");
 };
 
-const resolveKpiStatus = (vendas: number, cancelamentos: number): KpiStatus => {
-  if (vendas === 0 && cancelamentos === 0) return "inativo";
-  if (vendas === 0 && cancelamentos > 0) return "so_perda";
-  if (vendas > 0 && cancelamentos === 0) return "so_venda";
-  if (vendas > cancelamentos) return "crescimento";
-  if (cancelamentos > vendas) return "queda";
+const resolveKpiStatus = (entradas: number, saidas: number): KpiStatus => {
+  if (entradas === 0 && saidas === 0) return "inativo";
+  if (entradas === 0 && saidas > 0) return "so_perda";
+  if (entradas > 0 && saidas === 0) return "so_ganho";
+  if (entradas > saidas) return "crescimento";
+  if (saidas > entradas) return "queda";
   return "neutro";
 };
 
@@ -230,25 +266,8 @@ const resolveCategoryFromStatus = (status: KpiStatus) => {
       return "Queda";
     case "crescimento":
       return "Crescimento";
-    case "so_venda":
-      return "So venda";
-    default:
-      return "Neutro";
-  }
-};
-
-const resolveClienteCategoryFromStatus = (status: KpiStatus) => {
-  switch (status) {
-    case "inativo":
-      return "Inativo";
-    case "so_perda":
-      return "So perda";
-    case "queda":
-      return "Queda";
-    case "crescimento":
-      return "Crescimento";
-    case "so_venda":
-      return "So venda";
+    case "so_ganho":
+      return "So ganho";
     default:
       return "Neutro";
   }
@@ -268,6 +287,16 @@ const loadDistinctCodes = async () => {
     if (batch.length < 1000) break;
   }
   return Array.from(new Set(codes)).sort((a, b) => a.localeCompare(b));
+};
+
+const loadCompanyNames = async (codes: string[]) => {
+  if (codes.length === 0) return new Map<string, string>();
+  const { data, error } = await supabase.from("clientes").select("codigo, empresa").in("codigo", codes);
+  if (error) throw new Error(error.message);
+  return new Map((data ?? []).map((row) => {
+    const item = row as { codigo: string | null; empresa: string | null };
+    return [normalizeCode(item.codigo), item.empresa?.trim() ?? ""] as const;
+  }));
 };
 
 const acquireDailyLock = async () => {
@@ -339,7 +368,7 @@ const insertRunItems = async (syncRunId: string, codes: string[]) => {
   if (error) throw new Error(error.message);
 };
 
-const createRun = async (source: string, totalCodes: number) => {
+const createRun = async (source: string, totalCodes: number, dataInicio: string, dataFim: string) => {
   const snapshotAt = nowIso();
   const { data, error } = await supabase
     .from("kpi_sync_runs")
@@ -356,6 +385,8 @@ const createRun = async (source: string, totalCodes: number) => {
       processed_codes: 0,
       changed_codes: 0,
       failed_codes: 0,
+      period_start_date: dataInicio,
+      period_end_date: dataFim,
     })
     .select("id")
     .single();
@@ -366,7 +397,7 @@ const createRun = async (source: string, totalCodes: number) => {
 const findRunningSyncRun = async (): Promise<SyncRunRow | null> => {
   const { data, error } = await supabase
     .from("kpi_sync_runs")
-    .select("id, status, total_codes, processed_codes, changed_codes, failed_codes, started_at, last_progress_at, current_code, current_stage, current_code_started_at, current_attempt, source")
+    .select("id, status, total_codes, processed_codes, changed_codes, failed_codes, started_at, last_progress_at, current_code, current_stage, current_code_started_at, current_attempt, source, period_start_date, period_end_date")
     .eq("status", "running")
     .order("started_at", { ascending: false })
     .limit(1)
@@ -399,40 +430,6 @@ const loadProcessedCodesForRun = async (syncRunId: string) => {
   const processed = new Set<string>(snapshots);
   for (const codigo of errors) processed.add(codigo);
   return processed;
-};
-
-const getPreviousByCode = async (periodDays: number, currentSyncRunId: string) => {
-  const rows: Array<{ codigo: string | null; vidas_qtde: number | null; snapshot_at: string; sync_run_id: string | null }> = [];
-  for (let offset = 0; ; offset += 1000) {
-    const { data, error } = await supabase
-      .from("kpi_sync_snapshots")
-      .select("codigo, vidas_qtde, snapshot_at, sync_run_id")
-      .eq("period_days", periodDays)
-      .neq("sync_run_id", currentSyncRunId)
-      .not("sync_run_id", "is", null)
-      .in("source", ["api_daily", "manual_sync", "manual_upload"])
-      .order("snapshot_at", { ascending: false })
-      .order("codigo", { ascending: true })
-      .order("id", { ascending: true })
-      .range(offset, offset + 999);
-    if (error) throw new Error(error.message);
-    const batch = (data ?? []).map((item) => ({
-      codigo: (item as { codigo: string | null }).codigo,
-      vidas_qtde: (item as { vidas_qtde: number | null }).vidas_qtde,
-      snapshot_at: (item as { snapshot_at: string }).snapshot_at,
-      sync_run_id: (item as { sync_run_id: string | null }).sync_run_id,
-    }));
-    rows.push(...batch);
-    if (batch.length < 1000) break;
-  }
-  const previousByCode = new Map<string, number>();
-  for (const row of rows) {
-    const codigo = normalizeCode(row.codigo);
-    if (!codigo || previousByCode.has(codigo)) continue;
-    const value = Number(row.vidas_qtde);
-    if (Number.isFinite(value)) previousByCode.set(codigo, value);
-  }
-  return previousByCode;
 };
 
 type RunProgress = {
@@ -509,11 +506,11 @@ const buildSnapshotRow = (
   source: string,
   code: string,
   empresa: string | null,
-  vidasQtde: number,
-  previous: number,
+  entries: number,
+  exits: number,
 ) => {
-  const delta = vidasQtde - previous;
-  const status = resolveKpiStatus(Math.max(0, delta), Math.max(0, -delta));
+  const delta = entries - exits;
+  const status = resolveKpiStatus(entries, exits);
   return {
     sync_run_id: syncRunId,
     source,
@@ -521,25 +518,16 @@ const buildSnapshotRow = (
     codigo: code,
     empresa,
     categoria: resolveCategoryFromStatus(status),
-    vidas_qtde: vidasQtde,
+    vidas_qtde: null,
     status,
     snapshot_at: snapshotAt,
     snapshot_date: snapshotDate,
-    previous_vidas_qtde: previous,
+    previous_vidas_qtde: null,
     delta,
-    vendas_qtde: delta > 0 ? delta : 0,
-    cancelamentos_qtde: delta < 0 ? Math.abs(delta) : 0,
+    vendas_qtde: entries,
+    cancelamentos_qtde: exits,
     synced_by_user_id: null,
   };
-};
-
-const upsertClientesForCode = async (code: string, vidasQtde: number, status: KpiStatus) => {
-  const { error } = await supabase.rpc("kpi_update_cliente_if_changed", {
-    p_codigo: code,
-    p_vidas_qtde: vidasQtde,
-    p_categoria: resolveClienteCategoryFromStatus(status),
-  });
-  if (error) throw new Error(error.message);
 };
 
 const processSingleCode = async (params: {
@@ -550,14 +538,16 @@ const processSingleCode = async (params: {
   periodDays: number;
   snapshotAt: string;
   snapshotDate: string;
-  previousByCode: Map<string, number>;
+  dataInicio: string;
+  dataFim: string;
+  empresaNome: string | null;
 }) => {
-  const { syncRunId, workerId, item, source, periodDays, snapshotAt, snapshotDate, previousByCode } = params;
+  const { syncRunId, workerId, item, source, periodDays, snapshotAt, snapshotDate, dataInicio, dataFim, empresaNome: clientCompanyName } = params;
   const startedAt = Date.now();
   await touchItem(item.id, workerId);
 
   try {
-    const { httpStatus, payload } = await fetchOdontoartPayload(item.codigo);
+    const { httpStatus, payload } = await fetchOdontoartPayload(item.codigo, dataInicio, dataFim);
     const emptyPayload = payload === null || payload === undefined || payload === "" || (Array.isArray(payload) && payload.length === 0);
     if (emptyPayload) {
       await supabase.from("kpi_sync_run_errors").insert({
@@ -578,16 +568,13 @@ const processSingleCode = async (params: {
       return;
     }
 
-    const empresa = extractEmpresaFromPayload(payload);
-    const empresaNome = empresa ? parseEmpresaName(empresa) : null;
-    const associadoTitular = empresa ? parseAssociadoTitular(empresa) : null;
-    if (!empresa || !empresaNome || associadoTitular === null) {
-      const lastError = !empresa ? "Empresa ausente no payload do ERP." : !empresaNome ? "Nome da empresa ausente no payload do ERP." : "AssociadoTitular invalido no payload do ERP.";
-      const stage = !empresa ? "missing_empresa" : !empresaNome ? "missing_empresa_name" : "invalid_associado_titular";
+    const totals = extractMovementTotals(payload);
+    if (!totals) {
+      const lastError = "Totais de entradas e saidas ausentes ou invalidos no payload do ERP.";
       await supabase.from("kpi_sync_run_errors").insert({
         sync_run_id: syncRunId,
         codigo: item.codigo,
-        stage,
+        stage: "invalid_movement_totals",
         error_message: lastError,
         http_status: httpStatus,
         payload_preview: previewPayload(payload),
@@ -595,19 +582,20 @@ const processSingleCode = async (params: {
       await finalizeItem(item.id, workerId, {
         status: "failed",
         changed: false,
-        errorCode: stage,
+        errorCode: "invalid_movement_totals",
         lastError,
         durationMs: Date.now() - startedAt,
       });
       return;
     }
 
-    const previous = previousByCode.get(item.codigo) ?? associadoTitular;
-    const changed = previous !== associadoTitular;
-    const status = resolveKpiStatus(Math.max(0, associadoTitular - previous), Math.max(0, previous - associadoTitular));
-    // Preserve every snapshot, even when no customer values need rewriting.
-    await upsertClientesForCode(item.codigo, associadoTitular, status);
-    const snapshotRow = buildSnapshotRow(syncRunId, snapshotAt, snapshotDate, periodDays, source, item.codigo, empresaNome, associadoTitular, previous);
+    const payloadRecord = payload as ErpRecord;
+    const empresa = [payloadRecord.empresa, payloadRecord.nome_empresa, payloadRecord.razao_social]
+      .find((value) => typeof value === "string" && value.trim());
+    const empresaNome = typeof empresa === "string" ? empresa.trim() : clientCompanyName || item.codigo;
+    const changed = totals.entries > 0 || totals.exits > 0;
+    const status = resolveKpiStatus(totals.entries, totals.exits);
+    const snapshotRow = buildSnapshotRow(syncRunId, snapshotAt, snapshotDate, periodDays, source, item.codigo, empresaNome, totals.entries, totals.exits);
     const { error } = await supabase.from("kpi_sync_snapshots").upsert(snapshotRow, { onConflict: "sync_run_id,codigo" });
     if (error) throw new Error(error.message);
 
@@ -615,8 +603,8 @@ const processSingleCode = async (params: {
       status: "completed",
       changed,
       kpiStatus: "ok",
-      receivedValue: { code: item.codigo, vidasQtde: associadoTitular, empresa: empresaNome },
-      previousValue: { code: item.codigo, vidasQtde: previous },
+      receivedValue: { code: item.codigo, entries: totals.entries, exits: totals.exits, empresa: empresaNome },
+      previousValue: null,
       durationMs: Date.now() - startedAt,
     });
   } catch (error) {
@@ -641,7 +629,13 @@ const processSingleCode = async (params: {
 
 const startDailySync = async (req: Request, body: KpiSyncRequestBody) => {
   const source = body.source?.trim() || req.headers.get("x-kpi-source")?.trim() || "api_daily";
-  const triggeredBy = body.triggered_by?.trim() || "cron";
+  let dataInicio: string;
+  let dataFim: string;
+  try {
+    ({ dataInicio, dataFim } = resolveDateRange(body));
+  } catch (error) {
+    return jsonResponse(400, { error: error instanceof Error ? error.message : "Periodo de consulta invalido." });
+  }
   if (!odontoartToken) return jsonResponse(400, { error: "ODONTOART_TOKEN nao configurado." });
 
   await acquireDailyLock();
@@ -659,7 +653,7 @@ const startDailySync = async (req: Request, body: KpiSyncRequestBody) => {
     }
 
     const codes = await loadDistinctCodes();
-    const syncRunId = await createRun(source, codes.length);
+    const syncRunId = await createRun(source, codes.length, dataInicio, dataFim);
     await insertRunItems(syncRunId, codes);
     await supabase.from("kpi_sync_runs").update({
       total_codes: codes.length,
@@ -677,11 +671,13 @@ const startDailySync = async (req: Request, body: KpiSyncRequestBody) => {
 
     return jsonResponse(202, {
       success: true,
-      run_id: syncRunId,
+      sync_run_id: syncRunId,
       status: "running",
       total_codes: codes.length,
       worker_count: KPI_WORKER_COUNT,
       request_concurrency: KPI_REQUEST_CONCURRENCY,
+      data_inicio: dataInicio,
+      data_fim: dataFim,
     });
   } catch (error) {
     return jsonResponse(400, { error: error instanceof Error ? error.message : "Falha na sincronizacao diaria KPI." });
@@ -701,7 +697,7 @@ const continueDailySync = async (req: Request, body: KpiSyncRequestBody) => {
   try {
     const { data: runRow, error: runError } = await supabase
       .from("kpi_sync_runs")
-      .select("id, status, total_codes, processed_codes, changed_codes, failed_codes, source, current_stage")
+      .select("id, status, total_codes, processed_codes, changed_codes, failed_codes, source, current_stage, period_start_date, period_end_date")
       .eq("id", syncRunId)
       .maybeSingle();
     if (runError) throw new Error(runError.message);
@@ -711,9 +707,10 @@ const continueDailySync = async (req: Request, body: KpiSyncRequestBody) => {
     }
 
     await touchDailyLock();
-    const previousByCode = await getPreviousByCode(30, syncRunId);
+    const dataInicio = String((runRow as SyncRunRow).period_start_date ?? getDefaultDateRange().dataInicio);
+    const dataFim = String((runRow as SyncRunRow).period_end_date ?? getDefaultDateRange().dataFim);
     const snapshotAt = nowIso();
-    const snapshotDate = snapshotAt.slice(0, 10);
+    const snapshotDate = dataFim;
     const startedAt = Date.now();
 
     let processedInLoop = 0;
@@ -721,6 +718,7 @@ const continueDailySync = async (req: Request, body: KpiSyncRequestBody) => {
       const claims = await claimNextItems(syncRunId, workerId);
       if (claims.length === 0) break;
       processedInLoop += claims.length;
+      const companyNames = await loadCompanyNames(claims.map((item) => item.codigo));
       const queue = [...claims];
 
       while (queue.length > 0) {
@@ -733,7 +731,9 @@ const continueDailySync = async (req: Request, body: KpiSyncRequestBody) => {
           periodDays: 30,
           snapshotAt,
           snapshotDate,
-          previousByCode,
+          dataInicio,
+          dataFim,
+          empresaNome: companyNames.get(item.codigo) || null,
         })));
       }
 
@@ -803,7 +803,9 @@ serve(async (req) => {
   if (req.method !== "POST") return jsonResponse(405, { error: "Metodo nao permitido." });
 
   const body = await parseBody(req);
+  if (body.mode !== "stop" && (body.mode === "continue" || body.sync_run_id)) return await continueDailySync(req, body);
+  const authorizationError = await authorizeKpiManager(req);
+  if (authorizationError) return authorizationError;
   if (body.mode === "stop") return await stopDailySync(body);
-  if (body.mode === "continue" || body.sync_run_id) return await continueDailySync(req, body);
   return await startDailySync(req, body);
 });

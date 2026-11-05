@@ -44,6 +44,25 @@ const formatOrValues = (values: string[]) =>
   values.map((value) => `"${value.replace(/"/g, '\\"')}"`).join(",");
 
 const SITUACAO_OPTIONS = ["Ativo", "Suspenso/Inadimplente", "Cancelado"] as const;
+const AGENDA_ID_FILTER_CHUNK_SIZE = 100;
+
+const chunkArray = <T,>(values: readonly T[], chunkSize: number) => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += chunkSize) {
+    chunks.push(values.slice(index, index + chunkSize));
+  }
+  return chunks;
+};
+
+const intersectAgendaIdFilters = (...filters: Array<string[] | null>) => {
+  const activeFilters = filters.filter((ids): ids is string[] => ids !== null);
+  if (activeFilters.length === 0) return null;
+  if (activeFilters.some((ids) => ids.length === 0)) return [];
+
+  const [first, ...rest] = activeFilters;
+  const otherSets = rest.map((ids) => new Set(ids));
+  return first.filter((id) => otherSets.every((set) => set.has(id)));
+};
 
 const buildSituacaoRawMap = () => {
   const rawMap = new Map<string, string[]>();
@@ -249,6 +268,81 @@ const fetchAgendaIdsByLatestCompletedVidas = async (range: { from: number | null
   return clienteIds;
 };
 
+const fetchAgendaIdsBySupervisorFilter = async (filters: AgendaFilters) => {
+  const selectedNames = new Set(
+    (filters.columns.supervisor ?? []).map(normalizeOption).filter(Boolean),
+  );
+  if (selectedNames.size === 0) return null;
+
+  const { data: supervisorRows, error: supervisorsError } = await supabase
+    .from("profiles")
+    .select("id, user_id, display_name")
+    .eq("role", "SUPERVISOR")
+    .or("is_inactive.is.null,is_inactive.eq.false");
+
+  if (supervisorsError) throw new Error(supervisorsError.message);
+
+  const supervisors = (supervisorRows ?? []).filter((profile) =>
+    profile.display_name ? selectedNames.has(normalizeOption(profile.display_name)) : false,
+  );
+  if (supervisors.length === 0) return [] as string[];
+
+  const supervisorProfileIds = Array.from(
+    new Set(
+      supervisors
+        .flatMap((profile) => [profile.id, profile.user_id])
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const assignedUserIds = new Set(
+    supervisors
+      .map((profile) => profile.user_id)
+      .filter((id): id is string => Boolean(id)),
+  );
+
+  for (const profileIdChunk of chunkArray(supervisorProfileIds, AGENDA_ID_FILTER_CHUNK_SIZE)) {
+    const { data: vendorRows, error: vendorsError } = await supabase
+      .from("profiles")
+      .select("user_id")
+      .eq("role", "VENDEDOR")
+      .in("supervisor_id", profileIdChunk);
+
+    if (vendorsError) throw new Error(vendorsError.message);
+    (vendorRows ?? []).forEach((vendor) => {
+      if (vendor.user_id) assignedUserIds.add(vendor.user_id);
+    });
+  }
+
+  if (assignedUserIds.size === 0) return [] as string[];
+
+  const clienteIds = new Set<string>();
+  for (const assignedUserIdChunk of chunkArray(
+    Array.from(assignedUserIds),
+    AGENDA_ID_FILTER_CHUNK_SIZE,
+  )) {
+    let from = 0;
+    while (true) {
+      const { data: visitRows, error: visitsError } = await supabase
+        .from("visits")
+        .select("id, cliente_id")
+        .in("assigned_to_user_id", assignedUserIdChunk)
+        .not("cliente_id", "is", null)
+        .order("id", { ascending: true })
+        .range(from, from + 999);
+
+      if (visitsError) throw new Error(visitsError.message);
+      const batch = (visitRows ?? []) as Array<{ id: string; cliente_id: string | null }>;
+      batch.forEach((visit) => {
+        if (visit.cliente_id) clienteIds.add(visit.cliente_id);
+      });
+      if (batch.length < 1000) break;
+      from += 1000;
+    }
+  }
+
+  return Array.from(clienteIds);
+};
+
 const isVendorVisitTypeValue = (visitType?: string | null) =>
   (visitType ?? "VENDEDOR") === "VENDEDOR";
 
@@ -310,6 +404,14 @@ const stripLastVisitDateRange = (filters: AgendaFilters): AgendaFilters => ({
   dateRanges: {
     ...filters.dateRanges,
     data_da_ultima_visita: {},
+  },
+});
+
+const stripSupervisorFilter = (filters: AgendaFilters): AgendaFilters => ({
+  ...filters,
+  columns: {
+    ...filters.columns,
+    supervisor: [],
   },
 });
 
@@ -428,7 +530,7 @@ const CLIENTES_FILTER_COLUMN_MAP: Record<string, string> = {
 };
 
 const CLIENTES_DYNAMIC_FILTER_KEYS = Object.keys(CLIENTES_FILTER_COLUMN_MAP).filter(
-  (key) => key !== "situacao" && key !== "categoria",
+  (key) => key !== "situacao" && key !== "categoria" && key !== "supervisor",
 );
 const CLIENTES_DYNAMIC_FILTER_COLUMNS = Array.from(
   new Set(
@@ -523,7 +625,7 @@ const applyFilters = <T,>(query: T, filters: AgendaFilters): T => {
   let next: any = query;
 
   Object.entries(filters.columns).forEach(([key, values]) => {
-    if (key === "supervisor_flag") return;
+    if (key === "supervisor" || key === "supervisor_flag") return;
     if (key === "situacao") return;
     if (key === "endereco") return;
     if (!values || values.length === 0) return;
@@ -750,7 +852,7 @@ const hydrateAgendaUpcomingRoutePresence = async (rows: AgendaRow[]) => {
 
   const routeClienteIds = new Set<string>();
   const today = getFortalezaTodayDate();
-  const chunkSize = 500;
+  const chunkSize = AGENDA_ID_FILTER_CHUNK_SIZE;
 
   for (let index = 0; index < clienteIds.length; index += chunkSize) {
     const chunk = clienteIds.slice(index, index + chunkSize);
@@ -795,47 +897,52 @@ const fetchAgendaFirstPageLiteDirect = async (
   }
 
   const pageOffset = pageIndex * pageSize;
-  const queryFilters = context.restrictedAgendaIds ? stripLastVisitDateRange(filters) : filters;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let query: any = supabase
-    .from("clientes")
-    .select(AGENDA_LITE_SELECT_COLUMNS)
-    .order("id", { ascending: true });
+  const queryFilters = context.restrictedAgendaIds
+    ? stripSupervisorFilter(stripLastVisitDateRange(filters))
+    : filters;
+  const buildQuery = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query: any = supabase
+      .from("clientes")
+      .select(AGENDA_LITE_SELECT_COLUMNS)
+      .order("id", { ascending: true });
 
-  query = applyFilaRoutingExclusionsToClientesQuery(query, context.filaBlocks);
-  query = applyFilters(query, queryFilters);
-  if (context.restrictedAgendaIds) {
-    query = query.in("id", context.restrictedAgendaIds);
-  }
-
-  if (context.companyName) {
-    const term = context.companyName.replace(/,/g, " ").trim();
-    if (term) {
-      query = query.or(`empresa.ilike.%${term}%,nome_fantasia.ilike.%${term}%`);
+    query = applyFilaRoutingExclusionsToClientesQuery(query, context.filaBlocks);
+    query = applyFilters(query, queryFilters);
+    if (context.companyName) {
+      const term = context.companyName.replace(/,/g, " ").trim();
+      if (term) {
+        query = query.or(`empresa.ilike.%${term}%,nome_fantasia.ilike.%${term}%`);
+      }
     }
-  }
-
-  if (context.companyCode) {
-    query = query.eq("codigo", context.companyCode);
-  }
-
-  if (context.companyAddress) {
-    query = applyEnderecoContainsFilter(query, context.companyAddress);
-  }
+    if (context.companyCode) query = query.eq("codigo", context.companyCode);
+    if (context.companyAddress) {
+      query = applyEnderecoContainsFilter(query, context.companyAddress);
+    }
+    return query;
+  };
 
   const rows: AgendaRow[] = [];
   const batchSize = 1000;
-  let from = 0;
+  const idChunks = context.restrictedAgendaIds
+    ? chunkArray(context.restrictedAgendaIds, AGENDA_ID_FILTER_CHUNK_SIZE)
+    : [null];
 
-  while (true) {
-    const response = await query.range(from, from + batchSize - 1);
-    if (response.error) throw new Error(response.error.message);
+  for (const idChunk of idChunks) {
+    let query = buildQuery();
+    if (idChunk) query = query.in("id", idChunk);
 
-    const batch = (response.data ?? []) as AgendaRow[];
-    if (batch.length === 0) break;
-    rows.push(...batch);
-    if (batch.length < batchSize) break;
-    from += batchSize;
+    let from = 0;
+    while (true) {
+      const response = await query.range(from, from + batchSize - 1);
+      if (response.error) throw new Error(response.error.message);
+
+      const batch = (response.data ?? []) as AgendaRow[];
+      if (batch.length === 0) break;
+      rows.push(...batch);
+      if (batch.length < batchSize) break;
+      from += batchSize;
+    }
   }
 
   const deduped = dedupeAgendaRows(rows);
@@ -853,7 +960,7 @@ const buildAgendaRpcFilters = (filters: AgendaFilters): Record<string, unknown> 
   const columns: Record<string, string[]> = {};
 
   (Object.keys(filters.columns) as Array<keyof AgendaFilters["columns"]>).forEach((key) => {
-    if (key === "supervisor_flag") return;
+    if (key === "supervisor" || key === "supervisor_flag") return;
     if (key === "endereco") return;
     const values = filters.columns[key] ?? [];
     const cleaned = values.map((value) => normalizeOption(value)).filter(Boolean);
@@ -908,7 +1015,7 @@ const fetchAgendaCandidateIdsForLatestVisitFilter = async (
   const companyName = search?.companyName?.replace(/%/g, "").trim() ?? "";
   const companyCode = search?.companyCode?.replace(/%/g, "").trim() ?? "";
   const companyAddress = search?.companyAddress?.replace(/%/g, "").trim() ?? "";
-  const queryFilters = stripLastVisitDateRange(filters);
+  const queryFilters = stripSupervisorFilter(stripLastVisitDateRange(filters));
   const rows: string[] = [];
   const pageSize = 1000;
   let cursorId: string | null = null;
@@ -976,15 +1083,23 @@ const buildAgendaQueryContext = async (
   const companyCode = search?.companyCode?.replace(/%/g, "").trim() ?? "";
   const companyAddress = search?.companyAddress?.replace(/%/g, "").trim() ?? "";
   const filaBlocks = await resolveFilaRoutingBlocks();
+  const supervisorAgendaIds = await fetchAgendaIdsBySupervisorFilter(filters);
   const candidateAgendaIds = await fetchAgendaCandidateIdsForLatestVisitFilter(filters, search, filaBlocks);
-  const rawRestrictedAgendaIds = await fetchAgendaIdsByLatestRegisteredVisitDate(
+  const dateRestrictedAgendaIds = await fetchAgendaIdsByLatestRegisteredVisitDate(
     filters,
     candidateAgendaIds,
   );
+  const rawRestrictedAgendaIds = intersectAgendaIdFilters(
+    dateRestrictedAgendaIds,
+    supervisorAgendaIds,
+  );
   const restrictedAgendaIds = excludeFilaBlockedIds(rawRestrictedAgendaIds, filaBlocks);
+  const filtersForQuery = restrictedAgendaIds
+    ? stripSupervisorFilter(stripLastVisitDateRange(filters))
+    : filters;
 
   return {
-    effectiveFilters: buildAgendaRpcFilters(restrictedAgendaIds ? stripLastVisitDateRange(filters) : filters),
+    effectiveFilters: buildAgendaRpcFilters(filtersForQuery),
     restrictedAgendaIds,
     companyName,
     companyCode,
@@ -1001,47 +1116,49 @@ const fetchAgendaCountExactDirect = async (
     return 0;
   }
 
-  const queryFilters = context.restrictedAgendaIds ? stripLastVisitDateRange(filters) : filters;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let query: any = supabase.from("clientes").select("id");
-  query = applyFilaRoutingExclusionsToClientesQuery(query, context.filaBlocks);
-  query = applyFilters(query, queryFilters);
-
-  if (context.restrictedAgendaIds) {
-    query = query.in("id", context.restrictedAgendaIds);
-  }
-
-  if (context.companyName) {
-    const term = context.companyName.replace(/,/g, " ").trim();
-    if (term) {
-      query = query.or(`empresa.ilike.%${term}%,nome_fantasia.ilike.%${term}%`);
+  const queryFilters = context.restrictedAgendaIds
+    ? stripSupervisorFilter(stripLastVisitDateRange(filters))
+    : filters;
+  const buildQuery = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query: any = supabase.from("clientes").select("id");
+    query = applyFilaRoutingExclusionsToClientesQuery(query, context.filaBlocks);
+    query = applyFilters(query, queryFilters);
+    if (context.companyName) {
+      const term = context.companyName.replace(/,/g, " ").trim();
+      if (term) {
+        query = query.or(`empresa.ilike.%${term}%,nome_fantasia.ilike.%${term}%`);
+      }
     }
-  }
-
-  if (context.companyCode) {
-    query = query.eq("codigo", context.companyCode);
-  }
-
-  if (context.companyAddress) {
-    const term = context.companyAddress.replace(/,/g, " ").trim();
-    if (term) {
-      query = query.ilike("endereco", `%${term}%`);
+    if (context.companyCode) query = query.eq("codigo", context.companyCode);
+    if (context.companyAddress) {
+      const term = context.companyAddress.replace(/,/g, " ").trim();
+      if (term) query = query.ilike("endereco", `%${term}%`);
     }
-  }
+    return query;
+  };
 
   const matchingIds: string[] = [];
-  const pageSize = 1000;
-  let from = 0;
-  while (true) {
-    const { data, error } = await query.range(from, from + pageSize - 1);
-    if (error) throw new Error(error.message);
-    const batch = (data ?? []) as Array<{ id?: string | null }>;
-    if (batch.length === 0) break;
-    batch.forEach((row) => {
-      if (row.id) matchingIds.push(row.id);
-    });
-    if (batch.length < pageSize) break;
-    from += pageSize;
+  const idChunks = context.restrictedAgendaIds
+    ? chunkArray(context.restrictedAgendaIds, AGENDA_ID_FILTER_CHUNK_SIZE)
+    : [null];
+  for (const idChunk of idChunks) {
+    let query = buildQuery();
+    if (idChunk) query = query.in("id", idChunk);
+
+    const pageSize = 1000;
+    let from = 0;
+    while (true) {
+      const { data, error } = await query.range(from, from + pageSize - 1);
+      if (error) throw new Error(error.message);
+      const batch = (data ?? []) as Array<{ id?: string | null }>;
+      if (batch.length === 0) break;
+      batch.forEach((row) => {
+        if (row.id) matchingIds.push(row.id);
+      });
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
   }
 
   return excludeFilaBlockedIds(matchingIds, context.filaBlocks)?.length ?? 0;
@@ -1089,6 +1206,7 @@ export const fetchAgendaFirstPageLite = async (
   const start = performance.now();
   const pageOffset = pageIndex * pageSize;
   const shouldUseDirectQuery =
+    context.restrictedAgendaIds !== null ||
     hasActiveLastVisitDateRange(filters) ||
     Boolean(context.companyCode.trim()) ||
     hasEnderecoSearch(filters, context);
@@ -1142,7 +1260,7 @@ export const fetchAgenda = async (
 
 export const fetchAgendaScheduledVisits = async (clienteIds: string[]) => {
   if (!clienteIds.length) return [] as AgendaScheduledVisit[];
-  const chunkSize = 500;
+  const chunkSize = AGENDA_ID_FILTER_CHUNK_SIZE;
   const results: AgendaScheduledVisit[] = [];
 
   for (let index = 0; index < clienteIds.length; index += chunkSize) {
@@ -1168,26 +1286,47 @@ export const fetchAgendaScheduledVisits = async (clienteIds: string[]) => {
 
 export const fetchAgendaVisitVendors = async (clienteIds: string[]) => {
   if (!clienteIds.length) return [] as AgendaVisitVendor[];
-  const { data, error } = await supabase
-    .from("visits")
-    .select(
-      "cliente_id, visit_date, assigned_to_user_id, assigned_to_name, completed_at, completed_vidas, no_visit_reason, no_visit_observation, route_id, visit_type, supervisor_reason",
-    )
-    .in("cliente_id", clienteIds)
-    .order("completed_at", { ascending: false })
-    .order("visit_date", { ascending: false });
+  const results: AgendaVisitVendor[] = [];
+  for (const chunk of chunkArray(clienteIds, AGENDA_ID_FILTER_CHUNK_SIZE)) {
+    const { data, error } = await supabase
+      .from("visits")
+      .select(
+        "cliente_id, visit_date, assigned_to_user_id, assigned_to_name, completed_at, completed_vidas, no_visit_reason, no_visit_observation, route_id, visit_type, supervisor_reason",
+      )
+      .in("cliente_id", chunk)
+      .order("completed_at", { ascending: false })
+      .order("visit_date", { ascending: false });
 
-  if (error) {
-    throw new Error(error.message);
+    if (error) throw new Error(error.message);
+    results.push(...((data ?? []) as AgendaVisitVendor[]));
   }
 
-  return (data ?? []) as AgendaVisitVendor[];
+  return results;
 };
 
 export const fetchDistinctOptions = async (filterKey: string, columns: string[]) => {
   const cached = optionsCache.get(filterKey);
   if (cached) {
     return cached.options;
+  }
+
+  if (filterKey === "supervisor") {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("display_name")
+      .eq("role", "SUPERVISOR")
+      .or("is_inactive.is.null,is_inactive.eq.false");
+
+    if (error) throw new Error(error.message);
+    const options = Array.from(
+      new Set(
+        (data ?? [])
+          .map((profile) => normalizeOption(profile.display_name ?? ""))
+          .filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+    optionsCache.set(filterKey, { options, rawMap: new Map() });
+    return options;
   }
 
   if (filterKey === "situacao") {
@@ -1298,10 +1437,8 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
 
   if (ids && ids.length > 0) {
     const results: AgendaPerfilRow[] = [];
-    const chunkSize = 500;
 
-    for (let i = 0; i < ids.length; i += chunkSize) {
-      const chunk = ids.slice(i, i + chunkSize);
+    for (const chunk of chunkArray(ids, AGENDA_ID_FILTER_CHUNK_SIZE)) {
       const { data, error } = await buildQuery().in("id", chunk);
       if (error) throw new Error(error.message);
       results.push(...((data ?? []) as AgendaPerfilRow[]));
@@ -1325,15 +1462,16 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
   const vidasRange = getVidasRange(filters);
   let agendaIdsByVidas: string[] | null = null;
   let agendaIdsByLastVisit: string[] | null = null;
-  let effectiveFilters = filters;
+  const agendaIdsBySupervisor = await fetchAgendaIdsBySupervisorFilter(filters);
+  let effectiveFilters = agendaIdsBySupervisor ? stripSupervisorFilter(filters) : filters;
 
   try {
     const candidateAgendaIds = await fetchAgendaCandidateIdsForLatestVisitFilter(
-      filters,
+      effectiveFilters,
       undefined,
       filaBlocks,
     );
-    agendaIdsByLastVisit = await fetchAgendaIdsByLatestRegisteredVisitDate(filters, candidateAgendaIds);
+    agendaIdsByLastVisit = await fetchAgendaIdsByLatestRegisteredVisitDate(effectiveFilters, candidateAgendaIds);
     if (agendaIdsByLastVisit) {
       effectiveFilters = stripLastVisitDateRange(effectiveFilters);
     }
@@ -1348,33 +1486,35 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
     }
   }
 
-  const restrictedAgendaIds =
-    agendaIdsByLastVisit && agendaIdsByVidas
-      ? agendaIdsByLastVisit.filter((id) => agendaIdsByVidas.includes(id))
-      : agendaIdsByLastVisit ?? agendaIdsByVidas;
+  const restrictedAgendaIds = intersectAgendaIdFilters(
+    agendaIdsByLastVisit,
+    agendaIdsByVidas,
+    agendaIdsBySupervisor,
+  );
   const routeableRestrictedAgendaIds = excludeFilaBlockedIds(restrictedAgendaIds, filaBlocks);
 
-  let query = buildQuery();
-  query = applyFilters(query, effectiveFilters);
-  if (routeableRestrictedAgendaIds) {
-    if (routeableRestrictedAgendaIds.length === 0) {
-      return [];
-    }
-    query = query.in("id", routeableRestrictedAgendaIds);
-  }
+  if (routeableRestrictedAgendaIds && routeableRestrictedAgendaIds.length === 0) return [];
 
   const results: AgendaPerfilRow[] = [];
   const pageSize = 1000;
-  let from = 0;
+  const idChunks = routeableRestrictedAgendaIds
+    ? chunkArray(routeableRestrictedAgendaIds, AGENDA_ID_FILTER_CHUNK_SIZE)
+    : [null];
 
-  while (true) {
-    const { data, error } = await query.range(from, from + pageSize - 1);
-    if (error) throw new Error(error.message);
-    const batch = (data ?? []) as AgendaPerfilRow[];
-    if (batch.length === 0) break;
-    results.push(...batch);
-    if (batch.length < pageSize) break;
-    from += pageSize;
+  for (const idChunk of idChunks) {
+    let query = applyFilters(buildQuery(), effectiveFilters);
+    if (idChunk) query = query.in("id", idChunk);
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await query.range(from, from + pageSize - 1);
+      if (error) throw new Error(error.message);
+      const batch = (data ?? []) as AgendaPerfilRow[];
+      if (batch.length === 0) break;
+      results.push(...batch);
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
   }
 
   const deduped = dedupeAgendaRows(
