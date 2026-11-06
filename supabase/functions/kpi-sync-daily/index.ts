@@ -19,17 +19,15 @@ const STALE_RUNNING_LIMIT_MS = 15 * 60 * 1000;
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim() ?? "";
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim() ?? "";
-const anonKey = Deno.env.get("SUPABASE_ANON_KEY")?.trim() ?? "";
 const odontoartToken = Deno.env.get("ODONTOART_TOKEN")?.trim() || Deno.env.get("VITE_ODONTOART_TOKEN")?.trim() || "";
 const internalSecret = Deno.env.get("KPI_INTERNAL_SECRET")?.trim() || Deno.env.get("X_KPI_INTERNAL_SECRET")?.trim() || "";
 const internalWorkerToken = internalSecret || serviceRoleKey;
-const gatewayAuthToken = anonKey || serviceRoleKey;
 
 if (!supabaseUrl || !serviceRoleKey) throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
 
 const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
-type KpiStatus = "inativo" | "so_perda" | "queda" | "crescimento" | "so_ganho" | "neutro";
+type KpiStatus = "so_perda" | "queda" | "crescimento" | "so_ganho" | "neutro";
 type RunStatus = "running" | "success" | "failed";
 type ItemStatus = "pending" | "processing" | "retrying" | "completed" | "failed" | "stopped";
 
@@ -248,7 +246,7 @@ const fetchOdontoartPayload = async (codigo: string, dataInicio: string, dataFim
 };
 
 const resolveKpiStatus = (entradas: number, saidas: number): KpiStatus => {
-  if (entradas === 0 && saidas === 0) return "inativo";
+  if (entradas === 0 && saidas === 0) return "neutro";
   if (entradas === 0 && saidas > 0) return "so_perda";
   if (entradas > 0 && saidas === 0) return "so_ganho";
   if (entradas > saidas) return "crescimento";
@@ -258,8 +256,6 @@ const resolveKpiStatus = (entradas: number, saidas: number): KpiStatus => {
 
 const resolveCategoryFromStatus = (status: KpiStatus) => {
   switch (status) {
-    case "inativo":
-      return "Inativo";
     case "so_perda":
       return "So perda";
     case "queda":
@@ -271,22 +267,6 @@ const resolveCategoryFromStatus = (status: KpiStatus) => {
     default:
       return "Neutro";
   }
-};
-
-const loadDistinctCodes = async () => {
-  const codes: string[] = [];
-  for (let offset = 0; ; offset += 1000) {
-    const { data, error } = await supabase
-      .from("clientes")
-      .select("codigo")
-      .order("codigo", { ascending: true })
-      .range(offset, offset + 999);
-    if (error) throw new Error(error.message);
-    const batch = (data ?? []).map((row) => normalizeCode((row as { codigo: string | null }).codigo)).filter(Boolean);
-    codes.push(...batch);
-    if (batch.length < 1000) break;
-  }
-  return Array.from(new Set(codes)).sort((a, b) => a.localeCompare(b));
 };
 
 const loadCompanyNames = async (codes: string[]) => {
@@ -347,9 +327,18 @@ const triggerWorkerInvocation = async (syncRunId: string, workerId: string) => {
     headers: {
       "Content-Type": "application/json",
       "x-kpi-internal-secret": internalWorkerToken,
-      Authorization: `Bearer ${gatewayAuthToken}`,
+      Authorization: `Bearer ${serviceRoleKey}`,
     },
     body: JSON.stringify({ mode: "continue", sync_run_id: syncRunId, worker_id: workerId }),
+  }).then(async (response) => {
+    if (response.ok) return;
+    const responseText = await response.text().catch(() => "");
+    console.error("[kpi-sync-daily] worker_trigger_rejected", {
+      syncRunId,
+      workerId,
+      httpStatus: response.status,
+      response: responseText.slice(0, 500),
+    });
   }).catch((error) => {
     console.error("[kpi-sync-daily] worker_trigger_failed", { syncRunId, workerId, error: error instanceof Error ? error.message : String(error) });
   });
@@ -360,12 +349,6 @@ const triggerWorkerInvocation = async (syncRunId: string, workerId: string) => {
     return;
   }
   void promise;
-};
-
-const insertRunItems = async (syncRunId: string, codes: string[]) => {
-  const rows = codes.map((codigo) => ({ run_id: syncRunId, codigo, status: "pending" as const }));
-  const { error } = await supabase.from("kpi_sync_run_items").upsert(rows, { onConflict: "run_id,codigo" });
-  if (error) throw new Error(error.message);
 };
 
 const createRun = async (source: string, totalCodes: number, dataInicio: string, dataFim: string) => {
@@ -599,6 +582,12 @@ const processSingleCode = async (params: {
     const { error } = await supabase.from("kpi_sync_snapshots").upsert(snapshotRow, { onConflict: "sync_run_id,codigo" });
     if (error) throw new Error(error.message);
 
+    const { error: companyUpdateError } = await supabase
+      .from("clientes")
+      .update({ categoria: resolveCategoryFromStatus(status) })
+      .eq("codigo", item.codigo);
+    if (companyUpdateError) throw new Error(`Falha ao persistir status no cadastro da empresa: ${companyUpdateError.message}`);
+
     await finalizeItem(item.id, workerId, {
       status: "completed",
       changed,
@@ -639,9 +628,13 @@ const startDailySync = async (req: Request, body: KpiSyncRequestBody) => {
   if (!odontoartToken) return jsonResponse(400, { error: "ODONTOART_TOKEN nao configurado." });
 
   await acquireDailyLock();
+  let syncRunId: string | null = null;
   try {
     const runningRun = await findRunningSyncRun();
     if (runningRun) {
+      await Promise.all(
+        Array.from({ length: KPI_WORKER_COUNT }, (_, index) => triggerWorkerInvocation(runningRun.id, `worker-recovery-${index + 1}`)),
+      );
       return jsonResponse(202, {
         sync_run_id: runningRun.id,
         status: "running",
@@ -652,18 +645,22 @@ const startDailySync = async (req: Request, body: KpiSyncRequestBody) => {
       });
     }
 
-    const codes = await loadDistinctCodes();
-    const syncRunId = await createRun(source, codes.length, dataInicio, dataFim);
-    await insertRunItems(syncRunId, codes);
-    await supabase.from("kpi_sync_runs").update({
-      total_codes: codes.length,
+    syncRunId = await createRun(source, 0, dataInicio, dataFim);
+    const { data: totalCodesValue, error: prepareError } = await supabase.rpc("kpi_seed_run_items", {
+      p_run_id: syncRunId,
+    });
+    if (prepareError) throw new Error(prepareError.message);
+    const totalCodes = Number(totalCodesValue ?? 0);
+    const { error: updateRunError } = await supabase.from("kpi_sync_runs").update({
+      total_codes: totalCodes,
       processed_codes: 0,
       changed_codes: 0,
       failed_codes: 0,
-      remaining_codes: codes.length,
+      remaining_codes: totalCodes,
       current_stage: "queued",
       last_progress_at: nowIso(),
     }).eq("id", syncRunId);
+    if (updateRunError) throw new Error(updateRunError.message);
 
     await Promise.all(
       Array.from({ length: KPI_WORKER_COUNT }, (_, index) => triggerWorkerInvocation(syncRunId, `worker-${index + 1}`)),
@@ -673,14 +670,23 @@ const startDailySync = async (req: Request, body: KpiSyncRequestBody) => {
       success: true,
       sync_run_id: syncRunId,
       status: "running",
-      total_codes: codes.length,
+      total_codes: totalCodes,
       worker_count: KPI_WORKER_COUNT,
       request_concurrency: KPI_REQUEST_CONCURRENCY,
       data_inicio: dataInicio,
       data_fim: dataFim,
     });
   } catch (error) {
-    return jsonResponse(400, { error: error instanceof Error ? error.message : "Falha na sincronizacao diaria KPI." });
+    const message = error instanceof Error ? error.message : "Falha na sincronizacao diaria KPI.";
+    if (syncRunId) {
+      await supabase.from("kpi_sync_runs").update({
+        status: "failed",
+        finished_at: nowIso(),
+        error_message: message,
+        current_stage: null,
+      }).eq("id", syncRunId);
+    }
+    return jsonResponse(400, { error: message, sync_run_id: syncRunId });
   } finally {
     await safeReleaseDailyLock();
   }
@@ -690,9 +696,11 @@ const continueDailySync = async (req: Request, body: KpiSyncRequestBody) => {
   const syncRunId = body.sync_run_id?.trim() || "";
   const workerId = body.worker_id?.trim() || crypto.randomUUID();
   if (!syncRunId) return jsonResponse(400, { error: "sync_run_id ausente." });
-  if (!internalWorkerToken) return jsonResponse(400, { error: "Token interno de worker nao configurado." });
   const secret = req.headers.get("x-kpi-internal-secret")?.trim() || "";
-  if (secret !== internalWorkerToken) return jsonResponse(401, { error: "Acesso negado." });
+  if (!internalWorkerToken || secret !== internalWorkerToken) {
+    const authorizationError = await authorizeKpiManager(req);
+    if (authorizationError) return authorizationError;
+  }
 
   try {
     const { data: runRow, error: runError } = await supabase
@@ -735,6 +743,7 @@ const continueDailySync = async (req: Request, body: KpiSyncRequestBody) => {
           dataFim,
           empresaNome: companyNames.get(item.codigo) || null,
         })));
+        await updateRunProgressFromItems(syncRunId);
       }
 
       const progress = await updateRunProgressFromItems(syncRunId);

@@ -5,7 +5,7 @@ export const CATEGORIA_OPTIONS = [
   "So perda",
   "Queda",
   "Crescimento",
-  "So venda",
+  "So ganho",
   "Neutro",
 ] as const;
 
@@ -15,11 +15,11 @@ export type CategoriaValue = (typeof CATEGORIA_OPTIONS)[number];
 
 export const CATEGORIA_DESCRIPTIONS: Record<CategoriaValue, string> = {
   Inativo: "Nao teve venda e cancelamento",
-  "So perda": "Teve cancelamento e nao teve venda",
-  Queda: "Cancelou mais do que vendeu",
-  Crescimento: "Vendeu mais do que cancelou",
-  "So venda": "Teve vendas e nao teve cancelamento",
-  Neutro: "Vendeu e cancelou na mesma quantidade",
+  "So perda": "Teve saidas e nao teve entradas",
+  Queda: "Saidas maiores que entradas",
+  Crescimento: "Entradas maiores que saidas",
+  "So ganho": "Teve entradas e nao teve saidas",
+  Neutro: "Entradas e saidas em quantidades iguais",
 };
 
 const normalizeCategoriaKey = (value: string) =>
@@ -37,9 +37,9 @@ export const buildCategoriaRawMap = () => {
   ]);
   rawMap.set(normalizeCategoriaKey("Queda"), ["Queda", "QUEDA"]);
   rawMap.set(normalizeCategoriaKey("Crescimento"), ["Crescimento", "CRESCIMENTO"]);
-  rawMap.set(normalizeCategoriaKey("So venda"), [
-    "So venda",
-    "SO VENDA",
+  rawMap.set(normalizeCategoriaKey("So ganho"), [
+    "So ganho",
+    "SO GANHO",
     "Só venda",
     "SÓ VENDA",
   ]);
@@ -74,8 +74,8 @@ export const CATEGORIA_LEGEND_ITEMS: Array<{
     className: "bg-[#a3e635] text-black",
   },
   {
-    value: "So venda",
-    description: CATEGORIA_DESCRIPTIONS["So venda"],
+    value: "So ganho",
+    description: CATEGORIA_DESCRIPTIONS["So ganho"],
     className: "bg-[#22c55e] text-black",
   },
   {

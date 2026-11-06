@@ -21,4 +21,4 @@ alter table public.kpi_sync_snapshots
   check (status in (
     'ok', 'preenchido', 'em_branco',
     'inativo', 'so_perda', 'so_venda', 'so_ganho', 'crescimento', 'queda', 'neutro'
-  ));
+  )) not valid;

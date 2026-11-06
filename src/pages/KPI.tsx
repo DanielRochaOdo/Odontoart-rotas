@@ -25,9 +25,8 @@ type KpiSnapshotRow = {
   created_at: string;
 };
 
-type KpiStatus = "inativo" | "so_perda" | "queda" | "crescimento" | "so_ganho" | "neutro";
+type KpiStatus = "so_perda" | "queda" | "crescimento" | "so_ganho" | "neutro";
 const KPI_STATUS_LABELS: Record<KpiStatus, string> = {
-  inativo: "Inativo",
   so_perda: "Só perda",
   queda: "Queda",
   crescimento: "Crescimento",
@@ -113,7 +112,7 @@ const dedupeRowsByCodigo = (rows: KpiSnapshotRow[]) => {
 };
 
 const resolveKpiStatus = (vendas: number, cancelamentos: number): KpiStatus => {
-  if (vendas === 0 && cancelamentos === 0) return "inativo";
+  if (vendas === 0 && cancelamentos === 0) return "neutro";
   if (vendas === 0 && cancelamentos > 0) return "so_perda";
   if (vendas > 0 && cancelamentos === 0) return "so_ganho";
   if (vendas > cancelamentos) return "crescimento";
@@ -571,6 +570,7 @@ export default function KPI() {
   const [codesPage, setCodesPage] = useState(1);
   const snapshotLoadSequenceRef = useRef(0);
   const snapshotLoadKeyRef = useRef("");
+  const workerRecoveryRequestedAtRef = useRef<Record<string, number>>({});
 
   const syncProgressPercent =
     syncRunBanner && syncRunBanner.total_codes > 0
@@ -612,14 +612,13 @@ export default function KPI() {
 
   const categoryBreakdown = useMemo(() => {
     const labels: Record<KpiStatus, string> = {
-      inativo: "Inativo",
       so_perda: "Só perda",
       queda: "Queda",
       crescimento: "Crescimento",
       so_ganho: "Só ganho",
       neutro: "Neutro",
     };
-    const statuses: KpiStatus[] = ["so_perda", "so_ganho", "crescimento", "queda", "neutro", "inativo"];
+    const statuses: KpiStatus[] = ["so_perda", "so_ganho", "crescimento", "queda", "neutro"];
     return statuses.map((status) => ({
       status,
       categoria: labels[status],
@@ -634,7 +633,6 @@ export default function KPI() {
       { label: "Crescimento", value: categoryBreakdown.find((item) => item.status === "crescimento")?.total ?? 0, color: "#16a34a" },
       { label: "Queda", value: categoryBreakdown.find((item) => item.status === "queda")?.total ?? 0, color: "#d97706" },
       { label: "Neutro", value: categoryBreakdown.find((item) => item.status === "neutro")?.total ?? 0, color: "#0284c7" },
-      { label: "Inativo", value: categoryBreakdown.find((item) => item.status === "inativo")?.total ?? 0, color: "#64748b" },
     ],
     [categoryBreakdown],
   );
@@ -743,7 +741,6 @@ export default function KPI() {
       { key: "total_codigos", label: "Total de codigos", value: kpiPeriodAnalysis.length },
       { key: "total_entradas", label: "Total de entradas", value: kpiPeriodAnalysis.reduce((sum, row) => sum + row.vendas, 0) },
       { key: "total_saidas", label: "Total de saidas", value: kpiPeriodAnalysis.reduce((sum, row) => sum + row.cancelamentos, 0) },
-      { key: "inativos", label: "Inativo", value: kpiPeriodAnalysis.filter((row) => row.status === "inativo").length },
       { key: "so_perda", label: "Só perda", value: kpiPeriodAnalysis.filter((row) => row.status === "so_perda").length },
       { key: "queda", label: "Queda", value: kpiPeriodAnalysis.filter((row) => row.status === "queda").length },
       { key: "crescimento", label: "Crescimento", value: kpiPeriodAnalysis.filter((row) => row.status === "crescimento").length },
@@ -788,17 +785,6 @@ export default function KPI() {
           codigo: row.codigo,
           value: row.cancelamentos,
         })),
-      },
-      inativos: {
-        title: "Inativo",
-        metricLabel: "Saldo",
-        rows: kpiPeriodAnalysis
-          .filter((row) => row.status === "inativo")
-          .map((row) => ({
-            empresa: row.empresa ?? "-",
-            codigo: row.codigo,
-            value: 0,
-          })),
       },
       so_perda: {
         title: "So perda",
@@ -1222,21 +1208,36 @@ export default function KPI() {
         }
         if (!cancelled && banner?.id && banner.status === "running") {
           const loadKey = `${banner.id}:${banner.processed_codes}:${banner.status}`;
-          if (snapshotLoadKeyRef.current === loadKey) return;
-          snapshotLoadKeyRef.current = loadKey;
-          const loadSequence = snapshotLoadSequenceRef.current + 1;
-          snapshotLoadSequenceRef.current = loadSequence;
-          console.info("[KPI] snapshot-load-requested", {
-            runId: banner.id,
-            processedCodes: banner.processed_codes,
-            sequence: loadSequence,
-            trigger: "polling",
-          });
+          if (snapshotLoadKeyRef.current !== loadKey) {
+            snapshotLoadKeyRef.current = loadKey;
+            const loadSequence = snapshotLoadSequenceRef.current + 1;
+            snapshotLoadSequenceRef.current = loadSequence;
+            console.info("[KPI] snapshot-load-requested", {
+              runId: banner.id,
+              processedCodes: banner.processed_codes,
+              sequence: loadSequence,
+              trigger: "polling",
+            });
 
-          void loadKpiSnapshotsForRun(banner.id, loadSequence).catch((error) => {
-            if (loadSequence !== snapshotLoadSequenceRef.current) return;
-            setSyncError(error instanceof Error ? error.message : "Erro ao carregar snapshots do KPI.");
-          });
+            void loadKpiSnapshotsForRun(banner.id, loadSequence).catch((error) => {
+              if (loadSequence !== snapshotLoadSequenceRef.current) return;
+              setSyncError(error instanceof Error ? error.message : "Erro ao carregar snapshots do KPI.");
+            });
+          }
+
+          const lastProgressAt = Date.parse(banner.last_progress_at ?? banner.started_at);
+          const staleForMs = Date.now() - lastProgressAt;
+          const lastRecoveryAt = workerRecoveryRequestedAtRef.current[banner.id] ?? 0;
+          if (Number.isFinite(staleForMs) && staleForMs >= 60_000 && Date.now() - lastRecoveryAt >= 60_000) {
+            workerRecoveryRequestedAtRef.current[banner.id] = Date.now();
+            void supabase.functions.invoke("kpi-sync-daily", {
+              body: { mode: "continue", sync_run_id: banner.id },
+            }).then(({ error }) => {
+              if (error) console.error("[KPI] worker-recovery-failed", { runId: banner.id, error: error.message });
+            }).catch((error) => {
+              console.error("[KPI] worker-recovery-failed", { runId: banner.id, error });
+            });
+          }
         }
         if (!cancelled && banner?.status === "failed") {
           const lastSuccessRunId = await fetchLatestFinishedSyncRunId();
