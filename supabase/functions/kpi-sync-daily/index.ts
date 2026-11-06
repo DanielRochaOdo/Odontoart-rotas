@@ -9,10 +9,11 @@ const corsHeaders = {
 
 const ODONTOART_MOVIMENTACAO_URL = "https://odontoart.s4e.com.br/v2/api/contratos/movimentacao-vidas";
 const ODONTOART_TIMEOUT_MS = 15000;
-const KPI_WORKER_COUNT = 10;
-const KPI_CLAIM_SIZE = 30;
-const KPI_REQUEST_CONCURRENCY = 10;
+const KPI_WORKER_COUNT = 6;
+const KPI_CLAIM_SIZE = 10;
+const KPI_REQUEST_CONCURRENCY = 5;
 const KPI_MAX_ATTEMPTS = 3;
+const KPI_ITEM_MAX_ATTEMPTS = 3;
 const KPI_WORKER_TIME_BUDGET_MS = 40000;
 const KPI_RETRY_TIMEOUT_SECONDS = 120;
 const STALE_RUNNING_LIMIT_MS = 15 * 60 * 1000;
@@ -269,13 +270,13 @@ const resolveCategoryFromStatus = (status: KpiStatus) => {
   }
 };
 
-const loadCompanyNames = async (codes: string[]) => {
-  if (codes.length === 0) return new Map<string, string>();
-  const { data, error } = await supabase.from("clientes").select("codigo, empresa").in("codigo", codes);
+const loadCompanyData = async (codes: string[]) => {
+  if (codes.length === 0) return new Map<string, { name: string; category: string | null }>();
+  const { data, error } = await supabase.from("clientes").select("codigo, empresa, categoria").in("codigo", codes);
   if (error) throw new Error(error.message);
   return new Map((data ?? []).map((row) => {
-    const item = row as { codigo: string | null; empresa: string | null };
-    return [normalizeCode(item.codigo), item.empresa?.trim() ?? ""] as const;
+    const item = row as { codigo: string | null; empresa: string | null; categoria: string | null };
+    return [normalizeCode(item.codigo), { name: item.empresa?.trim() ?? "", category: item.categoria }] as const;
   }));
 };
 
@@ -442,12 +443,7 @@ const claimNextItems = async (syncRunId: string, workerId: string) => {
     p_retry_timeout_seconds: KPI_RETRY_TIMEOUT_SECONDS,
   });
   if (error) throw new Error(error.message);
-  return (data ?? []) as Array<{ id: string; codigo: string }>;
-};
-
-const touchItem = async (itemId: string, workerId: string) => {
-  const { error } = await supabase.rpc("kpi_touch_run_item", { p_item_id: itemId, p_worker_id: workerId });
-  if (error) throw new Error(error.message);
+  return (data ?? []) as Array<{ id: string; codigo: string; attempts: number }>;
 };
 
 const finalizeItem = async (
@@ -516,7 +512,7 @@ const buildSnapshotRow = (
 const processSingleCode = async (params: {
   syncRunId: string;
   workerId: string;
-  item: { id: string; codigo: string };
+  item: { id: string; codigo: string; attempts: number };
   source: string;
   periodDays: number;
   snapshotAt: string;
@@ -524,10 +520,10 @@ const processSingleCode = async (params: {
   dataInicio: string;
   dataFim: string;
   empresaNome: string | null;
+  empresaCategoria: string | null;
 }) => {
-  const { syncRunId, workerId, item, source, periodDays, snapshotAt, snapshotDate, dataInicio, dataFim, empresaNome: clientCompanyName } = params;
+  const { syncRunId, workerId, item, source, periodDays, snapshotAt, snapshotDate, dataInicio, dataFim, empresaNome: clientCompanyName, empresaCategoria } = params;
   const startedAt = Date.now();
-  await touchItem(item.id, workerId);
 
   try {
     const { httpStatus, payload } = await fetchOdontoartPayload(item.codigo, dataInicio, dataFim);
@@ -579,14 +575,17 @@ const processSingleCode = async (params: {
     const changed = totals.entries > 0 || totals.exits > 0;
     const status = resolveKpiStatus(totals.entries, totals.exits);
     const snapshotRow = buildSnapshotRow(syncRunId, snapshotAt, snapshotDate, periodDays, source, item.codigo, empresaNome, totals.entries, totals.exits);
-    const { error } = await supabase.from("kpi_sync_snapshots").upsert(snapshotRow, { onConflict: "sync_run_id,codigo" });
+    const { error } = await supabase.from("kpi_sync_snapshots").upsert(snapshotRow, { onConflict: "sync_run_id,codigo", ignoreDuplicates: true });
     if (error) throw new Error(error.message);
 
-    const { error: companyUpdateError } = await supabase
-      .from("clientes")
-      .update({ categoria: resolveCategoryFromStatus(status) })
-      .eq("codigo", item.codigo);
-    if (companyUpdateError) throw new Error(`Falha ao persistir status no cadastro da empresa: ${companyUpdateError.message}`);
+    const category = resolveCategoryFromStatus(status);
+    if (empresaCategoria !== category) {
+      const { error: companyUpdateError } = await supabase
+        .from("clientes")
+        .update({ categoria: category })
+        .eq("codigo", item.codigo);
+      if (companyUpdateError) throw new Error(`Falha ao persistir status no cadastro da empresa: ${companyUpdateError.message}`);
+    }
 
     await finalizeItem(item.id, workerId, {
       status: "completed",
@@ -598,16 +597,19 @@ const processSingleCode = async (params: {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro ao consultar ERP.";
-    await supabase.from("kpi_sync_run_errors").insert({
-      sync_run_id: syncRunId,
-      codigo: item.codigo,
-      stage: "fetch_erp",
-      error_message: message,
-      http_status: null,
-      payload_preview: null,
-    });
+    const shouldRetry = item.attempts < KPI_ITEM_MAX_ATTEMPTS;
+    if (!shouldRetry) {
+      await supabase.from("kpi_sync_run_errors").insert({
+        sync_run_id: syncRunId,
+        codigo: item.codigo,
+        stage: "fetch_erp",
+        error_message: message,
+        http_status: null,
+        payload_preview: null,
+      });
+    }
     await finalizeItem(item.id, workerId, {
-      status: "retrying",
+      status: shouldRetry ? "retrying" : "failed",
       changed: false,
       errorCode: "fetch_erp",
       lastError: message,
@@ -726,7 +728,7 @@ const continueDailySync = async (req: Request, body: KpiSyncRequestBody) => {
       const claims = await claimNextItems(syncRunId, workerId);
       if (claims.length === 0) break;
       processedInLoop += claims.length;
-      const companyNames = await loadCompanyNames(claims.map((item) => item.codigo));
+      const companyData = await loadCompanyData(claims.map((item) => item.codigo));
       const queue = [...claims];
 
       while (queue.length > 0) {
@@ -741,9 +743,9 @@ const continueDailySync = async (req: Request, body: KpiSyncRequestBody) => {
           snapshotDate,
           dataInicio,
           dataFim,
-          empresaNome: companyNames.get(item.codigo) || null,
+          empresaNome: companyData.get(item.codigo)?.name || null,
+          empresaCategoria: companyData.get(item.codigo)?.category ?? null,
         })));
-        await updateRunProgressFromItems(syncRunId);
       }
 
       const progress = await updateRunProgressFromItems(syncRunId);

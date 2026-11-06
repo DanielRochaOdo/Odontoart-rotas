@@ -1228,7 +1228,7 @@ export default function KPI() {
           const lastProgressAt = Date.parse(banner.last_progress_at ?? banner.started_at);
           const staleForMs = Date.now() - lastProgressAt;
           const lastRecoveryAt = workerRecoveryRequestedAtRef.current[banner.id] ?? 0;
-          if (Number.isFinite(staleForMs) && staleForMs >= 60_000 && Date.now() - lastRecoveryAt >= 60_000) {
+          if (Number.isFinite(staleForMs) && staleForMs >= 120_000 && Date.now() - lastRecoveryAt >= 120_000) {
             workerRecoveryRequestedAtRef.current[banner.id] = Date.now();
             void supabase.functions.invoke("kpi-sync-daily", {
               body: { mode: "continue", sync_run_id: banner.id },
