@@ -103,7 +103,7 @@ serve(async (req) => {
     .eq("user_id", callerUserId)
     .single();
 
-  if (profileError || profile?.role !== "SUPERVISOR") {
+  if (profileError || !["SUPERVISOR", "ASSISTENTE"].includes(String(profile?.role))) {
     return jsonResponse(403, { error: "Acesso negado." });
   }
 

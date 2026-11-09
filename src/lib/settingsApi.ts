@@ -209,13 +209,19 @@ export const updateManagedProfile = async (payload: {
     updates.is_inactive = payload.is_inactive;
   }
 
+  const { error: updateError } = await supabase.rpc("settings_update_profile", {
+    p_profile_id: payload.id,
+    p_patch: updates,
+  });
+
+  if (updateError) throw new Error(updateError.message);
+
   const { data, error } = await supabase
     .from("profiles")
-    .update(updates)
-    .eq("id", payload.id)
     .select(
       "id, user_id, role, display_name, nome, can_access_pre_cadastro, can_access_next_route_dashboard, force_reauth_after, is_inactive, supervisor_id, vendedor_id, supervisor:supervisor_id (id, display_name), vendedor:vendedor_id (id, display_name)",
     )
+    .eq("id", payload.id)
     .single();
 
   if (error) throw new Error(error.message);

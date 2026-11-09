@@ -43,7 +43,7 @@ const navItems: NavItem[] = [
   { label: "KPI", to: "/kpi", icon: ChartNoAxesCombined, roles: ["SUPERVISOR", "ASSISTENTE"] },
   { label: "Logs", to: "/logs", icon: History, roles: ["SUPERVISOR"] },
   { label: "Novidades", to: "/novidades", icon: Megaphone, roles: ["SUPERVISOR", "ASSISTENTE", "VENDEDOR"] },
-  { label: "Configuracoes", to: "/configuracoes", icon: Settings, roles: ["SUPERVISOR"] },
+  { label: "Configuracoes", to: "/configuracoes", icon: Settings, roles: ["SUPERVISOR", "ASSISTENTE"] },
 ];
 
 const ANDROID_ASSETS_HOST = "appassets.androidplatform.net";

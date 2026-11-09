@@ -356,7 +356,7 @@ const parseCodesFromWorkbook = (workbook: XLSX.WorkBook) => {
 
 export default function Settings() {
   const { role, session, loading: authLoading, signOut } = useAuth();
-  const canManageUsers = role === "SUPERVISOR";
+  const canManageUsers = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canManageEvents = role === "SUPERVISOR" || role === "ASSISTENTE";
   const canAccessSettings = canManageUsers || canManageEvents;
   const [themeMode, setThemeMode] = useState<"light" | "dark">(() => {
@@ -1155,7 +1155,7 @@ export default function Settings() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Erro ao resetar acesso do usuario.";
       if (isSessionExpiredError(message)) {
-        setError("Sua sessao de supervisor expirou para esta operacao. Faca login novamente e tente de novo.");
+        setError("Sua sessao expirou para esta operacao. Faca login novamente e tente de novo.");
         return;
       }
       setError(message);

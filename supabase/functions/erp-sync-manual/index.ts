@@ -751,7 +751,7 @@ serve(async (req) => {
   }
 
   const callerRole = await resolveCallerRole(callerUserId);
-  if (callerRole !== "SUPERVISOR") {
+  if (callerRole !== "SUPERVISOR" && callerRole !== "ASSISTENTE") {
     await appendManualLog(callerUserId, "access", "denied", { reason: "role_not_allowed", callerRole });
     return jsonResponse(403, { error: "Acesso negado." });
   }
