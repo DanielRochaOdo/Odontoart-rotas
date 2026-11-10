@@ -28,6 +28,7 @@ import { useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import {
   getActiveLocalActionsForDate,
+  getLocalActions,
   getLocalActionCompletion,
   refreshLocalActionCompletions,
   refreshLocalActions,
@@ -1228,44 +1229,62 @@ export default function Visitas() {
           profile?.display_name ? "assigned_to_name.eq." + profile.display_name : null,
           session?.user.email ? "assigned_to_name.eq." + session.user.email : null,
         ].filter((value): value is string => Boolean(value));
-        const routeDates: string[] = [];
         const todayKey = getDateKey(new Date());
+        let localBlockDate: string | null = null;
+        if (session?.user.id) {
+          const lastEligibleActionDate = getDateKey(addDays(new Date(`${maxDate}T12:00:00`), -1));
+          const activeActions = getLocalActions()
+            .filter((action) => action.active && action.startDate <= todayKey && action.startDate <= lastEligibleActionDate && action.endDate >= action.startDate)
+            .sort((left, right) => left.startDate.localeCompare(right.startDate));
 
-        for (let from = 0; ; from += 1000) {
-          let query = supabase
-            .from("visits")
-            .select("id, visit_date")
-            .lte("visit_date", todayKey)
-            .order("visit_date", { ascending: true })
-            .order("id", { ascending: true });
-          query = applyVendorVisitTypeScope(query);
-          if (assigneeClauses.length > 1) {
-            query = query.or(assigneeClauses.join(","));
-          } else if (session?.user.id) {
-            query = query.eq("assigned_to_user_id", session.user.id);
-          } else if (profile?.display_name) {
-            query = query.eq("assigned_to_name", profile.display_name);
+          for (const action of activeActions) {
+            if (localBlockDate && action.startDate >= localBlockDate) break;
+            const actionEndDate = [action.endDate, todayKey, lastEligibleActionDate]
+              .sort((left, right) => left.localeCompare(right))[0];
+            const actionStartDate = action.startDate;
+            if (actionStartDate > actionEndDate) continue;
+
+            for (let from = 0; ; from += VISITS_FETCH_PAGE_SIZE) {
+              let query = supabase
+                .from("visits")
+                .select("visit_date")
+                .gte("visit_date", actionStartDate)
+                .lte("visit_date", actionEndDate)
+                .order("visit_date", { ascending: true })
+                .order("id", { ascending: true });
+              if (localBlockDate) query = query.lt("visit_date", localBlockDate);
+              query = applyVendorVisitTypeScope(query);
+              if (assigneeClauses.length > 1) {
+                query = query.or(assigneeClauses.join(","));
+              } else if (session?.user.id) {
+                query = query.eq("assigned_to_user_id", session.user.id);
+              } else if (profile?.display_name) {
+                query = query.eq("assigned_to_name", profile.display_name);
+              }
+
+              const { data: routeRows, error: routeError } = await query.range(
+                from,
+                from + VISITS_FETCH_PAGE_SIZE - 1,
+              );
+              if (routeError) throw routeError;
+
+              const incompleteDate = (routeRows ?? [])
+                .map((row) => formatDateKey(row.visit_date))
+                .find((dateKey) => !getLocalActionCompletion(action.id, dateKey, session.user.id));
+              if (incompleteDate) {
+                localBlockDate = incompleteDate;
+                break;
+              }
+              if (!routeRows || routeRows.length < VISITS_FETCH_PAGE_SIZE) break;
+            }
           }
-
-          const { data: routeRows, error: routeError } = await query.range(from, from + 999);
-          if (routeError) throw routeError;
-          routeDates.push(...(routeRows ?? []).map((row) => formatDateKey(row.visit_date)));
-          if (!routeRows || routeRows.length < 1000) break;
         }
 
-        const uniqueRouteDates = [...new Set(routeDates)].sort();
-        if (session?.user.id) {
-          const localBlockDate = uniqueRouteDates.find((dateKey) =>
-            getActiveLocalActionsForDate(dateKey).some(
-              (action) => !getLocalActionCompletion(action.id, dateKey, session.user.id),
-            ),
-          );
-          if (localBlockDate && localBlockDate < maxDate) {
-            maxDate = localBlockDate;
-            blockReason = "Conclua as acoes da rota (" +
-              format(new Date(maxDate + "T12:00:00"), "dd/MM/yyyy") +
-              ") para liberar as proximas rotas.";
-          }
+        if (localBlockDate && localBlockDate < maxDate) {
+          maxDate = localBlockDate;
+          blockReason = "Conclua as acoes da rota (" +
+            format(new Date(maxDate + "T12:00:00"), "dd/MM/yyyy") +
+            ") para liberar as proximas rotas.";
         }
 
         // Pendencies on the limit date don't block that route. Keep the notice
