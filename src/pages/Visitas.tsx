@@ -343,6 +343,21 @@ const logPerfDuration = (label: string, startedAt: number) => {
   console.log(label, { durationMs: Math.round(performance.now() - startedAt) });
 };
 
+// A janela de liberacao e baseada no relogio do servidor (Fortaleza),
+// nao na data ou no mes selecionados pelo vendedor no calendario.
+const getFortalezaRouteGateWindow = () => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Fortaleza",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}-${Number(part("hour")) >= 19 ? "after19" : "before19"}`;
+};
+
 const NO_VISIT_REASONS = [
   "NAO AUTORIZADO",
   "NAO CHEGOU A TEMPO",
@@ -1373,6 +1388,22 @@ export default function Visitas() {
     };
     document.addEventListener("visibilitychange", revalidateWhenVisible);
     return () => document.removeEventListener("visibilitychange", revalidateWhenVisible);
+  }, [isVendor]);
+
+  useEffect(() => {
+    if (!isVendor) return;
+    // Mesmo sem troca de dia ou de mes, a regra das 19h precisa revalidar
+    // automaticamente se o vendedor permanecer com a Agenda aberta.
+    let previousWindow = getFortalezaRouteGateWindow();
+    const interval = window.setInterval(() => {
+      const nextWindow = getFortalezaRouteGateWindow();
+      if (nextWindow === previousWindow) return;
+      previousWindow = nextWindow;
+      setRouteGateStatus("checking");
+      setRouteGateResolvedKey(null);
+      setRefreshKey((value) => value + 1);
+    }, 60_000);
+    return () => window.clearInterval(interval);
   }, [isVendor]);
 
   useEffect(() => {
