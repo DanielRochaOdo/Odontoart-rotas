@@ -343,6 +343,21 @@ const logPerfDuration = (label: string, startedAt: number) => {
   console.log(label, { durationMs: Math.round(performance.now() - startedAt) });
 };
 
+// A janela de liberacao e baseada no relogio do servidor (Fortaleza),
+// nao na data ou no mes selecionados pelo vendedor no calendario.
+const getFortalezaRouteGateWindow = () => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Fortaleza",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}-${Number(part("hour")) >= 19 ? "after19" : "before19"}`;
+};
+
 const NO_VISIT_REASONS = [
   "NAO AUTORIZADO",
   "NAO CHEGOU A TEMPO",
@@ -465,6 +480,9 @@ export default function Visitas() {
   const restoredViewRef = useRef(false);
   const vendorInitialViewRef = useRef(false);
   const lastDayLoadKeyRef = useRef<string | null>(null);
+  const initialActionsLoadRef = useRef<Promise<void> | null>(null);
+  const suppressBootstrapActionNotificationsRef = useRef(false);
+  const selectedDateKeyRef = useRef("");
   const clientesLiteCacheRef = useRef(new Map<string, ClienteListRow>());
   const clientesDetailsCacheRef = useRef(new Map<string, ClienteDetailsRow>());
   const pendingModalRestoreRef = useRef<{
@@ -499,6 +517,9 @@ export default function Visitas() {
     () => (selectedDate ? format(selectedDate, "yyyy-MM-dd") : ""),
     [selectedDate],
   );
+  useEffect(() => {
+    selectedDateKeyRef.current = selectedDateKey;
+  }, [selectedDateKey]);
   const currentMonthKey = useMemo(() => format(currentMonth, "yyyy-MM"), [currentMonth]);
   const dayLoadKey = useMemo(
     () =>
@@ -529,6 +550,8 @@ export default function Visitas() {
       session?.user.id,
     ],
   );
+  // O limite de acesso e calculado para a conta inteira: trocar dia/mes nao
+  // deve invalidar a liberacao nem disparar outra RPC cara no Supabase.
   const routeGateKey = useMemo(
     () =>
       [
@@ -536,12 +559,10 @@ export default function Visitas() {
         session?.user.id ?? "",
         profile?.display_name ?? "",
         session?.user.email ?? "",
-        currentMonthKey,
-        selectedDateKey,
         refreshKey,
         localActionsVersion,
       ].join("|"),
-    [currentMonthKey, localActionsVersion, profile?.display_name, refreshKey, role, selectedDateKey, session?.user.email, session?.user.id],
+    [localActionsVersion, profile?.display_name, refreshKey, role, session?.user.email, session?.user.id],
   );
   const vendorGateResolved =
     !isVendor ||
@@ -927,8 +948,30 @@ export default function Visitas() {
     addVendorsSaving ||
     vendorDashboardAccessSaving;
   useEffect(() => {
-    void Promise.all([refreshLocalActions(), refreshLocalActionCompletions()]).catch(() => undefined);
-    return subscribeLocalActions(() => setLocalActionsVersion((value) => value + 1));
+    let active = true;
+    // Ambas as consultas atualizam o cache e emitem evento. Durante o bootstrap
+    // elas formam UMA sincronizacao; ignorar as duas notificacoes intermediarias
+    // evita reiniciar a validacao da Agenda com dados parcialmente carregados.
+    suppressBootstrapActionNotificationsRef.current = true;
+    const unsubscribe = subscribeLocalActions(() => {
+      if (active && !suppressBootstrapActionNotificationsRef.current) {
+        setLocalActionsVersion((value) => value + 1);
+      }
+    });
+    const initialLoad = Promise.all([
+      refreshLocalActions(),
+      refreshLocalActionCompletions(),
+    ]).then(() => undefined);
+    initialActionsLoadRef.current = initialLoad;
+    void initialLoad.then(
+      () => { if (active) suppressBootstrapActionNotificationsRef.current = false; },
+      () => { if (active) suppressBootstrapActionNotificationsRef.current = false; },
+    );
+    return () => {
+      active = false;
+      suppressBootstrapActionNotificationsRef.current = false;
+      unsubscribe();
+    };
   }, []);
   const requestRefresh = useCallback(() => {
     ignoreRealtimeRef.current += 1;
@@ -984,6 +1027,13 @@ export default function Visitas() {
     let active = true;
     const startedAt = performance.now();
 
+    // A contagem so sera usada depois que o gate estiver liberado.
+    // Evita pressionar a RLS e a RPC de liberacao em paralelo no bootstrap.
+    if (isVendor && !vendorGateResolved) {
+      setMonthSummaryCounts(new Map());
+      return () => { active = false; };
+    }
+
     const loadMonthSummary = async () => {
       const year = currentMonth.getFullYear();
       const monthIndex = currentMonth.getMonth();
@@ -1038,7 +1088,7 @@ export default function Visitas() {
     return () => {
       active = false;
     };
-  }, [canManage, currentMonth, isVendor, refreshKey, selectedVendorId, session?.user.id]);
+  }, [canManage, currentMonth, isVendor, refreshKey, selectedVendorId, session?.user.id, vendorGateResolved]);
 
   useEffect(() => {
     let active = true;
@@ -1213,7 +1263,12 @@ export default function Visitas() {
     const validateRouteGate = async () => {
       const startedAt = performance.now();
       try {
-        const { data, error: gateError } = await supabase.rpc("vendor_agenda_visibility_state");
+        // Iniciar a verificacao SQL e a sincronizacao inicial das acoes em
+        // paralelo. Nao liberar a Agenda usando caches ainda incompletos.
+        const [{ data, error: gateError }] = await Promise.all([
+          supabase.rpc("vendor_agenda_visibility_state"),
+          initialActionsLoadRef.current ?? Promise.resolve(),
+        ]);
         if (gateError) throw gateError;
         const gateState = Array.isArray(data) ? data[0] : data;
         const serverMaxDate = gateState?.max_visible_date
@@ -1287,24 +1342,24 @@ export default function Visitas() {
             ") para liberar as proximas rotas.";
         }
 
-        // Pendencies on the limit date don't block that route. Keep the notice
-        // only when the selected date is actually beyond the allowed limit.
-        if (selectedDateKey <= maxDate) blockReason = null;
-
         if (!active) return;
         setMaxVisibleDate(maxDate);
+        // Manter o motivo visivel mesmo apos ajustar a data ao limite.
         setBlockMessage(blockReason);
+        setRouteGateResolvedKey(routeGateKey);
         setRouteGateStatus("ready");
 
-        if (selectedDateKey > maxDate) {
+        if (selectedDateKeyRef.current > maxDate) {
           const clampedDate = new Date(maxDate + "T12:00:00");
           setSelectedDate(clampedDate);
-          setCurrentMonth(startOfMonth(clampedDate));
-          setRouteGateResolvedKey(null);
-        } else {
-          setRouteGateResolvedKey(routeGateKey);
+          setCurrentMonth((previousMonth) =>
+            format(previousMonth, "yyyy-MM") === maxDate.slice(0, 7)
+              ? previousMonth
+              : startOfMonth(clampedDate),
+          );
         }
-      } catch {
+      } catch (err) {
+        console.error("VISITAS_ROUTE_GATE_ERROR", err);
         if (!active) return;
         setMaxVisibleDate(null);
         setBlockMessage("Nao foi possivel validar as pendencias do vendedor. O acesso a rotas foi bloqueado.");
@@ -1321,7 +1376,7 @@ export default function Visitas() {
     return () => {
       active = false;
     };
-  }, [isVendor, localActionsVersion, profile?.display_name, routeGateKey, selectedDateKey, session?.user.email, session?.user.id]);
+  }, [isVendor, profile?.display_name, routeGateKey, session?.user.email, session?.user.id]);
 
   useEffect(() => {
     if (!isVendor) return;
@@ -1333,6 +1388,22 @@ export default function Visitas() {
     };
     document.addEventListener("visibilitychange", revalidateWhenVisible);
     return () => document.removeEventListener("visibilitychange", revalidateWhenVisible);
+  }, [isVendor]);
+
+  useEffect(() => {
+    if (!isVendor) return;
+    // Mesmo sem troca de dia ou de mes, a regra das 19h precisa revalidar
+    // automaticamente se o vendedor permanecer com a Agenda aberta.
+    let previousWindow = getFortalezaRouteGateWindow();
+    const interval = window.setInterval(() => {
+      const nextWindow = getFortalezaRouteGateWindow();
+      if (nextWindow === previousWindow) return;
+      previousWindow = nextWindow;
+      setRouteGateStatus("checking");
+      setRouteGateResolvedKey(null);
+      setRefreshKey((value) => value + 1);
+    }, 60_000);
+    return () => window.clearInterval(interval);
   }, [isVendor]);
 
   useEffect(() => {
@@ -4492,6 +4563,18 @@ export default function Visitas() {
                     type="button"
                     className="rounded-lg border border-amber-500 bg-white px-3 py-1.5 font-semibold text-ink hover:bg-amber-50"
                     onClick={() => {
+                      // Se o bootstrap das acoes falhou, tentar a sincronizacao
+                      // novamente antes de considerar a Agenda liberada.
+                      suppressBootstrapActionNotificationsRef.current = true;
+                      const retryLoad = Promise.all([
+                        refreshLocalActions(),
+                        refreshLocalActionCompletions(),
+                      ]).then(() => undefined);
+                      initialActionsLoadRef.current = retryLoad;
+                      void retryLoad.then(
+                        () => { suppressBootstrapActionNotificationsRef.current = false; },
+                        () => { suppressBootstrapActionNotificationsRef.current = false; },
+                      );
                       setRouteGateStatus("checking");
                       setRouteGateResolvedKey(null);
                       setRefreshKey((value) => value + 1);
