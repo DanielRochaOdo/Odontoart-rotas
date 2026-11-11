@@ -299,7 +299,15 @@ export default function AceiteDigital() {
                   disabled={digitalLoading || Boolean(digitalLoadError) || digitalSaving || pendingDates.length === 0}
                   className="rounded-lg border border-sea/20 bg-white/90 px-2 py-2 text-xs text-ink outline-none focus:border-sea disabled:opacity-60"
                 >
-                  {pendingDates.length === 0 && <option value="">Sem pendencias</option>}
+                  {pendingDates.length === 0 && (
+                    <option value="">
+                      {digitalLoading
+                        ? "Verificando..."
+                        : digitalLoadError
+                          ? "Verificacao indisponivel"
+                          : "Sem pendencias"}
+                    </option>
+                  )}
                   {pendingDates.map((dateKey) => (
                     <option key={dateKey} value={dateKey}>
                       {formatDateKey(dateKey)}
