@@ -23,8 +23,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import {
-  fetchAgendaCountExact,
-  fetchAgendaFirstPageLite,
+  fetchAgendaPageAndCount,
   fetchAgendaForGeneration,
   fetchAgendaScheduledVisits,
   fetchAgendaVisitVendors,
@@ -1631,29 +1630,25 @@ export default function Agenda() {
             let countErrorSafe: string | null = null;
             let countMethod: AgendaStartupLoadResult["countMethod"] = "none";
             let totalSource = "rpc_exact";
-            const listPromise = fetchAgendaFirstPageLite(
+            const pageResult = await fetchAgendaPageAndCount(
               pageIndex,
               pageSize,
               sorting,
               appliedFilters,
               queryFilters,
             );
-            const countPromise = (async () => {
-              try {
-                totalCountReal = await fetchAgendaCountExact(appliedFilters, queryFilters);
-                countMethod = totalCountReal === null ? "none" : "rpc";
-              } catch (countError) {
-                totalCountReal = null;
-                totalSource = "rpc_exact_failed";
-                countErrorSafe = countError instanceof Error ? countError.message : String(countError ?? "");
-                countMethod = "rpc_failed";
-              }
-              return Math.round(performance.now() - countStart);
-            })();
-            const [liteRows, countDuration] = await Promise.all([listPromise, countPromise]);
+            totalCountReal = pageResult.count;
+            countErrorSafe = pageResult.countError;
+            if (pageResult.countError) {
+              totalSource = "rpc_exact_failed";
+              countMethod = "rpc_failed";
+            } else {
+              countMethod = totalCountReal === null ? "none" : "rpc";
+            }
+            const countDuration = Math.round(performance.now() - countStart);
 
             return {
-              liteRows,
+              liteRows: pageResult.data,
               totalCountReal,
               totalSource,
               countDurationMs: countDuration,

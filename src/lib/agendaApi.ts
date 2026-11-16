@@ -760,6 +760,10 @@ export type AgendaFetchResult = {
   count: number | null;
 };
 
+export type AgendaPageAndCountResult = AgendaFetchResult & {
+  countError: string | null;
+};
+
 export type AgendaSearchFilters = {
   companyName?: string;
   companyCode?: string;
@@ -1189,6 +1193,62 @@ export const fetchAgendaFirstPageLite = async (
   const routeable = excludeFilaBlockedRows(deduped, context.filaBlocks);
   const normalized = normalizeAgendaLiteRows(routeable as AgendaRow[]);
   return normalized;
+};
+
+export const fetchAgendaPageAndCount = async (
+  pageIndex: number,
+  pageSize: number,
+  sorting: SortingState,
+  filters: AgendaFilters,
+  search?: AgendaSearchFilters,
+): Promise<AgendaPageAndCountResult> => {
+  const bounds = resolveLastVisitDateBounds(filters);
+  const hasSupervisorFilter = Boolean(
+    filters.columns.supervisor?.some((value) => value.trim()) ||
+      filters.columns.supervisor_flag?.some((value) => value.trim()),
+  );
+
+  if (bounds.active && !hasSupervisorFilter) {
+    const normalizedSearch = {
+      companyName: search?.companyName?.replace(/%/g, "").replace(/,/g, " ").trim() ?? "",
+      companyCode: search?.companyCode?.replace(/%/g, "").trim() ?? "",
+      companyAddress: search?.companyAddress?.replace(/%/g, "").trim() ?? "",
+    };
+    const { data, error } = await supabase.rpc("get_rotas_agenda_latest_visit_page_v1", {
+      p_filters: buildAgendaRpcFilters(stripSupervisorFilter(stripLastVisitDateRange(filters))),
+      p_company_name: normalizedSearch.companyName || null,
+      p_company_code: normalizedSearch.companyCode || null,
+      p_company_address: normalizedSearch.companyAddress || null,
+      p_from: bounds.from,
+      p_to: bounds.to,
+      p_invert: bounds.invert,
+      p_page_size: Math.max(1, pageSize),
+      p_page_offset: Math.max(0, pageIndex * pageSize),
+    });
+
+    if (error) throw new Error(error.message);
+    const result = (Array.isArray(data) ? data[0] : data) as
+      | { rows?: unknown; total_count?: unknown }
+      | null;
+    const rows = Array.isArray(result?.rows) ? (result.rows as AgendaRow[]) : [];
+    const countValue = Number(result?.total_count ?? 0);
+    return {
+      data: normalizeAgendaLiteRows(rows),
+      count: Number.isFinite(countValue) ? countValue : 0,
+      countError: null,
+    };
+  }
+
+  const [data, countResult] = await Promise.all([
+    fetchAgendaFirstPageLite(pageIndex, pageSize, sorting, filters, search),
+    fetchAgendaCountExact(filters, search)
+      .then((count) => ({ count, error: null }))
+      .catch((error: unknown) => ({
+        count: null,
+        error: error instanceof Error ? error.message : String(error ?? ""),
+      })),
+  ]);
+  return { data, count: countResult.count, countError: countResult.error };
 };
 
 export const fetchAgenda = async (
