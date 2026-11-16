@@ -157,9 +157,7 @@ const fetchKpiMovementRowsByRunId = async (syncRunId: string) => {
   const allRows: KpiMovementRow[] = [];
   for (let offset = 0; ; offset += KPI_LEDGER_READ_PAGE_SIZE) {
     const { data, error } = await supabase
-      .from("kpi_movimentos_mensais")
-      .select("id, sync_run_id, codigo, empresa, competencia, entradas, saidas, saldo, categoria, consultado_em, created_at")
-      .eq("sync_run_id", syncRunId)
+      .rpc("kpi_movement_rows_for_run_v1", { p_sync_run_id: syncRunId })
       .order("competencia", { ascending: true })
       .order("codigo", { ascending: true })
       .range(offset, offset + KPI_LEDGER_READ_PAGE_SIZE - 1);

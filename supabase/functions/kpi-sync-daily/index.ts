@@ -450,28 +450,24 @@ const findRunningSyncRun = async (): Promise<SyncRunRow | null> => {
 };
 
 const loadProcessedCodesForRun = async (syncRunId: string) => {
-  const loadForTable = async (table: "kpi_movimentos_mensais" | "kpi_sync_run_errors") => {
-    const result = new Set<string>();
-    for (let offset = 0; ; offset += 1000) {
-      const { data, error } = await supabase
-        .from(table)
-        .select("codigo")
-        .eq("sync_run_id", syncRunId)
-        .order("codigo", { ascending: true })
-        .range(offset, offset + 999);
-      if (error) throw new Error(error.message);
-      const rows = data ?? [];
-      rows.forEach((item) => {
-        const codigo = normalizeCode((item as { codigo: string | null }).codigo);
-        if (codigo) result.add(codigo);
-      });
-      if (rows.length < 1000) break;
-    }
-    return result;
-  };
-  const [ledger, errors] = await Promise.all([loadForTable("kpi_movimentos_mensais"), loadForTable("kpi_sync_run_errors")]);
-  const processed = new Set<string>(ledger);
-  for (const codigo of errors) processed.add(codigo);
+  const processed = new Set<string>();
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await supabase
+      .from("kpi_sync_run_items")
+      .select("codigo")
+      .eq("run_id", syncRunId)
+      .in("status", ["completed", "failed", "stopped"])
+      .order("created_at", { ascending: true })
+      .order("codigo", { ascending: true })
+      .range(offset, offset + 999);
+    if (error) throw new Error(error.message);
+    const rows = data ?? [];
+    rows.forEach((item) => {
+      const codigo = normalizeCode((item as { codigo: string | null }).codigo);
+      if (codigo) processed.add(codigo);
+    });
+    if (rows.length < 1000) break;
+  }
   return processed;
 };
 
