@@ -1207,13 +1207,61 @@ export const fetchAgendaPageAndCount = async (
     filters.columns.supervisor?.some((value) => value.trim()) ||
       filters.columns.supervisor_flag?.some((value) => value.trim()),
   );
+  const normalizedSearch = {
+    companyName: search?.companyName?.replace(/%/g, "").replace(/,/g, " ").trim() ?? "",
+    companyCode: search?.companyCode?.replace(/%/g, "").trim() ?? "",
+    companyAddress: search?.companyAddress?.replace(/%/g, "").trim() ?? "",
+  };
+
+  // The SQL RPCs already apply queue exclusions. Avoid also downloading every
+  // queue control into the browser for the common Agenda path.
+  if (
+    !bounds.active &&
+    !hasSupervisorFilter &&
+    !normalizedSearch.companyCode &&
+    !normalizedSearch.companyAddress
+  ) {
+    const rpcFilters = buildAgendaRpcFilters(filters);
+    const [pageResult, countResult] = await Promise.all([
+      supabase.rpc("get_rotas_agenda_first_page_v2", {
+        p_page_size: Math.max(1, pageSize),
+        p_page_offset: Math.max(0, pageIndex * pageSize),
+        p_filters: rpcFilters,
+        p_company_name: normalizedSearch.companyName || null,
+        p_company_code: null,
+      }),
+      supabase
+        .rpc("get_rotas_agenda_count_v1", {
+          p_filters: rpcFilters,
+          p_company_name: normalizedSearch.companyName || null,
+          p_company_code: null,
+        })
+        .then((response) => ({
+          ...response,
+          countError: response.error?.message ?? null,
+        }))
+        .catch((error: unknown) => ({
+          data: null,
+          error: { message: error instanceof Error ? error.message : String(error ?? "") },
+          countError: error instanceof Error ? error.message : String(error ?? ""),
+        })),
+    ]);
+
+    if (pageResult.error) throw new Error(pageResult.error.message);
+    const rows = (pageResult.data ?? []) as AgendaRow[];
+    const countValue = Number(countResult.data ?? 0);
+    return {
+      data: normalizeAgendaLiteRows(dedupeAgendaRows(rows)),
+      count: countResult.error
+        ? null
+        : Number.isFinite(countValue)
+          ? countValue
+          : 0,
+      countError: countResult.countError,
+    };
+  }
 
   if (bounds.active && !hasSupervisorFilter) {
-    const normalizedSearch = {
-      companyName: search?.companyName?.replace(/%/g, "").replace(/,/g, " ").trim() ?? "",
-      companyCode: search?.companyCode?.replace(/%/g, "").trim() ?? "",
-      companyAddress: search?.companyAddress?.replace(/%/g, "").trim() ?? "",
-    };
     const { data, error } = await supabase.rpc("get_rotas_agenda_latest_visit_page_v1", {
       p_filters: buildAgendaRpcFilters(stripSupervisorFilter(stripLastVisitDateRange(filters))),
       p_company_name: normalizedSearch.companyName || null,
