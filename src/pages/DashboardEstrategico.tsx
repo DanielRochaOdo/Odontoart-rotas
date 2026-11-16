@@ -1488,9 +1488,21 @@ function DashboardEstrategicoForUser() {
   }));
   const commercialMonthlyRows = commercialModel.monthlyRows.map((row) => ({ Mes: row.month, "Vidas em visitas": row.total }));
   const commercialSellerRows = commercialModel.visibleSellersTotals.map((row) => ({ Vendedor: row.seller, "Vidas em visitas": row.total }));
-  const coverageMostRows = model.allMostVisitedCompanies.map((row) => ({ Empresa: row.name, Visitas: row.count }));
-  const coverageLeastRows = model.allLeastVisitedNonZeroCompanies.map((row) => ({ Empresa: row.name, Visitas: row.count }));
-  const coverageNeverRows = model.allNeverVisitedCompanies.map((row) => ({ Empresa: row.name, Visitas: 0 }));
+  const coverageMostRows = model.allMostVisitedCompanies.map((row) => ({
+    Empresa: row.name,
+    "Bairro da empresa": clientesMap.get(row.id)?.bairro ?? "-",
+    Visitas: row.count,
+  }));
+  const coverageLeastRows = model.allLeastVisitedNonZeroCompanies.map((row) => ({
+    Empresa: row.name,
+    "Bairro da empresa": clientesMap.get(row.id)?.bairro ?? "-",
+    Visitas: row.count,
+  }));
+  const coverageNeverRows = model.allNeverVisitedCompanies.map((row) => ({
+    Empresa: row.name,
+    "Bairro da empresa": clientesMap.get(row.id)?.bairro ?? "-",
+    Visitas: 0,
+  }));
   const qualityIntegrityRows = [
     { Indicador: "Sem cliente", Quantidade: model.semCliente },
     { Indicador: "Sem responsavel", Quantidade: model.semResponsavel },
