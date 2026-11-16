@@ -4,25 +4,27 @@ import { createPortal } from "react-dom";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
 
-type KpiPeriodDays = 1 | 7 | 15 | 30;
-
-type KpiSnapshotRow = {
+type KpiMovementRow = {
   id: string;
   sync_run_id: string | null;
-  source: "api_daily" | "manual_upload" | "manual_sync" | null;
-  period_days: number;
   codigo: string;
   empresa: string | null;
   categoria: string;
-  vidas_qtde: number | null;
   status: string;
-  snapshot_at: string;
-  snapshot_date: string;
-  previous_vidas_qtde: number | null;
   delta: number;
-  vendas_qtde: number;
-  cancelamentos_qtde: number;
+  entradas: number;
+  saidas: number;
+  consultado_em: string;
   created_at: string;
+};
+
+type KpiMonthlyHistoryRow = {
+  codigo: string;
+  empresa: string | null;
+  competencia: string;
+  entradas: number;
+  saidas: number;
+  saldo: number;
 };
 
 type KpiStatus = "so_perda" | "queda" | "crescimento" | "so_ganho" | "neutro";
@@ -73,7 +75,7 @@ type KpiCardDetailModalViewState = {
   search: string;
 };
 
-const KPI_SNAPSHOT_READ_CHUNK_SIZE = 1000;
+const KPI_LEDGER_READ_PAGE_SIZE = 1000;
 const KPI_ACTIVE_RUN_STORAGE_KEY = "kpi_active_sync_run_id";
 const DONUT_SIZE = 160;
 const DONUT_STROKE = 22;
@@ -101,12 +103,29 @@ const normalizeCode = (value: unknown) =>
     .replace(/\.0+$/, "")
     .trim();
 
-const dedupeRowsByCodigo = (rows: KpiSnapshotRow[]) => {
-  const byCode = new Map<string, KpiSnapshotRow>();
+const aggregateMovementRowsByCodigo = (rows: KpiMovementRow[]) => {
+  const byCode = new Map<string, KpiMovementRow>();
   rows.forEach((row) => {
     const codigo = normalizeCode(row.codigo);
     if (!codigo) return;
-    byCode.set(codigo, { ...row, codigo });
+    const existing = byCode.get(codigo);
+    if (!existing) {
+      byCode.set(codigo, { ...row, codigo });
+      return;
+    }
+    const entradas = Number(existing.entradas ?? 0) + Number(row.entradas ?? 0);
+    const saidas = Number(existing.saidas ?? 0) + Number(row.saidas ?? 0);
+    const status = resolveKpiStatus(entradas, saidas);
+    const category = status === "so_perda" ? "So perda" : status === "so_ganho" ? "So ganho" : status === "crescimento" ? "Crescimento" : status === "queda" ? "Queda" : "Neutro";
+    byCode.set(codigo, {
+      ...existing,
+      consultado_em: existing.consultado_em > row.consultado_em ? existing.consultado_em : row.consultado_em,
+      entradas,
+      saidas,
+      delta: entradas - saidas,
+      status,
+      categoria: category,
+    });
   });
   return Array.from(byCode.values()).sort((a, b) => a.codigo.localeCompare(b.codigo));
 };
@@ -123,80 +142,83 @@ const resolveKpiStatus = (vendas: number, cancelamentos: number): KpiStatus => {
 const KPI_SYNC_RUN_SELECT_COLUMNS =
   "id, status, total_codes, processed_codes, failed_codes, started_at, finished_at, source, current_code, current_stage, current_code_started_at, current_attempt, last_progress_at, period_start_date, period_end_date";
 
-const fetchAllKpiSnapshotRows = async (periodDays: KpiPeriodDays) => {
-  const allRows: KpiSnapshotRow[] = [];
-
-  for (let offset = 0; ; offset += KPI_SNAPSHOT_READ_CHUNK_SIZE) {
-      const { data, error } = await supabase
-      .from("kpi_sync_snapshots")
-      .select(
-        "id, sync_run_id, source, period_days, codigo, empresa, categoria, vidas_qtde, status, snapshot_at, snapshot_date, previous_vidas_qtde, delta, vendas_qtde, cancelamentos_qtde, created_at",
-      )
-      .eq("period_days", periodDays)
-      .order("snapshot_at", { ascending: false })
-      .range(offset, offset + KPI_SNAPSHOT_READ_CHUNK_SIZE - 1);
-    if (error) throw new Error(error.message);
-
-    const rows = (data ?? []) as KpiSnapshotRow[];
-    allRows.push(...rows);
-    if (rows.length < KPI_SNAPSHOT_READ_CHUNK_SIZE) break;
+const getKpiStageLabel = (stage: string) => {
+  switch (stage) {
+    case "queued":
+      return "Aguardando início";
+    case "queued_next_chunk":
+      return "Preparando a próxima parte da consulta";
+    default:
+      return "Em andamento";
   }
+};
 
+const fetchKpiMovementRowsByRunId = async (syncRunId: string) => {
+  const allRows: KpiMovementRow[] = [];
+  for (let offset = 0; ; offset += KPI_LEDGER_READ_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("kpi_movimentos_mensais")
+      .select("id, sync_run_id, codigo, empresa, competencia, entradas, saidas, saldo, categoria, consultado_em, created_at")
+      .eq("sync_run_id", syncRunId)
+      .order("competencia", { ascending: true })
+      .order("codigo", { ascending: true })
+      .range(offset, offset + KPI_LEDGER_READ_PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as Array<{
+      id: string; sync_run_id: string; codigo: string; empresa: string | null; competencia: string;
+      entradas: number; saidas: number; saldo: number; categoria: string; consultado_em: string; created_at: string;
+    }>;
+    allRows.push(...rows.map((row) => ({
+      id: row.id,
+      sync_run_id: row.sync_run_id,
+      codigo: row.codigo,
+      empresa: row.empresa,
+      categoria: row.categoria,
+      status: row.categoria.toLowerCase().replaceAll(" ", "_"),
+      delta: row.saldo,
+      entradas: row.entradas,
+      saidas: row.saidas,
+      consultado_em: row.consultado_em,
+      created_at: row.created_at,
+    })));
+    if (rows.length < KPI_LEDGER_READ_PAGE_SIZE) break;
+  }
   return allRows;
 };
 
-const fetchAllKpiSnapshotRowsByRunId = async (syncRunId: string) => {
-  const allRows: KpiSnapshotRow[] = [];
-  let lastCodigo = "";
-
-  for (;;) {
-    let query = supabase
-      .from("kpi_sync_snapshots")
-      .select(
-        "id, sync_run_id, source, period_days, codigo, empresa, categoria, vidas_qtde, status, snapshot_at, snapshot_date, previous_vidas_qtde, delta, vendas_qtde, cancelamentos_qtde, created_at",
-      )
-      .eq("sync_run_id", syncRunId)
+const fetchKpiLastTwelveMonths = async () => {
+  const now = new Date();
+  const firstCompetence = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+  const from = `${firstCompetence.getFullYear()}-${String(firstCompetence.getMonth() + 1).padStart(2, "0")}-01`;
+  const through = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const allRows: KpiMonthlyHistoryRow[] = [];
+  for (let offset = 0; ; offset += KPI_LEDGER_READ_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("kpi_movimentos_mensais")
+      .select("codigo, empresa, competencia, entradas, saidas, saldo")
+      .gte("competencia", from)
+      .lte("competencia", through)
+      .order("competencia", { ascending: true })
       .order("codigo", { ascending: true })
-      .order("id", { ascending: true })
-      .limit(KPI_SNAPSHOT_READ_CHUNK_SIZE);
-
-    if (lastCodigo) {
-      query = query.gt("codigo", lastCodigo);
-    }
-
-    const { data, error } = await query;
+      .range(offset, offset + KPI_LEDGER_READ_PAGE_SIZE - 1);
     if (error) throw new Error(error.message);
-
-    const rows = (data ?? []) as KpiSnapshotRow[];
-    allRows.push(...rows);
-    if (rows.length < KPI_SNAPSHOT_READ_CHUNK_SIZE) break;
-    lastCodigo = rows[rows.length - 1]?.codigo ?? lastCodigo;
-    if (!lastCodigo) break;
+    const rows = data ?? [];
+    allRows.push(...rows as KpiMonthlyHistoryRow[]);
+    if (rows.length < KPI_LEDGER_READ_PAGE_SIZE) break;
   }
-
   return allRows;
 };
 
 const fetchLatestSyncRunBanner = async () => {
-  const { data: runningData, error: runningError } = await supabase
+  const { data, error } = await supabase
     .from("kpi_sync_runs")
     .select(KPI_SYNC_RUN_SELECT_COLUMNS)
-    .eq("status", "running")
+    .in("status", ["running", "success"])
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (runningError) throw new Error(runningError.message);
-  if (runningData) return runningData as SyncRunBanner;
-
-  const { data: lastSuccessData, error: successError } = await supabase
-    .from("kpi_sync_runs")
-    .select(KPI_SYNC_RUN_SELECT_COLUMNS)
-    .eq("status", "success")
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (successError) throw new Error(successError.message);
-  return (lastSuccessData as SyncRunBanner) ?? null;
+  if (error) throw new Error(error.message);
+  return (data as SyncRunBanner) ?? null;
 };
 
 const fetchLatestFinishedSyncRunId = async () => {
@@ -562,15 +584,20 @@ export default function KPI() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncRunBanner, setSyncRunBanner] = useState<SyncRunBanner>(null);
-  const [syncPersistedCounts, setSyncPersistedCounts] = useState<{ snapshots: number; errors: number } | null>(null);
-  const [currentSnapshotRows, setCurrentSnapshotRows] = useState<KpiSnapshotRow[]>([]);
+  const [currentMovementRows, setCurrentMovementRows] = useState<KpiMovementRow[]>([]);
+  const [monthlyHistoryRows, setMonthlyHistoryRows] = useState<KpiMonthlyHistoryRow[]>([]);
+  const [monthlyHistoryLoaded, setMonthlyHistoryLoaded] = useState(false);
+  const [activeKpiTab, setActiveKpiTab] = useState<"periodo" | "historico">("periodo");
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyPage, setHistoryPage] = useState(1);
   const [codesSearch, setCodesSearch] = useState("");
   const [codesSortKey, setCodesSortKey] = useState<"codigo" | "empresa" | "entradas" | "saidas" | "saldo" | "categoria">("codigo");
   const [codesSortDirection, setCodesSortDirection] = useState<"asc" | "desc">("asc");
   const [codesPage, setCodesPage] = useState(1);
-  const snapshotLoadSequenceRef = useRef(0);
-  const snapshotLoadKeyRef = useRef("");
+  const movementLoadSequenceRef = useRef(0);
+  const movementLoadKeyRef = useRef("");
   const workerRecoveryRequestedAtRef = useRef<Record<string, number>>({});
+  const failedRunLookupRef = useRef("");
 
   const syncProgressPercent =
     syncRunBanner && syncRunBanner.total_codes > 0
@@ -587,16 +614,27 @@ export default function KPI() {
     if (ageMs < 15 * 60 * 1000) return "Sincronização sem progresso recente.";
     return "Sincronização sem atualização há muito tempo.";
   }, [syncRunBanner]);
-  const uniqueSnapshotRows = useMemo(
-    () => dedupeRowsByCodigo(currentSnapshotRows),
-    [currentSnapshotRows],
+  const movementRowsByCode = useMemo(
+    () => aggregateMovementRowsByCodigo(currentMovementRows),
+    [currentMovementRows],
   );
+  const filteredHistoryRows = useMemo(() => {
+    const query = historySearch.trim().toLowerCase();
+    if (!query) return monthlyHistoryRows;
+    return monthlyHistoryRows.filter((row) =>
+      `${row.codigo} ${row.empresa ?? ""} ${row.competencia}`.toLowerCase().includes(query),
+    );
+  }, [historySearch, monthlyHistoryRows]);
+  const historyPageSize = 50;
+  const historyTotalPages = Math.max(1, Math.ceil(filteredHistoryRows.length / historyPageSize));
+  const safeHistoryPage = Math.min(historyPage, historyTotalPages);
+  const pagedHistoryRows = filteredHistoryRows.slice((safeHistoryPage - 1) * historyPageSize, safeHistoryPage * historyPageSize);
 
   const kpiPeriodAnalysis = useMemo(() => {
-    return uniqueSnapshotRows
+    return movementRowsByCode
       .map((row) => {
-        const entradas = Math.max(0, Number(row.vendas_qtde ?? 0));
-        const saidas = Math.max(0, Number(row.cancelamentos_qtde ?? 0));
+        const entradas = Math.max(0, Number(row.entradas ?? 0));
+        const saidas = Math.max(0, Number(row.saidas ?? 0));
         return {
           codigo: normalizeCode(row.codigo),
           empresa: row.empresa,
@@ -608,7 +646,7 @@ export default function KPI() {
       })
       .filter((row) => row.codigo)
       .sort((a, b) => a.codigo.localeCompare(b.codigo));
-  }, [uniqueSnapshotRows]);
+  }, [movementRowsByCode]);
 
   const categoryBreakdown = useMemo(() => {
     const labels: Record<KpiStatus, string> = {
@@ -1000,38 +1038,15 @@ export default function KPI() {
     }
   };
 
-  const loadKpiSnapshots = async (periodDays: KpiPeriodDays) => {
-    const rows = await fetchAllKpiSnapshotRows(periodDays);
+  const loadKpiMovementRowsForRun = async (syncRunId: string, loadSequence: number) => {
+    const rows = await fetchKpiMovementRowsByRunId(syncRunId);
+    if (loadSequence !== movementLoadSequenceRef.current) return;
     if (rows.length === 0) {
-      setCurrentSnapshotRows([]);
+      setCurrentMovementRows([]);
       return;
     }
 
-    const latestSnapshotAt = rows[0]?.snapshot_at ?? null;
-    setCurrentSnapshotRows(dedupeRowsByCodigo(rows.filter((row) => row.snapshot_at === latestSnapshotAt)));
-  };
-
-  const loadKpiSnapshotsForRun = async (syncRunId: string, loadSequence: number) => {
-    console.info("[KPI] snapshot-load-start", {
-      runId: syncRunId,
-      processedCodes: syncRunBanner?.processed_codes,
-      sequence: loadSequence,
-      currentSequence: snapshotLoadSequenceRef.current,
-    });
-    const rows = await fetchAllKpiSnapshotRowsByRunId(syncRunId);
-    console.info("[KPI] snapshot-load-finished", {
-      runId: syncRunId,
-      loadedRows: rows.length,
-      sequence: loadSequence,
-      currentSequence: snapshotLoadSequenceRef.current,
-    });
-    if (loadSequence !== snapshotLoadSequenceRef.current) return;
-    if (rows.length === 0) {
-      setCurrentSnapshotRows([]);
-      return;
-    }
-
-    setCurrentSnapshotRows(dedupeRowsByCodigo(rows));
+    setCurrentMovementRows(rows);
   };
 
   const runKpiSync = async () => {
@@ -1118,17 +1133,6 @@ export default function KPI() {
     }
   };
 
-  const loadSyncPersistedCounts = async (syncRunId: string) => {
-    const [{ count: snapshotsCount }, { count: errorsCount }] = await Promise.all([
-      supabase.from("kpi_sync_snapshots").select("id", { count: "exact", head: true }).eq("sync_run_id", syncRunId),
-      supabase.from("kpi_sync_run_errors").select("id", { count: "exact", head: true }).eq("sync_run_id", syncRunId),
-    ]);
-    setSyncPersistedCounts({
-      snapshots: snapshotsCount ?? 0,
-      errors: errorsCount ?? 0,
-    });
-  };
-
   const stopKpiSync = async () => {
     if (!syncRunBanner?.id || syncRunBanner.status !== "running") return;
     setSyncingKpi(true);
@@ -1159,7 +1163,7 @@ export default function KPI() {
     if (!canAccess) return;
     let cancelled = false;
 
-    const hydratePersistedSnapshots = async () => {
+    const hydratePersistedKpiData = async () => {
       try {
         const activeRunId = readActiveSyncRunId();
         if (activeRunId) return;
@@ -1170,28 +1174,41 @@ export default function KPI() {
           setPeriodStartDate(banner.period_start_date);
           setPeriodEndDate(banner.period_end_date);
         }
-        const finishedRunId = await fetchLatestFinishedSyncRunId();
         if (cancelled) return;
-        if (finishedRunId) {
-          const loadSequence = snapshotLoadSequenceRef.current + 1;
-          snapshotLoadSequenceRef.current = loadSequence;
-          await loadKpiSnapshotsForRun(finishedRunId, loadSequence);
+        if (banner?.status === "success") {
+          const loadSequence = movementLoadSequenceRef.current + 1;
+          movementLoadSequenceRef.current = loadSequence;
+          await loadKpiMovementRowsForRun(banner.id, loadSequence);
           return;
         }
-        await loadKpiSnapshots(30);
       } catch (error) {
         if (!cancelled) {
-          setSyncError(error instanceof Error ? error.message : "Erro ao carregar snapshots persistidos.");
+        setSyncError(error instanceof Error ? error.message : "Erro ao carregar o historico KPI.");
         }
       }
     };
 
-    void hydratePersistedSnapshots();
+    void hydratePersistedKpiData();
 
     return () => {
       cancelled = true;
     };
   }, [canAccess]);
+
+  useEffect(() => {
+    if (!canAccess || activeKpiTab !== "historico") return;
+    let cancelled = false;
+    void fetchKpiLastTwelveMonths().then((rows) => {
+      if (cancelled) return;
+      setMonthlyHistoryRows(rows);
+      setMonthlyHistoryLoaded(true);
+    }).catch((error) => {
+      if (!cancelled) setSyncError(error instanceof Error ? error.message : "Erro ao carregar o historico KPI.");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [canAccess, activeKpiTab, syncRunBanner?.finished_at]);
 
   useEffect(() => {
     if (!canAccess) return;
@@ -1206,29 +1223,24 @@ export default function KPI() {
         if (!cancelled && activeRunId && (!banner || banner.status !== "running")) {
           writeActiveSyncRunId(null);
         }
-        if (!cancelled && banner?.id && banner.status === "running") {
-          const loadKey = `${banner.id}:${banner.processed_codes}:${banner.status}`;
-          if (snapshotLoadKeyRef.current !== loadKey) {
-            snapshotLoadKeyRef.current = loadKey;
-            const loadSequence = snapshotLoadSequenceRef.current + 1;
-            snapshotLoadSequenceRef.current = loadSequence;
-            console.info("[KPI] snapshot-load-requested", {
-              runId: banner.id,
-              processedCodes: banner.processed_codes,
-              sequence: loadSequence,
-              trigger: "polling",
-            });
-
-            void loadKpiSnapshotsForRun(banner.id, loadSequence).catch((error) => {
-              if (loadSequence !== snapshotLoadSequenceRef.current) return;
-              setSyncError(error instanceof Error ? error.message : "Erro ao carregar snapshots do KPI.");
+        if (!cancelled && banner?.id && banner.status !== "running") {
+          const loadKey = `finished:${banner.id}:${banner.status}`;
+          if (movementLoadKeyRef.current !== loadKey) {
+            movementLoadKeyRef.current = loadKey;
+            const loadSequence = movementLoadSequenceRef.current + 1;
+            movementLoadSequenceRef.current = loadSequence;
+            void loadKpiMovementRowsForRun(banner.id, loadSequence).catch((error) => {
+              if (loadSequence !== movementLoadSequenceRef.current) return;
+              setSyncError(error instanceof Error ? error.message : "Erro ao carregar o historico KPI.");
             });
           }
 
+        }
+        if (!cancelled && banner?.id && banner.status === "running") {
           const lastProgressAt = Date.parse(banner.last_progress_at ?? banner.started_at);
           const staleForMs = Date.now() - lastProgressAt;
           const lastRecoveryAt = workerRecoveryRequestedAtRef.current[banner.id] ?? 0;
-          if (Number.isFinite(staleForMs) && staleForMs >= 120_000 && Date.now() - lastRecoveryAt >= 120_000) {
+          if (Number.isFinite(staleForMs) && staleForMs >= 300_000 && Date.now() - lastRecoveryAt >= 300_000) {
             workerRecoveryRequestedAtRef.current[banner.id] = Date.now();
             void supabase.functions.invoke("kpi-sync-daily", {
               body: { mode: "continue", sync_run_id: banner.id },
@@ -1239,31 +1251,23 @@ export default function KPI() {
             });
           }
         }
-        if (!cancelled && banner?.status === "failed") {
+        if (!cancelled && banner?.status === "failed" && failedRunLookupRef.current !== banner.id) {
           const lastSuccessRunId = await fetchLatestFinishedSyncRunId();
+          failedRunLookupRef.current = banner.id;
           if (lastSuccessRunId) {
             const loadKey = `success:${lastSuccessRunId}`;
-            if (snapshotLoadKeyRef.current !== loadKey) {
-              snapshotLoadKeyRef.current = loadKey;
-              const loadSequence = snapshotLoadSequenceRef.current + 1;
-              snapshotLoadSequenceRef.current = loadSequence;
-              void loadKpiSnapshotsForRun(lastSuccessRunId, loadSequence).catch((error) => {
-                if (loadSequence !== snapshotLoadSequenceRef.current) return;
+            if (movementLoadKeyRef.current !== loadKey) {
+              movementLoadKeyRef.current = loadKey;
+              const loadSequence = movementLoadSequenceRef.current + 1;
+              movementLoadSequenceRef.current = loadSequence;
+              void loadKpiMovementRowsForRun(lastSuccessRunId, loadSequence).catch((error) => {
+                if (loadSequence !== movementLoadSequenceRef.current) return;
                 setSyncError(error instanceof Error ? error.message : "Erro ao carregar ultimo KPI concluido.");
               });
             }
           } else {
-            setCurrentSnapshotRows([]);
+            setCurrentMovementRows([]);
           }
-        }
-        if (!cancelled && banner?.id) {
-          void loadSyncPersistedCounts(banner.id).catch((error) => {
-            if (!cancelled) {
-              setSyncError(error instanceof Error ? error.message : "Erro ao carregar contagem persistida do KPI.");
-            }
-          });
-        } else if (!cancelled) {
-          setSyncPersistedCounts(null);
         }
       } catch (error) {
         if (!cancelled) {
@@ -1275,15 +1279,14 @@ export default function KPI() {
     const scheduleRefresh = (delayMs: number) => {
       if (cancelled) return;
       timeoutId = window.setTimeout(async () => {
-        await refreshSyncRunBanner();
+        if (document.visibilityState === "visible" && navigator.onLine) await refreshSyncRunBanner();
         if (cancelled) return;
-        const nextDelay = syncRunBanner?.status === "running" ? 5000 : 15000;
-        scheduleRefresh(nextDelay);
+        scheduleRefresh(30000);
       }, delayMs);
     };
 
     void refreshSyncRunBanner().finally(() => {
-      scheduleRefresh(5000);
+      scheduleRefresh(30000);
     });
 
     return () => {
@@ -1377,21 +1380,21 @@ export default function KPI() {
               </div>
             </div>
             {syncRunBanner.current_code ? <p>Codigo atual: {syncRunBanner.current_code}</p> : null}
-            {syncRunBanner.current_stage ? <p>Etapa: {syncRunBanner.current_stage}</p> : null}
+            {syncRunBanner.current_stage ? <p>Andamento: {getKpiStageLabel(syncRunBanner.current_stage)}</p> : null}
             {syncCurrentCodeDuration !== null ? <p>Tempo no codigo: {syncCurrentCodeDuration}s</p> : null}
             {syncRunBanner.current_attempt ? <p>Tentativa: {syncRunBanner.current_attempt}</p> : null}
             {syncRunBanner.last_progress_at ? <p>Ultima atualizacao: {formatDateTime(syncRunBanner.last_progress_at)}</p> : null}
             {syncHealthWarning ? <p className="text-amber-700">{syncHealthWarning}</p> : null}
-            <p>Snapshots carregados: {currentSnapshotRows.length}</p>
-            {syncPersistedCounts ? (
-              <p>Persistido: {syncPersistedCounts.snapshots} snapshots e {syncPersistedCounts.errors} erros</p>
-            ) : null}
             <p>Falhas: {syncRunBanner.failed_codes}</p>
             <p>Iniciada em: {formatDateTime(syncRunBanner.started_at)}</p>
           </div>
         ) : (
-          <p className="text-emerald-700">
-            Base consolidada: ultimo periodo consultado.
+          <p className={syncRunBanner?.status === "failed" ? "text-amber-700" : "text-emerald-700"}>
+            {syncRunBanner?.status === "success"
+              ? "Leituras concluídas com sucesso."
+              : syncRunBanner?.status === "failed"
+                ? "A consulta não foi concluída."
+                : "Base consolidada: último período consultado."}
             {syncRunBanner?.period_start_date && syncRunBanner?.period_end_date
               ? ` | Periodo ${syncRunBanner.period_start_date} a ${syncRunBanner.period_end_date}`
               : ""}
@@ -1401,7 +1404,75 @@ export default function KPI() {
         {syncError && <p className="mt-1 text-red-600">{syncError}</p>}
       </div>
 
-      <section className="rotas-kpi-v2-main rounded-2xl border border-sea/20 bg-sand/30 p-3 md:p-4">
+      <div className="flex gap-2 border-b border-sea/15 pb-2" role="tablist" aria-label="Abas do KPI">
+        {([ ["periodo", "Visao do periodo"], ["historico", "Historico 12 meses"] ] as const).map(([tab, label]) => (
+          <button
+            key={tab}
+            type="button"
+            role="tab"
+            aria-selected={activeKpiTab === tab}
+            onClick={() => setActiveKpiTab(tab)}
+            className={`rounded-lg px-3 py-2 text-xs font-semibold ${activeKpiTab === tab ? "bg-sea text-white" : "border border-sea/20 bg-white text-ink/70 hover:border-sea/50"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeKpiTab === "historico" ? (
+        <section className="rotas-kpi-v2-table-panel rounded-xl border border-sea/15 bg-white p-4" role="tabpanel">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">Historico por codigo · ultimas 12 competencias</h3>
+              <p className="mt-1 text-[11px] text-ink/60">Uma consulta mais recente substitui os totais anteriores da mesma competencia.</p>
+            </div>
+            <input
+              value={historySearch}
+              onChange={(event) => { setHistorySearch(event.target.value); setHistoryPage(1); }}
+              placeholder="Buscar codigo ou empresa"
+              className="w-full max-w-sm rounded-lg border border-sea/20 bg-sand/10 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
+            />
+          </div>
+          {!monthlyHistoryLoaded ? (
+            <p className="mt-4 text-xs text-ink/60">Carregando historico...</p>
+          ) : monthlyHistoryRows.length === 0 ? (
+            <p className="mt-4 text-xs text-ink/60">O historico sera formado a partir das proximas sincronizacoes.</p>
+          ) : (
+            <>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[620px] text-left text-xs text-ink/70">
+                  <thead><tr className="border-b border-sea/20">
+                    <th className="px-2 py-2">Codigo</th><th className="px-2 py-2">Empresa</th><th className="px-2 py-2">Competencia</th>
+                    <th className="px-2 py-2">Entradas</th><th className="px-2 py-2">Saidas</th><th className="px-2 py-2">Saldo</th>
+                  </tr></thead>
+                  <tbody>
+                    {pagedHistoryRows.map((row) => (
+                      <tr key={`${row.codigo}-${row.competencia}`} className="border-b border-sea/10">
+                        <td className="px-2 py-2 font-semibold text-ink">{row.codigo}</td>
+                        <td className="px-2 py-2">{row.empresa ?? "-"}</td>
+                        <td className="px-2 py-2">{new Date(`${row.competencia}T12:00:00`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</td>
+                        <td className="px-2 py-2 text-emerald-700">{formatChartNumber(row.entradas)}</td>
+                        <td className="px-2 py-2 text-red-600">{formatChartNumber(row.saidas)}</td>
+                        <td className={`px-2 py-2 font-semibold ${row.saldo >= 0 ? "text-emerald-700" : "text-red-600"}`}>{formatChartNumber(row.saldo)}</td>
+                      </tr>
+                    ))}
+                    {pagedHistoryRows.length === 0 ? <tr><td colSpan={6} className="px-2 py-5 text-center text-ink/50">Nenhum registro corresponde à busca.</td></tr> : null}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-3 flex items-center justify-between border-t border-sea/10 pt-3 text-xs text-ink/60">
+                <span>{filteredHistoryRows.length} registro(s) · pagina {safeHistoryPage} de {historyTotalPages}</span>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setHistoryPage((page) => Math.max(1, page - 1))} disabled={safeHistoryPage <= 1} className="rounded-lg border border-sea/20 px-3 py-1.5 font-semibold disabled:opacity-40">Anterior</button>
+                  <button type="button" onClick={() => setHistoryPage((page) => Math.min(historyTotalPages, page + 1))} disabled={safeHistoryPage >= historyTotalPages} className="rounded-lg border border-sea/20 px-3 py-1.5 font-semibold disabled:opacity-40">Proxima</button>
+                </div>
+              </div>
+            </>
+          )}
+        </section>
+      ) : null}
+
+      <section className={`rotas-kpi-v2-main rounded-2xl border border-sea/20 bg-sand/30 p-3 md:p-4 ${activeKpiTab === "periodo" ? "" : "hidden"}`} role="tabpanel">
         <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           {summaryCards.map((card) => (
             <button
