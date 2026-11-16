@@ -186,19 +186,24 @@ const fetchKpiMovementRowsByRunId = async (syncRunId: string) => {
   return allRows;
 };
 
-const fetchKpiLastTwelveMonths = async () => {
+const getRecentCompetences = (count = 12) => {
   const now = new Date();
-  const firstCompetence = new Date(now.getFullYear(), now.getMonth() - 11, 1);
-  const from = `${firstCompetence.getFullYear()}-${String(firstCompetence.getMonth() + 1).padStart(2, "0")}-01`;
-  const through = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - index, 1);
+    const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-01`;
+    const rawLabel = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(date);
+    const label = rawLabel.charAt(0).toLocaleUpperCase("pt-BR") + rawLabel.slice(1);
+    return { value, label };
+  });
+};
+
+const fetchKpiRowsByCompetence = async (competence: string) => {
   const allRows: KpiMonthlyHistoryRow[] = [];
   for (let offset = 0; ; offset += KPI_LEDGER_READ_PAGE_SIZE) {
     const { data, error } = await supabase
       .from("kpi_movimentos_mensais")
       .select("codigo, empresa, competencia, entradas, saidas, saldo")
-      .gte("competencia", from)
-      .lte("competencia", through)
-      .order("competencia", { ascending: true })
+      .eq("competencia", competence)
       .order("codigo", { ascending: true })
       .range(offset, offset + KPI_LEDGER_READ_PAGE_SIZE - 1);
     if (error) throw new Error(error.message);
@@ -586,8 +591,10 @@ export default function KPI() {
   const [syncRunBanner, setSyncRunBanner] = useState<SyncRunBanner>(null);
   const [currentMovementRows, setCurrentMovementRows] = useState<KpiMovementRow[]>([]);
   const [monthlyHistoryRows, setMonthlyHistoryRows] = useState<KpiMonthlyHistoryRow[]>([]);
-  const [monthlyHistoryLoaded, setMonthlyHistoryLoaded] = useState(false);
+  const [monthlyHistoryLoading, setMonthlyHistoryLoading] = useState(false);
+  const [monthlyHistoryError, setMonthlyHistoryError] = useState<string | null>(null);
   const [activeKpiTab, setActiveKpiTab] = useState<"periodo" | "historico">("periodo");
+  const [historyCompetence, setHistoryCompetence] = useState("");
   const [historySearch, setHistorySearch] = useState("");
   const [historyPage, setHistoryPage] = useState(1);
   const [codesSearch, setCodesSearch] = useState("");
@@ -598,6 +605,7 @@ export default function KPI() {
   const movementLoadKeyRef = useRef("");
   const workerRecoveryRequestedAtRef = useRef<Record<string, number>>({});
   const failedRunLookupRef = useRef("");
+  const historyCompetenceOptions = useMemo(() => getRecentCompetences(), []);
 
   const syncProgressPercent =
     syncRunBanner && syncRunBanner.total_codes > 0
@@ -1197,18 +1205,30 @@ export default function KPI() {
 
   useEffect(() => {
     if (!canAccess || activeKpiTab !== "historico") return;
+    if (!historyCompetence) {
+      setMonthlyHistoryRows([]);
+      setMonthlyHistoryError(null);
+      setMonthlyHistoryLoading(false);
+      return;
+    }
     let cancelled = false;
-    void fetchKpiLastTwelveMonths().then((rows) => {
-      if (cancelled) return;
-      setMonthlyHistoryRows(rows);
-      setMonthlyHistoryLoaded(true);
-    }).catch((error) => {
-      if (!cancelled) setSyncError(error instanceof Error ? error.message : "Erro ao carregar o historico KPI.");
-    });
+    setMonthlyHistoryRows([]);
+    setMonthlyHistoryError(null);
+    setMonthlyHistoryLoading(true);
+    void fetchKpiRowsByCompetence(historyCompetence)
+      .then((rows) => {
+        if (!cancelled) setMonthlyHistoryRows(rows);
+      })
+      .catch((error) => {
+        if (!cancelled) setMonthlyHistoryError(error instanceof Error ? error.message : "Erro ao carregar o historico KPI.");
+      })
+      .finally(() => {
+        if (!cancelled) setMonthlyHistoryLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [canAccess, activeKpiTab, syncRunBanner?.finished_at]);
+  }, [canAccess, activeKpiTab, historyCompetence, syncRunBanner?.finished_at]);
 
   useEffect(() => {
     if (!canAccess) return;
@@ -1424,19 +1444,41 @@ export default function KPI() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h3 className="text-sm font-semibold text-ink">Historico por codigo · ultimas 12 competencias</h3>
-              <p className="mt-1 text-[11px] text-ink/60">Uma consulta mais recente substitui os totais anteriores da mesma competencia.</p>
+              <p className="mt-1 text-[11px] text-ink/60">Selecione uma competência para listar as empresas.</p>
             </div>
-            <input
-              value={historySearch}
-              onChange={(event) => { setHistorySearch(event.target.value); setHistoryPage(1); }}
-              placeholder="Buscar codigo ou empresa"
-              className="w-full max-w-sm rounded-lg border border-sea/20 bg-sand/10 px-3 py-2 text-xs text-ink outline-none focus:border-sea"
-            />
+            <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+              <select
+                aria-label="Filtrar histórico por competência"
+                value={historyCompetence}
+                onChange={(event) => {
+                  setHistoryCompetence(event.target.value);
+                  setHistorySearch("");
+                  setHistoryPage(1);
+                }}
+                className="w-full rounded-lg border border-sea/20 bg-white px-3 py-2 text-xs text-ink outline-none focus:border-sea sm:w-56"
+              >
+                <option value="">Selecione a competência</option>
+                {historyCompetenceOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <input
+                value={historySearch}
+                onChange={(event) => { setHistorySearch(event.target.value); setHistoryPage(1); }}
+                placeholder="Buscar código ou empresa"
+                disabled={!historyCompetence}
+                className="w-full max-w-sm rounded-lg border border-sea/20 bg-sand/10 px-3 py-2 text-xs text-ink outline-none focus:border-sea disabled:opacity-50"
+              />
+            </div>
           </div>
-          {!monthlyHistoryLoaded ? (
-            <p className="mt-4 text-xs text-ink/60">Carregando historico...</p>
+          {!historyCompetence ? (
+            <p className="mt-4 text-xs text-ink/60">Escolha uma competência para consultar as empresas.</p>
+          ) : monthlyHistoryLoading ? (
+            <p className="mt-4 text-xs text-ink/60">Carregando empresas...</p>
+          ) : monthlyHistoryError ? (
+            <p className="mt-4 text-xs text-red-600">{monthlyHistoryError}</p>
           ) : monthlyHistoryRows.length === 0 ? (
-            <p className="mt-4 text-xs text-ink/60">O historico sera formado a partir das proximas sincronizacoes.</p>
+            <p className="mt-4 text-xs text-ink/60">Nenhuma empresa encontrada para esta competência.</p>
           ) : (
             <>
               <div className="mt-3 overflow-x-auto">

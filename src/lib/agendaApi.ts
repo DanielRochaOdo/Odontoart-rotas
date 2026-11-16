@@ -45,6 +45,7 @@ const formatOrValues = (values: string[]) =>
 
 const SITUACAO_OPTIONS = ["Ativo", "Suspenso/Inadimplente", "Cancelado"] as const;
 const AGENDA_ID_FILTER_CHUNK_SIZE = 100;
+const AGENDA_QUERY_CONCURRENCY = 4;
 
 const chunkArray = <T,>(values: readonly T[], chunkSize: number) => {
   const chunks: T[][] = [];
@@ -52,6 +53,26 @@ const chunkArray = <T,>(values: readonly T[], chunkSize: number) => {
     chunks.push(values.slice(index, index + chunkSize));
   }
   return chunks;
+};
+
+const mapWithConcurrency = async <T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+) => {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(items[index], index);
+      }
+    }),
+  );
+  return results;
 };
 
 const intersectAgendaIdFilters = (...filters: Array<string[] | null>) => {
@@ -316,35 +337,37 @@ const fetchAgendaIdsBySupervisorFilter = async (filters: AgendaFilters) => {
   if (assignedUserIds.size === 0) return [] as string[];
 
   const clienteIds = new Set<string>();
-  for (const assignedUserIdChunk of chunkArray(
-    Array.from(assignedUserIds),
-    AGENDA_ID_FILTER_CHUNK_SIZE,
-  )) {
-    let from = 0;
-    while (true) {
-      const { data: visitRows, error: visitsError } = await supabase
-        .from("visits")
-        .select("id, cliente_id")
-        .in("assigned_to_user_id", assignedUserIdChunk)
-        .not("cliente_id", "is", null)
-        .order("id", { ascending: true })
-        .range(from, from + 999);
+  const assignedUserIdChunks = chunkArray(Array.from(assignedUserIds), AGENDA_ID_FILTER_CHUNK_SIZE);
+  const clienteIdsByChunk = await mapWithConcurrency(
+    assignedUserIdChunks,
+    AGENDA_QUERY_CONCURRENCY,
+    async (assignedUserIdChunk) => {
+      const chunkClienteIds: string[] = [];
+      let from = 0;
+      while (true) {
+        const { data: visitRows, error: visitsError } = await supabase
+          .from("visits")
+          .select("id, cliente_id")
+          .in("assigned_to_user_id", assignedUserIdChunk)
+          .not("cliente_id", "is", null)
+          .order("id", { ascending: true })
+          .range(from, from + 999);
 
-      if (visitsError) throw new Error(visitsError.message);
-      const batch = (visitRows ?? []) as Array<{ id: string; cliente_id: string | null }>;
-      batch.forEach((visit) => {
-        if (visit.cliente_id) clienteIds.add(visit.cliente_id);
-      });
-      if (batch.length < 1000) break;
-      from += 1000;
-    }
-  }
+        if (visitsError) throw new Error(visitsError.message);
+        const batch = (visitRows ?? []) as Array<{ id: string; cliente_id: string | null }>;
+        batch.forEach((visit) => {
+          if (visit.cliente_id) chunkClienteIds.push(visit.cliente_id);
+        });
+        if (batch.length < 1000) break;
+        from += 1000;
+      }
+      return chunkClienteIds;
+    },
+  );
+  clienteIdsByChunk.flat().forEach((id) => clienteIds.add(id));
 
   return Array.from(clienteIds);
 };
-
-const isVendorVisitTypeValue = (visitType?: string | null) =>
-  (visitType ?? "VENDEDOR") === "VENDEDOR";
 
 const resolveLastVisitDateBounds = (filters: AgendaFilters): LatestVisitDateBounds => {
   const { month, year, from, to, invert } = filters.dateRanges.data_da_ultima_visita;
@@ -392,13 +415,6 @@ const resolveLastVisitDateBounds = (filters: AgendaFilters): LatestVisitDateBoun
   };
 };
 
-const isDateWithinBounds = (dateKey: string, bounds: LatestVisitDateBounds) => {
-  const afterStart = !bounds.from || dateKey >= bounds.from;
-  const beforeEnd = !bounds.to || dateKey <= bounds.to;
-  const inside = afterStart && beforeEnd;
-  return bounds.invert ? !inside : inside;
-};
-
 const stripLastVisitDateRange = (filters: AgendaFilters): AgendaFilters => ({
   ...filters,
   dateRanges: {
@@ -435,78 +451,44 @@ const excludeFilaBlockedRows = <T extends { id?: string | null }>(
 
 const fetchAgendaIdsByLatestRegisteredVisitDate = async (
   filters: AgendaFilters,
-  candidateAgendaIds?: string[] | null,
+  search: AgendaSearchFilters | undefined,
+  filaBlocks: FilaRoutingBlockLists | null,
 ) => {
   const bounds = resolveLastVisitDateBounds(filters);
   if (!bounds.active) return null;
-  if (candidateAgendaIds && candidateAgendaIds.length === 0) return [];
-
-  const latestByCliente = new Map<string, string>();
-  const pageSize = 1000;
-  const visitPageSize = candidateAgendaIds ? 100 : pageSize;
-
-  const collectRows = (rows: VisitCompletedRow[]) => {
-    rows.forEach((row) => {
-      if (!row.cliente_id || !row.visit_date) return;
-      if (!isVendorVisitTypeValue(row.visit_type)) return;
-      if (latestByCliente.has(row.cliente_id)) return;
-      latestByCliente.set(row.cliente_id, row.visit_date.slice(0, 10));
-    });
+  const normalizedSearch = {
+    companyName: search?.companyName?.replace(/%/g, "").replace(/,/g, " ").trim() ?? "",
+    companyCode: search?.companyCode?.replace(/%/g, "").trim() ?? "",
+    companyAddress: normalizeSearchTerm(search?.companyAddress),
   };
+  const rpcFilters = buildAgendaRpcFilters(
+    stripSupervisorFilter(stripLastVisitDateRange(filters)),
+  );
+  const ids: string[] = [];
+  const pageSize = 1000;
+  let from = 0;
 
-  if (candidateAgendaIds) {
-    for (let index = 0; index < candidateAgendaIds.length; index += visitPageSize) {
-      const chunk = candidateAgendaIds.slice(index, index + visitPageSize);
-      const { data, error } = await supabase
-        .from("visits")
-        .select("cliente_id, completed_vidas, completed_at, visit_date, visit_type")
-        .in("cliente_id", chunk)
-        .not("completed_at", "is", null)
-        .not("visit_date", "is", null)
-        .order("completed_at", { ascending: false })
-        .order("visit_date", { ascending: false });
+  while (true) {
+    const { data, error } = await supabase.rpc("get_rotas_agenda_latest_visit_ids_v2", {
+      p_filters: rpcFilters,
+      p_company_name: normalizedSearch.companyName || null,
+      p_company_code: normalizedSearch.companyCode || null,
+      p_company_address: normalizedSearch.companyAddress || null,
+      p_from: bounds.from,
+      p_to: bounds.to,
+      p_invert: bounds.invert,
+    }).range(from, from + pageSize - 1);
 
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      collectRows((data ?? []) as VisitCompletedRow[]);
-    }
-  } else {
-    let from = 0;
-
-    while (true) {
-      const { data, error } = await supabase
-        .from("visits")
-        .select("cliente_id, completed_vidas, completed_at, visit_date, visit_type")
-        .not("cliente_id", "is", null)
-        .not("completed_at", "is", null)
-        .not("visit_date", "is", null)
-        .order("completed_at", { ascending: false })
-        .order("visit_date", { ascending: false })
-        .range(from, from + pageSize - 1);
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      const rows = (data ?? []) as VisitCompletedRow[];
-      if (rows.length === 0) break;
-      collectRows(rows);
-
-      if (rows.length < pageSize) break;
-      from += pageSize;
-    }
+    if (error) throw new Error(error.message);
+    const batch = (data ?? []) as Array<{ id: string }>;
+    batch.forEach((row) => {
+      if (row.id) ids.push(row.id);
+    });
+    if (batch.length < pageSize) break;
+    from += pageSize;
   }
 
-  const clienteIds: string[] = [];
-  latestByCliente.forEach((dateKey, clienteId) => {
-    if (isDateWithinBounds(dateKey, bounds)) {
-      clienteIds.push(clienteId);
-    }
-  });
-
-  return clienteIds;
+  return excludeFilaBlockedIds(ids, filaBlocks) ?? [];
 };
 
 type OptionsCacheEntry = {
@@ -853,9 +835,8 @@ const hydrateAgendaUpcomingRoutePresence = async (rows: AgendaRow[]) => {
   const routeClienteIds = new Set<string>();
   const today = getFortalezaTodayDate();
   const chunkSize = AGENDA_ID_FILTER_CHUNK_SIZE;
-
-  for (let index = 0; index < clienteIds.length; index += chunkSize) {
-    const chunk = clienteIds.slice(index, index + chunkSize);
+  const chunks = chunkArray(clienteIds, chunkSize);
+  const routeRowsByChunk = await mapWithConcurrency(chunks, AGENDA_QUERY_CONCURRENCY, async (chunk) => {
     const { data, error } = await supabase
       .from("visits")
       .select("cliente_id")
@@ -863,12 +844,12 @@ const hydrateAgendaUpcomingRoutePresence = async (rows: AgendaRow[]) => {
       .not("route_id", "is", null)
       .is("completed_at", null)
       .gte("visit_date", today);
-
-    if (error) continue;
-    (data ?? []).forEach((row) => {
-      if (row.cliente_id) routeClienteIds.add(row.cliente_id);
-    });
-  }
+    if (error) return [] as Array<{ cliente_id: string | null }>;
+    return (data ?? []) as Array<{ cliente_id: string | null }>;
+  });
+  routeRowsByChunk.flat().forEach((row) => {
+    if (row.cliente_id) routeClienteIds.add(row.cliente_id);
+  });
 
   return rowsWithGeneratedVisit.map((row) => ({
     ...row,
@@ -924,14 +905,21 @@ const fetchAgendaFirstPageLiteDirect = async (
 
   const rows: AgendaRow[] = [];
   const batchSize = 1000;
-  const idChunks = context.restrictedAgendaIds
-    ? chunkArray(context.restrictedAgendaIds, AGENDA_ID_FILTER_CHUNK_SIZE)
-    : [null];
-
-  for (const idChunk of idChunks) {
+  if (context.restrictedAgendaIds) {
+    const idChunks = chunkArray(context.restrictedAgendaIds, AGENDA_ID_FILTER_CHUNK_SIZE);
+    const rowsByChunk = await mapWithConcurrency(
+      idChunks,
+      AGENDA_QUERY_CONCURRENCY,
+      async (idChunk) => {
+        const query = buildQuery().in("id", idChunk);
+        const { data, error } = await query.range(0, idChunk.length - 1);
+        if (error) throw new Error(error.message);
+        return (data ?? []) as AgendaRow[];
+      },
+    );
+    rows.push(...rowsByChunk.flat());
+  } else {
     let query = buildQuery();
-    if (idChunk) query = query.in("id", idChunk);
-
     let from = 0;
     while (true) {
       const response = await query.range(from, from + batchSize - 1);
@@ -1004,77 +992,6 @@ const buildAgendaRpcFilters = (filters: AgendaFilters): Record<string, unknown> 
   return normalized;
 };
 
-const fetchAgendaCandidateIdsForLatestVisitFilter = async (
-  filters: AgendaFilters,
-  search: AgendaSearchFilters | undefined,
-  filaBlocks: FilaRoutingBlockLists | null,
-) => {
-  const bounds = resolveLastVisitDateBounds(filters);
-  if (!bounds.active) return null;
-
-  const companyName = search?.companyName?.replace(/%/g, "").trim() ?? "";
-  const companyCode = search?.companyCode?.replace(/%/g, "").trim() ?? "";
-  const companyAddress = search?.companyAddress?.replace(/%/g, "").trim() ?? "";
-  const queryFilters = stripSupervisorFilter(stripLastVisitDateRange(filters));
-  const rows: string[] = [];
-  const pageSize = 1000;
-  let cursorId: string | null = null;
-  let guard = 0;
-  const maxBatches = 250;
-
-  while (true) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let query: any = supabase
-      .from("clientes")
-      .select("id")
-      .order("id", { ascending: true })
-      .limit(pageSize);
-
-    query = applyFilaRoutingExclusionsToClientesQuery(query, filaBlocks);
-    query = applyFilters(query, queryFilters);
-
-    if (companyName) {
-      const term = companyName.replace(/,/g, " ").trim();
-      if (term) {
-        query = query.or(`empresa.ilike.%${term}%,nome_fantasia.ilike.%${term}%`);
-      }
-    }
-
-  if (companyCode) {
-    query = query.eq("codigo", companyCode);
-  }
-
-  if (companyAddress) {
-    query = applyEnderecoContainsFilter(query, companyAddress);
-  }
-
-  if (cursorId) {
-      query = query.gt("id", cursorId);
-    }
-
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-
-    const batch = (data ?? []) as Array<{ id: string }>;
-    if (batch.length === 0) break;
-    batch.forEach((row) => {
-      if (row.id) rows.push(row.id);
-    });
-
-    if (batch.length < pageSize) break;
-    const nextCursor = batch[batch.length - 1]?.id ?? null;
-    if (!nextCursor || nextCursor === cursorId) break;
-    cursorId = nextCursor;
-
-    guard += 1;
-    if (guard >= maxBatches) {
-      break;
-    }
-  }
-
-  return excludeFilaBlockedIds(rows, filaBlocks) ?? [];
-};
-
 const buildAgendaQueryContext = async (
   filters: AgendaFilters,
   search?: AgendaSearchFilters,
@@ -1082,12 +999,14 @@ const buildAgendaQueryContext = async (
   const companyName = search?.companyName?.replace(/%/g, "").trim() ?? "";
   const companyCode = search?.companyCode?.replace(/%/g, "").trim() ?? "";
   const companyAddress = search?.companyAddress?.replace(/%/g, "").trim() ?? "";
-  const filaBlocks = await resolveFilaRoutingBlocks();
-  const supervisorAgendaIds = await fetchAgendaIdsBySupervisorFilter(filters);
-  const candidateAgendaIds = await fetchAgendaCandidateIdsForLatestVisitFilter(filters, search, filaBlocks);
+  const [filaBlocks, supervisorAgendaIds] = await Promise.all([
+    resolveFilaRoutingBlocks(),
+    fetchAgendaIdsBySupervisorFilter(filters),
+  ]);
   const dateRestrictedAgendaIds = await fetchAgendaIdsByLatestRegisteredVisitDate(
     filters,
-    candidateAgendaIds,
+    search,
+    filaBlocks,
   );
   const rawRestrictedAgendaIds = intersectAgendaIdFilters(
     dateRestrictedAgendaIds,
@@ -1108,6 +1027,28 @@ const buildAgendaQueryContext = async (
   };
 };
 
+const agendaQueryContextInFlight = new Map<string, Promise<AgendaQueryContext>>();
+
+const getAgendaQueryContext = (filters: AgendaFilters, search?: AgendaSearchFilters) => {
+  const normalizedSearch = {
+    companyName: search?.companyName?.replace(/%/g, "").trim() ?? "",
+    companyCode: search?.companyCode?.replace(/%/g, "").trim() ?? "",
+    companyAddress: search?.companyAddress?.replace(/%/g, "").trim() ?? "",
+  };
+  const key = JSON.stringify([filters, normalizedSearch]);
+  const existing = agendaQueryContextInFlight.get(key);
+  if (existing) return existing;
+
+  const pending = buildAgendaQueryContext(filters, normalizedSearch);
+  agendaQueryContextInFlight.set(key, pending);
+  void pending.finally(() => {
+    if (agendaQueryContextInFlight.get(key) === pending) {
+      agendaQueryContextInFlight.delete(key);
+    }
+  }).catch(() => undefined);
+  return pending;
+};
+
 const fetchAgendaCountExactDirect = async (
   filters: AgendaFilters,
   context: AgendaQueryContext,
@@ -1121,7 +1062,7 @@ const fetchAgendaCountExactDirect = async (
     : filters;
   const buildQuery = () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let query: any = supabase.from("clientes").select("id");
+    let query: any = supabase.from("clientes").select("id", { count: "exact", head: true });
     query = applyFilaRoutingExclusionsToClientesQuery(query, context.filaBlocks);
     query = applyFilters(query, queryFilters);
     if (context.companyName) {
@@ -1138,37 +1079,43 @@ const fetchAgendaCountExactDirect = async (
     return query;
   };
 
-  const matchingIds: string[] = [];
   const idChunks = context.restrictedAgendaIds
     ? chunkArray(context.restrictedAgendaIds, AGENDA_ID_FILTER_CHUNK_SIZE)
     : [null];
-  for (const idChunk of idChunks) {
+  const counts = await mapWithConcurrency(idChunks, AGENDA_QUERY_CONCURRENCY, async (idChunk) => {
     let query = buildQuery();
     if (idChunk) query = query.in("id", idChunk);
+    const { count, error } = await query;
+    if (error) throw new Error(error.message);
+    return count ?? 0;
+  });
+  let total = counts.reduce((sum, count) => sum + count, 0);
 
-    const pageSize = 1000;
-    let from = 0;
-    while (true) {
-      const { data, error } = await query.range(from, from + pageSize - 1);
-      if (error) throw new Error(error.message);
-      const batch = (data ?? []) as Array<{ id?: string | null }>;
-      if (batch.length === 0) break;
-      batch.forEach((row) => {
-        if (row.id) matchingIds.push(row.id);
-      });
-      if (batch.length < pageSize) break;
-      from += pageSize;
-    }
+  if (!context.restrictedAgendaIds && context.filaBlocks?.blockedEmpresaIds.length) {
+    const blockedIdChunks = chunkArray(
+      context.filaBlocks.blockedEmpresaIds,
+      AGENDA_ID_FILTER_CHUNK_SIZE,
+    );
+    const blockedCounts = await mapWithConcurrency(
+      blockedIdChunks,
+      AGENDA_QUERY_CONCURRENCY,
+      async (idChunk) => {
+        const { count, error } = await buildQuery().in("id", idChunk);
+        if (error) throw new Error(error.message);
+        return count ?? 0;
+      },
+    );
+    total -= blockedCounts.reduce((sum, count) => sum + count, 0);
   }
 
-  return excludeFilaBlockedIds(matchingIds, context.filaBlocks)?.length ?? 0;
+  return Math.max(0, total);
 };
 
 export const fetchAgendaCountExact = async (
   filters: AgendaFilters,
   search?: AgendaSearchFilters,
 ) => {
-  const context = await buildAgendaQueryContext(filters, search);
+  const context = await getAgendaQueryContext(filters, search);
   const effectiveFilterKeys = Object.keys(context.effectiveFilters);
   const filtersEffectivelyEmpty = effectiveFilterKeys.length === 0;
   const rpcFilters = filtersEffectivelyEmpty ? {} : context.effectiveFilters;
@@ -1199,7 +1146,7 @@ export const fetchAgendaFirstPageLite = async (
   filters: AgendaFilters,
   search?: AgendaSearchFilters,
 ): Promise<AgendaRow[]> => {
-  const context = await buildAgendaQueryContext(filters, search);
+  const context = await getAgendaQueryContext(filters, search);
   const effectiveFilterKeys = Object.keys(context.effectiveFilters);
   const filtersEffectivelyEmpty = effectiveFilterKeys.length === 0;
   const rpcFilters = filtersEffectivelyEmpty ? {} : context.effectiveFilters;
@@ -1466,12 +1413,11 @@ export const fetchAgendaForGeneration = async (filters: AgendaFilters, ids?: str
   let effectiveFilters = agendaIdsBySupervisor ? stripSupervisorFilter(filters) : filters;
 
   try {
-    const candidateAgendaIds = await fetchAgendaCandidateIdsForLatestVisitFilter(
+    agendaIdsByLastVisit = await fetchAgendaIdsByLatestRegisteredVisitDate(
       effectiveFilters,
       undefined,
       filaBlocks,
     );
-    agendaIdsByLastVisit = await fetchAgendaIdsByLatestRegisteredVisitDate(effectiveFilters, candidateAgendaIds);
     if (agendaIdsByLastVisit) {
       effectiveFilters = stripLastVisitDateRange(effectiveFilters);
     }

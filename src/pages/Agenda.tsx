@@ -1626,28 +1626,31 @@ export default function Agenda() {
         if (!inflight) {
           agendaStartupQueryCount += 1;
           inflight = (async (): Promise<AgendaStartupLoadResult> => {
-            const listStart = performance.now();
-        const liteRows = await fetchAgendaFirstPageLite(pageIndex, pageSize, sorting, appliedFilters, queryFilters);
-        const listEnd = performance.now();
-        const listDuration = Math.round(listEnd - listStart);
-
-            const jsAfterResponseStart = performance.now();
             const countStart = performance.now();
             let totalCountReal: number | null = null;
             let countErrorSafe: string | null = null;
             let countMethod: AgendaStartupLoadResult["countMethod"] = "none";
             let totalSource = "rpc_exact";
-            try {
-              totalCountReal = await fetchAgendaCountExact(appliedFilters, queryFilters);
-              countMethod = totalCountReal === null ? "none" : "rpc";
-            } catch (countError) {
-              totalCountReal = null;
-              totalSource = "rpc_exact_failed";
-              countErrorSafe = countError instanceof Error ? countError.message : String(countError ?? "");
-              countMethod = "rpc_failed";
-            }
-            const countDuration = Math.round(performance.now() - countStart);
-            const jsAfterResponseDuration = Math.round(performance.now() - jsAfterResponseStart);
+            const listPromise = fetchAgendaFirstPageLite(
+              pageIndex,
+              pageSize,
+              sorting,
+              appliedFilters,
+              queryFilters,
+            );
+            const countPromise = (async () => {
+              try {
+                totalCountReal = await fetchAgendaCountExact(appliedFilters, queryFilters);
+                countMethod = totalCountReal === null ? "none" : "rpc";
+              } catch (countError) {
+                totalCountReal = null;
+                totalSource = "rpc_exact_failed";
+                countErrorSafe = countError instanceof Error ? countError.message : String(countError ?? "");
+                countMethod = "rpc_failed";
+              }
+              return Math.round(performance.now() - countStart);
+            })();
+            const [liteRows, countDuration] = await Promise.all([listPromise, countPromise]);
 
             return {
               liteRows,
