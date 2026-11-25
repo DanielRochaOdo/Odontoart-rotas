@@ -115,6 +115,7 @@ type VisitRowJoin = VisitRow & {
   cliente?: VisitRow["cliente"] | VisitRow["cliente"][] | null;
 };
 const VISITS_FETCH_PAGE_SIZE = 1000;
+const VISITS_SELECTED_DAY_PAGE_SIZE = 250;
 
 const isVisitRegistered = (
   visit: Pick<VisitRow, "completed_at" | "completed_vidas" | "no_visit_reason">,
@@ -1141,14 +1142,14 @@ export default function Visitas() {
         return query;
       };
 
-      const buildVisitsQuery = () => {
+      const buildVisitsQuery = (rangeStart = startDate, rangeEnd = monthEndExclusive) => {
         let query = supabase
           .from("visits")
           .select(
             "id, cliente_id, visit_date, assigned_to_user_id, assigned_to_name, visit_type, supervisor_reason, register_mode, visit_time, perfil_visita, perfil_visita_opcoes, route_id, completed_at, completed_vidas, no_visit_reason, no_visit_observation, instructions, visit_supervisors(supervisor_user_id)",
           )
-          .gte("visit_date", startDate)
-          .lt("visit_date", monthEndExclusive)
+          .gte("visit_date", rangeStart)
+          .lt("visit_date", rangeEnd)
           .order("visit_date", { ascending: true });
 
         if (isVendor) {
@@ -1159,53 +1160,29 @@ export default function Visitas() {
         return query;
       };
 
-      if (isVendor) {
-        const selectedDayQueryStartedAt = performance.now();
-        const selectedDayStart = selectedDate
-          ? toYmd(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate())
-          : startDate;
-        const nextDay = addDays(new Date(`${selectedDayStart}T12:00:00`), 1);
-        const selectedDayEndExclusive = toYmd(nextDay.getFullYear(), nextDay.getMonth(), nextDay.getDate());
-
-        const { data: dayVisits, error: dayError } = await buildVisitsQuery()
-          .gte("visit_date", selectedDayStart)
-          .lt("visit_date", selectedDayEndExclusive);
-        logPerfDuration("VISITAS_SELECTED_DAY_QUERY", selectedDayQueryStartedAt);
-
-        if (!active) return;
-
-        if (dayError) {
-          setError(dayError.message);
-          setVisits([]);
-        } else {
-          const hydrationStartedAt = performance.now();
-          const normalizedDayVisits = await hydrateVisitsWithClientes((dayVisits ?? []) as VisitRowJoin[], "list");
-          logPerfDuration("VISITAS_CLIENTES_HYDRATION_LITE", hydrationStartedAt);
-          setVisits(normalizedDayVisits);
-        }
-
-        logPerfDuration("VISITAS_INITIAL_LOAD", startedAt);
-        setLoading(false);
-        return;
-      }
-
+      const selectedDayStart = selectedDate
+        ? toYmd(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate())
+        : startDate;
+      const nextDay = addDays(new Date(`${selectedDayStart}T12:00:00`), 1);
+      const selectedDayEndExclusive = toYmd(nextDay.getFullYear(), nextDay.getMonth(), nextDay.getDate());
       const data: VisitRowJoin[] = [];
       let from = 0;
       let supaError: { message: string } | null = null;
       const selectedDayQueryStartedAt = performance.now();
       while (true) {
-        const { data: pageVisits, error: pageError } = await buildVisitsQuery().range(
-          from,
-          from + VISITS_FETCH_PAGE_SIZE - 1,
-        );
+        const { data: pageVisits, error: pageError } = await buildVisitsQuery(
+          selectedDayStart,
+          selectedDayEndExclusive,
+        )
+          .range(from, from + VISITS_SELECTED_DAY_PAGE_SIZE - 1);
         if (pageError) {
           supaError = pageError;
           break;
         }
         const page = (pageVisits ?? []) as VisitRowJoin[];
         data.push(...page);
-        if (page.length < VISITS_FETCH_PAGE_SIZE) break;
-        from += VISITS_FETCH_PAGE_SIZE;
+        if (page.length < VISITS_SELECTED_DAY_PAGE_SIZE) break;
+        from += VISITS_SELECTED_DAY_PAGE_SIZE;
       }
       logPerfDuration("VISITAS_SELECTED_DAY_QUERY", selectedDayQueryStartedAt);
 
