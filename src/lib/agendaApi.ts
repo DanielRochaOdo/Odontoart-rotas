@@ -1230,12 +1230,13 @@ export const fetchAgendaPageAndCount = async (
         p_company_name: normalizedSearch.companyName || null,
         p_company_code: null,
       }),
-      supabase
-        .rpc("get_rotas_agenda_count_v1", {
+      Promise.resolve(
+        supabase.rpc("get_rotas_agenda_count_v1", {
           p_filters: rpcFilters,
           p_company_name: normalizedSearch.companyName || null,
           p_company_code: null,
-        })
+        }),
+      )
         .then((response) => ({
           ...response,
           countError: response.error?.message ?? null,
