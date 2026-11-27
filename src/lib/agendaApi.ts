@@ -1222,43 +1222,30 @@ export const fetchAgendaPageAndCount = async (
     !normalizedSearch.companyAddress
   ) {
     const rpcFilters = buildAgendaRpcFilters(filters);
-    const [pageResult, countResult] = await Promise.all([
-      supabase.rpc("get_rotas_agenda_first_page_v2", {
-        p_page_size: Math.max(1, pageSize),
-        p_page_offset: Math.max(0, pageIndex * pageSize),
-        p_filters: rpcFilters,
-        p_company_name: normalizedSearch.companyName || null,
-        p_company_code: null,
-      }),
-      Promise.resolve(
-        supabase.rpc("get_rotas_agenda_count_v1", {
-          p_filters: rpcFilters,
-          p_company_name: normalizedSearch.companyName || null,
-          p_company_code: null,
-        }),
-      )
-        .then((response) => ({
-          ...response,
-          countError: response.error?.message ?? null,
-        }))
-        .catch((error: unknown) => ({
-          data: null,
-          error: { message: error instanceof Error ? error.message : String(error ?? "") },
-          countError: error instanceof Error ? error.message : String(error ?? ""),
-        })),
-    ]);
+    const { data, error } = await supabase.rpc("get_rotas_agenda_page_and_count_v1", {
+      p_page_size: Math.max(1, pageSize),
+      p_page_offset: Math.max(0, pageIndex * pageSize),
+      p_filters: rpcFilters,
+      p_company_name: normalizedSearch.companyName || null,
+      p_company_code: null,
+    });
 
-    if (pageResult.error) throw new Error(pageResult.error.message);
-    const rows = (pageResult.data ?? []) as AgendaRow[];
-    const countValue = Number(countResult.data ?? 0);
+    if (error) throw new Error(error.message);
+    const result = (Array.isArray(data) ? data[0] : data) as
+      | { rows?: unknown; total_count?: unknown }
+      | null;
+    if (!result || !Array.isArray(result.rows)) {
+      throw new Error("Resposta invalida ao carregar a pagina e a contagem da Agenda.");
+    }
+    const countValue = Number(result.total_count);
+    if (!Number.isFinite(countValue)) {
+      throw new Error("Contagem invalida recebida ao carregar a Agenda.");
+    }
+    const rows = result.rows as AgendaRow[];
     return {
       data: normalizeAgendaLiteRows(dedupeAgendaRows(rows)),
-      count: countResult.error
-        ? null
-        : Number.isFinite(countValue)
-          ? countValue
-          : 0,
-      countError: countResult.countError,
+      count: countValue,
+      countError: null,
     };
   }
 
